@@ -32,7 +32,7 @@ func TestInitServerCreatesMetadata(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), ".mcp")
 	mgr := NewServerManager(core.NewTestKubectlClient(&core.MockExecutor{}), zap.NewNop())
 
-	if err := mgr.InitServer("payments", dir, "", "v1", "tenant", "allow-list", "deny", true, 8088, []string{"add", "add", "echo"}, []string{"refund_invoice:high:destructive"}, false); err != nil {
+	if err := mgr.InitServer("payments", dir, "", "v1", "tenant", "allow-list", "deny", true, 8088, []string{"add", "add", "echo"}, []string{"refund_invoice:high:destructive"}, "", false); err != nil {
 		t.Fatalf("InitServer() error = %v", err)
 	}
 
@@ -100,17 +100,35 @@ func TestInitServerCreatesMetadata(t *testing.T) {
 	}
 }
 
+func TestInitServerSetsToolRisk(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), ".mcp")
+	mgr := NewServerManager(core.NewTestKubectlClient(&core.MockExecutor{}), zap.NewNop())
+
+	if err := mgr.InitServer("payments", dir, "", "latest", "tenant", "allow-list", "deny", true, 8088, []string{"add"}, []string{"refund_invoice:high:destructive"}, "high", false); err != nil {
+		t.Fatalf("InitServer() error = %v", err)
+	}
+	registry, err := metadata.LoadFromFile(filepath.Join(dir, "servers.yaml"))
+	if err != nil {
+		t.Fatalf("LoadFromFile() error = %v", err)
+	}
+	for _, tool := range registry.Servers[0].Tools {
+		if tool.RiskLevel != metadata.ToolRiskLevelHigh {
+			t.Fatalf("tool risk = %#v, want high for %#v", tool.RiskLevel, tool)
+		}
+	}
+}
+
 func TestInitServerAppendsAndRejectsDuplicate(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), ".mcp")
 	mgr := NewServerManager(core.NewTestKubectlClient(&core.MockExecutor{}), zap.NewNop())
 
-	if err := mgr.InitServer("one", dir, "", "latest", "tenant", "allow-list", "deny", true, 8088, nil, nil, false); err != nil {
+	if err := mgr.InitServer("one", dir, "", "latest", "tenant", "allow-list", "deny", true, 8088, nil, nil, "", false); err != nil {
 		t.Fatalf("InitServer(one) error = %v", err)
 	}
-	if err := mgr.InitServer("two", dir, "custom/two", "v2", "org", "allow-list", "deny", true, 9000, []string{"search"}, nil, false); err != nil {
+	if err := mgr.InitServer("two", dir, "custom/two", "v2", "org", "allow-list", "deny", true, 9000, []string{"search"}, nil, "", false); err != nil {
 		t.Fatalf("InitServer(two) error = %v", err)
 	}
-	err := mgr.InitServer("one", dir, "", "latest", "tenant", "allow-list", "deny", true, 8088, nil, nil, false)
+	err := mgr.InitServer("one", dir, "", "latest", "tenant", "allow-list", "deny", true, 8088, nil, nil, "", false)
 	if err == nil || !strings.Contains(err.Error(), "--force") {
 		t.Fatalf("duplicate error = %v, want --force guidance", err)
 	}
@@ -128,7 +146,7 @@ func TestInitServerUsesGovernanceFlags(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), ".mcp")
 	mgr := NewServerManager(core.NewTestKubectlClient(&core.MockExecutor{}), zap.NewNop())
 
-	if err := mgr.InitServer("payments", dir, "", "latest", "tenant", "observe", "allow", false, 8088, nil, nil, false); err != nil {
+	if err := mgr.InitServer("payments", dir, "", "latest", "tenant", "observe", "allow", false, 8088, nil, nil, "", false); err != nil {
 		t.Fatalf("InitServer() error = %v", err)
 	}
 
@@ -149,11 +167,11 @@ func TestInitServerRejectsInvalidGovernanceFlags(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), ".mcp")
 	mgr := NewServerManager(core.NewTestKubectlClient(&core.MockExecutor{}), zap.NewNop())
 
-	err := mgr.InitServer("payments", dir, "", "latest", "tenant", "audit", "deny", true, 8088, nil, nil, false)
+	err := mgr.InitServer("payments", dir, "", "latest", "tenant", "audit", "deny", true, 8088, nil, nil, "", false)
 	if err == nil || !strings.Contains(err.Error(), "invalid policy mode") {
 		t.Fatalf("policy mode error = %v, want invalid policy mode", err)
 	}
-	err = mgr.InitServer("payments", dir, "", "latest", "tenant", "allow-list", "maybe", true, 8088, nil, nil, false)
+	err = mgr.InitServer("payments", dir, "", "latest", "tenant", "allow-list", "maybe", true, 8088, nil, nil, "", false)
 	if err == nil || !strings.Contains(err.Error(), "invalid default decision") {
 		t.Fatalf("default decision error = %v, want invalid default decision", err)
 	}
@@ -163,10 +181,10 @@ func TestInitServerForceReplacesExisting(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), ".mcp")
 	mgr := NewServerManager(core.NewTestKubectlClient(&core.MockExecutor{}), zap.NewNop())
 
-	if err := mgr.InitServer("payments", dir, "payments", "v1", "tenant", "allow-list", "deny", true, 8088, []string{"add"}, nil, false); err != nil {
+	if err := mgr.InitServer("payments", dir, "payments", "v1", "tenant", "allow-list", "deny", true, 8088, []string{"add"}, nil, "", false); err != nil {
 		t.Fatalf("InitServer() error = %v", err)
 	}
-	if err := mgr.InitServer("payments", dir, "payments-v2", "v2", "tenant", "allow-list", "deny", true, 9090, []string{"echo"}, nil, true); err != nil {
+	if err := mgr.InitServer("payments", dir, "payments-v2", "v2", "tenant", "allow-list", "deny", true, 9090, []string{"echo"}, nil, "", true); err != nil {
 		t.Fatalf("InitServer(force) error = %v", err)
 	}
 	registry, err := metadata.LoadFromFile(filepath.Join(dir, "servers.yaml"))
@@ -186,7 +204,7 @@ func TestInitServerRejectsDuplicateToolSpec(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), ".mcp")
 	mgr := NewServerManager(core.NewTestKubectlClient(&core.MockExecutor{}), zap.NewNop())
 
-	err := mgr.InitServer("payments", dir, "", "latest", "tenant", "allow-list", "deny", true, 8088, []string{"add"}, []string{"add:high:write"}, false)
+	err := mgr.InitServer("payments", dir, "", "latest", "tenant", "allow-list", "deny", true, 8088, []string{"add"}, []string{"add:high:write"}, "", false)
 	if err == nil || !strings.Contains(err.Error(), "duplicate tool metadata") {
 		t.Fatalf("error = %v, want duplicate tool metadata", err)
 	}
@@ -196,7 +214,7 @@ func TestInitServerRejectsInvalidToolSpec(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), ".mcp")
 	mgr := NewServerManager(core.NewTestKubectlClient(&core.MockExecutor{}), zap.NewNop())
 
-	err := mgr.InitServer("payments", dir, "", "latest", "tenant", "allow-list", "deny", true, 8088, nil, []string{"refund_invoice:full:danger"}, false)
+	err := mgr.InitServer("payments", dir, "", "latest", "tenant", "allow-list", "deny", true, 8088, nil, []string{"refund_invoice:full:danger"}, "", false)
 	if err == nil || !strings.Contains(err.Error(), "trust must be low, medium, or high") {
 		t.Fatalf("error = %v, want trust validation", err)
 	}

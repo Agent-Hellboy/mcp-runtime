@@ -1,0 +1,14 @@
+Print client connection config for an MCP server
+
+Usage:
+  mcp-runtime server connect-config [name] [flags]
+
+Flags:
+      --client string      Client config: claude, cursor, vscode, or json (default "json")
+  -h, --help               help for connect-config
+      --namespace string   Namespace (default "mcp-servers")
+  -o, --output string      Output format: text, json, or yaml (default "text")
+
+Global Flags:
+      --debug      Enable debug mode with structured error logging
+      --use-kube   Use direct Kubernetes mode with kubectl; requires admin/operator cluster access (admin/dev/test only)

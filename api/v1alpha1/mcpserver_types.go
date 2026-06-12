@@ -47,6 +47,15 @@ const (
 	ToolSideEffectDestructive ToolSideEffect = "destructive"
 )
 
+// +kubebuilder:validation:Enum=low;medium;high
+type ToolRiskLevel string
+
+const (
+	ToolRiskLevelLow    ToolRiskLevel = "low"
+	ToolRiskLevelMedium ToolRiskLevel = "medium"
+	ToolRiskLevelHigh   ToolRiskLevel = "high"
+)
+
 // +kubebuilder:validation:Enum=RollingUpdate;Recreate;Canary
 type RolloutStrategy string
 
@@ -184,6 +193,7 @@ type ToolConfig struct {
 	Description   string            `json:"description,omitempty"`
 	RequiredTrust TrustLevel        `json:"requiredTrust,omitempty"`
 	SideEffect    ToolSideEffect    `json:"sideEffect"`
+	RiskLevel     ToolRiskLevel     `json:"riskLevel,omitempty"`
 	Labels        map[string]string `json:"labels,omitempty"`
 }
 

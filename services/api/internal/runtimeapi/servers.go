@@ -24,6 +24,8 @@ import (
 	runtimeaccess "mcp-sentinel-api/internal/runtimeapi/access"
 )
 
+var errForbiddenNamespace = errors.New("forbidden namespace")
+
 const (
 	defaultAnalyticsCredentialSourceSecretName = "mcp-sentinel-secrets"
 	defaultAnalyticsCredentialSourceKey        = "INGEST_API_KEYS"
@@ -68,46 +70,21 @@ func (s *RuntimeServer) handleRuntimeServerList(w http.ResponseWriter, r *http.R
 	defer cancel()
 
 	namespace := strings.TrimSpace(r.URL.Query().Get("namespace"))
-	namespaces := []string{namespace}
-	adminAllNamespaces := false
-	if p.Role != roleAdmin {
-		if namespace == "" {
-			namespaces = catalogNamespacesForPrincipal(p)
-		} else if !principalCanReadNamespace(p, namespace) {
-			writeAPIError(w, http.StatusForbidden, "forbidden namespace")
-			return
-		}
-	} else if namespace == "" {
-		adminAllNamespaces = true
-		namespaces = []string{metav1.NamespaceAll}
+	servers, err := s.visibleServers(ctx, control, p, namespace)
+	if errors.Is(err, errForbiddenNamespace) {
+		writeAPIError(w, http.StatusForbidden, "forbidden namespace")
+		return
 	}
-	if !adminAllNamespaces {
-		namespaces = dedupeNonEmptyStrings(namespaces)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "failed to list servers")
+		return
 	}
-	if len(namespaces) == 0 && !adminAllNamespaces {
+	if len(servers) == 0 {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"servers":        []serverInfo{},
 			"publish_policy": s.publishPolicyStatusForPrincipal(ctx, p),
 		})
 		return
-	}
-
-	servers := make([]controlplane.ServerInfo, 0)
-	for _, namespace := range namespaces {
-		if p.Role != roleAdmin && !principalCanReadNamespace(p, namespace) {
-			writeAPIError(w, http.StatusForbidden, "forbidden namespace")
-			return
-		}
-
-		result, err := control.ListServers(ctx, namespace)
-		if err != nil {
-			writeAPIError(w, http.StatusInternalServerError, "failed to list servers")
-			return
-		}
-		if result.CRDError != nil && !apierrors.IsNotFound(result.CRDError) {
-			log.Printf("runtime servers: list MCPServers failed in namespace %q: %v", namespace, result.CRDError)
-		}
-		servers = append(servers, result.Servers...)
 	}
 	sort.SliceStable(servers, func(i, j int) bool {
 		if servers[i].Namespace != servers[j].Namespace {

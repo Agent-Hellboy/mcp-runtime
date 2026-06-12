@@ -289,10 +289,28 @@ mcp-runtime server policy inspect workspace-demo --namespace mcp-team-acme
 mcp-runtime server list
 mcp-runtime server get workspace-demo --namespace mcp-team-acme
 mcp-runtime server status --namespace mcp-team-acme
+mcp-runtime server connect-config workspace-demo --namespace mcp-team-acme --client claude
 mcp-runtime server policy inspect workspace-demo --namespace mcp-team-acme
 mcp-runtime server delete workspace-demo
 mcp-runtime server generate --metadata-dir .mcp --output manifests/
 ```
+
+---
+
+## catalog
+
+**[User]** platform API only
+
+```bash
+mcp-runtime catalog tools
+mcp-runtime catalog tools --query invoice --risk high
+mcp-runtime catalog tools --namespace mcp-team-acme --side-effect write
+mcp-runtime catalog tool refund_invoice --server payments --output json
+```
+
+The catalog is visibility-only. It shows tools from visible servers with trust,
+side effect, computed or declared risk, drift (`declared`, `ungoverned`,
+`missing`), and copyable connect config.
 
 ### Direct Kubernetes operations (--use-kube) [Admin]
 
