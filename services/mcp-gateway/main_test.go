@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"io"
 	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -524,6 +525,106 @@ func TestAuditPayloadIncludesLatencyMetadata(t *testing.T) {
 	if got := payload["bytes_out"]; got != 91 {
 		t.Fatalf("bytes_out = %#v, want %d", got, 91)
 	}
+}
+
+func TestGatewayMetricsNotExposedOnMainListener(t *testing.T) {
+	t.Parallel()
+
+	registry := prometheus.NewRegistry()
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(upstream.Close)
+
+	target, err := url.Parse(upstream.URL)
+	if err != nil {
+		t.Fatalf("url.Parse() error = %v", err)
+	}
+
+	proxy := &gatewayServer{
+		proxy:                 newUpstreamReverseProxy(target),
+		metrics:               newGatewayMetrics(registry),
+		httpClient:            &http.Client{Timeout: 2 * time.Second},
+		defaultHumanHeader:    defaultHumanHeader,
+		defaultAgentHeader:    defaultAgentHeader,
+		defaultTeamHeader:     defaultTeamHeader,
+		defaultSessionHeader:  defaultSessionHeader,
+		defaultPolicyMode:     defaultPolicyMode,
+		defaultPolicyDecision: defaultPolicyDecision,
+		defaultPolicyVersion:  "test-policy",
+		oauthProviders:        map[string]*oauthProvider{},
+	}
+	proxy.snapshotPolicy(policySnapshot{Policy: headerPolicy()})
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", proxy.handleGateway)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	mux.ServeHTTP(recorder, request)
+
+	if strings.Contains(recorder.Body.String(), "mcp_gateway_requests_total") {
+		t.Fatalf("main listener exposed prometheus metrics: status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestGatewayMetricsAvailableOnMetricsPort(t *testing.T) {
+	t.Parallel()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = listener.Close()
+	})
+
+	registry := prometheus.NewRegistry()
+	metrics := newGatewayMetrics(registry)
+	metrics.recordRequest(
+		gatewayMetricScope{Namespace: "mcp-servers", Server: "demo", Cluster: "kind", TeamID: "team-acme"},
+		httptest.NewRequest(http.MethodPost, "http://proxy.example.com/mcp", nil),
+		"tools/call",
+		policypkg.Decision{Allowed: true, Status: http.StatusOK, Reason: "allowed", PolicyVersion: "test-policy"},
+		http.StatusOK,
+		time.Millisecond,
+		0,
+		0,
+	)
+
+	metricsServer := &http.Server{
+		Handler: serviceutilMetricsHandler(registry),
+	}
+	go func() {
+		_ = metricsServer.Serve(listener)
+	}()
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = metricsServer.Shutdown(ctx)
+	})
+
+	resp, err := http.Get("http://" + listener.Addr().String() + "/metrics")
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("ReadAll() error = %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("metrics status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if !strings.Contains(string(body), "mcp_gateway_requests_total") {
+		t.Fatalf("metrics body missing gateway counter: %s", body)
+	}
+}
+
+func serviceutilMetricsHandler(registry *prometheus.Registry) http.Handler {
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", promhttp.HandlerFor(registry, promhttp.HandlerOpts{}))
+	return mux
 }
 
 func TestGatewayMetricsRecordRequestsPolicyDecisionsAndBytes(t *testing.T) {

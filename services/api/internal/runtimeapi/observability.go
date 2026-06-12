@@ -223,6 +223,9 @@ func (s *RuntimeServer) authorizedObservabilityTarget(r *http.Request) (principa
 	if namespace == "" || serverName == "" {
 		return principal{}, nil, observabilityRequestError{status: http.StatusBadRequest, message: "namespace and server are required"}
 	}
+	if p.Role != roleAdmin && !principalCanReadNamespace(p, namespace) {
+		return principal{}, nil, observabilityRequestError{status: http.StatusNotFound, message: "server not found"}
+	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
@@ -231,13 +234,27 @@ func (s *RuntimeServer) authorizedObservabilityTarget(r *http.Request) (principa
 		return principal{}, nil, observabilityRequestError{status: http.StatusNotFound, message: "server not found"}
 	}
 	if err != nil {
-		code, msg := k8sclient.HTTPStatusFromK8sError(err)
+		code, msg := observabilityTargetReadStatus(err)
 		return principal{}, nil, observabilityRequestError{status: code, message: msg}
 	}
 	if !mcpServerObservableByPrincipal(*target, p) {
-		return principal{}, nil, observabilityRequestError{status: http.StatusForbidden, message: "forbidden server"}
+		return principal{}, nil, observabilityRequestError{status: http.StatusNotFound, message: "server not found"}
 	}
 	return p, target, nil
+}
+
+func observabilityTargetReadStatus(err error) (int, string) {
+	if err == nil {
+		return http.StatusNotFound, "server not found"
+	}
+	if apierrors.IsNotFound(err) {
+		return http.StatusNotFound, "server not found"
+	}
+	code, msg := k8sclient.HTTPStatusFromK8sError(err)
+	if code == http.StatusForbidden {
+		return http.StatusNotFound, "server not found"
+	}
+	return code, msg
 }
 
 func writeObservabilityError(w http.ResponseWriter, err error) {

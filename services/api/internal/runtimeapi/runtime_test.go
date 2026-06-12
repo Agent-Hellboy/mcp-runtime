@@ -690,8 +690,8 @@ func TestRuntimeObservabilityRejectsCrossTenantServer(t *testing.T) {
 
 	server.HandleRuntimeObservabilityLinks(recorder, request)
 
-	if recorder.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d; body = %s", recorder.Code, http.StatusNotFound, recorder.Body.String())
 	}
 }
 
@@ -717,8 +717,8 @@ func TestRuntimeObservabilityRejectsUnownedSharedCatalogServer(t *testing.T) {
 
 	server.HandleRuntimeObservabilityLinks(recorder, request)
 
-	if recorder.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d; body = %s", recorder.Code, http.StatusNotFound, recorder.Body.String())
 	}
 }
 

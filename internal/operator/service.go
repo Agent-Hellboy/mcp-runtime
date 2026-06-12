@@ -34,26 +34,36 @@ func (r *MCPServerReconciler) reconcileService(ctx context.Context, mcpServer *m
 			LabelManagedBy: LabelManagedByValue,
 		}
 		service.Labels = labels
-		service.Annotations = nil
+		if service.Annotations == nil {
+			service.Annotations = map[string]string{}
+		}
 		if gatewayEnabled(mcpServer) {
-			service.Annotations = map[string]string{
-				"prometheus.io/path":   "/metrics",
-				"prometheus.io/port":   strconv.Itoa(int(mcpServer.Spec.Gateway.Port)),
-				"prometheus.io/scrape": "true",
-			}
+			service.Annotations["prometheus.io/path"] = "/metrics"
+			service.Annotations["prometheus.io/port"] = strconv.Itoa(DefaultGatewayMetricsPort)
+			service.Annotations["prometheus.io/scrape"] = "true"
+		}
+
+		ports := []corev1.ServicePort{
+			{
+				Name:       "http",
+				Port:       mcpServer.Spec.ServicePort,
+				TargetPort: intstr.FromInt32(targetPort),
+				Protocol:   corev1.ProtocolTCP,
+			},
+		}
+		if gatewayEnabled(mcpServer) {
+			ports = append(ports, corev1.ServicePort{
+				Name:       "metrics",
+				Port:       DefaultGatewayMetricsPort,
+				TargetPort: intstr.FromInt32(DefaultGatewayMetricsPort),
+				Protocol:   corev1.ProtocolTCP,
+			})
 		}
 
 		service.Spec = corev1.ServiceSpec{
 			Type:     corev1.ServiceTypeClusterIP,
 			Selector: labels,
-			Ports: []corev1.ServicePort{
-				{
-					Name:       "http",
-					Port:       mcpServer.Spec.ServicePort,
-					TargetPort: intstr.FromInt32(targetPort),
-					Protocol:   corev1.ProtocolTCP,
-				},
-			},
+			Ports:    ports,
 		}
 
 		if err := ctrl.SetControllerReference(mcpServer, service, r.Scheme); err != nil {

@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	_ "go.uber.org/automaxprocs" // align GOMAXPROCS with container CPU quota
 
@@ -22,6 +21,7 @@ import (
 
 func main() {
 	port := serviceutil.EnvOr("PORT", "8091")
+	metricsPort := serviceutil.EnvOr("METRICS_PORT", "9103")
 	upstream := serviceutil.EnvOr("UPSTREAM_URL", "http://127.0.0.1:8090")
 	analyticsURL := strings.TrimSpace(os.Getenv("ANALYTICS_INGEST_URL"))
 	apiKey := strings.TrimSpace(os.Getenv("ANALYTICS_API_KEY"))
@@ -88,8 +88,9 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
-	mux.Handle("/metrics", promhttp.Handler())
 	mux.HandleFunc("/", srv.handleGateway)
+
+	metricsShutdown, metricsErrs := serviceutil.StartMetricsServer(metricsPort)
 
 	shutdown, err := initTracer("mcp-gateway")
 	if err != nil {
@@ -102,7 +103,7 @@ func main() {
 		}()
 	}
 
-	log.Printf("mcp-gateway listening on :%s -> %s", port, upstream)
+	log.Printf("mcp-gateway listening on :%s -> %s (metrics on :%s)", port, upstream, metricsPort)
 	handler := otelhttp.NewHandler(mux, "http.server")
 	httpServer := &http.Server{
 		Addr:              ":" + port,
@@ -113,26 +114,35 @@ func main() {
 		IdleTimeout:       60 * time.Second,
 	}
 
-	serverErr := make(chan error, 1)
+	serverErrs := make(chan error, 2)
 	go func() {
-		serverErr <- httpServer.ListenAndServe()
+		if err, ok := <-metricsErrs; ok {
+			serverErrs <- err
+		}
+	}()
+	go func() {
+		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serverErrs <- err
+		}
 	}()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	select {
-	case err := <-serverErr:
+	case err := <-serverErrs:
 		srv.stopAnalyticsDispatcher()
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("server failed: %v", err)
-		}
+		log.Fatalf("server failed: %v", err)
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		if err := httpServer.Shutdown(shutdownCtx); err != nil {
 			srv.stopAnalyticsDispatcher()
 			log.Fatalf("server shutdown failed: %v", err)
+		}
+		if err := metricsShutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			srv.stopAnalyticsDispatcher()
+			log.Fatalf("metrics shutdown failed: %v", err)
 		}
 		srv.stopAnalyticsDispatcher()
 	}
