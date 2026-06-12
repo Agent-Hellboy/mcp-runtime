@@ -13,7 +13,8 @@ import (
 )
 
 // errPolicyUnavailable is returned by currentPolicy when no validated policy
-// snapshot has been activated yet. Callers fail tool calls closed in this state.
+// snapshot has been activated yet. Callers (including gate filters) fail closed
+// in this state.
 var errPolicyUnavailable = errors.New("policy_unavailable")
 
 func (s *gatewayServer) startPolicyCache() error {
