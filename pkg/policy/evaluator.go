@@ -29,6 +29,7 @@ type Decision struct {
 	PolicyVersion      string
 	RequiredTrust      string
 	RequiredSideEffect string
+	RiskLevel          string
 	AdminTrust         string
 	ConsentedTrust     string
 	EffectiveTrust     string
@@ -65,6 +66,7 @@ func Authorize(policy *Document, request Request, now time.Time) Decision {
 	if !IsToolCallMethod(request.RPCMethod) {
 		return decision
 	}
+	_, _, decision.RiskLevel = resolveToolMetadata(policyTools(policy), request.ToolName)
 	if policyModeObserve(policy) {
 		return decision
 	}
@@ -108,7 +110,7 @@ func Authorize(policy *Document, request Request, now time.Time) Decision {
 		matchedSessionNamespace = string(session.Namespace)
 	}
 
-	requiredTrust, requiredSideEffect := resolveToolMetadata(tools, request.ToolName)
+	requiredTrust, requiredSideEffect, riskLevel := resolveToolMetadata(tools, request.ToolName)
 	matchingGrants := matchingGrants(grants, identity)
 	if len(matchingGrants) == 0 {
 		denied := decideByDefault(policy, "no_matching_grant")
@@ -136,6 +138,7 @@ func Authorize(policy *Document, request Request, now time.Time) Decision {
 			Reason:                  "tool_side_effect_unknown",
 			PolicyVersion:           grant.policyVersion,
 			RequiredTrust:           grant.requiredTrust,
+			RiskLevel:               riskLevel,
 			MatchedGrant:            grant.grantName,
 			MatchedGrantNamespace:   grant.grantNamespace,
 			MatchedSession:          matchedSession,
@@ -149,6 +152,7 @@ func Authorize(policy *Document, request Request, now time.Time) Decision {
 			PolicyVersion:           grant.policyVersion,
 			RequiredTrust:           grant.requiredTrust,
 			RequiredSideEffect:      requiredSideEffect,
+			RiskLevel:               riskLevel,
 			MatchedGrant:            grant.grantName,
 			MatchedGrantNamespace:   grant.grantNamespace,
 			MatchedSession:          matchedSession,
@@ -178,6 +182,7 @@ func Authorize(policy *Document, request Request, now time.Time) Decision {
 			PolicyVersion:           grant.policyVersion,
 			RequiredTrust:           grant.requiredTrust,
 			RequiredSideEffect:      requiredSideEffect,
+			RiskLevel:               riskLevel,
 			AdminTrust:              RankToTrust(grant.adminTrustRank),
 			ConsentedTrust:          consentedTrust,
 			EffectiveTrust:          RankToTrust(effectiveRank),
@@ -195,6 +200,7 @@ func Authorize(policy *Document, request Request, now time.Time) Decision {
 		PolicyVersion:           grant.policyVersion,
 		RequiredTrust:           grant.requiredTrust,
 		RequiredSideEffect:      requiredSideEffect,
+		RiskLevel:               riskLevel,
 		AdminTrust:              RankToTrust(grant.adminTrustRank),
 		ConsentedTrust:          consentedTrust,
 		EffectiveTrust:          RankToTrust(effectiveRank),
@@ -203,6 +209,13 @@ func Authorize(policy *Document, request Request, now time.Time) Decision {
 		MatchedSession:          matchedSession,
 		MatchedSessionNamespace: matchedSessionNamespace,
 	}
+}
+
+func policyTools(policy *Document) []Tool {
+	if policy == nil {
+		return nil
+	}
+	return policy.Tools
 }
 
 type grantSelection struct {
@@ -341,17 +354,36 @@ func subjectMatchesTeam(humanID HumanID, agentID AgentID, teamID TeamID, identit
 	return humanID != "" || agentID != "" || teamID != ""
 }
 
-func resolveToolMetadata(tools []Tool, toolName ToolName) (string, string) {
+func resolveToolMetadata(tools []Tool, toolName ToolName) (string, string, string) {
 	requiredTrust := TrustLevelLow
 	for _, tool := range tools {
 		if tool.Name == toolName {
 			if tool.RequiredTrust != "" {
 				requiredTrust = NormalizeTrust(tool.RequiredTrust)
 			}
-			return requiredTrust, NormalizeSideEffect(tool.SideEffect)
+			return requiredTrust, NormalizeSideEffect(tool.SideEffect), NormalizeRiskLevel(tool.RiskLevel, requiredTrust, tool.SideEffect)
 		}
 	}
-	return requiredTrust, ""
+	return requiredTrust, "", ""
+}
+
+func NormalizeRiskLevel(risk, trust, sideEffect string) string {
+	switch strings.ToLower(strings.TrimSpace(risk)) {
+	case "low", "medium", "high":
+		return strings.ToLower(strings.TrimSpace(risk))
+	}
+	trust = NormalizeTrust(trust)
+	sideEffect = NormalizeSideEffect(sideEffect)
+	switch {
+	case sideEffect == "destructive" || trust == TrustLevelHigh:
+		return "high"
+	case sideEffect == "write" || trust == TrustLevelMedium:
+		return "medium"
+	case sideEffect == "read" && trust == TrustLevelLow:
+		return "low"
+	default:
+		return ""
+	}
 }
 
 func policyVersionOrDefault(policy *Document, def string) string {

@@ -664,6 +664,9 @@ run_cli_help_sweep() {
     "cluster cert status"
     "cluster cert apply"
     "cluster cert wait"
+    "catalog"
+    "catalog tools"
+    "catalog tool"
     "registry"
     "registry status"
     "registry info"
@@ -680,6 +683,7 @@ run_cli_help_sweep() {
     "server delete"
     "server logs"
     "server status"
+    "server connect-config"
     "server policy"
     "server policy inspect"
     "server build"
@@ -4830,6 +4834,52 @@ print(json.dumps({"email": os.environ["PLATFORM_ADMIN_EMAIL"], "password": os.en
   env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime team user list "${DEEP_CLI_TEAM_SLUG}" >/dev/null
   env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime server list --namespace mcp-servers >/dev/null
   env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime server get "${SERVER_NAME}" --namespace mcp-servers >/dev/null
+  env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime catalog tools \
+    --namespace mcp-servers \
+    --risk low >"${WORKDIR}/catalog-tools.txt"
+  grep -q "${SERVER_NAME}" "${WORKDIR}/catalog-tools.txt"
+  grep -q "aaa-ping" "${WORKDIR}/catalog-tools.txt"
+  env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime catalog tool aaa-ping \
+    --server "${SERVER_NAME}" \
+    --namespace mcp-servers \
+    --output json >"${WORKDIR}/catalog-tool.json"
+  python3 - "${WORKDIR}/catalog-tool.json" <<'PY'
+import json
+import sys
+
+payload = json.load(open(sys.argv[1], encoding="utf-8"))
+matches = [
+    tool for tool in payload.get("tools", [])
+    if tool.get("tool_name") == "aaa-ping"
+]
+if not matches:
+    raise SystemExit("catalog tool output did not include aaa-ping")
+tool = matches[0]
+if tool.get("risk_level") != "low":
+    raise SystemExit(f"expected aaa-ping low risk, got {tool.get('risk_level')!r}")
+config = tool.get("connect_config") or {}
+if not config.get("mcpServers"):
+    raise SystemExit("catalog tool output did not include connect_config.mcpServers")
+PY
+  env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime server connect-config "${SERVER_NAME}" \
+    --namespace mcp-servers \
+    --client claude \
+    --output json >"${WORKDIR}/server-connect-config.json"
+  python3 - "${WORKDIR}/server-connect-config.json" "${SERVER_NAME}" <<'PY'
+import json
+import sys
+
+payload = json.load(open(sys.argv[1], encoding="utf-8"))
+server_name = sys.argv[2]
+servers = payload.get("mcpServers") or {}
+server = servers.get(server_name)
+if not server:
+    raise SystemExit(f"connect config missing {server_name}")
+if server.get("type") != "http":
+    raise SystemExit(f"expected http connect config, got {server.get('type')!r}")
+if not server.get("url"):
+    raise SystemExit("connect config missing url")
+PY
   env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime access grant list --namespace mcp-servers >/dev/null
   env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime access grant get "${SERVER_NAME}-grant" --namespace mcp-servers >/dev/null
   env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime access session list --namespace mcp-servers >/dev/null

@@ -48,6 +48,16 @@ func (s *gatewayServer) handleGateway(w http.ResponseWriter, r *http.Request) {
 		Reason:        "allowed",
 		PolicyVersion: s.defaultPolicyVersion,
 	}
+	scope := s.metricScope(policy)
+	stopInflight := s.metrics.trackInflight(scope)
+	defer stopInflight()
+	policyDecisionObserved := false
+	defer func() {
+		s.metrics.recordRequest(scope, r, rpcMethod, decision, recorder.status, time.Since(start), r.ContentLength, recorder.bytes)
+		if policyDecisionObserved {
+			s.metrics.recordPolicyDecision(scope, rpcMethod, decision)
+		}
+	}()
 	oauthResult := oauthAuthResult{
 		Allowed:  true,
 		Status:   http.StatusOK,
@@ -63,6 +73,7 @@ func (s *gatewayServer) handleGateway(w http.ResponseWriter, r *http.Request) {
 				oauthResult.Reason,
 				policypkg.ChoosePolicyVersion(policypkg.PolicyVersion(policy), s.defaultPolicyVersion),
 			)
+			policyDecisionObserved = true
 			s.writeDeniedResponse(recorder, r, originalPath, rpcMethod, toolName, authCtx, policy, decision, start, inspection.IsRPCAttempt)
 			return
 		}
@@ -89,6 +100,7 @@ func (s *gatewayServer) handleGateway(w http.ResponseWriter, r *http.Request) {
 				ToolName:  policypkg.ToolName(toolName),
 			}, time.Now())
 		}
+		policyDecisionObserved = true
 	}
 
 	if !decision.Allowed {
@@ -273,6 +285,9 @@ func (s *gatewayServer) auditPayload(
 	}
 	if decision.RequiredSideEffect != "" {
 		payload["required_side_effect"] = decision.RequiredSideEffect
+	}
+	if riskLevel := policypkg.FirstNonEmpty(decision.RiskLevel, policypkg.ToolRiskLevel(policy, toolName)); riskLevel != "" {
+		payload["risk_level"] = riskLevel
 	}
 	if decision.AdminTrust != "" {
 		payload["admin_trust"] = decision.AdminTrust
