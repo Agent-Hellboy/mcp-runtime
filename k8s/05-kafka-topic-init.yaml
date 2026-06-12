@@ -25,6 +25,19 @@ spec:
             - /bin/bash
             - -ec
             - |
+              echo "Waiting for Kafka to be ready..."
+              ready=false
+              for i in {1..60}; do
+                if kafka-topics --bootstrap-server kafka:9092 --list >/dev/null 2>&1; then
+                  ready=true
+                  break
+                fi
+                sleep 2
+              done
+              if [ "$ready" != "true" ]; then
+                echo "Timed out waiting for Kafka"
+                exit 1
+              fi
               kafka-topics \
                 --bootstrap-server kafka:9092 \
                 --create \
@@ -42,6 +55,7 @@ spec:
             runAsNonRoot: true
             runAsUser: 1000
             runAsGroup: 1000
+            readOnlyRootFilesystem: true
             capabilities:
               drop: [ALL]
           resources:
@@ -50,3 +64,9 @@ spec:
               memory: 128Mi
             limits:
               memory: 256Mi
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
