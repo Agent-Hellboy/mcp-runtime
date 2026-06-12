@@ -69,6 +69,9 @@ func (s *apiServer) registerRuntimeRoutes(mux *http.ServeMux) {
 	mux.Handle("/api/runtime/servers", s.authOrPublicCatalog(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		runtimehandlers.HandleRuntimeServers(runtimeServer, w, r)
 	})))
+	mux.Handle("/api/runtime/tools", s.authOrPublicCatalog(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		runtimehandlers.HandleRuntimeTools(runtimeServer, w, r)
+	})))
 	mux.Handle("/api/runtime/servers/", s.auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		runtimehandlers.HandleRuntimeServerItem(runtimeServer, w, r)
 	})))

@@ -2,7 +2,6 @@ package operator
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
@@ -198,99 +197,7 @@ func TestBuildGatewayContainerAppliesConfiguredResources(t *testing.T) {
 	}
 }
 
-func TestValidateMCPServerSpecRejectsInvalidRolloutValues(t *testing.T) {
-	scheme := runtime.NewScheme()
-	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
-		t.Fatalf("AddToScheme() error = %v", err)
-	}
-
-	replicas := int32(2)
-	server := &mcpv1alpha1.MCPServer{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "gateway-server",
-			Namespace: "default",
-		},
-		Spec: mcpv1alpha1.MCPServerSpec{
-			Image:            "example.com/server",
-			Replicas:         &replicas,
-			Port:             DefaultPort,
-			PublicPathPrefix: "gateway-server",
-			Gateway: &mcpv1alpha1.GatewayConfig{
-				Enabled: true,
-				Port:    defaultGatewayPort,
-				Image:   "example.com/mcp-gateway:latest",
-			},
-			Rollout: &mcpv1alpha1.RolloutConfig{
-				MaxUnavailable: "invalid%",
-			},
-		},
-	}
-
-	client := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithStatusSubresource(server).
-		WithObjects(server.DeepCopy()).
-		Build()
-	reconciler := &MCPServerReconciler{
-		Client: client,
-		Scheme: scheme,
-	}
-
-	err := reconciler.validateMCPServerSpec(context.Background(), server, logr.Discard())
-	if err == nil {
-		t.Fatal("expected rollout validation error")
-	}
-	if !strings.Contains(err.Error(), "rollout.maxUnavailable") {
-		t.Fatalf("expected rollout.maxUnavailable error, got %v", err)
-	}
-}
-
-func TestValidateMCPServerSpecRequiresOAuthIssuer(t *testing.T) {
-	scheme := runtime.NewScheme()
-	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
-		t.Fatalf("AddToScheme() error = %v", err)
-	}
-
-	server := &mcpv1alpha1.MCPServer{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "gateway-server",
-			Namespace: "default",
-		},
-		Spec: mcpv1alpha1.MCPServerSpec{
-			Image:            "example.com/server",
-			Port:             DefaultPort,
-			PublicPathPrefix: "gateway-server",
-			Gateway: &mcpv1alpha1.GatewayConfig{
-				Enabled: true,
-				Port:    defaultGatewayPort,
-				Image:   "example.com/mcp-gateway:latest",
-			},
-			Auth: &mcpv1alpha1.AuthConfig{
-				Mode: mcpv1alpha1.AuthModeOAuth,
-			},
-		},
-	}
-
-	client := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithStatusSubresource(server).
-		WithObjects(server.DeepCopy()).
-		Build()
-	reconciler := &MCPServerReconciler{
-		Client: client,
-		Scheme: scheme,
-	}
-
-	err := reconciler.validateMCPServerSpec(context.Background(), server, logr.Discard())
-	if err == nil {
-		t.Fatal("expected oauth issuer validation error")
-	}
-	if !strings.Contains(err.Error(), "auth.issuerURL") {
-		t.Fatalf("expected auth.issuerURL error, got %v", err)
-	}
-}
-
-func TestSetDefaults(t *testing.T) {
+func TestDefaultedMCPServerForReconcile(t *testing.T) {
 	t.Run("fills all defaults when unset", func(t *testing.T) {
 		mcpServer := mcpv1alpha1.MCPServer{
 			ObjectMeta: metav1.ObjectMeta{
@@ -299,7 +206,7 @@ func TestSetDefaults(t *testing.T) {
 			},
 		}
 		r := MCPServerReconciler{Scheme: runtime.NewScheme()}
-		r.setDefaults(&mcpServer)
+		mcpServer = *r.defaultedMCPServerForReconcile(&mcpServer)
 
 		assertReplicas(t, mcpServer.Spec.Replicas, 1)
 		assertEqual(t, "port", mcpServer.Spec.Port, int32(8088))
@@ -318,7 +225,7 @@ func TestSetDefaults(t *testing.T) {
 			Scheme:             runtime.NewScheme(),
 			DefaultIngressHost: "example.com",
 		}
-		r.setDefaults(&mcpServer)
+		mcpServer = *r.defaultedMCPServerForReconcile(&mcpServer)
 		assertEqual(t, "publicPathPrefix", mcpServer.Spec.PublicPathPrefix, "test-server")
 		assertEqual(t, "ingressHost", mcpServer.Spec.IngressHost, "example.com")
 	})
@@ -334,7 +241,7 @@ func TestSetDefaults(t *testing.T) {
 			Scheme:             runtime.NewScheme(),
 			DefaultIngressHost: "example.com",
 		}
-		r.setDefaults(&mcpServer)
+		mcpServer = *r.defaultedMCPServerForReconcile(&mcpServer)
 		assertEqual(t, "publicPathPrefix", mcpServer.Spec.PublicPathPrefix, "custom-prefix")
 		assertEqual(t, "ingressHost", mcpServer.Spec.IngressHost, "")
 	})
@@ -352,7 +259,7 @@ func TestSetDefaults(t *testing.T) {
 			},
 		}
 		r := MCPServerReconciler{Scheme: runtime.NewScheme()}
-		r.setDefaults(&mcpServer)
+		mcpServer = *r.defaultedMCPServerForReconcile(&mcpServer)
 
 		assertReplicas(t, mcpServer.Spec.Replicas, 5)
 		assertEqual(t, "port", mcpServer.Spec.Port, int32(9000))
@@ -370,7 +277,7 @@ func TestSetDefaults(t *testing.T) {
 			},
 		}
 		r := MCPServerReconciler{Scheme: runtime.NewScheme()}
-		r.setDefaults(&mcpServer)
+		mcpServer = *r.defaultedMCPServerForReconcile(&mcpServer)
 
 		assertEqual(t, "imageTag", mcpServer.Spec.ImageTag, "")
 	})
@@ -383,7 +290,7 @@ func TestSetDefaults(t *testing.T) {
 			},
 		}
 		r := MCPServerReconciler{Scheme: runtime.NewScheme()}
-		r.setDefaults(&mcpServer)
+		mcpServer = *r.defaultedMCPServerForReconcile(&mcpServer)
 
 		assertEqual(t, "imageTag", mcpServer.Spec.ImageTag, "latest")
 	})
@@ -396,7 +303,7 @@ func TestSetDefaults(t *testing.T) {
 			},
 		}
 		r := MCPServerReconciler{Scheme: runtime.NewScheme()}
-		r.setDefaults(&mcpServer)
+		mcpServer = *r.defaultedMCPServerForReconcile(&mcpServer)
 
 		assertEqual(t, "imageTag", mcpServer.Spec.ImageTag, "")
 	})
@@ -404,7 +311,7 @@ func TestSetDefaults(t *testing.T) {
 	t.Run("skips ingressPath if name is empty", func(t *testing.T) {
 		mcpServer := mcpv1alpha1.MCPServer{} // No name set
 		r := MCPServerReconciler{Scheme: runtime.NewScheme()}
-		r.setDefaults(&mcpServer)
+		mcpServer = *r.defaultedMCPServerForReconcile(&mcpServer)
 
 		assertEqual(t, "ingressPath", mcpServer.Spec.IngressPath, "")
 	})
@@ -424,7 +331,7 @@ func TestSetDefaults(t *testing.T) {
 		}
 
 		r := MCPServerReconciler{Scheme: runtime.NewScheme()}
-		r.setDefaults(&mcpServer)
+		mcpServer = *r.defaultedMCPServerForReconcile(&mcpServer)
 
 		if mcpServer.Spec.Gateway == nil {
 			t.Fatal("expected gateway defaults to be applied")
@@ -454,7 +361,7 @@ func TestSetDefaults(t *testing.T) {
 			Scheme:                    runtime.NewScheme(),
 			DefaultAnalyticsIngestURL: "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events",
 		}
-		r.setDefaults(&mcpServer)
+		mcpServer = *r.defaultedMCPServerForReconcile(&mcpServer)
 
 		if mcpServer.Spec.Analytics == nil {
 			t.Fatal("expected analytics defaults to be applied")
@@ -591,7 +498,7 @@ func TestReconcileDeploymentAddsGatewaySidecar(t *testing.T) {
 		Scheme:              scheme,
 		GatewayOTLPEndpoint: "http://otel-collector.mcp-sentinel.svc.cluster.local:4318",
 	}
-	reconciler.setDefaults(&mcpServer)
+	mcpServer = *reconciler.defaultedMCPServerForReconcile(&mcpServer)
 
 	if err := reconciler.reconcileDeployment(context.Background(), &mcpServer); err != nil {
 		t.Fatalf("reconcileDeployment() error = %v", err)
@@ -976,48 +883,64 @@ func TestCheckResourceReadiness(t *testing.T) {
 	})
 }
 
-func TestApplyDefaultsIfNeeded(t *testing.T) {
+func TestDefaultedMCPServerForReconcileDoesNotPersistDefaults(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = mcpv1alpha1.AddToScheme(scheme)
 
-	t.Run("returns requeue true when defaults are applied", func(t *testing.T) {
-		mcpServer := &mcpv1alpha1.MCPServer{
-			ObjectMeta: metav1.ObjectMeta{Name: "test-server", Namespace: "default"},
-			Spec:       mcpv1alpha1.MCPServerSpec{Image: "test-image"},
-		}
-		client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(mcpServer).Build()
-		r := MCPServerReconciler{Client: client, Scheme: scheme}
-		requeue, err := r.applyDefaultsIfNeeded(context.Background(), mcpServer, logr.Discard())
-		if err != nil {
-			t.Fatalf("failed to apply defaults: %v", err)
-		}
-		// Returns true to trigger re-reconciliation after defaults are applied
-		assertEqual(t, "requeue", requeue, true)
-	})
+	mcpServer := &mcpv1alpha1.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-server", Namespace: "default"},
+		Spec:       mcpv1alpha1.MCPServerSpec{Image: "test-image"},
+	}
+	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(mcpServer).Build()
+	r := MCPServerReconciler{
+		Client:                    client,
+		Scheme:                    scheme,
+		DefaultIngressHost:        "example.com",
+		DefaultAnalyticsIngestURL: "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events",
+	}
 
-	t.Run("returns requeue false when defaults already set", func(t *testing.T) {
-		replicas := int32(1)
-		mcpServer := &mcpv1alpha1.MCPServer{
-			ObjectMeta: metav1.ObjectMeta{Name: "test-server", Namespace: "default"},
-			Spec: mcpv1alpha1.MCPServerSpec{
-				Image:            "test-image",
-				ImageTag:         "latest",
-				Port:             8088,
-				ServicePort:      80,
-				Replicas:         &replicas,
-				IngressPath:      "/test-server/mcp",
-				IngressClass:     "traefik",
-				PublicPathPrefix: "test-server",
-			},
-		}
-		client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(mcpServer).Build()
-		r := MCPServerReconciler{Client: client, Scheme: scheme}
-		requeue, err := r.applyDefaultsIfNeeded(context.Background(), mcpServer, logr.Discard())
-		if err != nil {
-			t.Fatalf("failed to apply defaults: %v", err)
-		}
-		assertEqual(t, "requeue", requeue, false)
-	})
+	defaulted := r.defaultedMCPServerForReconcile(mcpServer)
+	assertEqual(t, "defaultedPort", defaulted.Spec.Port, int32(8088))
+	assertReplicas(t, defaulted.Spec.Replicas, 1)
+	assertEqual(t, "defaultedIngressHost", defaulted.Spec.IngressHost, "example.com")
+
+	var stored mcpv1alpha1.MCPServer
+	if err := client.Get(context.Background(), types.NamespacedName{Name: "test-server", Namespace: "default"}, &stored); err != nil {
+		t.Fatalf("failed to fetch stored MCPServer: %v", err)
+	}
+	assertEqual(t, "storedPort", stored.Spec.Port, int32(0))
+	if stored.Spec.Replicas != nil {
+		t.Fatalf("expected stored replicas to stay nil, got %v", *stored.Spec.Replicas)
+	}
+	assertEqual(t, "storedIngressHost", stored.Spec.IngressHost, "")
+}
+
+func TestValidateMCPServerSpecRunsAfterDefaulting(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme() error = %v", err)
+	}
+	server := &mcpv1alpha1.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{Name: "invalid-server", Namespace: "default"},
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Image: "example.com/server",
+			Tools: []mcpv1alpha1.ToolConfig{{
+				Name: "read_file",
+			}},
+		},
+	}
+	client := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(server).
+		WithObjects(server.DeepCopy()).
+		Build()
+	reconciler := &MCPServerReconciler{Client: client, Scheme: scheme}
+	defaulted := reconciler.defaultedMCPServerForReconcile(server)
+
+	err := reconciler.validateMCPServerSpec(context.Background(), defaulted, logr.Discard())
+	if err == nil {
+		t.Fatal("expected validation error for missing tool sideEffect")
+	}
 }
 
 func TestRequireSpecField(t *testing.T) {
@@ -1834,7 +1757,7 @@ func TestReconcile(t *testing.T) {
 		assertEqual(t, "result", result, ctrl.Result{RequeueAfter: 10 * time.Second})
 	})
 
-	t.Run("returns after applying defaults", func(t *testing.T) {
+	t.Run("reconciles with local defaults", func(t *testing.T) {
 		mcpServer := &mcpv1alpha1.MCPServer{
 			ObjectMeta: metav1.ObjectMeta{Name: "test-server", Namespace: "default"},
 			Spec: mcpv1alpha1.MCPServerSpec{
@@ -1853,7 +1776,16 @@ func TestReconcile(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		assertEqual(t, "result", result, ctrl.Result{})
+		assertEqual(t, "result", result, ctrl.Result{RequeueAfter: 10 * time.Second})
+
+		var stored mcpv1alpha1.MCPServer
+		if err := client.Get(context.Background(), types.NamespacedName{Name: "test-server", Namespace: "default"}, &stored); err != nil {
+			t.Fatalf("failed to fetch stored MCPServer: %v", err)
+		}
+		assertEqual(t, "storedPort", stored.Spec.Port, int32(0))
+		if stored.Spec.Replicas != nil {
+			t.Fatalf("expected stored replicas to stay nil, got %v", *stored.Spec.Replicas)
+		}
 	})
 }
 

@@ -274,6 +274,9 @@ func (s *gatewayServer) auditPayload(
 	if decision.RequiredSideEffect != "" {
 		payload["required_side_effect"] = decision.RequiredSideEffect
 	}
+	if riskLevel := policypkg.FirstNonEmpty(decision.RiskLevel, policypkg.ToolRiskLevel(policy, toolName)); riskLevel != "" {
+		payload["risk_level"] = riskLevel
+	}
 	if decision.AdminTrust != "" {
 		payload["admin_trust"] = decision.AdminTrust
 	}

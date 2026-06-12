@@ -16,6 +16,11 @@ func HandleRuntimeServers(server *runtimeapi.RuntimeServer, w http.ResponseWrite
 	server.HandleRuntimeServers(w, r)
 }
 
+// HandleRuntimeTools routes runtime tool catalog requests through the runtime API server.
+func HandleRuntimeTools(server *runtimeapi.RuntimeServer, w http.ResponseWriter, r *http.Request) {
+	server.HandleRuntimeTools(w, r)
+}
+
 // HandleRuntimeServerItem routes runtime server item requests through the runtime API server.
 func HandleRuntimeServerItem(server *runtimeapi.RuntimeServer, w http.ResponseWriter, r *http.Request) {
 	server.HandleRuntimeServerItem(w, r)

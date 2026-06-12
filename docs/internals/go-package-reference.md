@@ -124,11 +124,16 @@ Package v1alpha1 contains API Schema definitions for the MCP server resource.
 - [`func (in *MCPServer) DeepCopyInto(out *MCPServer)`](#api-types-func-in-mcpserver-deepcopyinto-out-mcpserver)
 - [`func (in *MCPServer) DeepCopyObject() runtime.Object`](#api-types-func-in-mcpserver-deepcopyobject-runtime-object)
 - [`func (r *MCPServer) Default()`](#api-types-func-r-mcpserver-default)
+- [`func (r *MCPServer) DefaultWithOptions(options MCPServerDefaultOptions)`](#api-types-func-r-mcpserver-defaultwithoptions-options-mcpserverdefaultoptions)
 - [`func (r *MCPServer) SetupWebhookWithManager(mgr ctrl.Manager) error`](#api-types-func-r-mcpserver-setupwebhookwithmanager-mgr-ctrl-manager-error)
+- [`func (r *MCPServer) SetupWebhookWithManagerWithOptions(mgr ctrl.Manager, options MCPServerDefaultOptions) error`](#api-types-func-r-mcpserver-setupwebhookwithmanagerwithoptions-mgr-ctrl-manager-options-mcpserverdefaultoptions-error)
 - [`func (r *MCPServer) String() string`](#api-types-func-r-mcpserver-string-string)
 - [`func (r *MCPServer) ValidateCreate() (admission.Warnings, error)`](#api-types-func-r-mcpserver-validatecreate-admission-warnings-error)
 - [`func (r *MCPServer) ValidateDelete() (admission.Warnings, error)`](#api-types-func-r-mcpserver-validatedelete-admission-warnings-error)
 - [`func (r *MCPServer) ValidateUpdate(_ runtime.Object) (admission.Warnings, error)`](#api-types-func-r-mcpserver-validateupdate-runtime-object-admission-warnings-error)
+- [`type MCPServerDefaultOptions struct`](#api-types-type-mcpserverdefaultoptions-struct)
+- [`func (in *MCPServerDefaultOptions) DeepCopy() *MCPServerDefaultOptions`](#api-types-func-in-mcpserverdefaultoptions-deepcopy-mcpserverdefaultoptions)
+- [`func (in *MCPServerDefaultOptions) DeepCopyInto(out *MCPServerDefaultOptions)`](#api-types-func-in-mcpserverdefaultoptions-deepcopyinto-out-mcpserverdefaultoptions)
 - [`type MCPServerList struct`](#api-types-type-mcpserverlist-struct)
 - [`func (in *MCPServerList) DeepCopy() *MCPServerList`](#api-types-func-in-mcpserverlist-deepcopy-mcpserverlist)
 - [`func (in *MCPServerList) DeepCopyInto(out *MCPServerList)`](#api-types-func-in-mcpserverlist-deepcopyinto-out-mcpserverlist)
@@ -172,6 +177,7 @@ Package v1alpha1 contains API Schema definitions for the MCP server resource.
 - [`type ToolConfig struct`](#api-types-type-toolconfig-struct)
 - [`func (in *ToolConfig) DeepCopy() *ToolConfig`](#api-types-func-in-toolconfig-deepcopy-toolconfig)
 - [`func (in *ToolConfig) DeepCopyInto(out *ToolConfig)`](#api-types-func-in-toolconfig-deepcopyinto-out-toolconfig)
+- [`type ToolRiskLevel string`](#api-types-type-toolrisklevel-string)
 - [`type ToolRule struct`](#api-types-type-toolrule-struct)
 - [`func (in *ToolRule) DeepCopy() *ToolRule`](#api-types-func-in-toolrule-deepcopy-toolrule)
 - [`func (in *ToolRule) DeepCopyInto(out *ToolRule)`](#api-types-func-in-toolrule-deepcopyinto-out-toolrule)
@@ -441,7 +447,6 @@ func (in *MCPAccessGrant) DeepCopyObject() runtime.Object
 <a id="api-types-func-r-mcpaccessgrant-setupwebhookwithmanager-mgr-ctrl-manager-error"></a>
 ```text
 func (r *MCPAccessGrant) SetupWebhookWithManager(mgr ctrl.Manager) error
-    +kubebuilder:webhook:path=/validate-mcpruntime-org-v1alpha1-mcpaccessgrant,mutating=false,failurePolicy=fail,sideEffects=None,groups=mcpruntime.org,resources=mcpaccessgrants,verbs=create;update,versions=v1alpha1,name=vmcpaccessgrant.kb.io,admissionReviewVersions=v1
 
 ```
 
@@ -599,7 +604,6 @@ func (in *MCPAgentSession) DeepCopyObject() runtime.Object
 <a id="api-types-func-r-mcpagentsession-setupwebhookwithmanager-mgr-ctrl-manager-error"></a>
 ```text
 func (r *MCPAgentSession) SetupWebhookWithManager(mgr ctrl.Manager) error
-    +kubebuilder:webhook:path=/validate-mcpruntime-org-v1alpha1-mcpagentsession,mutating=false,failurePolicy=fail,sideEffects=None,groups=mcpruntime.org,resources=mcpagentsessions,verbs=create;update,versions=v1alpha1,name=vmcpagentsession.kb.io,admissionReviewVersions=v1
 
 ```
 
@@ -756,14 +760,26 @@ func (in *MCPServer) DeepCopyObject() runtime.Object
 <a id="api-types-func-r-mcpserver-default"></a>
 ```text
 func (r *MCPServer) Default()
-    +kubebuilder:webhook:path=/mutate-mcpruntime-org-v1alpha1-mcpserver,mutating=true,failurePolicy=fail,sideEffects=None,groups=mcpruntime.org,resources=mcpservers,verbs=create;update,versions=v1alpha1,name=mmcpserver.kb.io,admissionReviewVersions=v1
+
+```
+
+<a id="api-types-func-r-mcpserver-defaultwithoptions-options-mcpserverdefaultoptions"></a>
+```text
+func (r *MCPServer) DefaultWithOptions(options MCPServerDefaultOptions)
+    DefaultWithOptions applies MCPServer defaults, including operator-configured
+    fallbacks when the webhook is registered by the operator manager.
 
 ```
 
 <a id="api-types-func-r-mcpserver-setupwebhookwithmanager-mgr-ctrl-manager-error"></a>
 ```text
 func (r *MCPServer) SetupWebhookWithManager(mgr ctrl.Manager) error
-    +kubebuilder:webhook:path=/validate-mcpruntime-org-v1alpha1-mcpserver,mutating=false,failurePolicy=fail,sideEffects=None,groups=mcpruntime.org,resources=mcpservers,verbs=create;update,versions=v1alpha1,name=vmcpserver.kb.io,admissionReviewVersions=v1
+
+```
+
+<a id="api-types-func-r-mcpserver-setupwebhookwithmanagerwithoptions-mgr-ctrl-manager-options-mcpserverdefaultoptions-error"></a>
+```text
+func (r *MCPServer) SetupWebhookWithManagerWithOptions(mgr ctrl.Manager, options MCPServerDefaultOptions) error
 
 ```
 
@@ -788,6 +804,33 @@ func (r *MCPServer) ValidateDelete() (admission.Warnings, error)
 <a id="api-types-func-r-mcpserver-validateupdate-runtime-object-admission-warnings-error"></a>
 ```text
 func (r *MCPServer) ValidateUpdate(_ runtime.Object) (admission.Warnings, error)
+
+```
+
+<a id="api-types-type-mcpserverdefaultoptions-struct"></a>
+```text
+type MCPServerDefaultOptions struct {
+	DefaultIngressHost        string
+	DefaultAnalyticsIngestURL string
+}
+    MCPServerDefaultOptions holds operator-scoped values that the admission
+    webhook can use while defaulting MCPServer objects.
+
+```
+
+<a id="api-types-func-in-mcpserverdefaultoptions-deepcopy-mcpserverdefaultoptions"></a>
+```text
+func (in *MCPServerDefaultOptions) DeepCopy() *MCPServerDefaultOptions
+    DeepCopy is an autogenerated deepcopy function, copying the receiver,
+    creating a new MCPServerDefaultOptions.
+
+```
+
+<a id="api-types-func-in-mcpserverdefaultoptions-deepcopyinto-out-mcpserverdefaultoptions"></a>
+```text
+func (in *MCPServerDefaultOptions) DeepCopyInto(out *MCPServerDefaultOptions)
+    DeepCopyInto is an autogenerated deepcopy function, copying the receiver,
+    writing into out. in must be non-nil.
 
 ```
 
@@ -1284,6 +1327,7 @@ type ToolConfig struct {
 	Description   string            `json:"description,omitempty"`
 	RequiredTrust TrustLevel        `json:"requiredTrust,omitempty"`
 	SideEffect    ToolSideEffect    `json:"sideEffect"`
+	RiskLevel     ToolRiskLevel     `json:"riskLevel,omitempty"`
 	Labels        map[string]string `json:"labels,omitempty"`
 }
     ToolConfig describes one MCP tool exposed by a server.
@@ -1305,6 +1349,18 @@ func (in *ToolConfig) DeepCopyInto(out *ToolConfig)
     DeepCopyInto is an autogenerated deepcopy function, copying the receiver,
     writing into out. in must be non-nil.
 
+```
+
+<a id="api-types-type-toolrisklevel-string"></a>
+```text
+type ToolRiskLevel string
+    +kubebuilder:validation:Enum=low;medium;high
+
+const (
+	ToolRiskLevelLow    ToolRiskLevel = "low"
+	ToolRiskLevelMedium ToolRiskLevel = "medium"
+	ToolRiskLevelHigh   ToolRiskLevel = "high"
+)
 ```
 
 <a id="api-types-type-toolrule-struct"></a>
@@ -1420,6 +1476,7 @@ _No package overview is documented._
 - [`type ServerMetadata struct`](#metadata-helpers-type-servermetadata-struct)
 - [`type SessionConfig struct`](#metadata-helpers-type-sessionconfig-struct)
 - [`type ToolConfig struct`](#metadata-helpers-type-toolconfig-struct)
+- [`type ToolRiskLevel string`](#metadata-helpers-type-toolrisklevel-string)
 - [`type ToolSideEffect string`](#metadata-helpers-type-toolsideeffect-string)
 - [`type TrustLevel string`](#metadata-helpers-type-trustlevel-string)
 
@@ -1848,10 +1905,22 @@ type ToolConfig struct {
 	Description   string            `yaml:"description,omitempty" json:"description,omitempty"`
 	RequiredTrust TrustLevel        `yaml:"requiredTrust,omitempty" json:"requiredTrust,omitempty"`
 	SideEffect    ToolSideEffect    `yaml:"sideEffect" json:"sideEffect"`
+	RiskLevel     ToolRiskLevel     `yaml:"riskLevel,omitempty" json:"riskLevel,omitempty"`
 	Labels        map[string]string `yaml:"labels,omitempty" json:"labels,omitempty"`
 }
     ToolConfig describes one MCP tool exposed by a server.
 
+```
+
+<a id="metadata-helpers-type-toolrisklevel-string"></a>
+```text
+type ToolRiskLevel string
+
+const (
+	ToolRiskLevelLow    ToolRiskLevel = "low"
+	ToolRiskLevelMedium ToolRiskLevel = "medium"
+	ToolRiskLevelHigh   ToolRiskLevel = "high"
+)
 ```
 
 <a id="metadata-helpers-type-toolsideeffect-string"></a>
@@ -4788,6 +4857,7 @@ _No package overview is documented._
 - [`func (c *PlatformClient) ListGrants(ctx context.Context, namespace string) ([]sentinelaccess.GrantSummary, error)`](#cli-platform-api-func-c-platformclient-listgrants-ctx-context-context-namespace-string-sentinelaccess-grantsummary-error)
 - [`func (c *PlatformClient) ListNamespaces(ctx context.Context) ([]namespaceListItem, error)`](#cli-platform-api-func-c-platformclient-listnamespaces-ctx-context-context-namespacelistitem-error)
 - [`func (c *PlatformClient) ListRuntimeServers(ctx context.Context, namespace string) ([]ServerListItem, error)`](#cli-platform-api-func-c-platformclient-listruntimeservers-ctx-context-context-namespace-string-serverlistitem-error)
+- [`func (c *PlatformClient) ListRuntimeTools(ctx context.Context, filters map[string]string) ([]RuntimeToolRow, error)`](#cli-platform-api-func-c-platformclient-listruntimetools-ctx-context-context-filters-map-string-string-runtimetoolrow-error)
 - [`func (c *PlatformClient) ListSessions(ctx context.Context, namespace string) ([]sentinelaccess.SessionSummary, error)`](#cli-platform-api-func-c-platformclient-listsessions-ctx-context-context-namespace-string-sentinelaccess-sessionsummary-error)
 - [`func (c *PlatformClient) ListTeamMembers(ctx context.Context, slug string) ([]TeamMembership, error)`](#cli-platform-api-func-c-platformclient-listteammembers-ctx-context-context-slug-string-teammembership-error)
 - [`func (c *PlatformClient) ListTeams(ctx context.Context) ([]Team, error)`](#cli-platform-api-func-c-platformclient-listteams-ctx-context-context-team-error)
@@ -4799,9 +4869,11 @@ _No package overview is documented._
 - [`func (c *PlatformClient) ValidateCredentials(ctx context.Context) error`](#cli-platform-api-func-c-platformclient-validatecredentials-ctx-context-context-error)
 - [`type PlatformUser struct`](#cli-platform-api-type-platformuser-struct)
 - [`type Principal struct`](#cli-platform-api-type-principal-struct)
+- [`type RuntimeToolRow struct`](#cli-platform-api-type-runtimetoolrow-struct)
 - [`type ServerListItem struct`](#cli-platform-api-type-serverlistitem-struct)
 - [`type Team struct`](#cli-platform-api-type-team-struct)
 - [`type TeamMembership = platform.TeamMembership`](#cli-platform-api-type-teammembership-platform-teammembership)
+- [`type ToolConfig struct`](#cli-platform-api-type-toolconfig-struct)
 
 <a id="cli-platform-api-constants"></a>
 ### Constants
@@ -5027,6 +5099,12 @@ func (c *PlatformClient) ListRuntimeServers(ctx context.Context, namespace strin
 
 ```
 
+<a id="cli-platform-api-func-c-platformclient-listruntimetools-ctx-context-context-filters-map-string-string-runtimetoolrow-error"></a>
+```text
+func (c *PlatformClient) ListRuntimeTools(ctx context.Context, filters map[string]string) ([]RuntimeToolRow, error)
+
+```
+
 <a id="cli-platform-api-func-c-platformclient-listsessions-ctx-context-context-namespace-string-sentinelaccess-sessionsummary-error"></a>
 ```text
 func (c *PlatformClient) ListSessions(ctx context.Context, namespace string) ([]sentinelaccess.SessionSummary, error)
@@ -5107,11 +5185,33 @@ type Principal struct {
 
 ```
 
+<a id="cli-platform-api-type-runtimetoolrow-struct"></a>
+```text
+type RuntimeToolRow struct {
+	ToolName      string            `json:"tool_name"`
+	Description   string            `json:"description,omitempty"`
+	ServerName    string            `json:"server_name"`
+	Namespace     string            `json:"namespace"`
+	TeamID        string            `json:"team_id,omitempty"`
+	EndpointURL   string            `json:"endpoint_url,omitempty"`
+	Declared      bool              `json:"declared"`
+	Live          bool              `json:"live"`
+	DriftStatus   string            `json:"drift_status"`
+	RequiredTrust string            `json:"required_trust,omitempty"`
+	SideEffect    string            `json:"side_effect,omitempty"`
+	RiskLevel     string            `json:"risk_level,omitempty"`
+	Labels        map[string]string `json:"labels,omitempty"`
+	ConnectConfig map[string]any    `json:"connect_config,omitempty"`
+}
+
+```
+
 <a id="cli-platform-api-type-serverlistitem-struct"></a>
 ```text
 type ServerListItem struct {
 	Name        string            `json:"name"`
 	Namespace   string            `json:"namespace"`
+	TeamID      string            `json:"team_id,omitempty"`
 	Image       string            `json:"image,omitempty"`
 	ImageTag    string            `json:"imageTag,omitempty"`
 	Description string            `json:"description,omitempty"`
@@ -5119,6 +5219,9 @@ type ServerListItem struct {
 	Status      string            `json:"status"`
 	Labels      map[string]string `json:"labels"`
 	Age         string            `json:"age"`
+	Endpoint    string            `json:"endpoint,omitempty"`
+	Tools       []ToolConfig      `json:"tools,omitempty"`
+	AccessJSON  map[string]any    `json:"access_json,omitempty"`
 }
     ServerListItem is one row from the platform API runtime servers list.
 
@@ -5139,6 +5242,19 @@ type Team struct {
 <a id="cli-platform-api-type-teammembership-platform-teammembership"></a>
 ```text
 type TeamMembership = platform.TeamMembership
+
+```
+
+<a id="cli-platform-api-type-toolconfig-struct"></a>
+```text
+type ToolConfig struct {
+	Name          string            `json:"name"`
+	Description   string            `json:"description,omitempty"`
+	RequiredTrust string            `json:"requiredTrust,omitempty"`
+	SideEffect    string            `json:"sideEffect,omitempty"`
+	RiskLevel     string            `json:"riskLevel,omitempty"`
+	Labels        map[string]string `json:"labels,omitempty"`
+}
 ```
 
 <a id="cli-platform-status"></a>
@@ -5705,6 +5821,7 @@ Package server owns routing for the server top-level command.
 <a id="cli-server-index"></a>
 ### Index
 
+- [`func BuildConnectConfig(server platformapi.ServerListItem, clientName string) (map[string]any, error)`](#cli-server-func-buildconnectconfig-server-platformapi-serverlistitem-clientname-string-map-string-any-error)
 - [`func BuildImage(ctx context.Context, logger *zap.Logger, serverName, dockerfile, metadataFile, metadataDir, registryURL, tag, platform, contextDir string) error`](#cli-server-func-buildimage-ctx-context-context-logger-zap-logger-servername-dockerfile-metadatafile-metadatadir-registryurl-tag-platform-contextdir-string-error)
 - [`func DiscoverToolsFromServer(serverURL string) ([]string, error)`](#cli-server-func-discovertoolsfromserver-serverurl-string-string-error)
 - [`func New(runtime *core.Runtime) *cobra.Command`](#cli-server-func-new-runtime-core-runtime-cobra-command)
@@ -5714,6 +5831,7 @@ Package server owns routing for the server top-level command.
 - [`func NewServerManager(kubectl *core.KubectlClient, logger *zap.Logger) *ServerManager`](#cli-server-func-newservermanager-kubectl-core-kubectlclient-logger-zap-logger-servermanager)
 - [`func (m *ServerManager) ApplyServerFromFile(file string) error`](#cli-server-func-m-servermanager-applyserverfromfile-file-string-error)
 - [`func (m *ServerManager) BindUseKubeFlag(cmd *cobra.Command)`](#cli-server-func-m-servermanager-bindusekubeflag-cmd-cobra-command)
+- [`func (m *ServerManager) ConnectConfig(name, namespace, clientName, output string) error`](#cli-server-func-m-servermanager-connectconfig-name-namespace-clientname-output-string-error)
 - [`func (m *ServerManager) CreateServer(name, namespace, image, imageTag string) error`](#cli-server-func-m-servermanager-createserver-name-namespace-image-imagetag-string-error)
 - [`func (m *ServerManager) CreateServerFromFile(file string) error`](#cli-server-func-m-servermanager-createserverfromfile-file-string-error)
 - [`func (m *ServerManager) DeleteServer(name, namespace string) error`](#cli-server-func-m-servermanager-deleteserver-name-namespace-string-error)
@@ -5721,7 +5839,7 @@ Package server owns routing for the server top-level command.
 - [`func (m *ServerManager) ExportServer(name, namespace, file string) error`](#cli-server-func-m-servermanager-exportserver-name-namespace-file-string-error)
 - [`func (m *ServerManager) GenerateManifests(metadataFile, metadataDir, outputDir string) error`](#cli-server-func-m-servermanager-generatemanifests-metadatafile-metadatadir-outputdir-string-error)
 - [`func (m *ServerManager) GetServer(name, namespace string) error`](#cli-server-func-m-servermanager-getserver-name-namespace-string-error)
-- [`func (m *ServerManager) InitServer(name, metadataDir, image, imageTag, scope, policyMode, defaultDecision string, sessionRequired bool, port int32, tools, toolSpecs []string, force bool) error`](#cli-server-func-m-servermanager-initserver-name-metadatadir-image-imagetag-scope-policymode-defaultdecision-string-sessionrequired-bool-port-int32-tools-toolspecs-string-force-bool-error)
+- [`func (m *ServerManager) InitServer(name, metadataDir, image, imageTag, scope, policyMode, defaultDecision string, sessionRequired bool, port int32, tools, toolSpecs []string, toolRisk string, force bool) error`](#cli-server-func-m-servermanager-initserver-name-metadatadir-image-imagetag-scope-policymode-defaultdecision-string-sessionrequired-bool-port-int32-tools-toolspecs-string-toolrisk-string-force-bool-error)
 - [`func (m *ServerManager) InspectServerPolicy(name, namespace string) error`](#cli-server-func-m-servermanager-inspectserverpolicy-name-namespace-string-error)
 - [`func (m *ServerManager) ListServers(namespace, team string) error`](#cli-server-func-m-servermanager-listservers-namespace-team-string-error)
 - [`func (m *ServerManager) Logger() *zap.Logger`](#cli-server-func-m-servermanager-logger-zap-logger)
@@ -5731,6 +5849,11 @@ Package server owns routing for the server top-level command.
 
 <a id="cli-server-functions"></a>
 ### Functions
+
+<a id="cli-server-func-buildconnectconfig-server-platformapi-serverlistitem-clientname-string-map-string-any-error"></a>
+```text
+func BuildConnectConfig(server platformapi.ServerListItem, clientName string) (map[string]any, error)
+```
 
 <a id="cli-server-func-buildimage-ctx-context-context-logger-zap-logger-servername-dockerfile-metadatafile-metadatadir-registryurl-tag-platform-contextdir-string-error"></a>
 ```text
@@ -5805,6 +5928,14 @@ func (m *ServerManager) BindUseKubeFlag(cmd *cobra.Command)
 
 ```
 
+<a id="cli-server-func-m-servermanager-connectconfig-name-namespace-clientname-output-string-error"></a>
+```text
+func (m *ServerManager) ConnectConfig(name, namespace, clientName, output string) error
+    ConnectConfig prints client connection config for a platform-visible MCP
+    server.
+
+```
+
 <a id="cli-server-func-m-servermanager-createserver-name-namespace-image-imagetag-string-error"></a>
 ```text
 func (m *ServerManager) CreateServer(name, namespace, image, imageTag string) error
@@ -5854,9 +5985,9 @@ func (m *ServerManager) GetServer(name, namespace string) error
 
 ```
 
-<a id="cli-server-func-m-servermanager-initserver-name-metadatadir-image-imagetag-scope-policymode-defaultdecision-string-sessionrequired-bool-port-int32-tools-toolspecs-string-force-bool-error"></a>
+<a id="cli-server-func-m-servermanager-initserver-name-metadatadir-image-imagetag-scope-policymode-defaultdecision-string-sessionrequired-bool-port-int32-tools-toolspecs-string-toolrisk-string-force-bool-error"></a>
 ```text
-func (m *ServerManager) InitServer(name, metadataDir, image, imageTag, scope, policyMode, defaultDecision string, sessionRequired bool, port int32, tools, toolSpecs []string, force bool) error
+func (m *ServerManager) InitServer(name, metadataDir, image, imageTag, scope, policyMode, defaultDecision string, sessionRequired bool, port int32, tools, toolSpecs []string, toolRisk string, force bool) error
 
 ```
 

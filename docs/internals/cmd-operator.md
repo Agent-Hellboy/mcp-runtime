@@ -20,6 +20,7 @@ go doc -all ./internal/operator
 - configures controller-runtime logging
 - creates the manager
 - registers the `MCPServerReconciler`
+- registers admission webhooks when `MCP_ENABLE_WEBHOOKS` is enabled
 - installs health and readiness probes
 - starts the manager with signal handling
 
@@ -31,7 +32,7 @@ Keep this package focused on process wiring. Reconciliation behavior belongs in
 `MCPServerReconciler` follows a predictable loop:
 
 1. Fetch the `MCPServer`.
-2. Apply defaults and persist defaulted spec fields when needed.
+2. Apply defaults to an in-memory copy for reconcile-time rendering.
 3. Validate routing prerequisites.
 4. Reconcile the Deployment.
 5. Reconcile the Service.
@@ -45,8 +46,9 @@ normal garbage collection cleans them up with the `MCPServer`.
 
 ## Defaults
 
-Default values are intentionally centralized in `internal/operator` constants.
-Current defaults include:
+Default values are intentionally centralized in `api/v1alpha1` so the admission
+webhook and reconciler fallback share the same behavior. Current defaults
+include:
 
 | Setting | Default |
 |---|---|
@@ -62,8 +64,8 @@ Current defaults include:
 | CPU limit | `500m` |
 | memory limit | `256Mi` |
 
-If you change a default, update API docs, examples, tests, and any CLI metadata
-generation that emits the same field.
+If you change a default, update API docs, examples, webhook/reconciler tests,
+and any CLI metadata generation that emits the same field.
 
 ## Deployment Reconciliation
 

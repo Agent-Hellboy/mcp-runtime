@@ -1487,6 +1487,35 @@ tr:hover td {
   overflow: auto;
 }
 
+.tool-catalog {
+  border-top: 1px solid rgba(247, 245, 239, 0.1);
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  padding-top: 14px;
+}
+
+.tool-catalog-head {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.tool-catalog-head h3 {
+  font-size: 14px;
+  margin: 0;
+}
+
+.tool-catalog-head span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.compact-action {
+  min-height: 28px;
+  padding: 5px 8px;
+}
+
 .server-inventory-grid {
   align-items: start;
   display: grid;
@@ -1616,6 +1645,7 @@ tr:hover td {
 }
 
 .inventory-item summary > .trust-chip,
+.inventory-item summary > .risk-chip,
 .inventory-item summary > .drift-chip {
   grid-column: 2;
 }
@@ -1660,6 +1690,29 @@ tr:hover td {
   border-radius: 999px;
   color: #c8edff !important;
   padding: 3px 8px;
+}
+
+.risk-chip {
+  border-radius: 999px;
+  padding: 3px 8px;
+}
+
+.risk-low {
+  background: rgba(80, 200, 120, 0.14);
+  border: 1px solid rgba(80, 200, 120, 0.28);
+  color: #b9f4cf !important;
+}
+
+.risk-medium {
+  background: rgba(242, 184, 75, 0.14);
+  border: 1px solid rgba(242, 184, 75, 0.34);
+  color: #ffd990 !important;
+}
+
+.risk-high {
+  background: rgba(255, 111, 97, 0.14);
+  border: 1px solid rgba(255, 111, 97, 0.3);
+  color: #ffc1ba !important;
 }
 
 .drift-chip {

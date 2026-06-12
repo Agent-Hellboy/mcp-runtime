@@ -751,6 +751,41 @@ func TestGatewayMetricMethodsUseBoundedLabels(t *testing.T) {
 	}
 }
 
+func TestAuditPayloadIncludesToolRiskLevel(t *testing.T) {
+	t.Parallel()
+
+	proxy := &gatewayServer{
+		serverName:           "example-server",
+		serverNamespace:      "mcp-servers",
+		defaultPolicyVersion: "test-policy",
+	}
+	req := httptest.NewRequest(http.MethodPost, "http://proxy.example.com/mcp", strings.NewReader(`{"jsonrpc":"2.0"}`))
+	policy := &policypkg.Document{
+		Tools: []policypkg.Tool{{
+			Name:          "refund_invoice",
+			RequiredTrust: "high",
+			SideEffect:    "destructive",
+		}},
+	}
+
+	payload := proxy.auditPayload(
+		req,
+		"/mcp",
+		"tools/call",
+		"refund_invoice",
+		identityContext{HumanID: "human-1"},
+		policy,
+		policypkg.Decision{Allowed: true, Reason: "allowed", PolicyVersion: "test-policy"},
+		http.StatusOK,
+		1,
+		2,
+	)
+
+	if got := payload["risk_level"]; got != "high" {
+		t.Fatalf("risk_level = %#v, want high", got)
+	}
+}
+
 func TestStartPolicyCacheRequiresConfiguredPolicyFile(t *testing.T) {
 	t.Parallel()
 

@@ -3,7 +3,6 @@ package operator
 import (
 	"context"
 	"fmt"
-	"reflect"
 	"strings"
 	"time"
 
@@ -114,17 +113,9 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	logger.Info("Reconciling MCPServer", "name", mcpServer.Name, "namespace", mcpServer.Namespace)
 
+	mcpServer = r.defaultedMCPServerForReconcile(mcpServer)
 	if err := r.validateMCPServerSpec(ctx, mcpServer, logger); err != nil {
 		return ctrl.Result{}, err
-	}
-
-	// Set defaults and update spec only if changed
-	requeue, err := r.applyDefaultsIfNeeded(ctx, mcpServer, logger)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-	if requeue {
-		return ctrl.Result{}, nil
 	}
 
 	if err := r.validateIngressConfig(ctx, mcpServer, logger); err != nil {
@@ -164,20 +155,6 @@ func (r *MCPServerReconciler) fetchMCPServer(ctx context.Context, req ctrl.Reque
 		return nil, false, err
 	}
 	return &mcpServer, true, nil
-}
-
-func (r *MCPServerReconciler) applyDefaultsIfNeeded(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer, logger logr.Logger) (bool, error) {
-	original := mcpServer.DeepCopy()
-	r.setDefaults(mcpServer)
-	if reflect.DeepEqual(original.Spec, mcpServer.Spec) {
-		return false, nil
-	}
-	if err := r.Update(ctx, mcpServer); err != nil {
-		logger.Error(err, "Failed to update MCPServer spec with defaults")
-		return false, err
-	}
-	// Requeue to work with the updated object and avoid stale data
-	return true, nil
 }
 
 func (r *MCPServerReconciler) validateMCPServerSpec(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer, logger logr.Logger) error {
@@ -347,22 +324,15 @@ func determinePhase(readiness resourceReadiness, mcpServer *mcpv1alpha1.MCPServe
 	return "Pending", false
 }
 
-func (r *MCPServerReconciler) setDefaults(mcpServer *mcpv1alpha1.MCPServer) {
-	ingressHostUnset := strings.TrimSpace(mcpServer.Spec.IngressHost) == ""
-	publicPathPrefixUnset := strings.TrimSpace(mcpServer.Spec.PublicPathPrefix) == ""
-
-	mcpServer.Default()
-
-	if ingressHostUnset && publicPathPrefixUnset {
-		mcpServer.Spec.IngressHost = strings.TrimSpace(r.DefaultIngressHost)
-	}
-
-	if mcpServer.Spec.Analytics != nil && !mcpServer.Spec.Analytics.Disabled {
-		if strings.TrimSpace(mcpServer.Spec.Analytics.IngestURL) == "" {
-			mcpServer.Spec.Analytics.IngestURL = strings.TrimSpace(r.DefaultAnalyticsIngestURL)
-		}
-	}
+func (r *MCPServerReconciler) defaultedMCPServerForReconcile(mcpServer *mcpv1alpha1.MCPServer) *mcpv1alpha1.MCPServer {
+	defaulted := mcpServer.DeepCopy()
+	defaulted.DefaultWithOptions(mcpv1alpha1.MCPServerDefaultOptions{
+		DefaultIngressHost:        r.DefaultIngressHost,
+		DefaultAnalyticsIngestURL: r.DefaultAnalyticsIngestURL,
+	})
+	return defaulted
 }
+
 func (r *MCPServerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&mcpv1alpha1.MCPServer{}).

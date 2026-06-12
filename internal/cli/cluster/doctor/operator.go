@@ -3,7 +3,10 @@ package doctor
 import (
 	"bufio"
 	"bytes"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"strings"
 	"time"
@@ -202,6 +205,88 @@ func checkOperatorReady(kubectl core.KubectlRunner) DoctorCheck {
 		Name:   "operator readiness",
 		OK:     true,
 		Detail: fmt.Sprintf("%s replicas ready", pair),
+	}
+}
+
+const operatorWebhookCertRenewalWindow = 30 * 24 * time.Hour
+
+func checkOperatorWebhookCertExpiry(kubectl core.KubectlRunner) DoctorCheck {
+	const (
+		checkName  = "operator webhook TLS expiry"
+		secretName = "mcp-runtime-operator-webhook-server-cert" // #nosec G101 -- Kubernetes Secret object name, not credential material.
+		namespace  = "mcp-runtime"
+	)
+	cmd, err := kubectl.CommandArgs([]string{
+		"get", "secret", secretName,
+		"-n", namespace,
+		"--ignore-not-found", "-o", "jsonpath={.data.tls\\.crt}",
+	})
+	if err != nil {
+		return DoctorCheck{
+			Name:   checkName,
+			OK:     false,
+			Detail: fmt.Sprintf("kubectl error: %v", err),
+			Remedy: "check cluster connectivity and kubeconfig",
+		}
+	}
+	out, err := cmd.Output()
+	certB64 := strings.TrimSpace(string(out))
+	if err != nil || certB64 == "" {
+		return DoctorCheck{
+			Name:   checkName,
+			OK:     true,
+			Detail: "webhook TLS secret not present (webhooks may be disabled)",
+		}
+	}
+	certPEM, err := base64.StdEncoding.DecodeString(certB64)
+	if err != nil {
+		return DoctorCheck{
+			Name:   checkName,
+			OK:     false,
+			Detail: "failed to decode webhook serving certificate",
+			Remedy: "re-run `./bin/mcp-runtime setup` to regenerate operator webhook TLS",
+		}
+	}
+	block, _ := pem.Decode(certPEM)
+	if block == nil {
+		return DoctorCheck{
+			Name:   checkName,
+			OK:     false,
+			Detail: "webhook serving certificate is not valid PEM",
+			Remedy: "re-run `./bin/mcp-runtime setup` to regenerate operator webhook TLS",
+		}
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return DoctorCheck{
+			Name:   checkName,
+			OK:     false,
+			Detail: fmt.Sprintf("failed to parse webhook serving certificate: %v", err),
+			Remedy: "re-run `./bin/mcp-runtime setup` to regenerate operator webhook TLS",
+		}
+	}
+
+	now := time.Now().UTC()
+	if now.After(cert.NotAfter) {
+		return DoctorCheck{
+			Name:   checkName,
+			OK:     false,
+			Detail: fmt.Sprintf("serving certificate expired at %s", cert.NotAfter.UTC().Format(time.RFC3339)),
+			Remedy: "re-run `./bin/mcp-runtime setup` to renew operator webhook TLS",
+		}
+	}
+	if now.Add(operatorWebhookCertRenewalWindow).After(cert.NotAfter) {
+		return DoctorCheck{
+			Name:   checkName,
+			OK:     true,
+			Detail: fmt.Sprintf("warning: serving certificate expires %s (within 30-day renewal window); re-run setup to renew", cert.NotAfter.UTC().Format(time.RFC3339)),
+			Remedy: "re-run `./bin/mcp-runtime setup` to renew the serving certificate",
+		}
+	}
+	return DoctorCheck{
+		Name:   checkName,
+		OK:     true,
+		Detail: fmt.Sprintf("serving certificate valid until %s", cert.NotAfter.UTC().Format(time.RFC3339)),
 	}
 }
 

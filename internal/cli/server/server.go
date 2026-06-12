@@ -50,6 +50,7 @@ For pushing images, use 'registry push'.`,
 	var initPort int32
 	var initTools []string
 	var initToolSpecs []string
+	var initToolRisk string
 	var initForce bool
 	var initFromServer string
 	initCmd := &cobra.Command{
@@ -83,7 +84,7 @@ For pushing images, use 'registry push'.`,
 					initTools = merged
 				}
 			}
-			return mgr.InitServer(args[0], initMetadataDir, initImage, initTag, initScope, initPolicyMode, initDefaultDecision, initSessionRequired, initPort, initTools, initToolSpecs, initForce)
+			return mgr.InitServer(args[0], initMetadataDir, initImage, initTag, initScope, initPolicyMode, initDefaultDecision, initSessionRequired, initPort, initTools, initToolSpecs, initToolRisk, initForce)
 		},
 	}
 	initCmd.Flags().StringVar(&initMetadataDir, "metadata-dir", ".mcp", "Directory where servers.yaml will be written")
@@ -96,6 +97,7 @@ For pushing images, use 'registry push'.`,
 	initCmd.Flags().Int32Var(&initPort, "port", defaultDeployPort(), "Container port")
 	initCmd.Flags().StringArrayVar(&initTools, "tool", nil, "Tool name to add with read side-effect metadata; repeat for multiple tools")
 	initCmd.Flags().StringArrayVar(&initToolSpecs, "tool-spec", nil, "Tool metadata as name:low|medium|high:read|write|destructive; repeat for mixed trust or side effects")
+	initCmd.Flags().StringVar(&initToolRisk, "tool-risk", "", "Informational risk level for seeded tools: low, medium, or high")
 	initCmd.Flags().BoolVar(&initForce, "force", false, "Replace an existing metadata entry with the same server name")
 	initCmd.Flags().StringVar(&initFromServer, "from-server", "", "Discover tools by calling tools/list on a running MCP server at this URL (e.g. http://localhost:8088); discovered names are merged with --tool flags")
 
@@ -276,6 +278,21 @@ For pushing images, use 'registry push'.`,
 	}
 	statusCmd.Flags().StringVar(&statusNamespace, "namespace", core.NamespaceMCPServers, "Namespace to inspect")
 
+	var connectNamespace string
+	var connectClient string
+	var connectOutput string
+	connectCmd := &cobra.Command{
+		Use:   "connect-config [name]",
+		Short: "Print client connection config for an MCP server",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return mgr.ConnectConfig(args[0], connectNamespace, connectClient, connectOutput)
+		},
+	}
+	connectCmd.Flags().StringVar(&connectNamespace, "namespace", core.NamespaceMCPServers, "Namespace")
+	connectCmd.Flags().StringVar(&connectClient, "client", "json", "Client config: claude, cursor, vscode, or json")
+	connectCmd.Flags().StringVarP(&connectOutput, "output", "o", "text", "Output format: text, json, or yaml")
+
 	var policyNamespace string
 	policyCmd := &cobra.Command{
 		Use:   "policy",
@@ -298,7 +315,7 @@ For pushing images, use 'registry push'.`,
 	}
 	buildCmd.AddCommand(newBuildImageCmd(mgr.Logger()))
 
-	cmd.AddCommand(initCmd, listCmd, getCmd, createCmd, applyCmd, deployCmd, generateCmd, exportCmd, patchCmd, deleteCmd, logsCmd, statusCmd, policyCmd, buildCmd, newValidateCmd())
+	cmd.AddCommand(initCmd, listCmd, getCmd, createCmd, applyCmd, deployCmd, generateCmd, exportCmd, patchCmd, deleteCmd, logsCmd, statusCmd, connectCmd, policyCmd, buildCmd, newValidateCmd())
 	return cmd
 }
 
