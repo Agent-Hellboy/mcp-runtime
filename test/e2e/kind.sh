@@ -3114,7 +3114,7 @@ platform_cache_ready() {
   kubectl rollout status deploy/mcp-sentinel-gateway -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
   kubectl rollout status statefulset/clickhouse -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
   kubectl rollout status statefulset/kafka -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
-  kubectl rollout status statefulset/zookeeper -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
+  kubectl wait --for=condition=complete job/kafka-topic-init -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
   kubectl rollout status daemonset/promtail -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
   kubectl rollout status statefulset/loki -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
   kubectl rollout status statefulset/tempo -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
@@ -3209,7 +3209,6 @@ else
     "traefik:v2.10" \
     "traefik:v3.0" \
     "clickhouse/clickhouse-server:23.8" \
-    "confluentinc/cp-zookeeper:7.5.1" \
     "confluentinc/cp-kafka:7.5.1" \
     "prom/prometheus:v2.49.1" \
     "otel/opentelemetry-collector:0.92.0" \

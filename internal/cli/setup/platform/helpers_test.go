@@ -2081,7 +2081,7 @@ spec:
 	}
 }
 
-func TestDeployAnalyticsManifestsWithKubectl_RecreatesClickhouseInitJob(t *testing.T) {
+func TestDeployAnalyticsManifestsWithKubectl_RecreatesInitializationJobs(t *testing.T) {
 	orig := core.DefaultCLIConfig
 	t.Cleanup(func() {
 		core.DefaultCLIConfig = orig
@@ -2111,6 +2111,7 @@ func TestDeployAnalyticsManifestsWithKubectl_RecreatesClickhouseInitJob(t *testi
 		"03-clickhouse.yaml",
 		"04-clickhouse-init.yaml",
 		"05-kafka.yaml",
+		"05-kafka-topic-init.yaml",
 		"06-ingest.yaml",
 		"07-processor.yaml",
 		"08-api.yaml",
@@ -2137,8 +2138,10 @@ func TestDeployAnalyticsManifestsWithKubectl_RecreatesClickhouseInitJob(t *testi
 		_ = os.Chdir(cwd)
 	})
 
-	deleteIndex := -1
-	waitIndex := -1
+	clickhouseDeleteIndex := -1
+	clickhouseWaitIndex := -1
+	kafkaDeleteIndex := -1
+	kafkaWaitIndex := -1
 	var mock *core.MockExecutor
 	mock = &core.MockExecutor{
 		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
@@ -2148,7 +2151,7 @@ func TestDeployAnalyticsManifestsWithKubectl_RecreatesClickhouseInitJob(t *testi
 				cmd.OutputErr = errors.New("not found")
 			}
 			if contains(spec.Args, "delete") && contains(spec.Args, "job/clickhouse-init") {
-				deleteIndex = len(mock.Commands) - 1
+				clickhouseDeleteIndex = len(mock.Commands) - 1
 				for _, want := range []string{"--ignore-not-found=true", "--wait=true", "--timeout=60s"} {
 					if !contains(spec.Args, want) {
 						t.Fatalf("delete job args missing %s: %v", want, spec.Args)
@@ -2156,7 +2159,13 @@ func TestDeployAnalyticsManifestsWithKubectl_RecreatesClickhouseInitJob(t *testi
 				}
 			}
 			if contains(spec.Args, "wait") && contains(spec.Args, "job/clickhouse-init") {
-				waitIndex = len(mock.Commands) - 1
+				clickhouseWaitIndex = len(mock.Commands) - 1
+			}
+			if contains(spec.Args, "delete") && contains(spec.Args, "job/kafka-topic-init") {
+				kafkaDeleteIndex = len(mock.Commands) - 1
+			}
+			if contains(spec.Args, "wait") && contains(spec.Args, "job/kafka-topic-init") {
+				kafkaWaitIndex = len(mock.Commands) - 1
 			}
 			return cmd
 		},
@@ -2172,14 +2181,23 @@ func TestDeployAnalyticsManifestsWithKubectl_RecreatesClickhouseInitJob(t *testi
 	if err != nil {
 		t.Fatalf("deployAnalyticsManifestsWithKubectl returned error: %v", err)
 	}
-	if deleteIndex == -1 {
+	if clickhouseDeleteIndex == -1 {
 		t.Fatal("expected setup to delete any existing clickhouse-init job before reapplying it")
 	}
-	if waitIndex == -1 {
+	if clickhouseWaitIndex == -1 {
 		t.Fatal("expected setup to wait for clickhouse-init job completion")
 	}
-	if deleteIndex > waitIndex {
-		t.Fatalf("expected clickhouse-init delete before wait, got delete index %d wait index %d", deleteIndex, waitIndex)
+	if clickhouseDeleteIndex > clickhouseWaitIndex {
+		t.Fatalf("expected clickhouse-init delete before wait, got delete index %d wait index %d", clickhouseDeleteIndex, clickhouseWaitIndex)
+	}
+	if kafkaDeleteIndex == -1 {
+		t.Fatal("expected setup to delete any existing kafka-topic-init job before reapplying it")
+	}
+	if kafkaWaitIndex == -1 {
+		t.Fatal("expected setup to wait for kafka-topic-init job completion")
+	}
+	if kafkaDeleteIndex > kafkaWaitIndex {
+		t.Fatalf("expected kafka-topic-init delete before wait, got delete index %d wait index %d", kafkaDeleteIndex, kafkaWaitIndex)
 	}
 }
 
@@ -2337,6 +2355,7 @@ func TestDeployAnalyticsManifestsReturnsRolloutFailures(t *testing.T) {
 		"04-clickhouse-init.yaml",
 		"05-kafka.yaml",
 		"05-kafka-hostpath.yaml",
+		"05-kafka-topic-init.yaml",
 		"06-ingest.yaml",
 		"07-processor.yaml",
 		"08-api.yaml",
@@ -2428,6 +2447,7 @@ func TestDeployAnalyticsManifestsWithKubectl_HostpathUsesHostpathManifests(t *te
 		"03-clickhouse-hostpath.yaml",
 		"04-clickhouse-init.yaml",
 		"05-kafka-hostpath.yaml",
+		"05-kafka-topic-init.yaml",
 		"20-postgres-hostpath.yaml",
 	} {
 		if err := os.WriteFile(filepath.Join(manifestDir, name), []byte(manifestContent), 0o644); err != nil {
@@ -2496,6 +2516,7 @@ func TestDeployAnalyticsManifestsWithKubectl_WaitsForPostgresStatefulSet(t *test
 		"03-clickhouse.yaml",
 		"04-clickhouse-init.yaml",
 		"05-kafka.yaml",
+		"05-kafka-topic-init.yaml",
 		"06-ingest.yaml",
 		"07-processor.yaml",
 		"08-api.yaml",

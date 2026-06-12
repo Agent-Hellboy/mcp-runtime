@@ -35,15 +35,12 @@ import (
 
 const (
 	kafkaStatefulSetName      = "kafka"
+	kafkaTopicInitJob         = "kafka-topic-init"
 	kafkaPodName              = "kafka-0"
 	kafkaPodContainer         = "kafka"
 	kafkaPVCName              = "kafka-data-kafka-0"
 	legacyZookeeperDeployment = "zookeeper"
 )
-
-func zookeeperRolloutKind(_ string) string {
-	return "statefulset"
-}
 
 func deployAnalyticsManifests(logger *zap.Logger, images AnalyticsImageSet, storageMode, platformMode string) error {
 	return deployAnalyticsManifestsClientGo(logger, images, storageMode, platformMode)
@@ -122,12 +119,11 @@ func deployAnalyticsManifestsClientGo(logger *zap.Logger, images AnalyticsImageS
 	if err := waitForRolloutStatusWithClientGo("statefulset", "clickhouse", core.DefaultAnalyticsNamespace, rolloutTimeoutDuration); err != nil {
 		return mcpSentinelDependencyRolloutFailed(core.DefaultKubectlClient(), err, "statefulset", "clickhouse", core.DefaultAnalyticsNamespace, "storage (clickhouse)")
 	}
-	zookeeperKind := zookeeperRolloutKind(storageMode)
-	if err := waitForRolloutStatusWithClientGo(zookeeperKind, "zookeeper", core.DefaultAnalyticsNamespace, rolloutTimeoutDuration); err != nil {
-		return mcpSentinelDependencyRolloutFailed(core.DefaultKubectlClient(), err, zookeeperKind, "zookeeper", core.DefaultAnalyticsNamespace, "messaging (zookeeper)")
-	}
 	if err := waitForKafkaRolloutClientGo(logger, rolloutTimeoutDuration, storageMode); err != nil {
 		return mcpSentinelDependencyRolloutFailed(core.DefaultKubectlClient(), err, "statefulset", "kafka", core.DefaultAnalyticsNamespace, "messaging (kafka)")
+	}
+	if err := initializeKafkaTopicsClientGo(images, imagePullSecretName, platformMode, rolloutTimeoutDuration); err != nil {
+		return err
 	}
 
 	core.Info("Initializing ClickHouse schema")
@@ -284,12 +280,11 @@ func deployAnalyticsManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap
 	if err := waitForRolloutStatusWithKubectl(kubectl, "statefulset", "clickhouse", core.DefaultAnalyticsNamespace, rolloutTimeout); err != nil {
 		return mcpSentinelDependencyRolloutFailed(kubectl, err, "statefulset", "clickhouse", core.DefaultAnalyticsNamespace, "storage (clickhouse)")
 	}
-	zookeeperKind := zookeeperRolloutKind(storageMode)
-	if err := waitForRolloutStatusWithKubectl(kubectl, zookeeperKind, "zookeeper", core.DefaultAnalyticsNamespace, rolloutTimeout); err != nil {
-		return mcpSentinelDependencyRolloutFailed(kubectl, err, zookeeperKind, "zookeeper", core.DefaultAnalyticsNamespace, "messaging (zookeeper)")
-	}
 	if err := waitForKafkaRolloutWithKubectl(kubectl, rolloutTimeout, storageMode); err != nil {
 		return mcpSentinelDependencyRolloutFailed(kubectl, err, "statefulset", "kafka", core.DefaultAnalyticsNamespace, "messaging (kafka)")
+	}
+	if err := initializeKafkaTopicsWithKubectl(kubectl, images, imagePullSecretName, platformMode, rolloutTimeout); err != nil {
+		return err
 	}
 
 	core.Info("Initializing ClickHouse schema")
@@ -445,7 +440,7 @@ func reconcileLegacyZookeeperDeploymentClientGo() error {
 		return fmt.Errorf("inspect Kafka persistent volume before ZooKeeper migration: %w", err)
 	}
 
-	core.Warn("Legacy ephemeral ZooKeeper deployment found without persistent Kafka data; deleting it before installing the persistent StatefulSet")
+	core.Warn("Legacy ephemeral ZooKeeper deployment found without persistent Kafka data; deleting it before KRaft migration")
 	propagation := metav1.DeletePropagationForeground
 	if err := deployments.Delete(context.Background(), legacyZookeeperDeployment, metav1.DeleteOptions{PropagationPolicy: &propagation}); err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("delete legacy ZooKeeper deployment: %w", err)
@@ -481,7 +476,7 @@ func reconcileLegacyZookeeperDeploymentWithKubectl(kubectl core.KubectlRunner) e
 		return fmt.Errorf("inspect Kafka persistent volume before ZooKeeper migration: %s", kubeerr.CommandDetail(pvcOutput, pvcErr))
 	}
 
-	core.Warn("Legacy ephemeral ZooKeeper deployment found without persistent Kafka data; deleting it before installing the persistent StatefulSet")
+	core.Warn("Legacy ephemeral ZooKeeper deployment found without persistent Kafka data; deleting it before KRaft migration")
 	if err := kubectl.RunWithOutput([]string{
 		"delete", "deployment/" + legacyZookeeperDeployment,
 		"-n", namespace,
@@ -543,7 +538,7 @@ func recoverKafkaClusterIDMismatchClientGo(logger *zap.Logger, _ string) (bool, 
 		logger.Warn("Kafka cluster ID mismatch detected; refusing destructive automatic recovery")
 	}
 	return false, fmt.Errorf(
-		"kafka cluster ID does not match ZooKeeper metadata; setup will not delete persistent volume %s/%s automatically. Restore or migrate ZooKeeper metadata to match the Kafka volume, or explicitly reset both stores if data loss is acceptable",
+		"kafka cluster ID does not match stored metadata; setup will not delete persistent volume %s/%s automatically. Restore or migrate metadata to match the Kafka volume, or explicitly reset both stores if data loss is acceptable",
 		core.DefaultAnalyticsNamespace, kafkaPVCName,
 	)
 }
@@ -554,7 +549,7 @@ func recoverKafkaClusterIDMismatchWithKubectl(kubectl core.KubectlRunner, _ stri
 		return false, nil
 	}
 	return false, fmt.Errorf(
-		"kafka cluster ID does not match ZooKeeper metadata; setup will not delete persistent volume %s/%s automatically. Restore or migrate ZooKeeper metadata to match the Kafka volume, or explicitly reset both stores if data loss is acceptable",
+		"kafka cluster ID does not match stored metadata; setup will not delete persistent volume %s/%s automatically. Restore or migrate metadata to match the Kafka volume, or explicitly reset both stores if data loss is acceptable",
 		core.DefaultAnalyticsNamespace, kafkaPVCName,
 	)
 }
@@ -593,6 +588,32 @@ func kafkaLogsWithKubectl(kubectl core.KubectlRunner) (string, error) {
 
 func isKafkaClusterIDMismatchLog(logs string) bool {
 	return strings.Contains(logs, "InconsistentClusterIdException") && strings.Contains(logs, "clusterId")
+}
+
+func initializeKafkaTopicsClientGo(images AnalyticsImageSet, imagePullSecretName, platformMode string, timeout time.Duration) error {
+	if err := deleteJobIfExistsClientGo(kafkaTopicInitJob, core.DefaultAnalyticsNamespace); err != nil {
+		return err
+	}
+	if err := applyRenderedManifestClientGo("k8s/05-kafka-topic-init.yaml", images, imagePullSecretName, platformMode); err != nil {
+		return err
+	}
+	if err := waitForJobCompletionClientGo(kafkaTopicInitJob, core.DefaultAnalyticsNamespace, timeout); err != nil {
+		return mcpSentinelDependencyJobFailed(core.DefaultKubectlClient(), err, kafkaTopicInitJob, core.DefaultAnalyticsNamespace, "Kafka topic initialization")
+	}
+	return nil
+}
+
+func initializeKafkaTopicsWithKubectl(kubectl core.KubectlRunner, images AnalyticsImageSet, imagePullSecretName, platformMode, timeout string) error {
+	if err := deleteJobIfExistsWithKubectl(kubectl, kafkaTopicInitJob, core.DefaultAnalyticsNamespace); err != nil {
+		return err
+	}
+	if err := applyRenderedManifest(kubectl, "k8s/05-kafka-topic-init.yaml", images, imagePullSecretName, platformMode); err != nil {
+		return err
+	}
+	if err := waitForJobCompletionWithKubectl(kubectl, kafkaTopicInitJob, core.DefaultAnalyticsNamespace, timeout); err != nil {
+		return mcpSentinelDependencyJobFailed(kubectl, err, kafkaTopicInitJob, core.DefaultAnalyticsNamespace, "Kafka topic initialization")
+	}
+	return nil
 }
 
 func applyCatalogNamespaceForMode(platformMode string) error {
@@ -743,9 +764,6 @@ func renderAnalyticsManifest(content string, images AnalyticsImageSet, imagePull
 	}
 	if strings.TrimSpace(images.ClickHouse) != "" {
 		replacements["image: clickhouse/clickhouse-server:23.8"] = "image: " + images.ClickHouse
-	}
-	if strings.TrimSpace(images.Zookeeper) != "" {
-		replacements["image: confluentinc/cp-zookeeper:7.5.1"] = "image: " + images.Zookeeper
 	}
 	if strings.TrimSpace(images.Kafka) != "" {
 		replacements["image: confluentinc/cp-kafka:7.5.1"] = "image: " + images.Kafka

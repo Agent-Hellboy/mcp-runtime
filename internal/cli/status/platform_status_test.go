@@ -267,11 +267,8 @@ func TestShowPlatformStatus(t *testing.T) {
 			commandKey("kubectl", "get", "statefulset", "clickhouse", "-n", "mcp-sentinel", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
 				Stdout: "1/1",
 			},
-			commandKey("kubectl", "get", "statefulset", "zookeeper", "-n", "mcp-sentinel", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
-				Stdout: "1/1",
-			},
 			commandKey("kubectl", "get", "statefulset", "kafka", "-n", "mcp-sentinel", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
-				Stdout: "1/1",
+				Stdout: "3/3",
 			},
 			commandKey("kubectl", "get", "deployment", "mcp-sentinel-ingest", "-n", "mcp-sentinel", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
 				Stdout: "2/2",

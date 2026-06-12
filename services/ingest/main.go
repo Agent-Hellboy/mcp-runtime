@@ -79,11 +79,7 @@ func main() {
 		}
 	}
 
-	writer := &kafka.Writer{
-		Addr:         kafka.TCP(brokers...),
-		Topic:        topic,
-		BatchTimeout: 200 * time.Millisecond,
-	}
+	writer := newKafkaWriter(brokers, topic)
 
 	server := &ingestServer{
 		writer:       writer,
@@ -145,6 +141,15 @@ func main() {
 	_ = httpServer.Shutdown(shutdownCtx)
 	_ = metricsShutdown(shutdownCtx)
 	_ = writer.Close()
+}
+
+func newKafkaWriter(brokers []string, topic string) *kafka.Writer {
+	return &kafka.Writer{
+		Addr:         kafka.TCP(brokers...),
+		Topic:        topic,
+		BatchTimeout: 200 * time.Millisecond,
+		RequiredAcks: kafka.RequireAll,
+	}
 }
 
 const ingestEventMaxBytes = 1 << 20 // 1MB

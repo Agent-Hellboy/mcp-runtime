@@ -536,7 +536,7 @@ KUBECONFIG=~/.kube/config mcp-runtime sentinel port-forward grafana
 ```
 
 Component names for `logs` and `restart`:
-`clickhouse`, `zookeeper`, `kafka`, `ingest`, `processor`, `api`, `ui`,
+`clickhouse`, `kafka`, `ingest`, `processor`, `api`, `ui`,
 `gateway`, `prometheus`, `grafana`, `otel-collector`, `tempo`, `loki`, `promtail`
 
 ---

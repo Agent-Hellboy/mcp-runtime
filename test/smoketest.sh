@@ -53,8 +53,8 @@ kubectl -n "$NAMESPACE" rollout restart deployment/workspace-assistant-server
 kubectl -n "$NAMESPACE" rollout restart deployment/workspace-assistant-sidecar
 
 kubectl -n "$NAMESPACE" rollout status statefulset/clickhouse --timeout=180s
-kubectl -n "$NAMESPACE" rollout status statefulset/zookeeper --timeout=180s
 kubectl -n "$NAMESPACE" rollout status statefulset/kafka --timeout=180s
+kubectl -n "$NAMESPACE" wait --for=condition=complete job/kafka-topic-init --timeout=180s
 kubectl -n "$NAMESPACE" rollout status deployment/mcp-sentinel-ingest --timeout=180s
 kubectl -n "$NAMESPACE" rollout status deployment/mcp-sentinel-processor --timeout=180s
 kubectl -n "$NAMESPACE" rollout status deployment/mcp-sentinel-api --timeout=180s
