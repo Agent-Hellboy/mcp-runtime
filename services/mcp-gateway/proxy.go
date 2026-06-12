@@ -32,6 +32,23 @@ func newUpstreamReverseProxy(target *url.URL) *httputil.ReverseProxy {
 // and then unconditionally runs stage 6 (audit/analytics finalization).
 func (s *gatewayServer) handleGateway(w http.ResponseWriter, r *http.Request) {
 	ex := newExchange(w, r, s.defaultPolicyVersion)
+
+	policy, _ := s.currentPolicy()
+	scope := s.metricScope(policy)
+	stopInflight := s.metrics.trackInflight(scope)
+	defer stopInflight()
+	policyDecisionObserved := false
+	defer func() {
+		metricScope := s.metricScope(ex.Policy)
+		s.metrics.recordRequest(
+			metricScope, ex.R, ex.Inspection.Method, ex.Decision,
+			ex.W.status, time.Since(ex.StartTime), ex.R.ContentLength, ex.W.bytes,
+		)
+		if policyDecisionObserved {
+			s.metrics.recordPolicyDecision(metricScope, ex.Inspection.Method, ex.Decision)
+		}
+	}()
+
 	for _, f := range s.buildPipeline() {
 		if f.Handle(ex) != Continue {
 			break
@@ -39,6 +56,10 @@ func (s *gatewayServer) handleGateway(w http.ResponseWriter, r *http.Request) {
 	}
 	if ex.Decision.PolicyVersion == "" {
 		ex.Decision.PolicyVersion = s.defaultPolicyVersion
+	}
+	policyDecisionObserved = ex.Inspection.ToolCall || ex.Inspection.Indeterminate
+	if !policyDecisionObserved && !ex.Decision.Allowed && !ex.SkipAudit {
+		policyDecisionObserved = true
 	}
 	s.emitAuditFromExchange(ex)
 }
@@ -205,6 +226,9 @@ func (s *gatewayServer) auditPayload(
 	}
 	if decision.RequiredSideEffect != "" {
 		payload["required_side_effect"] = decision.RequiredSideEffect
+	}
+	if riskLevel := policypkg.FirstNonEmpty(decision.RiskLevel, policypkg.ToolRiskLevel(policy, toolName)); riskLevel != "" {
+		payload["risk_level"] = riskLevel
 	}
 	if decision.AdminTrust != "" {
 		payload["admin_trust"] = decision.AdminTrust

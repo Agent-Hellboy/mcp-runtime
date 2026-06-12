@@ -773,8 +773,9 @@ func TestSetupPlatformWithDeps_ExternalRegistry(t *testing.T) {
 			Manifest: "config/ingress/overlays/http",
 			Force:    false,
 		},
-		RegistryManifest: "config/registry",
-		TLSEnabled:       true,
+		RegistryManifest:   "config/registry",
+		TLSEnabled:         true,
+		InstallCertManager: true,
 	}
 
 	if err := setupPlatformWithDeps(zap.NewNop(), plan, deps); err != nil {
@@ -855,9 +856,10 @@ func TestSetupPlatformWithDeps_InternalRegistryTLS(t *testing.T) {
 			Manifest: "config/ingress/overlays/prod",
 			Force:    false,
 		},
-		RegistryManifest: "config/registry/overlays/tls",
-		TLSEnabled:       true,
-		TestMode:         true,
+		RegistryManifest:   "config/registry/overlays/tls",
+		TLSEnabled:         true,
+		TestMode:           true,
+		InstallCertManager: true,
 	}
 
 	if err := setupPlatformWithDeps(zap.NewNop(), plan, deps); err != nil {
@@ -951,8 +953,9 @@ func TestSetupPlatformWithDeps_ExternalRegistryTLS(t *testing.T) {
 			Manifest: "config/ingress/overlays/prod",
 			Force:    false,
 		},
-		RegistryManifest: "config/registry/overlays/tls",
-		TLSEnabled:       true,
+		RegistryManifest:   "config/registry/overlays/tls",
+		TLSEnabled:         true,
+		InstallCertManager: true,
 	}
 
 	if err := setupPlatformWithDeps(zap.NewNop(), plan, deps); err != nil {
@@ -1033,9 +1036,10 @@ func TestSetupPlatformWithDeps_DiagnosticsOnRegistryWaitFailure(t *testing.T) {
 			Manifest: "config/ingress/overlays/http",
 			Force:    false,
 		},
-		RegistryManifest: "config/registry",
-		TLSEnabled:       true,
-		TestMode:         true,
+		RegistryManifest:   "config/registry",
+		TLSEnabled:         true,
+		TestMode:           true,
+		InstallCertManager: true,
 	}
 
 	if err := setupPlatformWithDeps(zap.NewNop(), plan, deps); err == nil {
@@ -1099,8 +1103,9 @@ func TestSetupPlatformWithDeps_DiagnosticsOnOperatorWaitFailure(t *testing.T) {
 			Manifest: "config/ingress/overlays/http",
 			Force:    false,
 		},
-		RegistryManifest: "config/registry/overlays/tls",
-		TLSEnabled:       true,
+		RegistryManifest:   "config/registry/overlays/tls",
+		TLSEnabled:         true,
+		InstallCertManager: true,
 	}
 
 	if err := setupPlatformWithDeps(zap.NewNop(), plan, deps); err == nil {
@@ -1166,8 +1171,9 @@ func TestSetupPlatformWithDeps_CRDCheckFailure(t *testing.T) {
 			Manifest: "config/ingress/overlays/http",
 			Force:    false,
 		},
-		RegistryManifest: "config/registry/overlays/tls",
-		TLSEnabled:       true,
+		RegistryManifest:   "config/registry/overlays/tls",
+		TLSEnabled:         true,
+		InstallCertManager: true,
 	}
 
 	if err := setupPlatformWithDeps(zap.NewNop(), plan, deps); err == nil {

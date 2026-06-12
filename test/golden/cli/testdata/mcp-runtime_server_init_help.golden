@@ -16,6 +16,7 @@ Flags:
       --session-required          Require adapter-issued agent sessions (default true)
       --tag string                Container image tag (default "latest")
       --tool stringArray          Tool name to add with read side-effect metadata; repeat for multiple tools
+      --tool-risk string          Informational risk level for seeded tools: low, medium, or high
       --tool-spec stringArray     Tool metadata as name:low|medium|high:read|write|destructive; repeat for mixed trust or side effects
 
 Global Flags:

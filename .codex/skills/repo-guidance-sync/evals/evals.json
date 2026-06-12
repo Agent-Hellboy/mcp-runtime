@@ -12,6 +12,16 @@
       ]
     },
     {
+      "id": "runtime-contract-doc-sync",
+      "prompt": "The MCPAccessGrant session matching behavior changed in the platform API. Check whether the repo guidance needs updates.",
+      "expected_output": "A docs sync pass that inspects the API/runtime access contract, CRD/types or tests, and existing docs; updates AGENTS.md or docs that describe grant/session behavior if stale; and summarizes source truth and validation searches.",
+      "assertions": [
+        "Inspects the access contract source (CRD/types, API handlers, or tests) before editing docs",
+        "Updates the nearest existing grant/session guidance instead of creating new top-level docs",
+        "Summarizes the source-of-truth files and searches used"
+      ]
+    },
+    {
       "id": "no-docs-needed-decision",
       "prompt": "This internal refactor should not affect user-facing behavior. Check if docs need changes and explain the decision.",
       "expected_output": "A concise docs impact assessment that inspects the diff, searches for affected guidance, and either updates docs or explains why no docs are needed.",

@@ -1,0 +1,19 @@
+List tools across visible MCP servers
+
+Usage:
+  mcp-runtime catalog tools [flags]
+
+Flags:
+      --drift string         Drift filter: declared, ungoverned, missing
+  -h, --help                 help for tools
+      --namespace string     Namespace filter
+  -o, --output string        Output format: table, json, yaml (default "table")
+  -q, --query string         Search text
+      --risk string          Risk filter: low, medium, high
+      --server string        Server name filter
+      --side-effect string   Side effect filter: read, write, destructive
+      --team string          Team ID filter
+      --trust string         Required trust filter: low, medium, high
+
+Global Flags:
+      --debug   Enable debug mode with structured error logging

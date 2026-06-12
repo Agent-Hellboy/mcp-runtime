@@ -3,6 +3,10 @@
 This page explains the core abstractions in MCP Runtime before you deploy anything.
 Most concepts have direct CLI counterparts — links are included throughout.
 
+For the complete answer to who may perform an action, under which identity, and
+where that decision is enforced, see
+[Identity and authorization](identity-and-authorization.md).
+
 ---
 
 ## MCPServer

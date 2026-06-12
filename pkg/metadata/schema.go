@@ -43,6 +43,14 @@ const (
 	ToolSideEffectDestructive ToolSideEffect = "destructive"
 )
 
+type ToolRiskLevel string
+
+const (
+	ToolRiskLevelLow    ToolRiskLevel = "low"
+	ToolRiskLevelMedium ToolRiskLevel = "medium"
+	ToolRiskLevelHigh   ToolRiskLevel = "high"
+)
+
 // +kubebuilder:validation:Enum=RollingUpdate;Recreate;Canary
 type RolloutStrategy string
 
@@ -169,6 +177,7 @@ type ToolConfig struct {
 	Description   string            `yaml:"description,omitempty" json:"description,omitempty"`
 	RequiredTrust TrustLevel        `yaml:"requiredTrust,omitempty" json:"requiredTrust,omitempty"`
 	SideEffect    ToolSideEffect    `yaml:"sideEffect" json:"sideEffect"`
+	RiskLevel     ToolRiskLevel     `yaml:"riskLevel,omitempty" json:"riskLevel,omitempty"`
 	Labels        map[string]string `yaml:"labels,omitempty" json:"labels,omitempty"`
 }
 

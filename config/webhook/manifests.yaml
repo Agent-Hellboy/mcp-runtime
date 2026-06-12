@@ -1,0 +1,96 @@
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: mutating-webhook-configuration
+webhooks:
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: mcp-runtime-operator-webhook-service
+      namespace: mcp-runtime
+      path: /mutate-mcpruntime-org-v1alpha1-mcpserver
+      port: 443
+  failurePolicy: Ignore
+  name: mmcpserver.kb.io
+  rules:
+  - apiGroups:
+    - mcpruntime.org
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - mcpservers
+  sideEffects: None
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: validating-webhook-configuration
+webhooks:
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: mcp-runtime-operator-webhook-service
+      namespace: mcp-runtime
+      path: /validate-mcpruntime-org-v1alpha1-mcpaccessgrant
+      port: 443
+  failurePolicy: Fail
+  name: vmcpaccessgrant.kb.io
+  rules:
+  - apiGroups:
+    - mcpruntime.org
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - mcpaccessgrants
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: mcp-runtime-operator-webhook-service
+      namespace: mcp-runtime
+      path: /validate-mcpruntime-org-v1alpha1-mcpagentsession
+      port: 443
+  failurePolicy: Fail
+  name: vmcpagentsession.kb.io
+  rules:
+  - apiGroups:
+    - mcpruntime.org
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - mcpagentsessions
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: mcp-runtime-operator-webhook-service
+      namespace: mcp-runtime
+      path: /validate-mcpruntime-org-v1alpha1-mcpserver
+      port: 443
+  failurePolicy: Fail
+  name: vmcpserver.kb.io
+  rules:
+  - apiGroups:
+    - mcpruntime.org
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - mcpservers
+  sideEffects: None

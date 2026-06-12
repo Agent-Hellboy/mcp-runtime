@@ -55,7 +55,9 @@ extra_css:
 nav:
   - Home: README.md
   - Quickstart: quickstart.md
-  - Concepts: concepts.md
+  - Concepts:
+      - Core Concepts: concepts.md
+      - Identity and Authorization: identity-and-authorization.md
   - Architecture: architecture.md
   - Getting Started: getting-started.md
   - Developer Guide:

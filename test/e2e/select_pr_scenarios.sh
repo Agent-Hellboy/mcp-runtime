@@ -54,7 +54,7 @@ classify_path() {
       mark_all
       return
       ;;
-    cmd/mcp-runtime/*|internal/cli/root/*)
+    cmd/mcp-runtime/*|internal/cli/root/*|internal/cli/catalog/*)
       add_scenario "cli-platform"
       return
       ;;
@@ -82,6 +82,11 @@ classify_path() {
     services/api/internal/runtimeapi/*team*|services/api/internal/runtimeapi/*namespace*|services/api/internal/runtimeapi/*registry*|services/api/internal/runtimeapi/*deploy*|services/api/internal/runtimeapi/*server*)
       add_scenario "api-platform"
       add_scenario "multitenancy"
+      return
+      ;;
+    services/api/internal/runtimeapi/*tool*)
+      add_scenario "api-platform"
+      add_scenario "cli-platform"
       return
       ;;
     services/api/internal/runtimeapi/*adapter*|services/api/internal/runtimeapi/*grant*|services/api/internal/runtimeapi/*session*|services/api/internal/runtimeapi/*access*)
