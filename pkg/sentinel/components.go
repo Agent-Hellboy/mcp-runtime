@@ -53,7 +53,7 @@ var Components = []Component{
 		Key:       "zookeeper",
 		Display:   "Zookeeper",
 		Namespace: DefaultNamespace,
-		Kind:      "deployment",
+		Kind:      "statefulset",
 		Resource:  "zookeeper",
 		Label:     "zookeeper",
 	},

@@ -130,6 +130,8 @@ Grafana: dev ingress `/grafana` or `https://platform.<domain>/grafana` (admin). 
 
 When `graphify-out/graph.json` exists: `graphify query`, `graphify path`, `graphify explain` before broad grep; `graphify update .` after code changes. See `.codex/skills/graphify/SKILL.md`.
 
+**Stale graph:** if a query returns no nodes (or misses one) for a symbol that clearly exists in the code, the graph is stale — run `graphify update .` (incremental re-extract of new/changed files) and retry. If the node is still missing, do a full rebuild (`/graphify .`) before falling back to grep, so the graph stays trustworthy for the next query.
+
 In any agent prompt, include:
 
 > Use `graphify query "<your question>"` to look up any code structure before grepping files. The graph is at `graphify-out/graph.json`.

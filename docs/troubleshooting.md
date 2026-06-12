@@ -187,6 +187,14 @@ kubectl create secret docker-registry mcp-runtime-registry-pull \
    Healthy output shows three Kafka pods, three `mcp.events` partitions, replica
    factor `3`, and all assigned replicas in ISR.
 
+4. If Kafka reports `InconsistentClusterIdException`, do not delete the Kafka
+   PVC. Older installs could persist Kafka while running ZooKeeper from
+   ephemeral storage. Current setup detects that legacy combination and stops
+   rather than orphaning topic metadata. Back up or migrate
+   `/var/lib/zookeeper/data` and `/var/lib/zookeeper/log`, remove the legacy
+   `deployment/zookeeper`, then rerun setup to install the persistent
+   `statefulset/zookeeper`.
+
 ---
 
 ### Sentinel API returns 401
