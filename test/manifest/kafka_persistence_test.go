@@ -36,7 +36,7 @@ type kafkaManifestDoc struct {
 	} `yaml:"spec"`
 }
 
-func TestDefaultZooKeeperPersistsMetadata(t *testing.T) {
+func TestDefaultKafkaPersistsBrokerData(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "k8s", "05-kafka.yaml"))
 	if err != nil {
 		t.Fatalf("read Kafka manifest: %v", err)
@@ -51,38 +51,30 @@ func TestDefaultZooKeeperPersistsMetadata(t *testing.T) {
 			}
 			t.Fatalf("decode Kafka manifest: %v", err)
 		}
-		if doc.Metadata.Name != "zookeeper" || doc.Kind == "Service" {
+		if doc.Kind != "StatefulSet" || doc.Metadata.Name != "kafka" {
 			continue
-		}
-		if doc.Kind != "StatefulSet" {
-			t.Fatalf("ZooKeeper kind = %q, want StatefulSet", doc.Kind)
 		}
 		claims := map[string]bool{}
 		for _, claim := range doc.Spec.VolumeClaimTemplates {
 			claims[claim.Metadata.Name] = true
 		}
-		for _, want := range []string{"zookeeper-data", "zookeeper-log"} {
-			if !claims[want] {
-				t.Fatalf("ZooKeeper missing volumeClaimTemplate %q", want)
-			}
+		if !claims["kafka-data"] {
+			t.Fatal("Kafka missing volumeClaimTemplate kafka-data")
 		}
 		for _, container := range doc.Spec.Template.Spec.Containers {
-			if container.Name != "zookeeper" {
+			if container.Name != "kafka" {
 				continue
 			}
 			mounts := map[string]string{}
 			for _, mount := range container.VolumeMounts {
 				mounts[mount.Name] = mount.MountPath
 			}
-			if mounts["zookeeper-data"] != "/var/lib/zookeeper/data" {
-				t.Fatalf("ZooKeeper data mount = %q", mounts["zookeeper-data"])
-			}
-			if mounts["zookeeper-log"] != "/var/lib/zookeeper/log" {
-				t.Fatalf("ZooKeeper log mount = %q", mounts["zookeeper-log"])
+			if mounts["kafka-data"] != "/var/lib/kafka/data" {
+				t.Fatalf("Kafka data mount = %q, want /var/lib/kafka/data", mounts["kafka-data"])
 			}
 			return
 		}
-		t.Fatal("ZooKeeper container not found")
+		t.Fatal("Kafka container not found")
 	}
-	t.Fatal("ZooKeeper workload not found")
+	t.Fatal("Kafka StatefulSet not found")
 }

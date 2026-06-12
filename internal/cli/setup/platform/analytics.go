@@ -35,14 +35,13 @@ import (
 )
 
 const (
-	kafkaStatefulSetName      = "kafka"
-	kafkaTopicInitJob         = "kafka-topic-init"
-	kafkaPodName              = "kafka-0"
-	kafkaPodContainer         = "kafka"
-	kafkaPVCName              = "kafka-data-kafka-0"
-	legacyZookeeperDeployment = "zookeeper"
-	kafkaHeadlessServiceName  = "kafka-headless"
-	kafkaKRaftReplicaCount    = int32(3)
+	kafkaStatefulSetName     = "kafka"
+	kafkaTopicInitJob        = "kafka-topic-init"
+	kafkaPodName             = "kafka-0"
+	kafkaPodContainer        = "kafka"
+	kafkaPVCName             = "kafka-data-kafka-0"
+	kafkaHeadlessServiceName = "kafka-headless"
+	kafkaKRaftReplicaCount   = int32(3)
 )
 
 func deployAnalyticsManifests(logger *zap.Logger, images AnalyticsImageSet, storageMode, platformMode string) error {
@@ -106,9 +105,6 @@ func deployAnalyticsManifestsClientGo(logger *zap.Logger, images AnalyticsImageS
 	}
 
 	if err := ensureAnalyticsHostpathDirs(storageMode); err != nil {
-		return err
-	}
-	if err := reconcileLegacyZookeeperDeploymentClientGo(); err != nil {
 		return err
 	}
 	if err := reconcileKafkaStatefulSetForKRaftUpgradeClientGo(); err != nil {
@@ -275,9 +271,6 @@ func deployAnalyticsManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap
 	if err := ensureAnalyticsHostpathDirs(storageMode); err != nil {
 		return err
 	}
-	if err := reconcileLegacyZookeeperDeploymentWithKubectl(kubectl); err != nil {
-		return err
-	}
 	if err := reconcileKafkaStatefulSetForKRaftUpgradeWithKubectl(kubectl); err != nil {
 		return err
 	}
@@ -430,99 +423,9 @@ func waitForKafkaRolloutClientGo(logger *zap.Logger, rolloutTimeout time.Duratio
 	}
 }
 
-func reconcileLegacyZookeeperDeploymentClientGo() error {
-	clients, err := platformKubernetesClients()
-	if err != nil {
-		return err
-	}
-	namespace := core.DefaultAnalyticsNamespace
-	deployments := clients.Clientset.AppsV1().Deployments(namespace)
-	if _, err := deployments.Get(context.Background(), legacyZookeeperDeployment, metav1.GetOptions{}); err != nil {
-		if apierrors.IsNotFound(err) {
-			return nil
-		}
-		return fmt.Errorf("inspect legacy ZooKeeper deployment: %w", err)
-	}
-
-	_, err = clients.Clientset.CoreV1().PersistentVolumeClaims(namespace).Get(context.Background(), kafkaPVCName, metav1.GetOptions{})
-	switch {
-	case err == nil:
-		return fmt.Errorf(
-			"legacy deployment/%s and persistent Kafka volume %s/%s were both found; setup will not replace ephemeral ZooKeeper automatically because that can orphan Kafka topic metadata. Back up or migrate ZooKeeper state, then delete deployment/%s before rerunning setup",
-			legacyZookeeperDeployment, namespace, kafkaPVCName, legacyZookeeperDeployment,
-		)
-	case !apierrors.IsNotFound(err):
-		return fmt.Errorf("inspect Kafka persistent volume before ZooKeeper migration: %w", err)
-	}
-
-	core.Warn("Legacy ephemeral ZooKeeper deployment found without persistent Kafka data; deleting it before KRaft migration")
-	propagation := metav1.DeletePropagationForeground
-	if err := deployments.Delete(context.Background(), legacyZookeeperDeployment, metav1.DeleteOptions{PropagationPolicy: &propagation}); err != nil && !apierrors.IsNotFound(err) {
-		return fmt.Errorf("delete legacy ZooKeeper deployment: %w", err)
-	}
-	return waitForDeploymentDeletionClientGo(clients, namespace, legacyZookeeperDeployment, 2*time.Minute)
-}
-
-func reconcileLegacyZookeeperDeploymentWithKubectl(kubectl core.KubectlRunner) error {
-	namespace := core.DefaultAnalyticsNamespace
-	deploymentOutput, err := kubectlText(kubectl, []string{
-		"get", "deployment", legacyZookeeperDeployment, "-n", namespace, "-o", "name",
-	})
-	if err != nil {
-		if isKubectlNotFound(deploymentOutput) {
-			return nil
-		}
-		return fmt.Errorf("inspect legacy ZooKeeper deployment: %s", kubeerr.CommandDetail(deploymentOutput, err))
-	}
-	if strings.TrimSpace(deploymentOutput) == "" {
-		return nil
-	}
-
-	pvcOutput, pvcErr := kubectlText(kubectl, []string{
-		"get", "pvc", kafkaPVCName, "-n", namespace, "-o", "name",
-	})
-	switch {
-	case pvcErr == nil && strings.TrimSpace(pvcOutput) != "":
-		return fmt.Errorf(
-			"legacy deployment/%s and persistent Kafka volume %s/%s were both found; setup will not replace ephemeral ZooKeeper automatically because that can orphan Kafka topic metadata. Back up or migrate ZooKeeper state, then delete deployment/%s before rerunning setup",
-			legacyZookeeperDeployment, namespace, kafkaPVCName, legacyZookeeperDeployment,
-		)
-	case pvcErr != nil && !isKubectlNotFound(pvcOutput):
-		return fmt.Errorf("inspect Kafka persistent volume before ZooKeeper migration: %s", kubeerr.CommandDetail(pvcOutput, pvcErr))
-	}
-
-	core.Warn("Legacy ephemeral ZooKeeper deployment found without persistent Kafka data; deleting it before KRaft migration")
-	if err := kubectl.RunWithOutput([]string{
-		"delete", "deployment/" + legacyZookeeperDeployment,
-		"-n", namespace,
-		"--ignore-not-found=true",
-		"--wait=true",
-		"--timeout=120s",
-	}, os.Stdout, os.Stderr); err != nil {
-		return fmt.Errorf("delete legacy ZooKeeper deployment: %w", err)
-	}
-	return nil
-}
-
 func isKubectlNotFound(output string) bool {
 	normalized := strings.ToLower(output)
 	return strings.Contains(normalized, "not found") || strings.Contains(normalized, "notfound")
-}
-
-func waitForDeploymentDeletionClientGo(clients *k8sclient.Clients, namespace, name string, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		_, err := clients.Clientset.AppsV1().Deployments(namespace).Get(context.Background(), name, metav1.GetOptions{})
-		if apierrors.IsNotFound(err) {
-			return nil
-		}
-		if err != nil {
-			time.Sleep(2 * time.Second)
-			continue
-		}
-		time.Sleep(2 * time.Second)
-	}
-	return fmt.Errorf("timed out waiting for deployment/%s deletion", name)
 }
 
 func waitForKafkaRolloutWithKubectl(kubectl core.KubectlRunner, rolloutTimeout, storageMode string) error {

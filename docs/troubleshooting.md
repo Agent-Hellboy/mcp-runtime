@@ -188,12 +188,9 @@ kubectl create secret docker-registry mcp-runtime-registry-pull \
    factor `3`, and all assigned replicas in ISR.
 
 4. If Kafka reports `InconsistentClusterIdException`, do not delete the Kafka
-   PVC. Older installs could persist Kafka while running ZooKeeper from
-   ephemeral storage. Current setup detects that legacy combination and stops
-   rather than orphaning topic metadata. Back up or migrate
-   `/var/lib/zookeeper/data` and `/var/lib/zookeeper/log`, remove the legacy
-   `deployment/zookeeper`, then rerun setup to install the persistent
-   `statefulset/zookeeper`.
+   PVC automatically. The stored broker metadata no longer matches the
+   configured KRaft cluster ID. Back up any data you need, scale Kafka to zero,
+   delete all three `kafka-data-kafka-{0,1,2}` PVCs, then rerun setup.
 
 ---
 
