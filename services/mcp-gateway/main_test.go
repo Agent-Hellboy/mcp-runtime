@@ -694,13 +694,16 @@ func TestGatewayMetricsRecordPolicyReloadResults(t *testing.T) {
 
 	registry := prometheus.NewRegistry()
 	policyFile := filepath.Join(t.TempDir(), "policy.json")
-	if err := os.WriteFile(policyFile, []byte(`{
-		"server":{"name":"demo","namespace":"mcp-servers","team_id":"team-acme","cluster":"kind"},
-		"auth":{"mode":"header"},
-		"policy":{"mode":"observe","default_decision":"deny","policy_version":"test-policy"}
-	}`), 0o600); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
+	writeStampedPolicy(t, policyFile, func(doc *policypkg.Document) {
+		doc.Server.TeamID = "team-acme"
+		doc.Server.Cluster = "kind"
+		doc.Auth = &policypkg.Auth{Mode: "header"}
+		doc.Policy = &policypkg.Config{
+			Mode:            "observe",
+			DefaultDecision: "deny",
+			PolicyVersion:   "test-policy",
+		}
+	})
 	proxy := &gatewayServer{
 		metrics:               newGatewayMetrics(registry),
 		policyFile:            policyFile,
@@ -1263,7 +1266,7 @@ func newTestGatewayServer(t *testing.T, policy *policypkg.Document, upstream htt
 		defaultPolicyVersion:  "test-policy",
 		oauthProviders:        map[string]*oauthProvider{},
 	}
-	server.snapshotPolicy(policySnapshot{Policy: policy})
+	server.snapshotPolicy(policySnapshot{Policy: policy, Revision: policy.Revision, LoadedAt: time.Now(), Ready: true})
 	return server
 }
 

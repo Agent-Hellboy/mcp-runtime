@@ -3,6 +3,20 @@
 // policy and the proxy-consumed policy.
 package policy
 
+// SchemaVersion is the current gateway policy contract schema version. It is
+// document-level metadata distinct from the authorization PolicyVersion: it
+// identifies the compatibility of the rendered JSON contract itself, not the
+// grant/session policy generation. Bump it only when the rendered JSON shape
+// changes in a way the consumer must understand.
+const SchemaVersion = "v1"
+
+// supportedSchemaVersions enumerates the schema versions a consumer is able to
+// activate. Documents carrying any other version fail validation and are
+// rejected before activation.
+var supportedSchemaVersions = map[string]struct{}{
+	SchemaVersion: {},
+}
+
 // ServerName identifies an MCP server in a rendered gateway policy.
 type ServerName string
 
@@ -26,13 +40,22 @@ type ToolName string
 
 // Document is the root gateway policy document that contains all policy configuration.
 type Document struct {
-	Server   Server    `json:"server"`
-	Auth     *Auth     `json:"auth,omitempty"`
-	Policy   *Config   `json:"policy,omitempty"`
-	Session  *Session  `json:"session,omitempty"`
-	Tools    []Tool    `json:"tools,omitempty"`
-	Grants   []Grant   `json:"grants,omitempty"`
-	Sessions []Binding `json:"sessions,omitempty"`
+	// SchemaVersion identifies the compatibility of the rendered JSON contract.
+	SchemaVersion string `json:"schema_version"`
+	// Revision is a deterministic SHA-256 digest of the canonical rendered
+	// policy content. It is computed with SchemaVersion included and with
+	// Revision and GeneratedAt excluded, so identical policy content always
+	// produces the same revision regardless of when it was generated.
+	Revision string `json:"revision"`
+	// GeneratedAt is informational only and must not affect Revision.
+	GeneratedAt string    `json:"generated_at,omitempty"`
+	Server      Server    `json:"server"`
+	Auth        *Auth     `json:"auth,omitempty"`
+	Policy      *Config   `json:"policy,omitempty"`
+	Session     *Session  `json:"session,omitempty"`
+	Tools       []Tool    `json:"tools,omitempty"`
+	Grants      []Grant   `json:"grants,omitempty"`
+	Sessions    []Binding `json:"sessions,omitempty"`
 }
 
 // Server identifies the MCP server this policy applies to.
