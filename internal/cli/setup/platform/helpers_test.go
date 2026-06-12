@@ -184,7 +184,7 @@ func TestBuildOperatorImagePassesDockerPlatform(t *testing.T) {
 }
 
 func TestGenerateOperatorWebhookCertificate(t *testing.T) {
-	caPEM, certPEM, keyPEM, err := generateOperatorWebhookCertificate(time.Date(2026, 5, 15, 0, 0, 0, 0, time.UTC))
+	caPEM, caKeyPEM, certPEM, keyPEM, err := generateOperatorWebhookCertificate(time.Date(2026, 5, 15, 0, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatalf("generateOperatorWebhookCertificate failed: %v", err)
 	}
@@ -199,6 +199,10 @@ func TestGenerateOperatorWebhookCertificate(t *testing.T) {
 	}
 	if !caCert.IsCA {
 		t.Fatal("expected CA certificate to be a CA")
+	}
+	caKeyBlock, _ := pem.Decode(caKeyPEM)
+	if caKeyBlock == nil {
+		t.Fatal("expected CA private key PEM block")
 	}
 
 	certBlock, _ := pem.Decode(certPEM)
@@ -230,7 +234,7 @@ func TestGenerateOperatorWebhookCertificate(t *testing.T) {
 
 func TestReusableOperatorWebhookServingCert(t *testing.T) {
 	issued := time.Date(2026, 5, 15, 0, 0, 0, 0, time.UTC)
-	caPEM, certPEM, keyPEM, err := generateOperatorWebhookCertificate(issued)
+	caPEM, _, certPEM, keyPEM, err := generateOperatorWebhookCertificate(issued)
 	if err != nil {
 		t.Fatalf("generateOperatorWebhookCertificate failed: %v", err)
 	}
@@ -246,7 +250,7 @@ func TestReusableOperatorWebhookServingCert(t *testing.T) {
 		t.Fatal("expected secret without ca.crt to be rotated")
 	}
 
-	_, _, otherKeyPEM, err := generateOperatorWebhookCertificate(issued)
+	_, _, _, otherKeyPEM, err := generateOperatorWebhookCertificate(issued)
 	if err != nil {
 		t.Fatalf("generateOperatorWebhookCertificate failed: %v", err)
 	}
@@ -255,22 +259,23 @@ func TestReusableOperatorWebhookServingCert(t *testing.T) {
 	}
 }
 
-func operatorWebhookSecretJSON(caPEM, certPEM, keyPEM []byte) []byte {
-	return []byte(fmt.Sprintf(`{"data":{"ca.crt":%q,"tls.crt":%q,"tls.key":%q}}`,
+func operatorWebhookSecretJSON(caPEM, caKeyPEM, certPEM, keyPEM []byte) []byte {
+	return []byte(fmt.Sprintf(`{"data":{"ca.crt":%q,"ca.key":%q,"tls.crt":%q,"tls.key":%q}}`,
 		base64.StdEncoding.EncodeToString(caPEM),
+		base64.StdEncoding.EncodeToString(caKeyPEM),
 		base64.StdEncoding.EncodeToString(certPEM),
 		base64.StdEncoding.EncodeToString(keyPEM)))
 }
 
 func TestEnsureOperatorWebhookTLSSecretReusesValidSecret(t *testing.T) {
-	caPEM, certPEM, keyPEM, err := generateOperatorWebhookCertificate(time.Now().UTC())
+	caPEM, caKeyPEM, certPEM, keyPEM, err := generateOperatorWebhookCertificate(time.Now().UTC())
 	if err != nil {
 		t.Fatalf("generateOperatorWebhookCertificate failed: %v", err)
 	}
 	mock := &core.MockExecutor{
 		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
 			if commandHasArgs(spec, "get", "secret", operatorWebhookSecretName) {
-				return &core.MockCommand{Args: spec.Args, OutputData: operatorWebhookSecretJSON(caPEM, certPEM, keyPEM)}
+				return &core.MockCommand{Args: spec.Args, OutputData: operatorWebhookSecretJSON(caPEM, caKeyPEM, certPEM, keyPEM)}
 			}
 			if commandHasArgs(spec, "apply") {
 				t.Errorf("expected no apply while reusing webhook secret, got %#v", spec.Args)
@@ -289,10 +294,10 @@ func TestEnsureOperatorWebhookTLSSecretReusesValidSecret(t *testing.T) {
 	}
 }
 
-func TestEnsureOperatorWebhookTLSSecretRotatesExpiringSecret(t *testing.T) {
+func TestEnsureOperatorWebhookTLSSecretRenewsExpiringServingCert(t *testing.T) {
 	// Issued ~11.5 months ago, the serving certificate expires inside the
-	// 30-day renewal window and must be rotated.
-	caPEM, certPEM, keyPEM, err := generateOperatorWebhookCertificate(time.Now().UTC().AddDate(0, -11, -15))
+	// 30-day renewal window and must be re-signed with the stored CA.
+	caPEM, caKeyPEM, certPEM, keyPEM, err := generateOperatorWebhookCertificate(time.Now().UTC().AddDate(0, -11, -15))
 	if err != nil {
 		t.Fatalf("generateOperatorWebhookCertificate failed: %v", err)
 	}
@@ -301,7 +306,7 @@ func TestEnsureOperatorWebhookTLSSecretRotatesExpiringSecret(t *testing.T) {
 		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
 			cmd := &core.MockCommand{Args: spec.Args}
 			if commandHasArgs(spec, "get", "secret", operatorWebhookSecretName) {
-				cmd.OutputData = operatorWebhookSecretJSON(caPEM, certPEM, keyPEM)
+				cmd.OutputData = operatorWebhookSecretJSON(caPEM, caKeyPEM, certPEM, keyPEM)
 			}
 			if commandHasArgs(spec, "apply") {
 				applied++
@@ -322,13 +327,52 @@ func TestEnsureOperatorWebhookTLSSecretRotatesExpiringSecret(t *testing.T) {
 	if applied == 0 {
 		t.Fatal("expected expiring webhook secret to be re-applied")
 	}
+	if string(got) != string(caPEM) {
+		t.Fatal("expected serving-certificate renewal to keep the existing CA bundle")
+	}
+}
+
+func TestEnsureOperatorWebhookTLSSecretRotatesLegacySecretWithoutCAKey(t *testing.T) {
+	caPEM, _, certPEM, keyPEM, err := generateOperatorWebhookCertificate(time.Now().UTC().AddDate(0, -11, -15))
+	if err != nil {
+		t.Fatalf("generateOperatorWebhookCertificate failed: %v", err)
+	}
+	applied := 0
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			cmd := &core.MockCommand{Args: spec.Args}
+			if commandHasArgs(spec, "get", "secret", operatorWebhookSecretName) {
+				cmd.OutputData = []byte(fmt.Sprintf(`{"data":{"ca.crt":%q,"tls.crt":%q,"tls.key":%q}}`,
+					base64.StdEncoding.EncodeToString(caPEM),
+					base64.StdEncoding.EncodeToString(certPEM),
+					base64.StdEncoding.EncodeToString(keyPEM)))
+			}
+			if commandHasArgs(spec, "apply") {
+				applied++
+				cmd.RunFunc = func() error {
+					_, err := io.ReadAll(cmd.StdinR)
+					return err
+				}
+			}
+			return cmd
+		},
+	}
+	kubectl := core.NewTestKubectlClient(mock)
+
+	got, err := ensureOperatorWebhookTLSSecret(kubectl)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if applied == 0 {
+		t.Fatal("expected legacy webhook secret without ca.key to be re-applied")
+	}
 	if string(got) == string(caPEM) {
-		t.Fatal("expected a freshly generated CA bundle")
+		t.Fatal("expected legacy secret without ca.key to rotate the CA bundle")
 	}
 }
 
 func TestEnsureOperatorWebhookTLSSecretClientGoReusesValidSecret(t *testing.T) {
-	caPEM, certPEM, keyPEM, err := generateOperatorWebhookCertificate(time.Now().UTC())
+	caPEM, caKeyPEM, certPEM, keyPEM, err := generateOperatorWebhookCertificate(time.Now().UTC())
 	if err != nil {
 		t.Fatalf("generateOperatorWebhookCertificate failed: %v", err)
 	}
@@ -338,6 +382,7 @@ func TestEnsureOperatorWebhookTLSSecretClientGoReusesValidSecret(t *testing.T) {
 		Type:       corev1.SecretTypeTLS,
 		Data: map[string][]byte{
 			"ca.crt":  caPEM,
+			"ca.key":  caKeyPEM,
 			"tls.crt": certPEM,
 			"tls.key": keyPEM,
 		},

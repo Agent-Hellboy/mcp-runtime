@@ -117,7 +117,10 @@ spec:
 
 `MCPServer.spec.teamID` records the owning platform team. `SubjectRef` has
 `humanID`, `agentID`, and `teamID`; the gateway matches every non-empty subject
-field exactly. A grant with only `subject.teamID` applies to any authenticated
+field exactly. An all-empty `subject` is a wildcard grant (the validating
+webhook emits a warning): the gateway matches any authenticated principal for
+the server, while adapter session creation still requires subject alignment
+with the caller. A grant with only `subject.teamID` applies to any authenticated
 principal from that team when trusted header or OAuth team identity is present.
 See [Multi-team isolation](multi-team.md).
 

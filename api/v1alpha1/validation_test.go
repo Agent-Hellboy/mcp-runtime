@@ -75,6 +75,26 @@ func TestMCPAccessGrantValidateAllowsWildcardSubject(t *testing.T) {
 	}
 }
 
+func TestMCPAccessGrantValidateCreateWarnsOnWildcardSubject(t *testing.T) {
+	grant := &MCPAccessGrant{
+		ObjectMeta: metav1.ObjectMeta{Name: "grant"},
+		Spec: MCPAccessGrantSpec{
+			ServerRef: ServerReference{Name: "payments"},
+		},
+	}
+
+	warnings, err := grant.ValidateCreate()
+	if err != nil {
+		t.Fatalf("expected wildcard grant to validate, got %v", err)
+	}
+	if len(warnings) != 1 {
+		t.Fatalf("expected one wildcard warning, got %d: %v", len(warnings), warnings)
+	}
+	if !strings.Contains(warnings[0], "wildcard grant") {
+		t.Fatalf("expected wildcard warning, got %q", warnings[0])
+	}
+}
+
 func TestMCPAccessGrantValidateRejectsWhitespaceTeamID(t *testing.T) {
 	grant := &MCPAccessGrant{
 		ObjectMeta: metav1.ObjectMeta{Name: "grant"},

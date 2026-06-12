@@ -430,15 +430,27 @@ func (mcpAccessGrantValidator) ValidateDelete(_ context.Context, obj *MCPAccessG
 }
 
 func (r *MCPAccessGrant) ValidateCreate() (admission.Warnings, error) {
-	return nil, r.validate()
+	return r.wildcardSubjectWarnings(), r.validate()
 }
 
 func (r *MCPAccessGrant) ValidateUpdate(_ runtime.Object) (admission.Warnings, error) {
-	return nil, r.validate()
+	return r.wildcardSubjectWarnings(), r.validate()
 }
 
 func (r *MCPAccessGrant) ValidateDelete() (admission.Warnings, error) {
 	return nil, nil
+}
+
+func (r *MCPAccessGrant) wildcardSubjectWarnings() admission.Warnings {
+	subject := r.Spec.Subject
+	if strings.TrimSpace(subject.HumanID) != "" ||
+		strings.TrimSpace(subject.AgentID) != "" ||
+		strings.TrimSpace(subject.TeamID) != "" {
+		return nil
+	}
+	return admission.Warnings{
+		"MCPAccessGrant subject is empty (wildcard grant): the gateway matches any authenticated principal for the server; adapter session creation still requires subject alignment with the caller",
+	}
 }
 
 func (r *MCPAccessGrant) validate() error {

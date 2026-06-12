@@ -2,9 +2,15 @@ package doctor
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
+	"encoding/pem"
 	"errors"
 	"fmt"
+	"math/big"
 	"strings"
 	"testing"
 	"time"
@@ -204,6 +210,53 @@ func TestCheckOperatorReady(t *testing.T) {
 		check := checkOperatorReady(kubectl)
 		if check.OK {
 			t.Fatal("expected failure for 0/1 ready replicas")
+		}
+	})
+}
+
+func testOperatorWebhookServingCertB64(t *testing.T, notAfter time.Time) string {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	template := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "webhook-test"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     notAfter,
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("create certificate: %v", err)
+	}
+	return base64.StdEncoding.EncodeToString(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+}
+
+func TestCheckOperatorWebhookCertExpiry(t *testing.T) {
+	t.Run("ok when webhook secret is absent", func(t *testing.T) {
+		mock := &core.MockExecutor{
+			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+				return &core.MockCommand{OutputData: []byte("")}
+			},
+		}
+		check := checkOperatorWebhookCertExpiry(core.NewTestKubectlClient(mock))
+		if !check.OK || !strings.Contains(check.Detail, "not present") {
+			t.Fatalf("unexpected check: %+v", check)
+		}
+	})
+
+	t.Run("warns inside renewal window", func(t *testing.T) {
+		certB64 := testOperatorWebhookServingCertB64(t, time.Now().UTC().Add(10*24*time.Hour))
+		mock := &core.MockExecutor{
+			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+				return &core.MockCommand{OutputData: []byte(certB64)}
+			},
+		}
+		check := checkOperatorWebhookCertExpiry(core.NewTestKubectlClient(mock))
+		if !check.OK || !strings.Contains(check.Detail, "warning:") {
+			t.Fatalf("expected renewal warning, got %+v", check)
 		}
 	})
 }

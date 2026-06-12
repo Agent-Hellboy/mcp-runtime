@@ -35,32 +35,26 @@ const (
 	operatorWebhookCertDir            = "/tmp/k8s-webhook-server/serving-certs"
 	operatorWebhookCertHashAnnotation = "mcp-runtime.io/webhook-cert-sha256"
 	// operatorWebhookCertRenewalWindow is how long before expiry a setup
-	// re-run rotates the webhook CA and serving certificate instead of
-	// reusing the existing Secret.
+	// re-run rotates the webhook serving certificate instead of reusing it.
+	// When ca.key is stored in the webhook TLS Secret, renewal re-signs the
+	// serving certificate with the existing CA so caBundle and validating
+	// webhooks stay stable; the CA itself is only rotated when it nears expiry
+	// or the Secret is missing ca.key / is malformed.
 	operatorWebhookCertRenewalWindow = 30 * 24 * time.Hour
 )
 
-func generateOperatorWebhookCertificate(now time.Time) ([]byte, []byte, []byte, error) {
+func generateOperatorWebhookCA(now time.Time) ([]byte, []byte, *x509.Certificate, *rsa.PrivateKey, error) {
 	caPrivateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("generate webhook CA private key: %w", err)
-	}
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("generate webhook private key: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("generate webhook CA private key: %w", err)
 	}
 
 	serialLimit := new(big.Int).Lsh(big.NewInt(1), 128)
 	caSerialNumber, err := rand.Int(rand.Reader, serialLimit)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("generate webhook CA certificate serial: %w", err)
-	}
-	serialNumber, err := rand.Int(rand.Reader, serialLimit)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("generate webhook certificate serial: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("generate webhook CA certificate serial: %w", err)
 	}
 
-	serviceDNS := operatorWebhookServiceName + "." + core.NamespaceMCPRuntime + ".svc"
 	caTemplate := x509.Certificate{
 		SerialNumber: caSerialNumber,
 		Subject: pkix.Name{
@@ -72,6 +66,34 @@ func generateOperatorWebhookCertificate(now time.Time) ([]byte, []byte, []byte, 
 		BasicConstraintsValid: true,
 		IsCA:                  true,
 	}
+
+	caCertDER, err := x509.CreateCertificate(rand.Reader, &caTemplate, &caTemplate, &caPrivateKey.PublicKey, caPrivateKey)
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("create webhook CA certificate: %w", err)
+	}
+	caCert, err := x509.ParseCertificate(caCertDER)
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("parse webhook CA certificate: %w", err)
+	}
+
+	caCertPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caCertDER})
+	caKeyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(caPrivateKey)})
+	return caCertPEM, caKeyPEM, caCert, caPrivateKey, nil
+}
+
+func signOperatorWebhookServingCertificate(now time.Time, caCert *x509.Certificate, caPrivateKey *rsa.PrivateKey) ([]byte, []byte, error) {
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return nil, nil, fmt.Errorf("generate webhook private key: %w", err)
+	}
+
+	serialLimit := new(big.Int).Lsh(big.NewInt(1), 128)
+	serialNumber, err := rand.Int(rand.Reader, serialLimit)
+	if err != nil {
+		return nil, nil, fmt.Errorf("generate webhook certificate serial: %w", err)
+	}
+
+	serviceDNS := operatorWebhookServiceName + "." + core.NamespaceMCPRuntime + ".svc"
 	certTemplate := x509.Certificate{
 		SerialNumber: serialNumber,
 		Subject: pkix.Name{
@@ -90,22 +112,64 @@ func generateOperatorWebhookCertificate(now time.Time) ([]byte, []byte, []byte, 
 		},
 	}
 
-	caCertDER, err := x509.CreateCertificate(rand.Reader, &caTemplate, &caTemplate, &caPrivateKey.PublicKey, caPrivateKey)
+	certDER, err := x509.CreateCertificate(rand.Reader, &certTemplate, caCert, &privateKey.PublicKey, caPrivateKey)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("create webhook CA certificate: %w", err)
-	}
-	certDER, err := x509.CreateCertificate(rand.Reader, &certTemplate, &caTemplate, &privateKey.PublicKey, caPrivateKey)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("create webhook certificate: %w", err)
+		return nil, nil, fmt.Errorf("create webhook certificate: %w", err)
 	}
 
-	caCertPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caCertDER})
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
 	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(privateKey)})
+	return certPEM, keyPEM, nil
+}
+
+func generateOperatorWebhookCertificate(now time.Time) ([]byte, []byte, []byte, []byte, error) {
+	caCertPEM, caKeyPEM, caCert, caPrivateKey, err := generateOperatorWebhookCA(now)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	certPEM, keyPEM, err := signOperatorWebhookServingCertificate(now, caCert, caPrivateKey)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	return caCertPEM, caKeyPEM, certPEM, keyPEM, nil
+}
+
+func renewOperatorWebhookServingCertificate(now time.Time, caCertPEM, caKeyPEM []byte) ([]byte, []byte, []byte, error) {
+	caCert, caPrivateKey, err := parseOperatorWebhookCA(caCertPEM, caKeyPEM)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	certPEM, keyPEM, err := signOperatorWebhookServingCertificate(now, caCert, caPrivateKey)
+	if err != nil {
+		return nil, nil, nil, err
+	}
 	return caCertPEM, certPEM, keyPEM, nil
 }
 
-func operatorWebhookTLSSecretManifest(caCertPEM, certPEM, keyPEM []byte) string {
+func parseOperatorWebhookCA(caCertPEM, caKeyPEM []byte) (*x509.Certificate, *rsa.PrivateKey, error) {
+	caCert, err := parsePEMCertificate(caCertPEM)
+	if err != nil {
+		return nil, nil, fmt.Errorf("parse webhook CA certificate: %w", err)
+	}
+	if !caCert.IsCA {
+		return nil, nil, errors.New("webhook CA certificate is not a CA")
+	}
+	keyBlock, _ := pem.Decode(caKeyPEM)
+	if keyBlock == nil {
+		return nil, nil, errors.New("no PEM CA private key block")
+	}
+	caPrivateKey, err := x509.ParsePKCS1PrivateKey(keyBlock.Bytes)
+	if err != nil {
+		return nil, nil, fmt.Errorf("parse webhook CA private key: %w", err)
+	}
+	caPublicKey, ok := caCert.PublicKey.(*rsa.PublicKey)
+	if !ok || !caPrivateKey.PublicKey.Equal(caPublicKey) {
+		return nil, nil, errors.New("webhook CA private key does not match CA certificate")
+	}
+	return caCert, caPrivateKey, nil
+}
+
+func operatorWebhookTLSSecretManifest(caCertPEM, caKeyPEM, certPEM, keyPEM []byte) string {
 	return fmt.Sprintf(`apiVersion: v1
 kind: Secret
 metadata:
@@ -114,26 +178,49 @@ metadata:
 type: kubernetes.io/tls
 data:
   ca.crt: %s
+  ca.key: %s
   tls.crt: %s
   tls.key: %s
-`, operatorWebhookSecretName, core.NamespaceMCPRuntime, base64.StdEncoding.EncodeToString(caCertPEM), base64.StdEncoding.EncodeToString(certPEM), base64.StdEncoding.EncodeToString(keyPEM))
+`, operatorWebhookSecretName, core.NamespaceMCPRuntime, base64.StdEncoding.EncodeToString(caCertPEM), base64.StdEncoding.EncodeToString(caKeyPEM), base64.StdEncoding.EncodeToString(certPEM), base64.StdEncoding.EncodeToString(keyPEM))
+}
+
+func resolveOperatorWebhookTLSSecret(now time.Time, caCertPEM, caKeyPEM, certPEM, keyPEM []byte) ([]byte, []byte, []byte, []byte, bool, error) {
+	if reusableOperatorWebhookServingCert(caCertPEM, certPEM, keyPEM, now) {
+		return caCertPEM, caKeyPEM, certPEM, keyPEM, false, nil
+	}
+	if operatorWebhookServingCertRenewalNeeded(certPEM, now) &&
+		reusableOperatorWebhookCA(caCertPEM, caKeyPEM, now) &&
+		reusableOperatorWebhookServingCertChain(caCertPEM, certPEM, keyPEM, now) {
+		renewedCA, renewedCert, renewedKey, err := renewOperatorWebhookServingCertificate(now, caCertPEM, caKeyPEM)
+		if err != nil {
+			return nil, nil, nil, nil, false, err
+		}
+		return renewedCA, caKeyPEM, renewedCert, renewedKey, true, nil
+	}
+	caCertPEM, caKeyPEM, certPEM, keyPEM, err := generateOperatorWebhookCertificate(now)
+	if err != nil {
+		return nil, nil, nil, nil, false, err
+	}
+	return caCertPEM, caKeyPEM, certPEM, keyPEM, true, nil
 }
 
 // ensureOperatorWebhookTLSSecretClientGo reuses the existing webhook Secret
 // when its certificate chain is still valid, so setup re-runs do not rotate
-// the CA. Rotation rolls the operator Deployment and, until the rollout
-// completes, the fail-closed webhooks reject all mcpruntime.org writes —
-// reuse keeps re-runs free of that window.
+// the CA. Serving-certificate renewal re-signs with the stored ca.key so
+// caBundle stays stable. Rotation rolls the operator Deployment and, until
+// the rollout completes, fail-closed validating webhooks reject mcpruntime.org
+// writes — reuse and CA-stable renewal keep re-runs free of that window.
 func ensureOperatorWebhookTLSSecretClientGo() ([]byte, error) {
 	now := time.Now().UTC()
-	if ca, cert, key := readOperatorWebhookTLSSecretClientGo(); reusableOperatorWebhookServingCert(ca, cert, key, now) {
-		return ca, nil
-	}
-	caCertPEM, certPEM, keyPEM, err := generateOperatorWebhookCertificate(now)
+	caCertPEM, caKeyPEM, certPEM, keyPEM := readOperatorWebhookTLSSecretClientGo()
+	caCertPEM, caKeyPEM, certPEM, keyPEM, changed, err := resolveOperatorWebhookTLSSecret(now, caCertPEM, caKeyPEM, certPEM, keyPEM)
 	if err != nil {
 		return nil, err
 	}
-	if err := applyManifestYAML(operatorWebhookTLSSecretManifest(caCertPEM, certPEM, keyPEM), "", os.Stdout); err != nil {
+	if !changed {
+		return caCertPEM, nil
+	}
+	if err := applyManifestYAML(operatorWebhookTLSSecretManifest(caCertPEM, caKeyPEM, certPEM, keyPEM), "", os.Stdout); err != nil {
 		return nil, err
 	}
 	return caCertPEM, nil
@@ -143,49 +230,50 @@ func ensureOperatorWebhookTLSSecretClientGo() ([]byte, error) {
 // for the kubectl deploy path.
 func ensureOperatorWebhookTLSSecret(kubectl core.KubectlRunner) ([]byte, error) {
 	now := time.Now().UTC()
-	if ca, cert, key := readOperatorWebhookTLSSecret(kubectl); reusableOperatorWebhookServingCert(ca, cert, key, now) {
-		return ca, nil
-	}
-	caCertPEM, certPEM, keyPEM, err := generateOperatorWebhookCertificate(now)
+	caCertPEM, caKeyPEM, certPEM, keyPEM := readOperatorWebhookTLSSecret(kubectl)
+	caCertPEM, caKeyPEM, certPEM, keyPEM, changed, err := resolveOperatorWebhookTLSSecret(now, caCertPEM, caKeyPEM, certPEM, keyPEM)
 	if err != nil {
 		return nil, err
 	}
-	if err := kube.ApplyManifestContent(kubectl.CommandArgs, operatorWebhookTLSSecretManifest(caCertPEM, certPEM, keyPEM)); err != nil {
+	if !changed {
+		return caCertPEM, nil
+	}
+	if err := kube.ApplyManifestContent(kubectl.CommandArgs, operatorWebhookTLSSecretManifest(caCertPEM, caKeyPEM, certPEM, keyPEM)); err != nil {
 		return nil, err
 	}
 	return caCertPEM, nil
 }
 
-func readOperatorWebhookTLSSecretClientGo() (caCertPEM, certPEM, keyPEM []byte) {
+func readOperatorWebhookTLSSecretClientGo() (caCertPEM, caKeyPEM, certPEM, keyPEM []byte) {
 	clients, err := platformKubernetesClients()
 	if err != nil {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 	secret, err := clients.Clientset.CoreV1().Secrets(core.NamespaceMCPRuntime).Get(context.Background(), operatorWebhookSecretName, metav1.GetOptions{})
 	if err != nil {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
-	return secret.Data["ca.crt"], secret.Data["tls.crt"], secret.Data["tls.key"]
+	return secret.Data["ca.crt"], secret.Data["ca.key"], secret.Data["tls.crt"], secret.Data["tls.key"]
 }
 
-func readOperatorWebhookTLSSecret(kubectl core.KubectlRunner) (caCertPEM, certPEM, keyPEM []byte) {
+func readOperatorWebhookTLSSecret(kubectl core.KubectlRunner) (caCertPEM, caKeyPEM, certPEM, keyPEM []byte) {
 	cmd, err := kubectl.CommandArgs([]string{
 		"get", "secret", operatorWebhookSecretName,
 		"-n", core.NamespaceMCPRuntime,
 		"--ignore-not-found", "-o", "json",
 	})
 	if err != nil {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 	out, err := cmd.Output()
 	if err != nil || len(bytes.TrimSpace(out)) == 0 {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 	var secret struct {
 		Data map[string]string `json:"data"`
 	}
 	if err := json.Unmarshal(out, &secret); err != nil {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 	decode := func(key string) []byte {
 		raw, err := base64.StdEncoding.DecodeString(secret.Data[key])
@@ -194,15 +282,33 @@ func readOperatorWebhookTLSSecret(kubectl core.KubectlRunner) (caCertPEM, certPE
 		}
 		return raw
 	}
-	return decode("ca.crt"), decode("tls.crt"), decode("tls.key")
+	return decode("ca.crt"), decode("ca.key"), decode("tls.crt"), decode("tls.key")
 }
 
-// reusableOperatorWebhookServingCert reports whether an existing webhook
-// Secret can be kept as-is: the serving certificate must match the stored
-// private key, chain to the stored CA for the webhook service DNS name, and
-// both certificates must stay valid beyond the renewal window. Secrets
-// written before ca.crt was stored fail the check and are regenerated.
-func reusableOperatorWebhookServingCert(caCertPEM, certPEM, keyPEM []byte, now time.Time) bool {
+func operatorWebhookServingCertRenewalNeeded(certPEM []byte, now time.Time) bool {
+	cert, err := parsePEMCertificate(certPEM)
+	if err != nil {
+		return true
+	}
+	return now.Add(operatorWebhookCertRenewalWindow).After(cert.NotAfter)
+}
+
+func reusableOperatorWebhookCA(caCertPEM, caKeyPEM []byte, now time.Time) bool {
+	if len(caCertPEM) == 0 || len(caKeyPEM) == 0 {
+		return false
+	}
+	caCert, err := parsePEMCertificate(caCertPEM)
+	if err != nil {
+		return false
+	}
+	if now.Add(operatorWebhookCertRenewalWindow).After(caCert.NotAfter) {
+		return false
+	}
+	_, _, err = parseOperatorWebhookCA(caCertPEM, caKeyPEM)
+	return err == nil
+}
+
+func reusableOperatorWebhookServingCertChain(caCertPEM, certPEM, keyPEM []byte, now time.Time) bool {
 	caCert, err := parsePEMCertificate(caCertPEM)
 	if err != nil {
 		return false
@@ -223,10 +329,6 @@ func reusableOperatorWebhookServingCert(caCertPEM, certPEM, keyPEM []byte, now t
 	if !ok || !key.PublicKey.Equal(certKey) {
 		return false
 	}
-	deadline := now.Add(operatorWebhookCertRenewalWindow)
-	if deadline.After(cert.NotAfter) || deadline.After(caCert.NotAfter) {
-		return false
-	}
 	roots := x509.NewCertPool()
 	roots.AddCert(caCert)
 	_, err = cert.Verify(x509.VerifyOptions{
@@ -235,6 +337,21 @@ func reusableOperatorWebhookServingCert(caCertPEM, certPEM, keyPEM []byte, now t
 		CurrentTime: now,
 	})
 	return err == nil
+}
+
+// reusableOperatorWebhookServingCert reports whether an existing webhook
+// Secret can be kept as-is: the serving certificate must match the stored
+// private key, chain to the stored CA for the webhook service DNS name, and
+// stay valid beyond the renewal window. Secrets written before ca.crt or
+// ca.key was stored fail the check and are regenerated.
+func reusableOperatorWebhookServingCert(caCertPEM, certPEM, keyPEM []byte, now time.Time) bool {
+	if len(caCertPEM) == 0 {
+		return false
+	}
+	if operatorWebhookServingCertRenewalNeeded(certPEM, now) {
+		return false
+	}
+	return reusableOperatorWebhookServingCertChain(caCertPEM, certPEM, keyPEM, now)
 }
 
 func parsePEMCertificate(pemBytes []byte) (*x509.Certificate, error) {
@@ -275,7 +392,21 @@ func configureOperatorWebhookDeployment(mutator *manifest.Mutator, caBundlePEM [
 	return nil
 }
 
+func waitForOperatorWebhookRolloutClientGo() error {
+	core.Info("Waiting for operator webhook rollout")
+	return waitForRolloutStatusWithClientGo("deployment", core.OperatorDeploymentName, core.NamespaceMCPRuntime, analyticsRolloutTimeoutDuration())
+}
+
+func waitForOperatorWebhookRollout(kubectl core.KubectlRunner) error {
+	core.Info("Waiting for operator webhook rollout")
+	return waitForRolloutStatusWithKubectl(kubectl, "deployment", core.OperatorDeploymentName, core.NamespaceMCPRuntime, analyticsRolloutTimeoutString())
+}
+
 func applyOperatorWebhookManifestsClientGo(caBundlePEM []byte) error {
+	if err := waitForOperatorWebhookRolloutClientGo(); err != nil {
+		return fmt.Errorf("operator deployment not ready before webhook registration: %w", err)
+	}
+
 	servicePath, err := assetpath.ResolveRepoAssetPath("config/webhook/service.yaml")
 	if err != nil {
 		return err
@@ -296,6 +427,10 @@ func applyOperatorWebhookManifestsClientGo(caBundlePEM []byte) error {
 }
 
 func applyOperatorWebhookManifests(kubectl core.KubectlRunner, caBundlePEM []byte) error {
+	if err := waitForOperatorWebhookRollout(kubectl); err != nil {
+		return fmt.Errorf("operator deployment not ready before webhook registration: %w", err)
+	}
+
 	serviceYAML, err := readRepoAsset("config/webhook/service.yaml")
 	if err != nil {
 		return fmt.Errorf("read operator webhook service manifest: %w", err)

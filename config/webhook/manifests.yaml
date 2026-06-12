@@ -12,7 +12,7 @@ webhooks:
       namespace: mcp-runtime
       path: /mutate-mcpruntime-org-v1alpha1-mcpserver
       port: 443
-  failurePolicy: Fail
+  failurePolicy: Ignore
   name: mmcpserver.kb.io
   rules:
   - apiGroups:
