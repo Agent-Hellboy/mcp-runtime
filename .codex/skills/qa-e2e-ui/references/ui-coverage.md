@@ -42,6 +42,7 @@ Admin (`admin@mcpruntime.org` / `admin@123`):
 - Hidden tab fallback works after logout.
 - Auto-refresh starts only for admin dashboard and stops on logout.
 - Grafana and Prometheus header links appear only for admin in dev path mode.
+- Normal tenant users never see the raw header Grafana/Prometheus links.
 
 API-key login:
 
@@ -114,13 +115,28 @@ Tenant user only:
 
 - Metrics: My Servers, Ready, Requests, Denied, Deny Rate.
 - Deployed Servers table: identity, namespace, status, inventory, endpoint,
-  Analytics action, Copy URL, tenant Retire.
+  Analytics action, Prometheus action, Grafana action, Copy URL, tenant Retire.
 - Usage controls: All servers, per-server selector, 24h/7d/30d/90d, Refresh.
 - Usage tables: per-server usage, top tools, recent activity.
 - Empty state: no personal servers.
 - Shared catalog servers are excluded from personal count.
 - Analytics empty response and API error render clear states.
 - If a selected server disappears, selector and tables recover cleanly.
+- Scoped observability: clicking Prometheus for a temporary tenant server opens
+  an allowlisted `/api/runtime/observability/prometheus/query` URL with
+  `namespace` and `server` filters for that exact server.
+- Scoped observability links: `/api/runtime/observability/links` returns only
+  queries for the authorized tenant server and does not expose arbitrary PromQL.
+- Grafana tenant action: clicking Grafana opens the default scoped platform
+  Grafana dashboard endpoint for that namespace/server. It must not open the raw
+  cluster-wide `/grafana` UI for tenant users.
+- Tenant negative checks: the same user receives an intentional 403/404 when
+  requesting observability links or Prometheus queries for a shared or foreign
+  namespace/server.
+- Backend metrics regressions: when the diff touches gateway metrics,
+  Prometheus scrape config, or runtime observability APIs, the browser matrix
+  must include the Metrics button plus network evidence from the scoped
+  Prometheus query endpoint, even when no UI file changed.
 
 ## API Keys
 

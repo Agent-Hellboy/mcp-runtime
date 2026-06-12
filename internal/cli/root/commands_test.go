@@ -14,6 +14,7 @@ func TestAddCommandsRegistersTopLevelCommands(t *testing.T) {
 
 	want := []string{
 		"admin",
+		"catalog",
 		"cluster",
 		"registry",
 		"server",

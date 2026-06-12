@@ -62,9 +62,7 @@ func (m *Mutator) FindDeployment(name, namespace string) map[string]any {
 	return nil
 }
 
-// withContainer is a helper that finds a deployment and container, then invokes a callback
-// to mutate the container. This eliminates duplicated scaffolding across SetDeployment* methods.
-func (m *Mutator) withContainer(deploymentName, containerName string, fn func(map[string]any) error) error {
+func (m *Mutator) withPodSpec(deploymentName string, fn func(map[string]any) error) error {
 	deployment := m.FindDeployment(deploymentName, "")
 	if deployment == nil {
 		return fmt.Errorf("deployment %s not found", deploymentName)
@@ -74,27 +72,110 @@ func (m *Mutator) withContainer(deploymentName, containerName string, fn func(ma
 	if spec == nil {
 		return fmt.Errorf("deployment %s has no pod spec", deploymentName)
 	}
+	return fn(spec)
+}
 
-	containers, ok := spec["containers"].([]any)
-	if !ok || len(containers) == 0 {
-		return fmt.Errorf("deployment %s has no containers", deploymentName)
-	}
-
-	for _, c := range containers {
-		container, ok := c.(map[string]any)
-		if !ok {
-			continue
+// withContainer is a helper that finds a deployment and container, then invokes a callback
+// to mutate the container. This eliminates duplicated scaffolding across SetDeployment* methods.
+func (m *Mutator) withContainer(deploymentName, containerName string, fn func(map[string]any) error) error {
+	return m.withPodSpec(deploymentName, func(spec map[string]any) error {
+		containers, ok := spec["containers"].([]any)
+		if !ok || len(containers) == 0 {
+			return fmt.Errorf("deployment %s has no containers", deploymentName)
 		}
-		if containerName == "" || getString(container, "name") == containerName {
-			return fn(container)
+
+		for _, c := range containers {
+			container, ok := c.(map[string]any)
+			if !ok {
+				continue
+			}
+			if containerName == "" || getString(container, "name") == containerName {
+				return fn(container)
+			}
 		}
+
+		if containerName != "" {
+			return fmt.Errorf("container %s not found in deployment %s", containerName, deploymentName)
+		}
+
+		return fmt.Errorf("no containers found in deployment %s", deploymentName)
+	})
+}
+
+// MergeDeploymentVolumes merges volumes by name into a deployment pod spec.
+func (m *Mutator) MergeDeploymentVolumes(deploymentName string, volumes []map[string]any) error {
+	return m.withPodSpec(deploymentName, func(spec map[string]any) error {
+		orderedVolumes := make([]any, 0)
+		nameToIndex := make(map[string]int)
+
+		if existing, ok := spec["volumes"].([]any); ok {
+			for _, volume := range existing {
+				volumeEntry, ok := volume.(map[string]any)
+				if !ok {
+					continue
+				}
+				name := getString(volumeEntry, "name")
+				if name == "" {
+					continue
+				}
+				nameToIndex[name] = len(orderedVolumes)
+				orderedVolumes = append(orderedVolumes, volumeEntry)
+			}
+		}
+
+		for _, volume := range volumes {
+			name := getString(volume, "name")
+			if name == "" {
+				return fmt.Errorf("volume name is required")
+			}
+			if idx, exists := nameToIndex[name]; exists {
+				orderedVolumes[idx] = volume
+				continue
+			}
+			nameToIndex[name] = len(orderedVolumes)
+			orderedVolumes = append(orderedVolumes, volume)
+		}
+
+		spec["volumes"] = orderedVolumes
+		return nil
+	})
+}
+
+// MergeDeploymentTemplateAnnotations merges annotations into a deployment pod template.
+func (m *Mutator) MergeDeploymentTemplateAnnotations(deploymentName string, annotations map[string]string) error {
+	deployment := m.FindDeployment(deploymentName, "")
+	if deployment == nil {
+		return fmt.Errorf("deployment %s not found", deploymentName)
 	}
 
-	if containerName != "" {
-		return fmt.Errorf("container %s not found in deployment %s", containerName, deploymentName)
+	spec, ok := deployment["spec"].(map[string]any)
+	if !ok {
+		return fmt.Errorf("deployment %s has no spec", deploymentName)
+	}
+	template, ok := spec["template"].(map[string]any)
+	if !ok {
+		return fmt.Errorf("deployment %s has no pod template", deploymentName)
+	}
+	metadata, ok := template["metadata"].(map[string]any)
+	if !ok {
+		metadata = map[string]any{}
+		template["metadata"] = metadata
+	}
+	existing, ok := metadata["annotations"].(map[string]any)
+	if !ok {
+		existing = map[string]any{}
+		metadata["annotations"] = existing
 	}
 
-	return fmt.Errorf("no containers found in deployment %s", deploymentName)
+	names := make([]string, 0, len(annotations))
+	for name := range annotations {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		existing[name] = annotations[name]
+	}
+	return nil
 }
 
 // SetDeploymentImage sets the container image for a specific container in a deployment.
@@ -276,6 +357,45 @@ func (m *Mutator) MergeDeploymentEnv(deploymentName, containerName string, envVa
 		}
 
 		container["env"] = orderedEnv
+		return nil
+	})
+}
+
+// MergeDeploymentVolumeMounts merges volume mounts by name into a deployment container.
+func (m *Mutator) MergeDeploymentVolumeMounts(deploymentName, containerName string, volumeMounts []map[string]any) error {
+	return m.withContainer(deploymentName, containerName, func(container map[string]any) error {
+		orderedMounts := make([]any, 0)
+		nameToIndex := make(map[string]int)
+
+		if existing, ok := container["volumeMounts"].([]any); ok {
+			for _, mount := range existing {
+				mountEntry, ok := mount.(map[string]any)
+				if !ok {
+					continue
+				}
+				name := getString(mountEntry, "name")
+				if name == "" {
+					continue
+				}
+				nameToIndex[name] = len(orderedMounts)
+				orderedMounts = append(orderedMounts, mountEntry)
+			}
+		}
+
+		for _, mount := range volumeMounts {
+			name := getString(mount, "name")
+			if name == "" {
+				return fmt.Errorf("volume mount name is required")
+			}
+			if idx, exists := nameToIndex[name]; exists {
+				orderedMounts[idx] = mount
+				continue
+			}
+			nameToIndex[name] = len(orderedMounts)
+			orderedMounts = append(orderedMounts, mount)
+		}
+
+		container["volumeMounts"] = orderedMounts
 		return nil
 	})
 }

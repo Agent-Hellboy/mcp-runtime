@@ -507,7 +507,8 @@ func waitForDeploymentDeletionClientGo(clients *k8sclient.Clients, namespace, na
 			return nil
 		}
 		if err != nil {
-			return err
+			time.Sleep(2 * time.Second)
+			continue
 		}
 		time.Sleep(2 * time.Second)
 	}

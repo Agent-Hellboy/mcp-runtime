@@ -16,6 +16,7 @@ import (
 
 	"mcp-runtime/internal/cli/core"
 	"mcp-runtime/pkg/metadata"
+	"mcp-runtime/pkg/policy"
 )
 
 type validateIssue struct {
@@ -162,6 +163,35 @@ func validateServer(srv metadata.ServerMetadata) []validateIssue {
 				message: fmt.Sprintf("server %q tool %q: invalid requiredTrust %q", srv.Name, name, tool.RequiredTrust),
 				hint:    "Valid values: low, medium, high",
 			})
+		}
+
+		switch tool.RiskLevel {
+		case metadata.ToolRiskLevelLow, metadata.ToolRiskLevelMedium, metadata.ToolRiskLevelHigh, "":
+		default:
+			issues = append(issues, validateIssue{
+				fatal:   true,
+				message: fmt.Sprintf("server %q tool %q: invalid riskLevel %q", srv.Name, name, tool.RiskLevel),
+				hint:    "Valid values: low, medium, high",
+			})
+		}
+
+		if tool.RiskLevel != "" {
+			trust := string(tool.RequiredTrust)
+			if trust == "" {
+				trust = string(metadata.TrustLevelLow)
+			}
+			computed := policy.NormalizeRiskLevel("", trust, string(tool.SideEffect))
+			declared := strings.ToLower(string(tool.RiskLevel))
+			if computed != "" && riskRank(declared) < riskRank(computed) {
+				issues = append(issues, validateIssue{
+					fatal: false,
+					message: fmt.Sprintf(
+						"server %q tool %q: declared riskLevel %q is lower than computed risk %q from requiredTrust and sideEffect",
+						srv.Name, name, declared, computed,
+					),
+					hint: fmt.Sprintf("Raise riskLevel to at least %q or adjust requiredTrust/sideEffect.", computed),
+				})
+			}
 		}
 	}
 
@@ -514,6 +544,19 @@ func loadMetadataForValidate(dir, file string) (*metadata.RegistryFile, string, 
 		return nil, "", err
 	}
 	return cfg, path, nil
+}
+
+func riskRank(level string) int {
+	switch strings.ToLower(strings.TrimSpace(level)) {
+	case "high":
+		return 3
+	case "medium":
+		return 2
+	case "low":
+		return 1
+	default:
+		return 0
+	}
 }
 
 func joinToolNames(tools []metadata.ToolConfig) string {

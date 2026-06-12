@@ -177,10 +177,12 @@ servers:
         description: List invoices for a customer account.
         requiredTrust: low
         sideEffect: read
+        riskLevel: low
       - name: refund_invoice
         description: Issue a refund for an invoice.
         requiredTrust: high
         sideEffect: destructive
+        riskLevel: high
 ```
 
 ### Metadata fields
@@ -210,7 +212,7 @@ servers:
 - `namespace`
   The target namespace.
 - `tools`
-  Tool inventory for the platform catalog and policy authoring. Include each tool's description when the MCP server SDK exposes one through `tools/list`, and set `sideEffect` to `read`, `write`, or `destructive`. Tool side effects are required when a tool is listed.
+  Tool inventory for the platform catalog and policy authoring. Include each tool's description when the MCP server SDK exposes one through `tools/list`, and set `sideEffect` to `read`, `write`, or `destructive`. Tool side effects are required when a tool is listed. Optional `riskLevel` (`low`, `medium`, `high`) is informational for catalog and audit views; it does not change gateway authorization.
 - `auth`, `policy`, `session`, and `gateway`
   Governed request-path settings. `server init` writes `gateway.enabled: true`, allow-list/deny policy, and `session.required: true` so public tool calls go through the adapter/session path by default. Use `--policy-mode`, `--default-decision`, or `--session-required=false` to change those scaffolded values. Init omits platform-managed gateway wiring and auth/session header details unless you override them intentionally.
 
