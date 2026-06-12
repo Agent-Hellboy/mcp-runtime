@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -430,17 +431,29 @@ func BuildConnectConfig(server platformapi.ServerListItem, clientName string) (m
 	}
 	url := strings.TrimSpace(server.Endpoint)
 	if access := server.AccessJSON; len(access) > 0 {
-		if servers, ok := access["mcpServers"].(map[string]any); ok {
-			for key, raw := range servers {
+		if servers, ok := access["mcpServers"].(map[string]any); ok && len(servers) > 0 {
+			keys := make([]string, 0, len(servers))
+			for key := range servers {
+				keys = append(keys, key)
+			}
+			sort.Strings(keys)
+			for _, key := range keys {
 				serverName = key
-				if entry, ok := raw.(map[string]any); ok {
-					if value, ok := entry["url"].(string); ok && strings.TrimSpace(value) != "" {
-						url = strings.TrimSpace(value)
-					}
+				entry, ok := servers[key].(map[string]any)
+				if !ok {
+					continue
 				}
+				value, ok := entry["url"].(string)
+				if !ok || strings.TrimSpace(value) == "" {
+					continue
+				}
+				url = strings.TrimSpace(value)
 				break
 			}
 		}
+	}
+	if url == "" {
+		return nil, core.NewWithSentinel(nil, fmt.Sprintf("server %q has no connect URL", serverName))
 	}
 	switch clientName {
 	case "claude", "cursor", "json", "raw":

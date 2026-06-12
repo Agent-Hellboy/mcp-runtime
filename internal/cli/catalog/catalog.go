@@ -41,7 +41,6 @@ func New(_ *core.Runtime) *cobra.Command {
 		Short: "Show one tool from the catalog",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			detailFilters.Query = args[0]
 			return mgr.GetTool(args[0], detailFilters)
 		},
 	}
@@ -88,9 +87,11 @@ func (m *Manager) ListTools(filters catalogFilters) error {
 }
 
 func (m *Manager) GetTool(name string, filters catalogFilters) error {
-	filters.Query = ""
+	name = strings.TrimSpace(name)
 	filtersMap := filters.queryMap()
-	filtersMap["query"] = strings.TrimSpace(name)
+	if strings.TrimSpace(filters.Query) == "" {
+		filtersMap["query"] = name
+	}
 	client, err := platformapi.NewPlatformClient()
 	if err != nil {
 		return err
