@@ -34,17 +34,8 @@ import (
 
 const (
 	kafkaStatefulSetName = "kafka"
-	kafkaPodName         = "kafka-0"
-	kafkaPodContainer    = "kafka"
-	kafkaPVCName         = "kafka-data-kafka-0"
+	kafkaTopicInitJob    = "kafka-topic-init"
 )
-
-func zookeeperRolloutKind(storageMode string) string {
-	if storageMode == setupplan.StorageModeHostpath {
-		return "statefulset"
-	}
-	return "deployment"
-}
 
 func deployAnalyticsManifests(logger *zap.Logger, images AnalyticsImageSet, storageMode, platformMode string) error {
 	return deployAnalyticsManifestsClientGo(logger, images, storageMode, platformMode)
@@ -119,12 +110,11 @@ func deployAnalyticsManifestsClientGo(logger *zap.Logger, images AnalyticsImageS
 	if err := waitForRolloutStatusWithClientGo("statefulset", "clickhouse", core.DefaultAnalyticsNamespace, rolloutTimeoutDuration); err != nil {
 		return mcpSentinelDependencyRolloutFailed(core.DefaultKubectlClient(), err, "statefulset", "clickhouse", core.DefaultAnalyticsNamespace, "storage (clickhouse)")
 	}
-	zookeeperKind := zookeeperRolloutKind(storageMode)
-	if err := waitForRolloutStatusWithClientGo(zookeeperKind, "zookeeper", core.DefaultAnalyticsNamespace, rolloutTimeoutDuration); err != nil {
-		return mcpSentinelDependencyRolloutFailed(core.DefaultKubectlClient(), err, zookeeperKind, "zookeeper", core.DefaultAnalyticsNamespace, "messaging (zookeeper)")
-	}
-	if err := waitForKafkaRolloutClientGo(logger, rolloutTimeoutDuration, storageMode); err != nil {
+	if err := waitForRolloutStatusWithClientGo("statefulset", kafkaStatefulSetName, core.DefaultAnalyticsNamespace, rolloutTimeoutDuration); err != nil {
 		return mcpSentinelDependencyRolloutFailed(core.DefaultKubectlClient(), err, "statefulset", "kafka", core.DefaultAnalyticsNamespace, "messaging (kafka)")
+	}
+	if err := initializeKafkaTopicsClientGo(images, imagePullSecretName, platformMode, rolloutTimeoutDuration); err != nil {
+		return err
 	}
 
 	core.Info("Initializing ClickHouse schema")
@@ -194,16 +184,6 @@ func deployAnalyticsManifestsClientGo(logger *zap.Logger, images AnalyticsImageS
 		core.Success("mcp-sentinel manifests deployed successfully")
 		return nil
 	}
-	if recovered, recoverErr := recoverKafkaClusterIDMismatchClientGo(logger, storageMode); recoverErr != nil {
-		return recoverErr
-	} else if recovered {
-		rolloutFailures, failedForDebug = waitForAnalyticsTargetsClientGo(targets, rolloutTimeoutDuration)
-		if len(rolloutFailures) == 0 {
-			core.Success("mcp-sentinel manifests deployed successfully")
-			return nil
-		}
-	}
-
 	printAnalyticsRolloutDiagnostics(core.DefaultKubectlClient())
 	summary := strings.Join(rolloutFailures, "; ")
 	cause := core.NewWithSentinel(core.ErrSetupAnalyticsRolloutFailed, summary)
@@ -277,12 +257,11 @@ func deployAnalyticsManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap
 	if err := waitForRolloutStatusWithKubectl(kubectl, "statefulset", "clickhouse", core.DefaultAnalyticsNamespace, rolloutTimeout); err != nil {
 		return mcpSentinelDependencyRolloutFailed(kubectl, err, "statefulset", "clickhouse", core.DefaultAnalyticsNamespace, "storage (clickhouse)")
 	}
-	zookeeperKind := zookeeperRolloutKind(storageMode)
-	if err := waitForRolloutStatusWithKubectl(kubectl, zookeeperKind, "zookeeper", core.DefaultAnalyticsNamespace, rolloutTimeout); err != nil {
-		return mcpSentinelDependencyRolloutFailed(kubectl, err, zookeeperKind, "zookeeper", core.DefaultAnalyticsNamespace, "messaging (zookeeper)")
-	}
-	if err := waitForKafkaRolloutWithKubectl(kubectl, rolloutTimeout, storageMode); err != nil {
+	if err := waitForRolloutStatusWithKubectl(kubectl, "statefulset", kafkaStatefulSetName, core.DefaultAnalyticsNamespace, rolloutTimeout); err != nil {
 		return mcpSentinelDependencyRolloutFailed(kubectl, err, "statefulset", "kafka", core.DefaultAnalyticsNamespace, "messaging (kafka)")
+	}
+	if err := initializeKafkaTopicsWithKubectl(kubectl, images, imagePullSecretName, platformMode, rolloutTimeout); err != nil {
+		return err
 	}
 
 	core.Info("Initializing ClickHouse schema")
@@ -345,16 +324,6 @@ func deployAnalyticsManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap
 		core.Success("mcp-sentinel manifests deployed successfully")
 		return nil
 	}
-	if recovered, recoverErr := recoverKafkaClusterIDMismatchWithKubectl(kubectl, storageMode); recoverErr != nil {
-		return recoverErr
-	} else if recovered {
-		rolloutFailures, failedForDebug = waitForAnalyticsTargetsWithKubectl(kubectl, targets, rolloutTimeout)
-		if len(rolloutFailures) == 0 {
-			core.Success("mcp-sentinel manifests deployed successfully")
-			return nil
-		}
-	}
-
 	printAnalyticsRolloutDiagnostics(kubectl)
 	summary := strings.Join(rolloutFailures, "; ")
 	cause := core.NewWithSentinel(core.ErrSetupAnalyticsRolloutFailed, summary)
@@ -398,164 +367,30 @@ func waitForAnalyticsTargetsWithKubectl(kubectl core.KubectlRunner, targets []st
 	return rolloutFailures, failedForDebug
 }
 
-func waitForKafkaRolloutClientGo(logger *zap.Logger, rolloutTimeout time.Duration, storageMode string) error {
-	if err := waitForRolloutStatusWithClientGo("statefulset", kafkaStatefulSetName, core.DefaultAnalyticsNamespace, rolloutTimeout); err == nil {
-		return nil
-	} else {
-		recovered, recoverErr := recoverKafkaClusterIDMismatchClientGo(logger, storageMode)
-		if recoverErr != nil {
-			return recoverErr
-		}
-		if recovered {
-			return waitForRolloutStatusWithClientGo("statefulset", kafkaStatefulSetName, core.DefaultAnalyticsNamespace, rolloutTimeout)
-		}
+func initializeKafkaTopicsClientGo(images AnalyticsImageSet, imagePullSecretName, platformMode string, timeout time.Duration) error {
+	if err := deleteJobIfExistsClientGo(kafkaTopicInitJob, core.DefaultAnalyticsNamespace); err != nil {
 		return err
 	}
-}
-
-func waitForKafkaRolloutWithKubectl(kubectl core.KubectlRunner, rolloutTimeout, storageMode string) error {
-	if err := waitForRolloutStatusWithKubectl(kubectl, "statefulset", kafkaStatefulSetName, core.DefaultAnalyticsNamespace, rolloutTimeout); err == nil {
-		return nil
-	} else {
-		recovered, recoverErr := recoverKafkaClusterIDMismatchWithKubectl(kubectl, storageMode)
-		if recoverErr != nil {
-			return recoverErr
-		}
-		if recovered {
-			return waitForRolloutStatusWithKubectl(kubectl, "statefulset", kafkaStatefulSetName, core.DefaultAnalyticsNamespace, rolloutTimeout)
-		}
+	if err := applyRenderedManifestClientGo("k8s/05-kafka-topic-init.yaml", images, imagePullSecretName, platformMode); err != nil {
 		return err
 	}
+	if err := waitForJobCompletionClientGo(kafkaTopicInitJob, core.DefaultAnalyticsNamespace, timeout); err != nil {
+		return mcpSentinelDependencyJobFailed(core.DefaultKubectlClient(), err, kafkaTopicInitJob, core.DefaultAnalyticsNamespace, "Kafka topic initialization")
+	}
+	return nil
 }
 
-func recoverKafkaClusterIDMismatchClientGo(logger *zap.Logger, storageMode string) (bool, error) {
-	if strings.EqualFold(strings.TrimSpace(storageMode), setupplan.StorageModeHostpath) {
-		return false, nil
-	}
-	clients, err := platformKubernetesClients()
-	if err != nil {
-		return false, err
-	}
-	logs, err := kafkaLogsClientGo(clients)
-	if err != nil || !isKafkaClusterIDMismatchLog(logs) {
-		return false, nil
-	}
-	if logger != nil {
-		logger.Warn("Kafka cluster ID mismatch detected; resetting bundled Kafka PVC")
-	}
-	core.Warn("Kafka data volume has stale cluster metadata; resetting bundled Kafka state")
-	if err := scaleKafkaStatefulSetClientGo(clients, 0); err != nil {
-		return false, err
-	}
-	if err := waitForKafkaPodDeletionClientGo(clients, 2*time.Minute); err != nil {
-		return false, err
-	}
-	if err := clients.Clientset.CoreV1().PersistentVolumeClaims(core.DefaultAnalyticsNamespace).Delete(context.Background(), kafkaPVCName, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
-		return false, err
-	}
-	if err := scaleKafkaStatefulSetClientGo(clients, 1); err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
-func recoverKafkaClusterIDMismatchWithKubectl(kubectl core.KubectlRunner, storageMode string) (bool, error) {
-	if strings.EqualFold(strings.TrimSpace(storageMode), setupplan.StorageModeHostpath) {
-		return false, nil
-	}
-	logs, err := kafkaLogsWithKubectl(kubectl)
-	if err != nil || !isKafkaClusterIDMismatchLog(logs) {
-		return false, nil
-	}
-	core.Warn("Kafka data volume has stale cluster metadata; resetting bundled Kafka state")
-	if err := kubectl.RunWithOutput([]string{"scale", "statefulset/" + kafkaStatefulSetName, "-n", core.DefaultAnalyticsNamespace, "--replicas=0"}, os.Stdout, os.Stderr); err != nil {
-		return false, err
-	}
-	if err := waitForKafkaPodDeletionWithKubectl(kubectl, 2*time.Minute); err != nil {
-		return false, err
-	}
-	if err := kubectl.RunWithOutput([]string{"delete", "pvc/" + kafkaPVCName, "-n", core.DefaultAnalyticsNamespace, "--ignore-not-found=true", "--wait=true", "--timeout=120s"}, os.Stdout, os.Stderr); err != nil {
-		return false, err
-	}
-	if err := kubectl.RunWithOutput([]string{"scale", "statefulset/" + kafkaStatefulSetName, "-n", core.DefaultAnalyticsNamespace, "--replicas=1"}, os.Stdout, os.Stderr); err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
-func kafkaLogsClientGo(clients *k8sclient.Clients) (string, error) {
-	for _, previous := range []bool{false, true} {
-		req := clients.Clientset.CoreV1().Pods(core.DefaultAnalyticsNamespace).GetLogs(kafkaPodName, &corev1.PodLogOptions{
-			Container: kafkaPodContainer,
-			Previous:  previous,
-		})
-		stream, err := req.Stream(context.Background())
-		if err != nil {
-			continue
-		}
-		data, readErr := io.ReadAll(stream)
-		_ = stream.Close()
-		if readErr == nil && strings.TrimSpace(string(data)) != "" {
-			return string(data), nil
-		}
-	}
-	return "", fmt.Errorf("kafka logs unavailable")
-}
-
-func kafkaLogsWithKubectl(kubectl core.KubectlRunner) (string, error) {
-	for _, args := range [][]string{
-		{"logs", kafkaPodName, "-n", core.DefaultAnalyticsNamespace, "-c", kafkaPodContainer},
-		{"logs", kafkaPodName, "-n", core.DefaultAnalyticsNamespace, "-c", kafkaPodContainer, "--previous"},
-	} {
-		out, err := kubectlText(kubectl, args)
-		if err == nil && strings.TrimSpace(out) != "" {
-			return out, nil
-		}
-	}
-	return "", fmt.Errorf("kafka logs unavailable")
-}
-
-func isKafkaClusterIDMismatchLog(logs string) bool {
-	return strings.Contains(logs, "InconsistentClusterIdException") && strings.Contains(logs, "clusterId")
-}
-
-func scaleKafkaStatefulSetClientGo(clients *k8sclient.Clients, replicas int32) error {
-	stsClient := clients.Clientset.AppsV1().StatefulSets(core.DefaultAnalyticsNamespace)
-	current, err := stsClient.Get(context.Background(), kafkaStatefulSetName, metav1.GetOptions{})
-	if err != nil {
+func initializeKafkaTopicsWithKubectl(kubectl core.KubectlRunner, images AnalyticsImageSet, imagePullSecretName, platformMode, timeout string) error {
+	if err := deleteJobIfExistsWithKubectl(kubectl, kafkaTopicInitJob, core.DefaultAnalyticsNamespace); err != nil {
 		return err
 	}
-	copy := current.DeepCopy()
-	copy.Spec.Replicas = &replicas
-	_, err = stsClient.Update(context.Background(), copy, metav1.UpdateOptions{})
-	return err
-}
-
-func waitForKafkaPodDeletionClientGo(clients *k8sclient.Clients, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		_, err := clients.Clientset.CoreV1().Pods(core.DefaultAnalyticsNamespace).Get(context.Background(), kafkaPodName, metav1.GetOptions{})
-		if apierrors.IsNotFound(err) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		time.Sleep(2 * time.Second)
+	if err := applyRenderedManifest(kubectl, "k8s/05-kafka-topic-init.yaml", images, imagePullSecretName, platformMode); err != nil {
+		return err
 	}
-	return fmt.Errorf("timed out waiting for %s pod deletion", kafkaPodName)
-}
-
-func waitForKafkaPodDeletionWithKubectl(kubectl core.KubectlRunner, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		out, err := kubectlText(kubectl, []string{"get", "pod", kafkaPodName, "-n", core.DefaultAnalyticsNamespace, "-o", "name"})
-		if err != nil || strings.TrimSpace(out) == "" {
-			return nil
-		}
-		time.Sleep(2 * time.Second)
+	if err := waitForJobCompletionWithKubectl(kubectl, kafkaTopicInitJob, core.DefaultAnalyticsNamespace, timeout); err != nil {
+		return mcpSentinelDependencyJobFailed(kubectl, err, kafkaTopicInitJob, core.DefaultAnalyticsNamespace, "Kafka topic initialization")
 	}
-	return fmt.Errorf("timed out waiting for %s pod deletion", kafkaPodName)
+	return nil
 }
 
 func applyCatalogNamespaceForMode(platformMode string) error {
@@ -706,9 +541,6 @@ func renderAnalyticsManifest(content string, images AnalyticsImageSet, imagePull
 	}
 	if strings.TrimSpace(images.ClickHouse) != "" {
 		replacements["image: clickhouse/clickhouse-server:23.8"] = "image: " + images.ClickHouse
-	}
-	if strings.TrimSpace(images.Zookeeper) != "" {
-		replacements["image: confluentinc/cp-zookeeper:7.5.1"] = "image: " + images.Zookeeper
 	}
 	if strings.TrimSpace(images.Kafka) != "" {
 		replacements["image: confluentinc/cp-kafka:7.5.1"] = "image: " + images.Kafka

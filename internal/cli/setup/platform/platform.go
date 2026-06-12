@@ -84,7 +84,6 @@ type AnalyticsImageSet struct {
 	UI            string
 	Traefik       string
 	ClickHouse    string
-	Zookeeper     string
 	Kafka         string
 	Prometheus    string
 	OTelCollector string

@@ -5298,7 +5298,6 @@ _No package overview is documented._
 ```text
 var DefaultPlatformStatusWorkloads = []PlatformWorkload{
 	{Component: "ClickHouse", Namespace: core.DefaultAnalyticsNamespace, Kind: "statefulset", Name: "clickhouse"},
-	{Component: "Zookeeper", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "zookeeper"},
 	{Component: "Kafka", Namespace: core.DefaultAnalyticsNamespace, Kind: "statefulset", Name: "kafka"},
 	{Component: "Ingest", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-sentinel-ingest"},
 	{Component: "Processor", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-sentinel-processor"},
@@ -6435,7 +6434,6 @@ type AnalyticsImageSet struct {
 	UI            string
 	Traefik       string
 	ClickHouse    string
-	Zookeeper     string
 	Kafka         string
 	Prometheus    string
 	OTelCollector string
