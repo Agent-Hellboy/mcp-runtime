@@ -1,0 +1,6 @@
+# Standalone `kubectl apply -k config/webhook` does not inject clientConfig.caBundle.
+# Use `mcp-runtime setup`, which reads ca.crt from the operator webhook TLS Secret,
+# or manually patch Mutating/ValidatingWebhookConfiguration objects after apply.
+resources:
+- manifests.yaml
+- service.yaml

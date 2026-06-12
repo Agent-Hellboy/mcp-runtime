@@ -444,8 +444,19 @@ func deployOperatorManifestsWithClientGo(logger *zap.Logger, operatorImage, gate
 	}
 	core.Info("Reapplied operator ClusterRole mcp-runtime-operator-role from config/rbac/role.yaml; run `mcp-runtime cluster doctor` if MCPServer creates ever appear unreconciled")
 
+	core.Info("Preparing operator admission webhook TLS")
+	webhookCA, err := ensureOperatorWebhookTLSSecretClientGo()
+	if err != nil {
+		wrappedErr := core.WrapWithSentinel(core.ErrApplySecretManifestFailed, err, fmt.Sprintf("failed to prepare operator webhook TLS secret: %v", err))
+		core.Error("Failed to prepare operator webhook TLS")
+		if logger != nil {
+			core.LogStructuredError(logger, wrappedErr, "Failed to prepare operator webhook TLS")
+		}
+		return wrappedErr
+	}
+
 	core.Info("Applying operator deployment")
-	managerYAML, err := renderOperatorManagerManifest(operatorImage, gatewayProxyImage, operatorArgs, existingOperatorEnvValueClientGo)
+	managerYAML, err := renderOperatorManagerManifest(operatorImage, gatewayProxyImage, operatorArgs, existingOperatorEnvValueClientGo, webhookCA)
 	if err != nil {
 		if logger != nil {
 			core.LogStructuredError(logger, err, "Failed to render manager manifest")
@@ -478,11 +489,20 @@ func deployOperatorManifestsWithClientGo(logger *zap.Logger, operatorImage, gate
 		return wrappedErr
 	}
 
+	if err := applyOperatorWebhookManifestsClientGo(webhookCA); err != nil {
+		wrappedErr := core.WrapWithSentinel(core.ErrApplyManifestFailed, err, fmt.Sprintf("failed to apply operator webhook manifests: %v", err))
+		core.Error("Failed to apply operator webhook manifests")
+		if logger != nil {
+			core.LogStructuredError(logger, wrappedErr, "Failed to apply operator webhook manifests")
+		}
+		return wrappedErr
+	}
+
 	core.Success("Operator manifests deployed successfully")
 	return nil
 }
 
-func renderOperatorManagerManifest(operatorImage, gatewayProxyImage string, operatorArgs []string, existingEnvValue func(string) string) ([]byte, error) {
+func renderOperatorManagerManifest(operatorImage, gatewayProxyImage string, operatorArgs []string, existingEnvValue func(string) string, webhookCA []byte) ([]byte, error) {
 	managerYAML, err := os.ReadFile("config/manager/manager.yaml")
 	if err != nil {
 		wrappedErr := core.WrapWithSentinel(core.ErrReadManagerYAMLFailed, err, fmt.Sprintf("failed to read manager.yaml: %v", err))
@@ -534,6 +554,12 @@ func renderOperatorManagerManifest(operatorImage, gatewayProxyImage string, oper
 			core.Error("Failed to merge operator env vars")
 			return nil, wrappedErr
 		}
+	}
+
+	if err := configureOperatorWebhookDeployment(mutator, webhookCA); err != nil {
+		wrappedErr := core.WrapWithSentinel(core.ErrMutateManagerYAMLFailed, err, fmt.Sprintf("failed to configure operator webhooks: %v", err))
+		core.Error("Failed to configure operator webhooks")
+		return nil, wrappedErr
 	}
 
 	mutatedYAML, err := mutator.ToYAML()
@@ -590,6 +616,17 @@ func deployOperatorManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap.
 		return wrappedErr
 	}
 	core.Info("Reapplied operator ClusterRole mcp-runtime-operator-role from config/rbac/role.yaml; run `mcp-runtime cluster doctor` if MCPServer creates ever appear unreconciled")
+
+	core.Info("Preparing operator admission webhook TLS")
+	webhookCA, err := ensureOperatorWebhookTLSSecret(kubectl)
+	if err != nil {
+		wrappedErr := core.WrapWithSentinel(core.ErrApplySecretManifestFailed, err, fmt.Sprintf("failed to prepare operator webhook TLS secret: %v", err))
+		core.Error("Failed to prepare operator webhook TLS")
+		if logger != nil {
+			core.LogStructuredError(logger, wrappedErr, "Failed to prepare operator webhook TLS")
+		}
+		return wrappedErr
+	}
 
 	// Step 3: Apply manager deployment with structured image replacement
 	core.Info("Applying operator deployment")
@@ -668,6 +705,15 @@ func deployOperatorManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap.
 		}
 	}
 
+	if err := configureOperatorWebhookDeployment(mutator, webhookCA); err != nil {
+		wrappedErr := core.WrapWithSentinel(core.ErrMutateManagerYAMLFailed, err, fmt.Sprintf("failed to configure operator webhooks: %v", err))
+		core.Error("Failed to configure operator webhooks")
+		if logger != nil {
+			core.LogStructuredError(logger, wrappedErr, "Failed to configure operator webhooks")
+		}
+		return wrappedErr
+	}
+
 	// Render the mutated manifest
 	mutatedYAML, err := mutator.ToYAML()
 	if err != nil {
@@ -701,6 +747,15 @@ func deployOperatorManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap.
 		core.Error("Failed to apply manager deployment")
 		if logger != nil {
 			core.LogStructuredError(logger, wrappedErr, "Failed to apply manager deployment")
+		}
+		return wrappedErr
+	}
+
+	if err := applyOperatorWebhookManifests(kubectl, webhookCA); err != nil {
+		wrappedErr := core.WrapWithSentinel(core.ErrApplyManifestFailed, err, fmt.Sprintf("failed to apply operator webhook manifests: %v", err))
+		core.Error("Failed to apply operator webhook manifests")
+		if logger != nil {
+			core.LogStructuredError(logger, wrappedErr, "Failed to apply operator webhook manifests")
 		}
 		return wrappedErr
 	}
