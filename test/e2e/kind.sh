@@ -824,26 +824,32 @@ port_forward_resource_bg() {
 }
 
 recover_traefik_port_forward_if_needed() {
-  if [[ -z "${TRAEFIK_PORT_FORWARD_PID:-}" ]]; then
-    return 0
-  fi
   if port_is_listening "${TRAEFIK_PORT}"; then
     return 0
   fi
 
-  if kill -0 "${TRAEFIK_PORT_FORWARD_PID}" >/dev/null 2>&1; then
+  if [[ -n "${TRAEFIK_PORT_FORWARD_PID:-}" ]] && kill -0 "${TRAEFIK_PORT_FORWARD_PID}" >/dev/null 2>&1; then
     kill "${TRAEFIK_PORT_FORWARD_PID}" >/dev/null 2>&1 || true
     wait "${TRAEFIK_PORT_FORWARD_PID}" >/dev/null 2>&1 || true
   fi
+  TRAEFIK_PORT_FORWARD_PID=""
 
   TRAEFIK_PORT_FORWARD_RESTARTS=$((TRAEFIK_PORT_FORWARD_RESTARTS + 1))
   local log_file="${WORKDIR}/traefik-port-forward-restart-${TRAEFIK_PORT_FORWARD_RESTARTS}.log"
   echo "[port-forward] restarting Traefik port-forward on localhost:${TRAEFIK_PORT}" >&2
-  port_forward_bg traefik traefik "${TRAEFIK_PORT}" 8000 "${log_file}"
+  port_forward_bg traefik traefik "${TRAEFIK_PORT}" 8000 "${log_file}" || return 1
   TRAEFIK_PORT_FORWARD_PID="${LAST_MANAGED_PID}"
+  wait_port "${TRAEFIK_PORT}" 30
 }
 
 ensure_traefik_port_forward() {
+  if [[ -n "${TRAEFIK_PORT_FORWARD_PID:-}" ]] && ! port_is_listening "${TRAEFIK_PORT}"; then
+    if kill -0 "${TRAEFIK_PORT_FORWARD_PID}" >/dev/null 2>&1; then
+      kill "${TRAEFIK_PORT_FORWARD_PID}" >/dev/null 2>&1 || true
+      wait "${TRAEFIK_PORT_FORWARD_PID}" >/dev/null 2>&1 || true
+    fi
+    TRAEFIK_PORT_FORWARD_PID=""
+  fi
   if [[ -z "${TRAEFIK_PORT_FORWARD_PID:-}" ]]; then
     echo "[port-forward] exposing traefik on localhost:${TRAEFIK_PORT}"
     port_forward_bg traefik traefik "${TRAEFIK_PORT}" 8000 "${WORKDIR}/traefik-port-forward.log"
@@ -4026,6 +4032,7 @@ if checkpoint_enabled "oauth"; then
   REGISTRY_PUBLIC_URL="http://127.0.0.1:${TRAEFIK_PORT}/v2/_catalog"
   REGISTRY_UNAUTH_STATUS=""
   for attempt in $(seq 1 12); do
+    recover_traefik_port_forward_if_needed || true
     REGISTRY_UNAUTH_STATUS="$(curl -sS -o /dev/null -w '%{http_code}' -H "Host: registry.local" "${REGISTRY_PUBLIC_URL}" || true)"
     if [[ "${REGISTRY_UNAUTH_STATUS}" == "401" || "${REGISTRY_UNAUTH_STATUS}" == "403" ]]; then
       break
@@ -4039,6 +4046,7 @@ if checkpoint_enabled "oauth"; then
   fi
   REGISTRY_ADMIN_STATUS=""
   for attempt in $(seq 1 12); do
+    recover_traefik_port_forward_if_needed || true
     REGISTRY_ADMIN_STATUS="$(curl -sS -o /dev/null -w '%{http_code}' -H "Host: registry.local" -H "x-api-key: ${API_KEY}" "${REGISTRY_PUBLIC_URL}" || true)"
     if [[ "${REGISTRY_ADMIN_STATUS}" == "200" ]]; then
       break
