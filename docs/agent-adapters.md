@@ -359,6 +359,10 @@ For mTLS-authenticated adapters, install cert-manager and an internal
 `ClusterIssuer` backed by your company CA, Vault, ADCS, or another workload
 PKI. Do not use Let's Encrypt for client certificates.
 
+Local `setup --test-mode` installs cert-manager and provisions the bundled
+`mcp-runtime-ca` ClusterIssuer automatically so this flow can be validated on
+Kind without public DNS or a production CA.
+
 ```bash
 mcp-runtime setup \
   --with-tls \

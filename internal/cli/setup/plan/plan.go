@@ -28,6 +28,7 @@ const (
 const (
 	DefaultOrgCatalogNamespace    = "mcp-servers-org"
 	DefaultPublicCatalogNamespace = "mcp-servers-public"
+	DefaultTestMTLSClusterIssuer  = "mcp-runtime-ca"
 )
 
 // Input captures the raw CLI inputs for setup.
@@ -151,6 +152,9 @@ func Build(input Input) Plan {
 		input.PlatformMode = mode
 	} else {
 		input.PlatformMode = PlatformModeTenant
+	}
+	if input.TestMode && strings.TrimSpace(input.MTLSClusterIssuer) == "" {
+		input.MTLSClusterIssuer = DefaultTestMTLSClusterIssuer
 	}
 
 	manifestPath := input.IngressManifest

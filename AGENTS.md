@@ -91,7 +91,7 @@ MCP_SETUP_WAIT_TIMEOUT=900 ./bin/mcp-runtime setup --test-mode --ingress-manifes
 kubectl port-forward -n traefik svc/traefik 18080:8000
 ```
 
-`setup --test-mode` builds and pushes images to the bundled registry (`registry.registry.svc.cluster.local:5000` in Kind). Prefer existing `kind-mcp-runtime` when healthy. Contributor runbook: `docs/contributor/README.md`.
+`setup --test-mode` builds and pushes images to the bundled registry (`registry.registry.svc.cluster.local:5000` in Kind) and provisions the local `mcp-runtime-ca` workload issuer for mTLS/SPIFFE validation. Prefer existing `kind-mcp-runtime` when healthy. Contributor runbook: `docs/contributor/README.md`.
 
 Endpoints, API keys, test logins: **`mcp-runtime-local-dev`** skill.
 
