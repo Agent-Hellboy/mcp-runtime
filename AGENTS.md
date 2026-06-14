@@ -20,7 +20,7 @@ This file is the **onboarding index** for the MCP Runtime repo. It complements `
 | Area | Path | Notes |
 |------|------|--------|
 | User-facing CLI | `cmd/mcp-runtime/`, `internal/cli/root/`, `internal/cli/<command>/`, `internal/cli/core/` | Cobra routing; `setup`, `status`, `registry`, `server`, `access`, … |
-| Agent adapters | `internal/cli/adapter/`, `internal/agentadapter/`, `services/api/internal/runtimeapi/adapter.go` | `adapter proxy/stdio` → `POST /api/runtime/adapter/sessions`; grants enforced on platform |
+| Agent adapters | `internal/cli/adapter/`, `internal/agentadapter/`, `services/api/internal/runtimeapi/adapter*.go` | `adapter proxy/stdio` use issued sessions; `adapter enroll` submits a local-key CSR for enterprise mTLS |
 | Operator | `cmd/operator/`, `internal/operator/` | `MCPServer` reconciliation, ingress (`ingressClass` default **traefik**), gateway |
 | API & CRD types | `api/v1alpha1/`, `config/crd/bases/` | Source of truth for object shapes |
 | Access and policy | `pkg/access/`, `pkg/policy/` | Grant/session helpers; gateway policy contract |
@@ -91,7 +91,7 @@ MCP_SETUP_WAIT_TIMEOUT=900 ./bin/mcp-runtime setup --test-mode --ingress-manifes
 kubectl port-forward -n traefik svc/traefik 18080:8000
 ```
 
-`setup --test-mode` builds and pushes images to the bundled registry (`registry.registry.svc.cluster.local:5000` in Kind). Prefer existing `kind-mcp-runtime` when healthy. Contributor runbook: `docs/contributor/README.md`.
+`setup --test-mode` builds and pushes images to the bundled registry (`registry.registry.svc.cluster.local:5000` in Kind) and provisions the local `mcp-runtime-ca` workload issuer for mTLS/SPIFFE validation. Prefer existing `kind-mcp-runtime` when healthy. Contributor runbook: `docs/contributor/README.md`.
 
 Endpoints, API keys, test logins: **`mcp-runtime-local-dev`** skill.
 

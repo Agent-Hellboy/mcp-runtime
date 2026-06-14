@@ -352,3 +352,70 @@ Behaviour worth knowing:
 - Restarting the adapter against a revoked or expired session yields a
   fresh `MCPAgentSession` automatically, since the reuse predicate excludes
   revoked/near-expiry sessions.
+
+## Enterprise mTLS and SPIFFE
+
+For mTLS-authenticated adapters, install cert-manager and an internal
+`ClusterIssuer` backed by your company CA, Vault, ADCS, or another workload
+PKI. Do not use Let's Encrypt for client certificates.
+
+Local `setup --test-mode` installs cert-manager and provisions the bundled
+`mcp-runtime-ca` ClusterIssuer automatically so this flow can be validated on
+Kind without public DNS or a production CA.
+
+```bash
+mcp-runtime setup \
+  --with-tls \
+  --tls-cluster-issuer letsencrypt-prod \
+  --mtls-cluster-issuer company-workload-ca
+```
+
+`--tls-cluster-issuer` controls public ingress and registry certificates.
+`--mtls-cluster-issuer` controls gateway and adapter workload certificates.
+The environment equivalent is
+`MCP_SETUP_MTLS_CLUSTER_ISSUER=company-workload-ca`.
+
+Configure the MCPServer for host-based Traefik TLS passthrough:
+
+```yaml
+spec:
+  ingressHost: tools.example.com
+  ingressClass: traefik
+  gateway:
+    enabled: true
+  auth:
+    mode: mtls
+    trustDomain: mcpruntime.org
+```
+
+Path-based routing is not supported in this mode because terminating TLS at an
+HTTP ingress removes the client certificate before the request reaches the
+gateway.
+
+Enroll an external adapter after signing in to the platform:
+
+```bash
+mcp-runtime adapter enroll \
+  --platform-url https://platform.example.com/api \
+  --server workspace-assistant \
+  --namespace mcp-servers \
+  --agent cursor \
+  --trust-domain mcpruntime.org \
+  --output-dir ~/.config/mcp-runtime/workspace-assistant
+```
+
+The command generates `client.key` locally and submits only a CSR. The platform
+checks that the SPIFFE URI identifies a session owned by the signed-in
+principal, then returns short-lived `client.crt` and `ca.crt` files.
+
+```bash
+mcp-runtime adapter proxy \
+  --runtime-url https://tools.example.com/mcp \
+  --tls-client-cert ~/.config/mcp-runtime/workspace-assistant/client.crt \
+  --tls-client-key ~/.config/mcp-runtime/workspace-assistant/client.key \
+  --tls-ca-bundle ~/.config/mcp-runtime/workspace-assistant/ca.crt
+```
+
+The gateway ignores `X-MCP-*` identity headers in mTLS mode. It derives human,
+agent, team, and session identity from the verified SPIFFE URI and the
+operator-rendered session binding.

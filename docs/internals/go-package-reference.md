@@ -275,6 +275,9 @@ type AuthConfig struct {
 	TokenHeader     string   `json:"tokenHeader,omitempty"`
 	IssuerURL       string   `json:"issuerURL,omitempty"`
 	Audience        string   `json:"audience,omitempty"`
+	// TrustDomain is the SPIFFE trust domain accepted from verified client
+	// certificate URI SANs when mode is mtls.
+	TrustDomain string `json:"trustDomain,omitempty"`
 }
     AuthConfig configures how identities are extracted at the gateway.
     +kubebuilder:object:generate=true
@@ -300,12 +303,13 @@ func (in *AuthConfig) DeepCopyInto(out *AuthConfig)
 <a id="api-types-type-authmode-string"></a>
 ```text
 type AuthMode string
-    +kubebuilder:validation:Enum=none;header;oauth
+    +kubebuilder:validation:Enum=none;header;oauth;mtls
 
 const (
 	AuthModeNone   AuthMode = "none"
 	AuthModeHeader AuthMode = "header"
 	AuthModeOAuth  AuthMode = "oauth"
+	AuthModeMTLS   AuthMode = "mtls"
 )
 ```
 
@@ -1611,6 +1615,7 @@ type AuthConfig struct {
 	TokenHeader     string   `yaml:"tokenHeader,omitempty" json:"tokenHeader,omitempty"`
 	IssuerURL       string   `yaml:"issuerURL,omitempty" json:"issuerURL,omitempty"`
 	Audience        string   `yaml:"audience,omitempty" json:"audience,omitempty"`
+	TrustDomain     string   `yaml:"trustDomain,omitempty" json:"trustDomain,omitempty"`
 }
     AuthConfig configures how identities are extracted at the gateway.
 
@@ -1625,6 +1630,7 @@ const (
 	AuthModeNone   AuthMode = "none"
 	AuthModeHeader AuthMode = "header"
 	AuthModeOAuth  AuthMode = "oauth"
+	AuthModeMTLS   AuthMode = "mtls"
 )
 ```
 
@@ -2568,6 +2574,10 @@ type MCPServerReconciler struct {
 
 	// ClusterName is the cluster label attached to policy and audit events.
 	ClusterName string
+
+	// MTLSClusterIssuer is the pre-existing cert-manager ClusterIssuer used for
+	// gateway and adapter workload certificates.
+	MTLSClusterIssuer string
 }
     MCPServerReconciler reconciles a MCPServer object
 
@@ -4832,6 +4842,8 @@ _No package overview is documented._
 - [`func AuthRequiredError(err error) error`](#cli-platform-api-func-authrequirederror-err-error-error)
 - [`func HasPlatformClient() bool`](#cli-platform-api-func-hasplatformclient-bool)
 - [`func NormalizeBaseURL(raw string) string`](#cli-platform-api-func-normalizebaseurl-raw-string-string)
+- [`type AdapterCertificate struct`](#cli-platform-api-type-adaptercertificate-struct)
+- [`type AdapterCertificateRequest struct`](#cli-platform-api-type-adaptercertificaterequest-struct)
 - [`type AdapterSession struct`](#cli-platform-api-type-adaptersession-struct)
 - [`type AdapterSessionRequest struct`](#cli-platform-api-type-adaptersessionrequest-struct)
 - [`type ImagePublishRecord struct`](#cli-platform-api-type-imagepublishrecord-struct)
@@ -4854,6 +4866,7 @@ _No package overview is documented._
 - [`func (c *PlatformClient) GetRuntimePolicy(ctx context.Context, namespace, server string) ([]byte, error)`](#cli-platform-api-func-c-platformclient-getruntimepolicy-ctx-context-context-namespace-server-string-byte-error)
 - [`func (c *PlatformClient) GetSession(ctx context.Context, namespace, name string) (sentinelaccess.SessionSummary, error)`](#cli-platform-api-func-c-platformclient-getsession-ctx-context-context-namespace-name-string-sentinelaccess-sessionsummary-error)
 - [`func (c *PlatformClient) GetTeam(ctx context.Context, slug string) (Team, error)`](#cli-platform-api-func-c-platformclient-getteam-ctx-context-context-slug-string-team-error)
+- [`func (c *PlatformClient) IssueAdapterCertificate(ctx context.Context, req AdapterCertificateRequest) (AdapterCertificate, error)`](#cli-platform-api-func-c-platformclient-issueadaptercertificate-ctx-context-context-req-adaptercertificaterequest-adaptercertificate-error)
 - [`func (c *PlatformClient) ListGrants(ctx context.Context, namespace string) ([]sentinelaccess.GrantSummary, error)`](#cli-platform-api-func-c-platformclient-listgrants-ctx-context-context-namespace-string-sentinelaccess-grantsummary-error)
 - [`func (c *PlatformClient) ListNamespaces(ctx context.Context) ([]namespaceListItem, error)`](#cli-platform-api-func-c-platformclient-listnamespaces-ctx-context-context-namespacelistitem-error)
 - [`func (c *PlatformClient) ListRuntimeServers(ctx context.Context, namespace string) ([]ServerListItem, error)`](#cli-platform-api-func-c-platformclient-listruntimeservers-ctx-context-context-namespace-string-serverlistitem-error)
@@ -4909,6 +4922,27 @@ func NormalizeBaseURL(raw string) string
 
 <a id="cli-platform-api-types"></a>
 ### Types
+
+<a id="cli-platform-api-type-adaptercertificate-struct"></a>
+```text
+type AdapterCertificate struct {
+	Certificate string    `json:"certificate"`
+	CABundle    string    `json:"caBundle"`
+	SPIFFEID    string    `json:"spiffeID"`
+	ExpiresAt   time.Time `json:"expiresAt"`
+}
+
+```
+
+<a id="cli-platform-api-type-adaptercertificaterequest-struct"></a>
+```text
+type AdapterCertificateRequest struct {
+	Namespace string `json:"namespace"`
+	Session   string `json:"session"`
+	CSR       string `json:"csr"`
+}
+
+```
 
 <a id="cli-platform-api-type-adaptersession-struct"></a>
 ```text
@@ -5078,6 +5112,12 @@ func (c *PlatformClient) GetSession(ctx context.Context, namespace, name string)
 <a id="cli-platform-api-func-c-platformclient-getteam-ctx-context-context-slug-string-team-error"></a>
 ```text
 func (c *PlatformClient) GetTeam(ctx context.Context, slug string) (Team, error)
+
+```
+
+<a id="cli-platform-api-func-c-platformclient-issueadaptercertificate-ctx-context-context-req-adaptercertificaterequest-adaptercertificate-error"></a>
+```text
+func (c *PlatformClient) IssueAdapterCertificate(ctx context.Context, req AdapterCertificateRequest) (AdapterCertificate, error)
 
 ```
 
@@ -6221,6 +6261,7 @@ const (
 const (
 	DefaultOrgCatalogNamespace    = "mcp-servers-org"
 	DefaultPublicCatalogNamespace = "mcp-servers-public"
+	DefaultTestMTLSClusterIssuer  = "mcp-runtime-ca"
 )
 ```
 
@@ -6272,7 +6313,10 @@ type Input struct {
 	ACMEmail    string
 	ACMEStaging bool
 	// TLSClusterIssuer is a pre-existing cert-manager.io ClusterIssuer (e.g. org internal CA / Vault / ADCS). Mutually exclusive with ACMEmail.
-	TLSClusterIssuer   string
+	TLSClusterIssuer string
+	// MTLSClusterIssuer is a pre-existing enterprise workload issuer used for
+	// gateway server and adapter client certificates.
+	MTLSClusterIssuer  string
 	InstallCertManager bool
 }
     Input captures the raw CLI inputs for setup.
@@ -6303,6 +6347,7 @@ type Plan struct {
 	ACMEmail             string
 	ACMEStaging          bool
 	TLSClusterIssuer     string
+	MTLSClusterIssuer    string
 	InstallCertManager   bool
 }
     Plan captures the resolved setup decisions.

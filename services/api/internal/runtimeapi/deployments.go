@@ -997,6 +997,7 @@ func ensureTraefikDeploymentWatchesNamespace(ctx context.Context, client kuberne
 		watched = append(watched, namespace)
 		updated := deployment.DeepCopy()
 		updated.Spec.Template.Spec.Containers[containerIndex].Args[argIndex] = traefikNamespaceWatchArgPrefix + strings.Join(watched, ",")
+		appendTraefikNamespaceWatch(updated, traefikCRDNamespaceWatchArgPrefix, namespace)
 		_, err = client.AppsV1().Deployments(cfg.namespace).Update(ctx, updated, metav1.UpdateOptions{})
 		if apierrors.IsConflict(err) {
 			return err
@@ -1009,6 +1010,29 @@ func ensureTraefikDeploymentWatchesNamespace(ctx context.Context, client kuberne
 }
 
 const traefikNamespaceWatchArgPrefix = "--providers.kubernetesingress.namespaces="
+const traefikCRDNamespaceWatchArgPrefix = "--providers.kubernetescrd.namespaces="
+
+func appendTraefikNamespaceWatch(deployment *appsv1.Deployment, prefix, namespace string) {
+	if deployment == nil {
+		return
+	}
+	for ci := range deployment.Spec.Template.Spec.Containers {
+		for ai, arg := range deployment.Spec.Template.Spec.Containers[ci].Args {
+			if !strings.HasPrefix(arg, prefix) {
+				continue
+			}
+			watched := splitCSV(strings.TrimPrefix(arg, prefix))
+			for _, watchedNamespace := range watched {
+				if watchedNamespace == namespace {
+					return
+				}
+			}
+			watched = append(watched, namespace)
+			deployment.Spec.Template.Spec.Containers[ci].Args[ai] = prefix + strings.Join(watched, ",")
+			return
+		}
+	}
+}
 
 func traefikNamespaceWatchArg(deployment *appsv1.Deployment) (int, int, string, bool) {
 	if deployment == nil {

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	networkingv1 "k8s.io/api/networking/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -21,6 +22,12 @@ func (r *MCPServerReconciler) reconcileIngress(ctx context.Context, mcpServer *m
 			Name:      mcpServer.Name,
 			Namespace: mcpServer.Namespace,
 		},
+	}
+	if serverUsesMTLS(mcpServer) {
+		if err := r.Delete(ctx, ingress); err != nil && !apierrors.IsNotFound(err) {
+			return err
+		}
+		return r.reconcileMTLSIngress(ctx, mcpServer)
 	}
 
 	op, err := ctrl.CreateOrUpdate(ctx, r.Client, ingress, func() error {

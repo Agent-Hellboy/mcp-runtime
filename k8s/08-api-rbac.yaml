@@ -9,12 +9,20 @@ rules:
   - apiGroups: ["networking.k8s.io"]
     resources: ["ingresses"]
     verbs: ["get", "list", "watch"]
+  - apiGroups: ["traefik.io"]
+    resources: ["ingressroutetcps"]
+    verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: mcp-sentinel-api
 rules:
+  # Authenticated external adapters submit CSRs; the API can create and read
+  # only cert-manager CertificateRequests, never private-key Secrets.
+  - apiGroups: ["cert-manager.io"]
+    resources: ["certificaterequests"]
+    verbs: ["create", "get", "list", "watch"]
   # Read access to MCP custom resources
   - apiGroups: ["mcpruntime.org"]
     resources: ["mcpaccessgrants", "mcpagentsessions"]

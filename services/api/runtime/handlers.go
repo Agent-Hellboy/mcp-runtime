@@ -66,6 +66,11 @@ func HandleAdapterSession(server *runtimeapi.RuntimeServer, w http.ResponseWrite
 	server.HandleAdapterSession(w, r)
 }
 
+// HandleAdapterCertificate routes adapter CSR enrollment requests.
+func HandleAdapterCertificate(server *runtimeapi.RuntimeServer, w http.ResponseWriter, r *http.Request) {
+	server.HandleAdapterCertificate(w, r)
+}
+
 // HandleRuntimeRegistryPush routes registry push requests through the runtime API server.
 func HandleRuntimeRegistryPush(server *runtimeapi.RuntimeServer, w http.ResponseWriter, r *http.Request) {
 	server.HandleRuntimeRegistryPush(w, r)

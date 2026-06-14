@@ -12,6 +12,7 @@ import (
 
 	"mcp-runtime/internal/cli/certmanager"
 	"mcp-runtime/internal/cli/core"
+	setupplan "mcp-runtime/internal/cli/setup/plan"
 	"mcp-runtime/pkg/k8sclient"
 	"mcp-runtime/pkg/metadata"
 )
@@ -69,6 +70,15 @@ func (s preflightStep) Run(logger *zap.Logger, _ SetupDeps, ctx *SetupContext) e
 		issues = append(issues, checkClusterIssuerExists(bg, clients, ctx.Plan.TLSClusterIssuer)...)
 		issues = append(issues, checkFailedCertificateRequests(bg, clients)...)
 		issues = append(issues, checkConflictingSecretOwners(bg, clients)...)
+	}
+	if issuer := strings.TrimSpace(ctx.Plan.MTLSClusterIssuer); issuer != "" {
+		if !ctx.Plan.TLSEnabled {
+			issues = append(issues, checkCertManagerCRDs(bg, clients, ctx.Plan.InstallCertManager)...)
+		}
+		testModeIssuerWillBeCreated := ctx.Plan.TestMode && issuer == setupplan.DefaultTestMTLSClusterIssuer
+		if issuer != strings.TrimSpace(ctx.Plan.TLSClusterIssuer) && !testModeIssuerWillBeCreated {
+			issues = append(issues, checkClusterIssuerExists(bg, clients, issuer)...)
+		}
 	}
 
 	if ctx.Plan.DeployAnalytics {

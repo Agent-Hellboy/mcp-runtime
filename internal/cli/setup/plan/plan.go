@@ -28,6 +28,7 @@ const (
 const (
 	DefaultOrgCatalogNamespace    = "mcp-servers-org"
 	DefaultPublicCatalogNamespace = "mcp-servers-public"
+	DefaultTestMTLSClusterIssuer  = "mcp-runtime-ca"
 )
 
 // Input captures the raw CLI inputs for setup.
@@ -56,7 +57,10 @@ type Input struct {
 	ACMEmail    string
 	ACMEStaging bool
 	// TLSClusterIssuer is a pre-existing cert-manager.io ClusterIssuer (e.g. org internal CA / Vault / ADCS). Mutually exclusive with ACMEmail.
-	TLSClusterIssuer   string
+	TLSClusterIssuer string
+	// MTLSClusterIssuer is a pre-existing enterprise workload issuer used for
+	// gateway server and adapter client certificates.
+	MTLSClusterIssuer  string
 	InstallCertManager bool
 }
 
@@ -83,6 +87,7 @@ type Plan struct {
 	ACMEmail             string
 	ACMEStaging          bool
 	TLSClusterIssuer     string
+	MTLSClusterIssuer    string
 	InstallCertManager   bool
 }
 
@@ -148,6 +153,9 @@ func Build(input Input) Plan {
 	} else {
 		input.PlatformMode = PlatformModeTenant
 	}
+	if input.TestMode && strings.TrimSpace(input.MTLSClusterIssuer) == "" {
+		input.MTLSClusterIssuer = DefaultTestMTLSClusterIssuer
+	}
 
 	manifestPath := input.IngressManifest
 	if !input.IngressManifestChanged {
@@ -202,5 +210,6 @@ func Build(input Input) Plan {
 		ACMEStaging:        input.ACMEStaging,
 		InstallCertManager: input.InstallCertManager,
 		TLSClusterIssuer:   input.TLSClusterIssuer,
+		MTLSClusterIssuer:  input.MTLSClusterIssuer,
 	}
 }

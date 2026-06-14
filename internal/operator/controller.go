@@ -62,6 +62,10 @@ type MCPServerReconciler struct {
 
 	// ClusterName is the cluster label attached to policy and audit events.
 	ClusterName string
+
+	// MTLSClusterIssuer is the pre-existing cert-manager ClusterIssuer used for
+	// gateway and adapter workload certificates.
+	MTLSClusterIssuer string
 }
 
 // Use constants from constants.go
@@ -98,6 +102,8 @@ type resourceReadiness = operatorutil.ResourceReadiness
 //+kubebuilder:rbac:groups="",resources=events,verbs=create;patch;update
 //+kubebuilder:rbac:groups=mcpruntime.org,resources=mcpaccessgrants,verbs=get;list;watch
 //+kubebuilder:rbac:groups=mcpruntime.org,resources=mcpagentsessions,verbs=get;list;watch
+//+kubebuilder:rbac:groups=cert-manager.io,resources=certificates,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=traefik.io,resources=ingressroutetcps,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile is part of the main kubernetes reconciliation loop
 func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -234,6 +240,13 @@ func (r *MCPServerReconciler) reconcileResources(ctx context.Context, mcpServer 
 		wrappedErr := wrapOperatorError(err, "Failed to reconcile policy ConfigMap", contextMap)
 		logOperatorError(logger, wrappedErr, "Failed to reconcile policy ConfigMap")
 		r.updateStatus(ctx, mcpServer, "Error", fmt.Sprintf("Failed to reconcile policy ConfigMap: %v", err), resourceReadiness{})
+		return wrappedErr
+	}
+	if err := r.reconcileGatewayCertificate(ctx, mcpServer); err != nil {
+		contextMap["resource"] = "certificate"
+		wrappedErr := wrapOperatorError(err, "Failed to reconcile gateway Certificate", contextMap)
+		logOperatorError(logger, wrappedErr, "Failed to reconcile gateway Certificate")
+		r.updateStatus(ctx, mcpServer, "Error", fmt.Sprintf("Failed to reconcile gateway Certificate: %v", err), resourceReadiness{})
 		return wrappedErr
 	}
 	if err := r.reconcileDeployment(ctx, mcpServer); err != nil {

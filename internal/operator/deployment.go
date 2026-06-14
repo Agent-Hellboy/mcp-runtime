@@ -230,6 +230,16 @@ func (r *MCPServerReconciler) buildDeploymentContainers(mcpServer *mcpv1alpha1.M
 				},
 			},
 		})
+		if serverUsesMTLS(mcpServer) {
+			volumes = append(volumes, corev1.Volume{
+				Name: gatewayTLSVolumeName,
+				VolumeSource: corev1.VolumeSource{
+					Secret: &corev1.SecretVolumeSource{
+						SecretName: gatewayTLSSecretName(mcpServer),
+					},
+				},
+			})
+		}
 	}
 
 	return containers, volumes, nil
@@ -462,6 +472,13 @@ func (r *MCPServerReconciler) buildGatewayContainer(mcpServer *mcpv1alpha1.MCPSe
 			corev1.EnvVar{Name: "AUTH_MODE", Value: string(mcpServer.Spec.Auth.Mode)},
 		)
 	}
+	if serverUsesMTLS(mcpServer) {
+		envVars = append(envVars,
+			corev1.EnvVar{Name: "TLS_CERT_FILE", Value: gatewayTLSMountDir + "/tls.crt"},
+			corev1.EnvVar{Name: "TLS_KEY_FILE", Value: gatewayTLSMountDir + "/tls.key"},
+			corev1.EnvVar{Name: "TLS_CLIENT_CA_FILE", Value: gatewayTLSMountDir + "/ca.crt"},
+		)
+	}
 	if mcpServer.Spec.Gateway.StripPrefix != "" {
 		envVars = append(envVars, corev1.EnvVar{Name: "STRIP_PREFIX", Value: mcpServer.Spec.Gateway.StripPrefix})
 	}
@@ -546,6 +563,16 @@ func (r *MCPServerReconciler) buildGatewayContainer(mcpServer *mcpv1alpha1.MCPSe
 			InitialDelaySeconds: 3,
 			PeriodSeconds:       5,
 		},
+	}
+	if serverUsesMTLS(mcpServer) {
+		container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{
+			Name:      gatewayTLSVolumeName,
+			MountPath: gatewayTLSMountDir,
+			ReadOnly:  true,
+		})
+		container.ReadinessProbe.ProbeHandler = corev1.ProbeHandler{
+			TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(port)},
+		}
 	}
 	gatewayResources := mcpv1alpha1.ResourceRequirements{}
 	if mcpServer.Spec.Gateway != nil && mcpServer.Spec.Gateway.Resources != nil {

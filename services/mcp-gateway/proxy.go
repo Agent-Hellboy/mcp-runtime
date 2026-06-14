@@ -138,6 +138,11 @@ func gatewayDeniedPayload(policy *policypkg.Document, decision policypkg.Decisio
 		payload["message"] = "This MCP server uses MCP Runtime header/session governance. Direct clients must connect through the mcp-runtime adapter proxy or stdio adapter, or send an adapter-issued identity/session."
 		payload["adapter_required"] = true
 		payload["required_headers"] = governanceRequiredHeaders(policy)
+	case "missing_client_certificate", "invalid_spiffe_identity", "ambiguous_spiffe_identity", "session_not_found":
+		if policy != nil && policy.Auth != nil && strings.EqualFold(policy.Auth.Mode, "mtls") {
+			payload["message"] = "This MCP server requires a platform-issued client certificate with a valid SPIFFE session identity."
+			payload["client_certificate_required"] = true
+		}
 	}
 	return payload
 }

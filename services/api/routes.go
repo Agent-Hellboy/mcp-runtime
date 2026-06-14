@@ -130,6 +130,9 @@ func (s *apiServer) registerRuntimeRoutes(mux *http.ServeMux) {
 	mux.Handle("/api/runtime/adapter/sessions", s.auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		runtimehandlers.HandleAdapterSession(runtimeServer, w, r)
 	})))
+	mux.Handle("/api/runtime/adapter/certificates", s.auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		runtimehandlers.HandleAdapterCertificate(runtimeServer, w, r)
+	})))
 	mux.Handle("/api/runtime/registry/push", s.auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		runtimehandlers.HandleRuntimeRegistryPush(runtimeServer, w, r)
 	})))
