@@ -665,6 +665,9 @@ func renderAnalyticsManifest(content string, images AnalyticsImageSet, imagePull
 	if mode, ok := setupplan.NormalizePlatformMode(platformMode); ok && mode != "" {
 		replacements[`PLATFORM_MODE: "tenant"`] = fmt.Sprintf(`PLATFORM_MODE: "%s"`, mode)
 	}
+	if issuer := strings.TrimSpace(os.Getenv("MCP_MTLS_CLUSTER_ISSUER")); issuer != "" {
+		replacements[`MCP_MTLS_CLUSTER_ISSUER: ""`] = fmt.Sprintf(`MCP_MTLS_CLUSTER_ISSUER: %q`, issuer)
+	}
 	if strings.TrimSpace(images.Ingest) != "" {
 		replacements["image: mcp-sentinel-ingest:latest"] = "image: " + images.Ingest
 	}

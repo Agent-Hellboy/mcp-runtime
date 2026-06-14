@@ -70,6 +70,14 @@ func (s preflightStep) Run(logger *zap.Logger, _ SetupDeps, ctx *SetupContext) e
 		issues = append(issues, checkFailedCertificateRequests(bg, clients)...)
 		issues = append(issues, checkConflictingSecretOwners(bg, clients)...)
 	}
+	if issuer := strings.TrimSpace(ctx.Plan.MTLSClusterIssuer); issuer != "" {
+		if !ctx.Plan.TLSEnabled {
+			issues = append(issues, checkCertManagerCRDs(bg, clients, ctx.Plan.InstallCertManager)...)
+		}
+		if issuer != strings.TrimSpace(ctx.Plan.TLSClusterIssuer) {
+			issues = append(issues, checkClusterIssuerExists(bg, clients, issuer)...)
+		}
+	}
 
 	if ctx.Plan.DeployAnalytics {
 		issues = append(issues, checkStaleAnalyticsJob(bg, clients)...)

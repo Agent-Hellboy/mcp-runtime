@@ -56,7 +56,10 @@ type Input struct {
 	ACMEmail    string
 	ACMEStaging bool
 	// TLSClusterIssuer is a pre-existing cert-manager.io ClusterIssuer (e.g. org internal CA / Vault / ADCS). Mutually exclusive with ACMEmail.
-	TLSClusterIssuer   string
+	TLSClusterIssuer string
+	// MTLSClusterIssuer is a pre-existing enterprise workload issuer used for
+	// gateway server and adapter client certificates.
+	MTLSClusterIssuer  string
 	InstallCertManager bool
 }
 
@@ -83,6 +86,7 @@ type Plan struct {
 	ACMEmail             string
 	ACMEStaging          bool
 	TLSClusterIssuer     string
+	MTLSClusterIssuer    string
 	InstallCertManager   bool
 }
 
@@ -202,5 +206,6 @@ func Build(input Input) Plan {
 		ACMEStaging:        input.ACMEStaging,
 		InstallCertManager: input.InstallCertManager,
 		TLSClusterIssuer:   input.TLSClusterIssuer,
+		MTLSClusterIssuer:  input.MTLSClusterIssuer,
 	}
 }

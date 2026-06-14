@@ -5,6 +5,18 @@ metadata:
   name: mcp-runtime-operator-role
 rules:
 - apiGroups:
+  - cert-manager.io
+  resources:
+  - certificates
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
   - ""
   resources:
   - configmaps

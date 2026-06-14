@@ -940,6 +940,9 @@ func operatorEnvOverrides(gatewayProxyImage, existingGatewayOTLPEndpoint string)
 	if mode := strings.TrimSpace(core.DefaultCLIConfig.IngressReadinessMode); mode != "" {
 		envVars = append(envVars, operatorEnvVar{Name: "MCP_INGRESS_READINESS_MODE", Value: mode})
 	}
+	if issuer := strings.TrimSpace(os.Getenv("MCP_MTLS_CLUSTER_ISSUER")); issuer != "" {
+		envVars = append(envVars, operatorEnvVar{Name: "MCP_MTLS_CLUSTER_ISSUER", Value: issuer})
+	}
 	registryEndpoint := strings.TrimSpace(resolveInternalPlatformRegistryURLClientGo(nil))
 	if registryEndpoint != "" {
 		envVars = append(envVars, operatorEnvVar{Name: "MCP_REGISTRY_ENDPOINT", Value: registryEndpoint})
@@ -1004,6 +1007,11 @@ func existingOperatorEnvValueClientGo(name string) string {
 }
 
 func applySetupPlanToCLIConfig(plan setupplan.Plan) {
+	if issuer := strings.TrimSpace(plan.MTLSClusterIssuer); issuer != "" {
+		_ = os.Setenv("MCP_MTLS_CLUSTER_ISSUER", issuer)
+	} else {
+		_ = os.Unsetenv("MCP_MTLS_CLUSTER_ISSUER")
+	}
 	if core.DefaultCLIConfig == nil {
 		return
 	}

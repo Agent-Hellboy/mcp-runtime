@@ -18,6 +18,7 @@ Usage:
   mcp-runtime adapter [command]
 
 Available Commands:
+  enroll      Issue platform-managed mTLS files for an external adapter
   proxy       Run a local Streamable HTTP MCP proxy that forwards to the runtime
   stdio       Bridge stdio MCP traffic to the configured runtime route
 

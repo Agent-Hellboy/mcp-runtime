@@ -23,6 +23,7 @@ Flags:
       --ingress string                      Ingress controller to install automatically during setup (traefik|none) (default "traefik")
       --ingress-manifest string             Manifest to apply when installing the ingress controller (default "config/ingress/overlays/http")
       --kubeconfig string                   Path to kubeconfig file (default: ~/.kube/config)
+      --mtls-cluster-issuer string          Use an existing enterprise cert-manager ClusterIssuer for gateway and adapter client certificates. Overrides env MCP_SETUP_MTLS_CLUSTER_ISSUER
       --operator-leader-elect               Override operator leader election when set
       --operator-metrics-addr string        Operator metrics bind address (default: :8080 from manager.yaml)
       --operator-probe-addr string          Operator health probe bind address (default: :8081 from manager.yaml)

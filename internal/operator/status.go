@@ -7,6 +7,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -68,6 +69,17 @@ func (r *MCPServerReconciler) checkServiceReady(ctx context.Context, mcpServer *
 }
 
 func (r *MCPServerReconciler) checkIngressReady(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer) (bool, error) {
+	if serverUsesMTLS(mcpServer) {
+		route := &unstructured.Unstructured{}
+		route.SetGroupVersionKind(ingressRouteTCPGVK)
+		if err := r.Get(ctx, types.NamespacedName{Name: mcpServer.Name, Namespace: mcpServer.Namespace}, route); err != nil {
+			if errors.IsNotFound(err) {
+				return false, nil
+			}
+			return false, err
+		}
+		return true, nil
+	}
 	ingress := &networkingv1.Ingress{}
 	if err := r.Get(ctx, types.NamespacedName{Name: mcpServer.Name, Namespace: mcpServer.Namespace}, ingress); err != nil {
 		if errors.IsNotFound(err) {

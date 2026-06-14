@@ -72,6 +72,7 @@ func New(runtime *core.Runtime, clusterMgr setupplatform.ClusterManagerAPI) *cob
 	var acmeEmail string
 	var acmeStaging bool
 	var tlsClusterIssuer string
+	var mtlsClusterIssuer string
 	var skipCertManagerInstall bool
 	mgr := newManager(runtime, clusterMgr)
 
@@ -151,6 +152,7 @@ will use to push and pull container images.`,
 			envStr("acme-email", &acmeEmail, "MCP_ACME_EMAIL")
 			envBool("acme-staging", &acmeStaging, "MCP_ACME_STAGING")
 			envStr("tls-cluster-issuer", &tlsClusterIssuer, "MCP_SETUP_TLS_CLUSTER_ISSUER", "MCP_TLS_CLUSTER_ISSUER")
+			envStr("mtls-cluster-issuer", &mtlsClusterIssuer, "MCP_SETUP_MTLS_CLUSTER_ISSUER", "MCP_MTLS_CLUSTER_ISSUER")
 			envBool("skip-cert-manager-install", &skipCertManagerInstall, "MCP_SETUP_SKIP_CERT_MANAGER_INSTALL")
 
 			// Deployment behaviour
@@ -208,6 +210,7 @@ will use to push and pull container images.`,
 				ACMEmail:               acmeEmail,
 				ACMEStaging:            acmeStaging,
 				TLSClusterIssuer:       tlsClusterIssuer,
+				MTLSClusterIssuer:      mtlsClusterIssuer,
 				InstallCertManager:     !skipCertManagerInstall,
 			})
 
@@ -232,6 +235,7 @@ will use to push and pull container images.`,
 	cmd.Flags().BoolVar(&tlsEnabled, "with-tls", false, "Enable TLS overlays (ingress/registry). Use --acme-email for public Let's Encrypt, --tls-cluster-issuer for an org ClusterIssuer, or the bundled mcp-runtime-ca private CA (no ACME) when neither is set")
 	cmd.Flags().StringVar(&acmeEmail, "acme-email", "", "Contact email for Let's Encrypt (HTTP-01 via cert-manager). Mutually exclusive with --tls-cluster-issuer. Overrides env MCP_ACME_EMAIL")
 	cmd.Flags().StringVar(&tlsClusterIssuer, "tls-cluster-issuer", "", "Use an existing cert-manager ClusterIssuer (e.g. internal CA; setup does not create it). Mutually exclusive with --acme-email. Overrides env MCP_SETUP_TLS_CLUSTER_ISSUER")
+	cmd.Flags().StringVar(&mtlsClusterIssuer, "mtls-cluster-issuer", "", "Use an existing enterprise cert-manager ClusterIssuer for gateway and adapter client certificates. Overrides env MCP_SETUP_MTLS_CLUSTER_ISSUER")
 	cmd.Flags().BoolVar(&acmeStaging, "acme-staging", false, "Use Let's Encrypt staging CA (also set MCP_ACME_STAGING=1)")
 	cmd.Flags().BoolVar(&skipCertManagerInstall, "skip-cert-manager-install", false, "Do not install cert-manager; require CRDs to already exist")
 	cmd.Flags().BoolVar(&testMode, "test-mode", false, "Test mode for local Kind/dev installs; builds and pushes latest-tag runtime images while relaxing production guardrails")
