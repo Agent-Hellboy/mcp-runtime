@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"mcp-runtime/pkg/serviceutil"
 )
 
 // HandleRuntimeTeamItemPath routes team detail and membership operations after role checks.
@@ -21,7 +23,7 @@ func (s *RuntimeServer) HandleRuntimeTeamItemPath(w http.ResponseWriter, r *http
 		writeAPIError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/runtime/teams/"), "/")
+	path := strings.Trim(strings.TrimPrefix(serviceutil.NormalizePublicAPIPath(r.URL.Path), "/runtime/teams/"), "/")
 	parts := strings.Split(path, "/")
 	if len(parts) == 0 || strings.TrimSpace(parts[0]) == "" {
 		writeAPIError(w, http.StatusBadRequest, "invalid path")

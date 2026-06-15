@@ -28,6 +28,7 @@ import (
 	"mcp-runtime/pkg/kubeworkload"
 	"mcp-runtime/pkg/publishscope"
 	"mcp-runtime/pkg/sentinel"
+	"mcp-runtime/pkg/serviceutil"
 )
 
 const (
@@ -1400,6 +1401,8 @@ func firstNonEmpty(values ...string) string {
 }
 
 func extractNamespaceName(path, prefix string) (string, string, error) {
+	path = serviceutil.NormalizePublicAPIPath(path)
+	prefix = serviceutil.NormalizePublicAPIPath(prefix)
 	trimmed := strings.Trim(strings.TrimPrefix(path, prefix), "/")
 	parts := strings.Split(trimmed, "/")
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
