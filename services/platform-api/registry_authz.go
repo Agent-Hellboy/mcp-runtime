@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	"mcp-platform-api/internal/apiauth"
 	"mcp-platform-api/registry"
@@ -30,6 +31,9 @@ func (s *apiServer) registryAuthzDependencies() registry.Dependencies {
 
 func (s *apiServer) authenticateRegistryRequest(r *http.Request) (principal, bool, error) {
 	if p, ok, err := s.authenticateRequest(r); err != nil || ok {
+		if ok {
+			p = s.enrichRegistryPrincipal(r.Context(), p)
+		}
 		return p, ok, err
 	}
 
@@ -37,19 +41,44 @@ func (s *apiServer) authenticateRegistryRequest(r *http.Request) (principal, boo
 	if !ok {
 		return principal{}, false, nil
 	}
-	if password != "" {
+	// Registry-issued Docker credentials use the mcpr_ prefix. Route them through
+	// AuthenticateRegistryCredential so username matching and team membership are
+	// resolved from Postgres instead of the generic user API key shortcut below.
+	if password != "" && !strings.HasPrefix(password, "mcpr_") {
 		clone := r.Clone(r.Context())
 		clone.Header.Set("x-api-key", password)
 		if p, ok, err := s.authenticateRequest(clone); err == nil && ok {
 			_ = username
-			return p, ok, nil
+			return s.enrichRegistryPrincipal(r.Context(), p), true, nil
 		}
 	}
 	authn := s.registryCredentialAuthenticator()
 	if authn == nil {
 		return principal{}, false, nil
 	}
-	return authn.AuthenticateRegistryCredential(r.Context(), username, password)
+	p, ok, err := authn.AuthenticateRegistryCredential(r.Context(), username, password)
+	if !ok || err != nil {
+		return principal(p), ok, err
+	}
+	return s.enrichRegistryPrincipal(r.Context(), principal(p)), true, nil
+}
+
+func (s *apiServer) enrichRegistryPrincipal(ctx context.Context, p principal) principal {
+	if s.platform == nil || p.IsService || p.Role == roleAdmin {
+		return p
+	}
+	userID := strings.TrimSpace(p.Subject)
+	if userID == "" {
+		return p
+	}
+	enriched, err := s.platform.PrincipalForUserID(ctx, userID)
+	if err != nil {
+		return p
+	}
+	enriched.AuthType = p.AuthType
+	enriched.APIKeyID = p.APIKeyID
+	enriched.IsService = p.IsService
+	return principal(enriched)
 }
 
 func (s *apiServer) registryCredentialAuthenticator() registryCredentialAuthenticator {

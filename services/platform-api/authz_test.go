@@ -431,6 +431,39 @@ func TestRegistryAuthzRejectsNonAdminRegistryCredential(t *testing.T) {
 	testAuthenticator(srv)
 }
 
+func TestRegistryAuthzAllowsRegistryCredentialForTeamRepositoryScope(t *testing.T) {
+	authn := &fakeRegistryCredentialAuth{
+		principal: principal{
+			Role:    roleUser,
+			Subject: "user-1",
+			Teams: []principalTeam{{
+				Slug:      "acme",
+				Namespace: "mcp-team-acme",
+				Role:      teamRoleMember,
+			}},
+			AuthType: "registry_basic",
+		},
+		ok: true,
+	}
+	srv := &apiServer{
+		registryAuth: authn,
+		userKeys:     &fakeUserAPIKeyStore{ok: false},
+	}
+	testAuthenticator(srv)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/registry/authz", nil)
+	req.SetBasicAuth("user-1", "mcpr_test_credential")
+	req.Header.Set("X-Forwarded-Uri", "/v2/acme/demo/manifests/latest")
+	srv.handleRegistryAuthz(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d body = %s, want 204", rec.Code, rec.Body.String())
+	}
+	if authn.password != "mcpr_test_credential" {
+		t.Fatalf("registry authn password = %q, want mcpr_test_credential", authn.password)
+	}
+}
+
 func TestRegistryAuthzReportsAuthErrors(t *testing.T) {
 	srv := &apiServer{registryAuth: &fakeRegistryCredentialAuth{err: errors.New("store unavailable")}}
 

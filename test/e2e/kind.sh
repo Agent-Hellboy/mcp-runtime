@@ -1037,6 +1037,46 @@ prepare_ingress_mcp_path_after_trust() {
   wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 200 "pong" 20 "" "" "ingress-warmup"
 }
 
+ensure_adapter_proxy_prerequisites() {
+  if api_service_paths_selected; then
+    ensure_api_port_forward
+  fi
+  ensure_gateway_port_forward
+  ensure_traefik_port_forward
+  refresh_mcp_proxy_urls
+}
+
+start_e2e_adapter_proxy() {
+  local adapter_agent_id="$1"
+  local platform_token="$2"
+  local adapter_runtime_url
+
+  ensure_adapter_proxy_prerequisites
+  # Adapter proxy only needs the governed MCP gateway path. Route through the
+  # server Service port-forward instead of Traefik so policy-checkpoint runs do
+  # not depend on ingress sync timing (or stale Traefik namespace watches in
+  # E2E_CACHE_MODE clusters).
+  ensure_server_proxy_port_forward
+  adapter_runtime_url="http://127.0.0.1:${SERVER_PROXY_PORT}${MCP_INGRESS_PATH}"
+  stop_listener_on_port "${ADAPTER_PROXY_PORT}"
+  ADAPTER_PROXY_LOG="${WORKDIR}/adapter-proxy.log"
+  require_port_available "${ADAPTER_PROXY_PORT}" "adapter proxy"
+  MCP_PLATFORM_API_URL="http://127.0.0.1:${SENTINEL_PORT}" \
+    MCP_PLATFORM_API_TOKEN="${platform_token}" \
+    ./bin/mcp-runtime adapter proxy \
+      --listen "127.0.0.1:${ADAPTER_PROXY_PORT}" \
+      --runtime-url "${adapter_runtime_url}" \
+      --host-header "${SERVER_HOST}" \
+      --server "${SERVER_NAME}" \
+      --namespace mcp-servers \
+      --agent "${adapter_agent_id}" \
+      --request-timeout 20s \
+      --log-level info >"${ADAPTER_PROXY_LOG}" 2>&1 &
+  ADAPTER_PROXY_PID="$!"
+  PIDS+=("${ADAPTER_PROXY_PID}")
+  wait_managed_port "${ADAPTER_PROXY_PORT}" "${ADAPTER_PROXY_PID}" "${ADAPTER_PROXY_LOG}" "adapter proxy"
+}
+
 ensure_trust_session_proxy() {
   refresh_mcp_proxy_urls
   ensure_server_proxy_port_forward
@@ -2048,7 +2088,7 @@ PY
     fi
     if [[ -f "${last_result_file}" ]]; then
       last_init_status="$(mcp_result_initialize_status "${last_result_file}" 2>/dev/null || true)"
-      if [[ "${last_init_status}" == "504" || "${last_init_status}" == "502" || "${last_init_status}" == "503" ]]; then
+      if [[ "${last_init_status}" == "504" || "${last_init_status}" == "502" || "${last_init_status}" == "503" || "${last_init_status}" == "404" ]]; then
         recover_ingress_mcp_path
         sleep 2
         continue
@@ -3724,10 +3764,7 @@ EOF
     # reuse semantics (reused=true on the *second* call within this run).
     ADAPTER_AGENT_ID="e2e-adapter-agent-$(date +%s)"
 
-    if api_service_paths_selected; then
-      ensure_api_port_forward
-    fi
-    ensure_gateway_port_forward
+    ensure_adapter_proxy_prerequisites
 
     log_line policy "applying agent-scoped grant for adapter-session test"
     cat >"${WORKDIR}/adapter-session-grant.yaml" <<EOF
@@ -3816,26 +3853,7 @@ print('adapter-session reused:', resp['name'])
 
     if deep_request_flows_enabled || scenario_selected "adapter-proxy"; then
       log_line policy "running local adapter proxy with platform-issued session"
-      ADAPTER_PROXY_LOG="${WORKDIR}/adapter-proxy.log"
-      if port_is_listening "${ADAPTER_PROXY_PORT}"; then
-        echo "[proxy] reusing existing adapter proxy on localhost:${ADAPTER_PROXY_PORT}"
-      else
-        require_port_available "${ADAPTER_PROXY_PORT}" "adapter proxy"
-        MCP_PLATFORM_API_URL="http://127.0.0.1:${SENTINEL_PORT}" \
-          MCP_PLATFORM_API_TOKEN="${ADAPTER_PLATFORM_TOKEN}" \
-          ./bin/mcp-runtime adapter proxy \
-            --listen "127.0.0.1:${ADAPTER_PROXY_PORT}" \
-            --runtime-url "${MCP_DIRECT_URL}" \
-            --host-header "${SERVER_HOST}" \
-            --server "${SERVER_NAME}" \
-            --namespace mcp-servers \
-            --agent "${ADAPTER_AGENT_ID}" \
-            --request-timeout 20s \
-            --log-level info >"${ADAPTER_PROXY_LOG}" 2>&1 &
-        ADAPTER_PROXY_PID="$!"
-        PIDS+=("${ADAPTER_PROXY_PID}")
-        wait_managed_port "${ADAPTER_PROXY_PORT}" "${ADAPTER_PROXY_PID}" "${ADAPTER_PROXY_LOG}" "adapter proxy"
-      fi
+      start_e2e_adapter_proxy "${ADAPTER_AGENT_ID}" "${ADAPTER_PLATFORM_TOKEN}"
       # The adapter session is rendered through the policy ConfigMap, then the
       # gateway observes the mounted file on its next kubelet/poll interval.
       # Reuse the normal policy wait budget here; CI can take longer than a
@@ -4707,6 +4725,8 @@ if scenario_selected "governance" || scenario_selected "adapter-proxy"; then
   # reuse semantics (reused=true on the *second* call within this run).
   ADAPTER_AGENT_ID="e2e-adapter-agent-$(date +%s)"
 
+  ensure_adapter_proxy_prerequisites
+
   log_line policy "applying agent-scoped grant for adapter-session test"
   cat >"${WORKDIR}/adapter-session-grant.yaml" <<EOF
 apiVersion: mcpruntime.org/v1alpha1
@@ -4794,33 +4814,14 @@ print('adapter-session reused:', resp['name'])
 
   if deep_request_flows_enabled || scenario_selected "adapter-proxy"; then
     log_line policy "running local adapter proxy with platform-issued session"
-    ADAPTER_PROXY_LOG="${WORKDIR}/adapter-proxy.log"
-    if port_is_listening "${ADAPTER_PROXY_PORT}"; then
-      echo "[proxy] reusing existing adapter proxy on localhost:${ADAPTER_PROXY_PORT}"
-    else
-      require_port_available "${ADAPTER_PROXY_PORT}" "adapter proxy"
-      MCP_PLATFORM_API_URL="http://127.0.0.1:${SENTINEL_PORT}" \
-        MCP_PLATFORM_API_TOKEN="${ADAPTER_PLATFORM_TOKEN}" \
-        ./bin/mcp-runtime adapter proxy \
-          --listen "127.0.0.1:${ADAPTER_PROXY_PORT}" \
-          --runtime-url "${MCP_DIRECT_URL}" \
-          --host-header "${SERVER_HOST}" \
-          --server "${SERVER_NAME}" \
-          --namespace mcp-servers \
-          --agent "${ADAPTER_AGENT_ID}" \
-          --request-timeout 20s \
-          --log-level info >"${ADAPTER_PROXY_LOG}" 2>&1 &
-      ADAPTER_PROXY_PID="$!"
-      PIDS+=("${ADAPTER_PROXY_PID}")
-      wait_managed_port "${ADAPTER_PROXY_PORT}" "${ADAPTER_PROXY_PID}" "${ADAPTER_PROXY_LOG}" "adapter proxy"
-    fi
+    start_e2e_adapter_proxy "${ADAPTER_AGENT_ID}" "${ADAPTER_PLATFORM_TOKEN}"
     # The adapter session is rendered through the policy ConfigMap, then the
     # gateway observes the mounted file on its next kubelet/poll interval.
     # Reuse the normal policy wait budget here; CI can take longer than a
     # short smoke retry after the ConfigMap has already been updated.
     wait_for_mcp_tool_result "http://127.0.0.1:${ADAPTER_PROXY_PORT}/mcp" "aaa-ping" '{}' 200 "pong"
     wait_for_mcp_tool_result "http://127.0.0.1:${ADAPTER_PROXY_PORT}/mcp" "add" '{"a":1,"b":2}' 403 "tool_not_granted"
-fi
+  fi
 
 if deep_request_flows_enabled || scenario_selected "cli-platform"; then
   log_line policy "running platform CLI request-flow sweep"
