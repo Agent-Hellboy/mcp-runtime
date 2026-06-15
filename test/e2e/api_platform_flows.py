@@ -169,7 +169,7 @@ expect_status(f"{api_base}/registry/authz", 401, headers=registry_forwarded_head
 expect_status(f"{api_base}/registry/authz", 204, headers=merged_headers(admin_key_headers, registry_forwarded_headers(f"/v2/{team_slug}/demo/manifests/latest")))
 personal_scope = user_namespace or registry_username
 if personal_scope:
-    expect_status(f"{api_base}/registry/authz", 403, headers=merged_headers(user_key_headers, registry_forwarded_headers(f"/v2/{personal_scope}/demo/manifests/latest"})))
+    expect_status(f"{api_base}/registry/authz", 403, headers=merged_headers(user_key_headers, registry_forwarded_headers(f"/v2/{personal_scope}/demo/manifests/latest")))
 registry_basic_headers = basic_headers(registry_username, registry_password)
 expect_status(f"{api_base}/registry/authz", 204, headers=merged_headers(registry_basic_headers, registry_forwarded_headers(f"/v2/{team_slug}/demo/manifests/latest")))
 expect_status(f"{api_base}/registry/authz", 204, headers=merged_headers(registry_basic_headers, registry_forwarded_headers(f"/v2/{team_namespace}/demo/manifests/latest")))
