@@ -6,6 +6,13 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from _helpers_loader import load_e2e_helpers
+
+_helpers = load_e2e_helpers()
+check = _helpers.check
+ok = _helpers.ok
+fail = _helpers.fail
+
 gateway_base = os.environ["SENTINEL_GATEWAY_BASE"]
 api_base = os.environ["SENTINEL_API_BASE"]
 api_metrics_url = os.environ["SENTINEL_API_METRICS_URL"]
@@ -44,11 +51,6 @@ server_mcp_path = f"/{server_name}/mcp"
 oauth_mcp_path = f"/{oauth_server_name}/mcp"
 catalog_namespace = "mcp-servers"
 test_user_password = "test-password-123"
-
-
-import os as _os
-
-exec(open(_os.environ["E2E_HELPERS"]).read())
 
 
 def request(url, *, method="GET", headers=None, body=None):

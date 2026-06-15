@@ -6,6 +6,13 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from _helpers_loader import load_e2e_helpers
+
+_helpers = load_e2e_helpers()
+check = _helpers.check
+ok = _helpers.ok
+fail = _helpers.fail
+
 api_base = os.environ["API_BASE"]
 gateway_api_base = os.environ["GATEWAY_API_BASE"]
 api_key = os.environ["API_KEY"]
@@ -17,11 +24,6 @@ platform_admin_email = os.environ["PLATFORM_ADMIN_EMAIL"]
 platform_admin_password = os.environ["PLATFORM_ADMIN_PASSWORD"]
 grant_name = f"{server_name}-grant"
 test_user_password = "test-password-123"
-
-
-import os as _os
-
-exec(open(_os.environ["E2E_HELPERS"]).read())
 
 
 def request(url, *, method="GET", headers=None, body=None):
@@ -40,7 +42,7 @@ def request(url, *, method="GET", headers=None, body=None):
 
 def expect_status(url, status, *, method="GET", headers=None, body=None, contains=None):
     got_status, _, got_body = request(url, method=method, headers=headers, body=body)
-    check(
+    check(  
         got_status == status,
         f"{method} {url} returned {status}",
         f"{method} {url} returned {got_status}: {got_body}",
