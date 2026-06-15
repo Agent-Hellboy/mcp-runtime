@@ -1687,7 +1687,7 @@ expected = {
     "tools/call",
 }
 headers = {"x-api-key": api_key}
-url = f"{api_base}/events??{urllib.parse.urlencode({'server': server_name, 'limit': '1000'})}"
+url = f"{api_base}/events?{urllib.parse.urlencode({'server': server_name, 'limit': '1000'})}"
 last = {}
 last_error = None
 
@@ -3176,6 +3176,24 @@ platform_cache_ready() {
   kubectl rollout status statefulset/tempo -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
 }
 
+refresh_cached_platform_ingress_contract() {
+  local traefik_base_namespaces="registry,mcp-sentinel,mcp-servers,mcp-servers-org,mcp-servers-public"
+
+  echo "[cache] refreshing registry ingress and Traefik forward-auth contract"
+  kubectl apply -f "${PROJECT_ROOT}/config/registry/base/ingress.yaml"
+  kubectl apply -f "${PROJECT_ROOT}/config/ingress/overlays/http/dynamic-config.yaml"
+
+  if kubectl get deploy traefik -n traefik >/dev/null 2>&1; then
+    # Reset Traefik to the bundled namespace watch list so stale per-team namespaces
+    # from prior cache-mode runs cannot break MCP ingress routing.
+    kubectl patch deployment traefik -n traefik --type='json' \
+      -p="[{\"op\":\"replace\",\"path\":\"/spec/template/spec/containers/0/args/1\",\"value\":\"--providers.kubernetesingress.namespaces=${traefik_base_namespaces}\"}]" \
+      >/dev/null 2>&1 || true
+    kubectl rollout restart deploy/traefik -n traefik >/dev/null 2>&1 || true
+    kubectl rollout status deploy/traefik -n traefik --timeout=180s >/dev/null 2>&1 || true
+  fi
+}
+
 cat > "${KIND_CONFIG}" <<EOF
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
@@ -3291,6 +3309,7 @@ export MCP_REGISTRY_ENDPOINT="${MCP_REGISTRY_ENDPOINT:-registry.registry.svc.clu
 export MCP_INGRESS_READINESS_MODE="${MCP_INGRESS_READINESS_MODE:-permissive}"
 export MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT="${MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector.mcp-sentinel.svc.cluster.local:4318}"
 if [[ "${PLATFORM_CACHE_READY}" == "1" ]]; then
+  refresh_cached_platform_ingress_contract
   echo "[setup] skipping platform setup because E2E_CACHE_MODE=1 found a ready platform"
 else
   echo "[setup] running platform setup in test mode (platform mode: ${E2E_PLATFORM_MODE})"
@@ -4594,7 +4613,7 @@ params = urllib.parse.urlencode(
         "limit": "20",
     }
 )
-url = f"{api_base}/events??{params}"
+url = f"{api_base}/events?{params}"
 headers = {"x-api-key": api_key}
 last_doc = {}
 
@@ -5240,7 +5259,7 @@ check(
 )
 
 pii_events = wait_for_json(
-    f"{api_base}/events??source={urllib.parse.quote(pii_source)}&event_type=pii.check&limit=1",
+    f"{api_base}/events?source={urllib.parse.quote(pii_source)}&event_type=pii.check&limit=1",
     lambda doc: bool(doc.get("events", [])),
     headers=headers,
     description="pii redaction event",
@@ -5276,55 +5295,55 @@ check(
 
 
 allow_aaa_ping = wait_for_json(
-    f"{api_base}/events??server={server_name}&decision=allow&tool_name=aaa-ping&limit=20",
+    f"{api_base}/events?server={server_name}&decision=allow&tool_name=aaa-ping&limit=20",
     lambda doc: bool(doc.get("events", [])),
     headers=headers,
     description="allow audit event for aaa-ping",
 ).get("events", [])
 allow_echo = wait_for_json(
-    f"{api_base}/events??server={server_name}&decision=allow&tool_name=echo&limit=20",
+    f"{api_base}/events?server={server_name}&decision=allow&tool_name=echo&limit=20",
     lambda doc: bool(doc.get("events", [])),
     headers=headers,
     description="allow audit event for echo",
 ).get("events", [])
 deny_upper = wait_for_json(
-    f"{api_base}/events??server={server_name}&decision=deny&tool_name=upper&limit=20",
+    f"{api_base}/events?server={server_name}&decision=deny&tool_name=upper&limit=20",
     lambda doc: bool(doc.get("events", [])),
     headers=headers,
     description="deny audit event for upper",
 ).get("events", [])
 deny_echo = wait_for_json(
-    f"{api_base}/events??server={server_name}&decision=deny&tool_name=echo&limit=20",
+    f"{api_base}/events?server={server_name}&decision=deny&tool_name=echo&limit=20",
     lambda doc: bool(doc.get("events", [])),
     headers=headers,
     description="deny audit event for echo",
 ).get("events", [])
 deny_aaa_ping = wait_for_json(
-    f"{api_base}/events??server={server_name}&decision=deny&tool_name=aaa-ping&limit=50",
+    f"{api_base}/events?server={server_name}&decision=deny&tool_name=aaa-ping&limit=50",
     lambda doc: bool(doc.get("events", [])),
     headers=headers,
     description="deny audit event for aaa-ping",
 ).get("events", [])
 oauth_allow_aaa_ping = wait_for_json(
-    f"{api_base}/events??server={oauth_server_name}&decision=allow&tool_name=aaa-ping&limit=20",
+    f"{api_base}/events?server={oauth_server_name}&decision=allow&tool_name=aaa-ping&limit=20",
     lambda doc: bool(doc.get("events", [])),
     headers=headers,
     description="oauth allow audit event for aaa-ping",
 ).get("events", [])
 oauth_deny_events = wait_for_json(
-    f"{api_base}/events??server={oauth_server_name}&decision=deny&limit=50",
+    f"{api_base}/events?server={oauth_server_name}&decision=deny&limit=50",
     lambda doc: bool(doc.get("events", [])),
     headers=headers,
     description="oauth deny audit events",
 ).get("events", [])
 all_oauth_events = wait_for_json(
-    f"{api_base}/events??server={oauth_server_name}&limit=1000",
+    f"{api_base}/events?server={oauth_server_name}&limit=1000",
     lambda doc: rpc_methods_from_events_doc(doc) >= expected_gateway_rpc_method_set,
     headers=headers,
     description="oauth server audit events",
 ).get("events", [])
 allow_upper = wait_for_json(
-    f"{api_base}/events??server={server_name}&decision=allow&tool_name=upper&limit=20",
+    f"{api_base}/events?server={server_name}&decision=allow&tool_name=upper&limit=20",
     lambda doc: bool(doc.get("events", [])),
     headers=headers,
     description="allow audit event for upper",
@@ -5343,14 +5362,14 @@ _required_deny_reasons = [
 all_server_denies = []
 for _deny_reason in _required_deny_reasons:
     _reason_events = wait_for_json(
-        f"{api_base}/events??server={server_name}&decision=deny&reason={_deny_reason}&limit=5",
+        f"{api_base}/events?server={server_name}&decision=deny&reason={_deny_reason}&limit=5",
         lambda doc: bool(doc.get("events", [])),
         headers=headers,
         description=f"server deny audit event for reason {_deny_reason}",
     ).get("events", [])
     all_server_denies.extend(_reason_events)
 all_server_events = wait_for_json(
-    f"{api_base}/events??server={server_name}&limit=1000",
+    f"{api_base}/events?server={server_name}&limit=1000",
     lambda doc: rpc_methods_from_events_doc(doc) >= expected_recent_gateway_rpc_method_set,
     headers=headers,
     description="server audit events",
