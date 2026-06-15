@@ -80,7 +80,10 @@ func (r *HTTPUserKeyResolver) ResolveAPIKey(ctx context.Context, rawKey string) 
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return Principal{}, false, err
 	}
-	r.store(cacheKey, result.Principal, result.OK)
+	// Cache misses only. Successful auth must revalidate so revoked keys fail immediately.
+	if !result.OK {
+		r.store(cacheKey, result.Principal, result.OK)
+	}
 	return result.Principal, result.OK, nil
 }
 
