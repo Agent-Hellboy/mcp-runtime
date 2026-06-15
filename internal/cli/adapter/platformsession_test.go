@@ -20,7 +20,7 @@ import (
 func fakePlatformServer(t *testing.T, expiresAt time.Time, calls *int32) (*httptest.Server, *platformapi.PlatformClient) {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/runtime/adapter/sessions" {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/runtime/adapter/sessions" {
 			http.NotFound(w, r)
 			return
 		}

@@ -4940,7 +4940,7 @@ type AdapterSessionRequest struct {
 	RequestedTTL   string `json:"requestedTTL,omitempty"`
 }
     AdapterSessionRequest is the input contract for the platform API endpoint
-    POST /api/runtime/adapter/sessions. RequestedTTL/Trust are optional;
+    POST /api/v1/runtime/adapter/sessions. RequestedTTL/Trust are optional;
     empty values fall back to platform-side defaults.
 
 ```

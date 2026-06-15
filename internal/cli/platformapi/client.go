@@ -56,7 +56,7 @@ func NewPlatformClient() (*PlatformClient, error) {
 		baseURL:   NormalizeBaseURL(base),
 		token:     tok,
 		http:      &http.Client{Timeout: 2 * time.Minute},
-		apiPrefix: "/api",
+		apiPrefix: "/api/v1",
 	}, nil
 }
 

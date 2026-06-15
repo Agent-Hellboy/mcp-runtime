@@ -3821,7 +3821,7 @@ print('adapter-session reused:', resp['name'])
         echo "[proxy] reusing existing adapter proxy on localhost:${ADAPTER_PROXY_PORT}"
       else
         require_port_available "${ADAPTER_PROXY_PORT}" "adapter proxy"
-        MCP_PLATFORM_API_URL="http://127.0.0.1:${API_SERVICE_PORT}" \
+        MCP_PLATFORM_API_URL="http://127.0.0.1:${SENTINEL_PORT}" \
           MCP_PLATFORM_API_TOKEN="${ADAPTER_PLATFORM_TOKEN}" \
           ./bin/mcp-runtime adapter proxy \
             --listen "127.0.0.1:${ADAPTER_PROXY_PORT}" \
@@ -3860,7 +3860,7 @@ print(json.dumps({"email": os.environ["PLATFORM_ADMIN_EMAIL"], "password": os.en
     DEEP_CLI_TEAM_SLUG="e2e-cli-$(date +%s)"
     DEEP_CLI_USER_EMAIL="${DEEP_CLI_TEAM_SLUG}@mcpruntime.org"
     DEEP_PLATFORM_ENV=(
-      MCP_PLATFORM_API_URL="http://127.0.0.1:${API_SERVICE_PORT}"
+      MCP_PLATFORM_API_URL="http://127.0.0.1:${SENTINEL_PORT}"
       MCP_PLATFORM_API_TOKEN="${ADAPTER_PLATFORM_TOKEN}"
     )
 
@@ -4799,7 +4799,7 @@ print('adapter-session reused:', resp['name'])
       echo "[proxy] reusing existing adapter proxy on localhost:${ADAPTER_PROXY_PORT}"
     else
       require_port_available "${ADAPTER_PROXY_PORT}" "adapter proxy"
-      MCP_PLATFORM_API_URL="http://127.0.0.1:${API_SERVICE_PORT}" \
+      MCP_PLATFORM_API_URL="http://127.0.0.1:${SENTINEL_PORT}" \
         MCP_PLATFORM_API_TOKEN="${ADAPTER_PLATFORM_TOKEN}" \
         ./bin/mcp-runtime adapter proxy \
           --listen "127.0.0.1:${ADAPTER_PROXY_PORT}" \
@@ -4837,7 +4837,7 @@ print(json.dumps({"email": os.environ["PLATFORM_ADMIN_EMAIL"], "password": os.en
   DEEP_CLI_TEAM_SLUG="e2e-cli-$(date +%s)"
   DEEP_CLI_USER_EMAIL="${DEEP_CLI_TEAM_SLUG}@mcpruntime.org"
   DEEP_PLATFORM_ENV=(
-    MCP_PLATFORM_API_URL="http://127.0.0.1:${API_SERVICE_PORT}"
+    MCP_PLATFORM_API_URL="http://127.0.0.1:${SENTINEL_PORT}"
     MCP_PLATFORM_API_TOKEN="${ADAPTER_PLATFORM_TOKEN}"
   )
 
