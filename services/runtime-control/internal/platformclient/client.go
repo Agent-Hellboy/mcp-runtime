@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"mcp-runtime/pkg/internalapi"
 	"mcp-runtime/pkg/platformauth"
 )
 
@@ -61,9 +62,7 @@ func (c *Client) authorizedJSON(ctx context.Context, method, path string, body a
 }
 
 func (c *Client) ListTeams(ctx context.Context) ([]Team, error) {
-	var result struct {
-		Teams []Team `json:"teams"`
-	}
+	var result internalapi.TeamsListResponse
 	status, err := c.authorizedJSON(ctx, http.MethodGet, "/internal/identity/teams", nil, &result)
 	if err != nil {
 		return nil, err
@@ -91,10 +90,10 @@ func (c *Client) GetTeamBySlug(ctx context.Context, slug string) (Team, bool, er
 
 func (c *Client) CreateTeam(ctx context.Context, slug, name, createdByUserID string) (Team, error) {
 	var team Team
-	status, err := c.authorizedJSON(ctx, http.MethodPost, "/internal/identity/teams", map[string]string{
-		"slug":               slug,
-		"name":               name,
-		"created_by_user_id": createdByUserID,
+	status, err := c.authorizedJSON(ctx, http.MethodPost, "/internal/identity/teams", internalapi.TeamCreateRequest{
+		Slug:            slug,
+		Name:            name,
+		CreatedByUserID: createdByUserID,
 	}, &team)
 	if err != nil {
 		return Team{}, err
@@ -120,11 +119,9 @@ func (c *Client) DeleteTeamBySlug(ctx context.Context, slug string) error {
 }
 
 func (c *Client) PrincipalForUserID(ctx context.Context, userID string) (platformauth.Principal, error) {
-	var result struct {
-		Principal platformauth.Principal `json:"principal"`
-	}
-	status, err := c.authorizedJSON(ctx, http.MethodPost, "/internal/identity/principal", map[string]string{
-		"user_id": userID,
+	var result internalapi.PrincipalResolveResponse
+	status, err := c.authorizedJSON(ctx, http.MethodPost, "/internal/identity/principal", internalapi.PrincipalResolveRequest{
+		UserID: userID,
 	}, &result)
 	if err != nil {
 		return platformauth.Principal{}, err
@@ -139,9 +136,7 @@ func (c *Client) PrincipalForUserID(ctx context.Context, userID string) (platfor
 }
 
 func (c *Client) ListNamespaces(ctx context.Context) ([]map[string]any, error) {
-	var result struct {
-		Namespaces []map[string]any `json:"namespaces"`
-	}
+	var result internalapi.NamespacesListResponse
 	status, err := c.authorizedJSON(ctx, http.MethodGet, "/internal/identity/namespaces", nil, &result)
 	if err != nil {
 		return nil, err
@@ -168,9 +163,7 @@ func (c *Client) GetNamespace(ctx context.Context, namespace string) (map[string
 }
 
 func (c *Client) ListTeamMemberships(ctx context.Context, teamSlug string) ([]TeamMembership, error) {
-	var result struct {
-		Members []TeamMembership `json:"members"`
-	}
+	var result internalapi.TeamMembersListResponse
 	path := "/internal/identity/teams/" + url.PathEscape(teamSlug) + "/members"
 	status, err := c.authorizedJSON(ctx, http.MethodGet, path, nil, &result)
 	if err != nil {
@@ -183,12 +176,10 @@ func (c *Client) ListTeamMemberships(ctx context.Context, teamSlug string) ([]Te
 }
 
 func (c *Client) UpsertTeamMembership(ctx context.Context, teamSlug, userID, role string) (TeamMembership, error) {
-	var result struct {
-		Membership TeamMembership `json:"membership"`
-	}
+	var result internalapi.TeamMembershipResponse
 	path := "/internal/identity/teams/" + url.PathEscape(teamSlug) + "/members/" + url.PathEscape(userID)
-	status, err := c.authorizedJSON(ctx, http.MethodPut, path, map[string]string{
-		"role": role,
+	status, err := c.authorizedJSON(ctx, http.MethodPut, path, internalapi.TeamMembershipPutRequest{
+		Role: role,
 	}, &result)
 	if err != nil {
 		return TeamMembership{}, err
@@ -218,13 +209,11 @@ func (c *Client) DeleteTeamMembership(ctx context.Context, teamSlug, userID stri
 }
 
 func (c *Client) CreatePasswordUser(ctx context.Context, email, password, role string) (User, error) {
-	var result struct {
-		User User `json:"user"`
-	}
-	status, err := c.authorizedJSON(ctx, http.MethodPost, "/internal/identity/users", map[string]string{
-		"email":    email,
-		"password": password,
-		"role":     role,
+	var result internalapi.CreateUserResponse
+	status, err := c.authorizedJSON(ctx, http.MethodPost, "/internal/identity/users", internalapi.CreateUserRequest{
+		Email:    email,
+		Password: password,
+		Role:     role,
 	}, &result)
 	if err != nil {
 		return User{}, err
@@ -236,15 +225,12 @@ func (c *Client) CreatePasswordUser(ctx context.Context, email, password, role s
 }
 
 func (c *Client) CreateTeamUser(ctx context.Context, teamSlug, email, password, role string) (User, TeamMembership, error) {
-	var result struct {
-		User       User           `json:"user"`
-		Membership TeamMembership `json:"membership"`
-	}
+	var result internalapi.TeamUserCreateResponse
 	path := "/internal/identity/teams/" + url.PathEscape(teamSlug) + "/users"
-	status, err := c.authorizedJSON(ctx, http.MethodPost, path, map[string]string{
-		"email":    email,
-		"password": password,
-		"role":     role,
+	status, err := c.authorizedJSON(ctx, http.MethodPost, path, internalapi.TeamUserCreateRequest{
+		Email:    email,
+		Password: password,
+		Role:     role,
 	}, &result)
 	if err != nil {
 		return User{}, TeamMembership{}, err

@@ -13,6 +13,7 @@ import (
 
 	"mcp-platform-api/internal/platformstore"
 	"mcp-runtime/pkg/apihttp"
+	"mcp-runtime/pkg/internalapi"
 	"mcp-runtime/pkg/platformauth"
 )
 
@@ -70,9 +71,7 @@ func (h Handler) resolveAuth(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w)
 		return
 	}
-	var request struct {
-		APIKey string `json:"api_key"`
-	}
+	var request internalapi.AuthResolveRequest
 	if err := decodeJSON(r, &request); err != nil {
 		apihttp.WriteEnvelope(w, http.StatusBadRequest, apihttp.CodeInvalidRequestBody, "invalid request body")
 		return
@@ -82,7 +81,7 @@ func (h Handler) resolveAuth(w http.ResponseWriter, r *http.Request) {
 		apihttp.WriteEnvelope(w, http.StatusInternalServerError, apihttp.CodeAuthFailed, "failed to resolve API key")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": ok, "principal": principal})
+	writeJSON(w, http.StatusOK, internalapi.AuthResolveResponse{OK: ok, Principal: principal})
 }
 
 func (h Handler) resolvePrincipal(w http.ResponseWriter, r *http.Request) {
@@ -90,9 +89,7 @@ func (h Handler) resolvePrincipal(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w)
 		return
 	}
-	var request struct {
-		UserID string `json:"user_id"`
-	}
+	var request internalapi.PrincipalResolveRequest
 	if err := decodeJSON(r, &request); err != nil {
 		apihttp.WriteEnvelope(w, http.StatusBadRequest, apihttp.CodeInvalidRequestBody, "invalid request body")
 		return
@@ -106,7 +103,7 @@ func (h Handler) resolvePrincipal(w http.ResponseWriter, r *http.Request) {
 		apihttp.WriteEnvelope(w, http.StatusInternalServerError, apihttp.CodeQueryFailed, "failed to resolve principal")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"principal": principal})
+	writeJSON(w, http.StatusOK, internalapi.PrincipalResolveResponse{Principal: principal})
 }
 
 func (h Handler) resolveIDs(w http.ResponseWriter, r *http.Request) {
@@ -114,10 +111,7 @@ func (h Handler) resolveIDs(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w)
 		return
 	}
-	var request struct {
-		UserIDs []string `json:"user_ids"`
-		TeamIDs []string `json:"team_ids"`
-	}
+	var request internalapi.ResolveIDsRequest
 	if err := decodeJSON(r, &request); err != nil {
 		apihttp.WriteEnvelope(w, http.StatusBadRequest, apihttp.CodeInvalidRequestBody, "invalid request body")
 		return
@@ -132,7 +126,7 @@ func (h Handler) resolveIDs(w http.ResponseWriter, r *http.Request) {
 		apihttp.WriteEnvelope(w, http.StatusInternalServerError, apihttp.CodeQueryFailed, "failed to resolve team ids")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"users": users, "teams": teams})
+	writeJSON(w, http.StatusOK, internalapi.ResolveIDsResponse{Users: users, Teams: teams})
 }
 
 func (h Handler) audit(w http.ResponseWriter, r *http.Request) {
@@ -140,12 +134,12 @@ func (h Handler) audit(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w)
 		return
 	}
-	var event platformstore.AuditEvent
+	var event internalapi.AuditEvent
 	if err := decodeJSON(r, &event); err != nil {
 		apihttp.WriteEnvelope(w, http.StatusBadRequest, apihttp.CodeInvalidRequestBody, "invalid request body")
 		return
 	}
-	h.Store.WriteAudit(r.Context(), event)
+	h.Store.WriteAudit(r.Context(), platformstore.AuditEvent(event))
 	w.WriteHeader(http.StatusAccepted)
 }
 
@@ -157,13 +151,9 @@ func (h Handler) teams(w http.ResponseWriter, r *http.Request) {
 			apihttp.WriteEnvelope(w, http.StatusInternalServerError, apihttp.CodeQueryFailed, "failed to list teams")
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"teams": teams})
+		writeJSON(w, http.StatusOK, internalapi.TeamsListResponse{Teams: teamsToInternal(teams)})
 	case http.MethodPost:
-		var request struct {
-			Slug            string `json:"slug"`
-			Name            string `json:"name"`
-			CreatedByUserID string `json:"created_by_user_id"`
-		}
+		var request internalapi.TeamCreateRequest
 		if err := decodeJSON(r, &request); err != nil {
 			apihttp.WriteEnvelope(w, http.StatusBadRequest, apihttp.CodeInvalidRequestBody, "invalid request body")
 			return
@@ -173,7 +163,7 @@ func (h Handler) teams(w http.ResponseWriter, r *http.Request) {
 			apihttp.WriteEnvelope(w, http.StatusBadRequest, apihttp.CodeInvalidRequestBody, err.Error())
 			return
 		}
-		writeJSON(w, http.StatusCreated, team)
+		writeJSON(w, http.StatusCreated, teamToInternal(team))
 	default:
 		methodNotAllowed(w)
 	}
@@ -217,7 +207,7 @@ func (h Handler) teamItemGet(w http.ResponseWriter, r *http.Request, slug string
 		apihttp.WriteEnvelope(w, http.StatusNotFound, apihttp.CodeNotFound, "team not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, team)
+	writeJSON(w, http.StatusOK, teamToInternal(team))
 }
 
 func (h Handler) teamItemDelete(w http.ResponseWriter, r *http.Request, slug string) {
@@ -238,14 +228,11 @@ func (h Handler) teamMembersList(w http.ResponseWriter, r *http.Request, slug st
 		apihttp.WriteEnvelope(w, http.StatusInternalServerError, apihttp.CodeQueryFailed, "failed to list team members")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"members": members})
+	writeJSON(w, http.StatusOK, internalapi.TeamMembersListResponse{Members: members})
 }
 
 func (h Handler) teamMembersUpsertBody(w http.ResponseWriter, r *http.Request, slug string) {
-	var request struct {
-		UserID string `json:"userID"`
-		Role   string `json:"role"`
-	}
+	var request internalapi.TeamMembershipUpsertRequest
 	if err := decodeJSON(r, &request); err != nil {
 		apihttp.WriteEnvelope(w, http.StatusBadRequest, apihttp.CodeInvalidRequestBody, "invalid request body")
 		return
@@ -263,14 +250,11 @@ func (h Handler) teamMembersUpsertBody(w http.ResponseWriter, r *http.Request, s
 		apihttp.WriteEnvelope(w, http.StatusBadRequest, apihttp.CodeInvalidRequestBody, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"membership": membership})
+	writeJSON(w, http.StatusOK, internalapi.TeamMembershipResponse{Membership: membership})
 }
 
 func (h Handler) teamMemberUpsert(w http.ResponseWriter, r *http.Request, slug, userID string) {
-	var request struct {
-		Role   string `json:"role"`
-		UserID string `json:"userID"`
-	}
+	var request internalapi.TeamMembershipPutRequest
 	if r.Method == http.MethodPut {
 		if err := decodeJSON(r, &request); err != nil {
 			apihttp.WriteEnvelope(w, http.StatusBadRequest, apihttp.CodeInvalidRequestBody, "invalid request body")
@@ -290,7 +274,7 @@ func (h Handler) teamMemberUpsert(w http.ResponseWriter, r *http.Request, slug, 
 		apihttp.WriteEnvelope(w, http.StatusBadRequest, apihttp.CodeInvalidRequestBody, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"membership": membership})
+	writeJSON(w, http.StatusOK, internalapi.TeamMembershipResponse{Membership: membership})
 }
 
 func (h Handler) teamMemberDelete(w http.ResponseWriter, r *http.Request, slug, userID string) {
@@ -306,11 +290,7 @@ func (h Handler) teamMemberDelete(w http.ResponseWriter, r *http.Request, slug, 
 }
 
 func (h Handler) teamUserCreate(w http.ResponseWriter, r *http.Request, teamSlug string) {
-	var request struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
-		Role     string `json:"role"`
-	}
+	var request internalapi.TeamUserCreateRequest
 	if err := decodeJSON(r, &request); err != nil {
 		apihttp.WriteEnvelope(w, http.StatusBadRequest, apihttp.CodeInvalidRequestBody, "invalid request body")
 		return
@@ -333,7 +313,7 @@ func (h Handler) teamUserCreate(w http.ResponseWriter, r *http.Request, teamSlug
 		apihttp.WriteEnvelope(w, http.StatusBadRequest, apihttp.CodeInvalidRequestBody, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"user": user, "membership": membership})
+	writeJSON(w, http.StatusCreated, internalapi.TeamUserCreateResponse{User: userToInternal(user), Membership: membership})
 }
 
 func (h Handler) createUser(w http.ResponseWriter, r *http.Request) {
@@ -341,11 +321,7 @@ func (h Handler) createUser(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w)
 		return
 	}
-	var request struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
-		Role     string `json:"role"`
-	}
+	var request internalapi.CreateUserRequest
 	if err := decodeJSON(r, &request); err != nil {
 		apihttp.WriteEnvelope(w, http.StatusBadRequest, apihttp.CodeInvalidRequestBody, "invalid request body")
 		return
@@ -359,7 +335,7 @@ func (h Handler) createUser(w http.ResponseWriter, r *http.Request) {
 		apihttp.WriteEnvelope(w, http.StatusBadRequest, apihttp.CodeInvalidRequestBody, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"user": user})
+	writeJSON(w, http.StatusCreated, internalapi.CreateUserResponse{User: userToInternal(user)})
 }
 
 func (h Handler) operationsSnapshot(w http.ResponseWriter, r *http.Request) {
@@ -445,7 +421,7 @@ func (h Handler) namespaces(w http.ResponseWriter, r *http.Request) {
 		apihttp.WriteEnvelope(w, http.StatusInternalServerError, apihttp.CodeQueryFailed, "failed to list namespaces")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"namespaces": namespaces})
+	writeJSON(w, http.StatusOK, internalapi.NamespacesListResponse{Namespaces: namespaces})
 }
 
 func (h Handler) namespaceItem(w http.ResponseWriter, r *http.Request) {
@@ -481,4 +457,30 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 
 func methodNotAllowed(w http.ResponseWriter) {
 	apihttp.WriteEnvelope(w, http.StatusMethodNotAllowed, apihttp.CodeMethodNotAllowed, "method not allowed")
+}
+
+func teamToInternal(team platformstore.Team) internalapi.Team {
+	return internalapi.Team{
+		ID:        team.ID,
+		Slug:      team.Slug,
+		Name:      team.Name,
+		Namespace: team.Namespace,
+		CreatedAt: team.CreatedAt,
+	}
+}
+
+func teamsToInternal(teams []platformstore.Team) []internalapi.Team {
+	out := make([]internalapi.Team, len(teams))
+	for i, team := range teams {
+		out[i] = teamToInternal(team)
+	}
+	return out
+}
+
+func userToInternal(user platformstore.User) internalapi.User {
+	return internalapi.User{
+		ID:    user.ID,
+		Email: user.Email,
+		Role:  user.Role,
+	}
 }

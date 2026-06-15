@@ -3,27 +3,18 @@ package platformclient
 import (
 	"time"
 
+	"mcp-runtime/pkg/internalapi"
 	"mcp-runtime/pkg/platform"
 )
 
 // Team is a managed platform team and its Kubernetes namespace.
-type Team struct {
-	ID        string    `json:"id"`
-	Slug      string    `json:"slug"`
-	Name      string    `json:"name"`
-	Namespace string    `json:"namespace"`
-	CreatedAt time.Time `json:"created_at"`
-}
+type Team = internalapi.Team
 
 // TeamMembership is the platform team membership API contract.
 type TeamMembership = platform.TeamMembership
 
 // User is a platform user record returned by identity APIs.
-type User struct {
-	ID    string `json:"id"`
-	Email string `json:"email"`
-	Role  string `json:"role"`
-}
+type User = internalapi.User
 
 // APIKeySummary is the non-secret metadata for a user API key.
 type APIKeySummary struct {
@@ -36,21 +27,7 @@ type APIKeySummary struct {
 }
 
 // AuditEvent is the write-side platform audit envelope.
-type AuditEvent struct {
-	UserID           string `json:"user_id,omitempty"`
-	Action           string `json:"action"`
-	Resource         string `json:"resource"`
-	Namespace        string `json:"namespace,omitempty"`
-	Status           string `json:"status"`
-	Message          string `json:"message,omitempty"`
-	ActorIP          string `json:"actor_ip,omitempty"`
-	RequestID        string `json:"request_id,omitempty"`
-	Source           string `json:"source,omitempty"`
-	AuthIdentity     string `json:"auth_identity,omitempty"`
-	ImageRef         string `json:"image_ref,omitempty"`
-	ServerName       string `json:"server_name,omitempty"`
-	DeploymentTarget string `json:"deployment_target,omitempty"`
-}
+type AuditEvent = internalapi.AuditEvent
 
 // OperationsFilter constrains platform operations and activity queries.
 type OperationsFilter struct {
