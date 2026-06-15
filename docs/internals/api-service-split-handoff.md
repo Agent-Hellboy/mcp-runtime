@@ -36,18 +36,20 @@ Branch: `refactor/api-service`. Work already committed/working-tree:
 | Secret rename | **DONE** | `PLATFORM_JWT_SECRET` → `JWT_SECRET` in `auth.JWTSecretFromEnv` (`services/api/auth/seed.go`), `main.go`, `k8s/08-api.yaml`, `k8s/21-...bootstrap-job.yaml`, setup secret render (`analytics.go`). `INTERNAL_AUTH_TOKEN` added to `k8s/02-secrets.yaml.example` + setup render. |
 | Cutover markers | **DONE (comments only)** | `config/ingress/base/dynamic-config.yaml` (registry forwardAuth) and `k8s/09-ui.yaml` (`API_UPSTREAM`) carry "Post api-service-split cutover: mcp-platform-api..." comments. Values NOT yet repointed. |
 
-**M2 (M2.1 RBAC + M2.2 setup/CLI + M2.3 ingress/UI) cluster-tested.** Monolith scaled to 0;
-Traefik gateway routes `/api/v1/*` to split services. Setup builds three API images, doctor probes
-runtime-control `/api/v1/runtime/*` plus platform/analytics `/health`+`/ready`, Prometheus scrapes
-9090/9094/9095. **M2.5 harness** (e2e/smoketest/CI → split APIs, NetworkPolicy egress) landed.
-**M2.4 partial:** analytics-api uses `pkg/apihttp` envelopes + `ParseLimit`; `/events/filter` folded into `GET /api/v1/events`.
-Full monolith delete + platform/runtime `apihttp` pass remain.
+**M2 cluster-tested and cutover complete (2026-06-15).** Monolith `services/api` and
+`k8s/08-api.yaml` deleted; Traefik routes `/api/v1/*` to split services. Setup builds three API
+images, doctor probes split deployments, Prometheus scrapes 9090/9094/9095.
+**M2.4:** runtime-control handlers use `pkg/apihttp` stable codes.
+**M2.5:** monolith manifest/tree removed; `08-traefik-watch-rbac.yaml`; k3s rollout builds three APIs.
+**M3.1:** `pkg/internalapi` shared DTOs wired in platform-api + runtime-control.
+**M3.2:** per-service `openapi.yaml`, `GET /api/v1/openapi.yaml`, `pkg/openapi` validation tests in CI.
 
 Verification completed for M1.1-M1.2:
 
-- `go test -race -count=1 ./pkg/platformauth/... ./pkg/apihttp/...`
-- `cd services/api && go test -race -count=1 ./internal/platforminternal ./internal/platformstore ./auth .`
-- `cd services/api && go build ./...`
+- `go test -race -count=1 ./pkg/platformauth/... ./pkg/apihttp/... ./pkg/openapi/...`
+- `cd services/platform-api && go test -race -count=1 ./...`
+- `cd services/runtime-control && go test -race -count=1 ./...`
+- `cd services/analytics-api && go test -race -count=1 ./...`
 - Fresh Kind cluster: all 38 permissive development `cluster doctor` checks passed.
 - Rolled the checkout-built API image to all three replicas and verified login minted
   the enriched multi-audience token and `/api/runtime/servers` returned HTTP `200`.

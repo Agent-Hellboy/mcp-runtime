@@ -8,6 +8,7 @@ import (
 	"mcp-platform-api/internal/platforminternal"
 	"mcp-platform-api/registry"
 	"mcp-runtime/pkg/apihttp"
+	"mcp-runtime/pkg/openapi"
 	"mcp-runtime/pkg/platformauth"
 )
 
@@ -28,6 +29,14 @@ func (s *apiServer) registerRoutes(mux *http.ServeMux) {
 	register := func(pattern string, handler http.Handler) {
 		mux.Handle("/api/v1"+pattern, handler)
 	}
+
+	register("/openapi.yaml", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		openapi.ServeYAML(w, openAPISpec)
+	}))
 
 	register("/registry/authz", http.HandlerFunc(s.handleRegistryAuthz))
 	register("/auth/login", http.HandlerFunc(s.handleLogin))
