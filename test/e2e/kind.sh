@@ -2125,7 +2125,7 @@ run_api_platform_http_flows() {
   log_line policy "validating targeted platform API request paths"
   ensure_api_port_forward
   ensure_gateway_port_forward
-  API_BASE="http://127.0.0.1:${API_SERVICE_PORT}" \
+  API_BASE="http://127.0.0.1:${SENTINEL_PORT}/api/v1" \
   GATEWAY_API_BASE="http://127.0.0.1:${SENTINEL_PORT}/api/v1" \
   API_KEY="${API_KEY}" \
   SERVER_NAME="${SERVER_NAME}" \
