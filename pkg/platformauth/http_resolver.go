@@ -44,7 +44,12 @@ func (r *HTTPUserKeyResolver) ResolveAPIKey(ctx context.Context, rawKey string) 
 	if err != nil {
 		return Principal{}, false, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(r.BaseURL, "/")+"/internal/auth/resolve", bytes.NewReader(body))
+	endpoint, err := resolveAuthURL(r.BaseURL)
+	if err != nil {
+		return Principal{}, false, err
+	}
+	// #nosec G704 -- endpoint is built from operator PLATFORM_API_URL after parseServiceBaseURL checks.
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return Principal{}, false, err
 	}
@@ -55,6 +60,7 @@ func (r *HTTPUserKeyResolver) ResolveAPIKey(ctx context.Context, rawKey string) 
 	if client == nil {
 		client = http.DefaultClient
 	}
+	// #nosec G704 -- same validated internal resolve endpoint as NewRequest above.
 	resp, err := client.Do(req)
 	if err != nil {
 		return Principal{}, false, err
