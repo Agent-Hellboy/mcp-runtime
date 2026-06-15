@@ -5,8 +5,8 @@ import (
 	"net/http"
 
 	"mcp-platform-api/internal/apiauth"
-	"mcp-platform-api/internal/apihttp"
 	"mcp-platform-api/internal/platformstore"
+	"mcp-runtime/pkg/apihttp"
 )
 
 const (

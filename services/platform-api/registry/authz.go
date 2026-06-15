@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"mcp-platform-api/internal/apiauth"
+	"mcp-platform-api/internal/httperrors"
 	"mcp-platform-api/internal/platformstore"
 	"mcp-runtime/pkg/publishscope"
 	"mcp-runtime/pkg/serviceutil"
@@ -35,7 +36,7 @@ func HandleAuthz(w http.ResponseWriter, r *http.Request, deps Dependencies) {
 	p, ok, err := deps.AuthenticateRequest(r)
 	if err != nil {
 		log.Printf("registry auth error: %v", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "auth_failed"})
+		httperrors.AuthFailed(w)
 		return
 	}
 	if !ok {
@@ -44,7 +45,7 @@ func HandleAuthz(w http.ResponseWriter, r *http.Request, deps Dependencies) {
 	}
 	if p.Role != apiauth.RoleAdmin {
 		if !deps.PrincipalCanAccessRegistryPath(p, r) {
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+			httperrors.Forbidden(w, "forbidden")
 			return
 		}
 	}
@@ -58,7 +59,7 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 func writeRegistryAuthChallenge(w http.ResponseWriter) {
 	w.Header().Set("WWW-Authenticate", authChallenge)
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+	httperrors.Unauthorized(w)
 }
 
 func RegistryForwardedPath(r *http.Request) string {

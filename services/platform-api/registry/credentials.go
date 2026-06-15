@@ -10,6 +10,7 @@ import (
 
 	"mcp-platform-api/identity"
 	"mcp-platform-api/internal/apiauth"
+	"mcp-platform-api/internal/httperrors"
 	"mcp-platform-api/internal/platformstore"
 )
 
@@ -25,19 +26,19 @@ type CredentialDependencies struct {
 
 func HandleRegistryCredentials(w http.ResponseWriter, r *http.Request, deps CredentialDependencies) {
 	if deps.Platform == nil {
-		deps.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "platform identity database not configured"})
+		httperrors.PlatformUnavailable(w)
 		return
 	}
 	p, ok := deps.PrincipalFromContext(r.Context())
 	if !ok || p.UserID() == "" {
-		deps.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		httperrors.Unauthorized(w)
 		return
 	}
 	switch r.Method {
 	case http.MethodGet:
 		keys, err := deps.Platform.ListRegistryCredentials(r.Context(), p.UserID())
 		if err != nil {
-			deps.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list registry credentials"})
+			httperrors.QueryFailed(w, "failed to list registry credentials")
 			return
 		}
 		deps.WriteJSON(w, http.StatusOK, map[string]any{"credentials": keys})
@@ -53,45 +54,43 @@ func HandleRegistryCredentials(w http.ResponseWriter, r *http.Request, deps Cred
 		key, cleartext, err := deps.Platform.CreateRegistryCredential(r.Context(), p.UserID(), req.Name)
 		if err != nil {
 			deps.Platform.WriteAudit(r.Context(), platformstore.AuditEvent{UserID: p.UserID(), Action: "registry_credential_create", Resource: strings.TrimSpace(req.Name), Status: "error", Message: err.Error(), ActorIP: deps.RequestIP(r), Source: deps.AuditSource(r, p), AuthIdentity: deps.AuditIdentityLabel(p)})
-			deps.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			httperrors.BadRequest(w, err.Error())
 			return
 		}
 		deps.Platform.WriteAudit(r.Context(), platformstore.AuditEvent{UserID: p.UserID(), Action: "registry_credential_create", Resource: key.ID, Status: "success", ActorIP: deps.RequestIP(r), Source: deps.AuditSource(r, p), AuthIdentity: deps.AuditIdentityLabel(p)})
 		deps.WriteJSON(w, http.StatusCreated, map[string]any{"credential": key, "username": identity.RegistryCredentialUsername(p), "password": cleartext})
 	default:
-		w.Header().Set("allow", "GET, POST")
-		deps.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+		httperrors.MethodNotAllowed(w, "GET, POST")
 	}
 }
 
 func HandleRegistryCredentialItem(w http.ResponseWriter, r *http.Request, deps CredentialDependencies) {
 	if deps.Platform == nil {
-		deps.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "platform identity database not configured"})
+		httperrors.PlatformUnavailable(w)
 		return
 	}
 	p, ok := deps.PrincipalFromContext(r.Context())
 	if !ok || p.UserID() == "" {
-		deps.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		httperrors.Unauthorized(w)
 		return
 	}
 	credentialID, allowed, valid := parseRegistryCredentialItemPath(r.Method, r.URL.Path)
 	if !allowed {
-		w.Header().Set("allow", "DELETE, POST")
-		deps.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+		httperrors.MethodNotAllowed(w, "DELETE, POST")
 		return
 	}
 	if !valid {
-		deps.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid credential path"})
+		httperrors.BadRequest(w, "invalid credential path")
 		return
 	}
 	key, err := deps.Platform.RevokeRegistryCredential(r.Context(), p.UserID(), credentialID)
 	if err != nil {
 		deps.Platform.WriteAudit(r.Context(), platformstore.AuditEvent{UserID: p.UserID(), Action: "registry_credential_revoke", Resource: credentialID, Status: "error", Message: err.Error(), ActorIP: deps.RequestIP(r), Source: deps.AuditSource(r, p), AuthIdentity: deps.AuditIdentityLabel(p)})
 		if errors.Is(err, sql.ErrNoRows) {
-			deps.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "credential not found"})
+			httperrors.NotFound(w, "credential not found")
 			return
 		}
-		deps.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to revoke credential"})
+		httperrors.QueryFailed(w, "failed to revoke credential")
 		return
 	}
 	deps.Platform.WriteAudit(r.Context(), platformstore.AuditEvent{UserID: p.UserID(), Action: "registry_credential_revoke", Resource: key.ID, Status: "success", ActorIP: deps.RequestIP(r), Source: deps.AuditSource(r, p), AuthIdentity: deps.AuditIdentityLabel(p)})

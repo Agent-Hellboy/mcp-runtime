@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"mcp-platform-api/internal/httperrors"
 	"mcp-platform-api/internal/platformstore"
 )
 
@@ -23,12 +24,11 @@ func HandlePasswordLogin(
 	maxBodyBytes int64,
 ) {
 	if backend == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "platform identity database not configured"})
+		httperrors.PlatformUnavailable(w)
 		return
 	}
 	if r.Method != http.MethodPost {
-		w.Header().Set("allow", "POST")
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+		httperrors.MethodNotAllowed(w, "POST")
 		return
 	}
 	var req struct {
@@ -41,8 +41,6 @@ func HandlePasswordLogin(
 		return
 	}
 	email := strings.ToLower(strings.TrimSpace(req.Email))
-	// attemptKey is ip|email for audit context; the tracker rekeys to per-IP buckets
-	// via normalizeLoginAttemptKey to limit email-spray lockout exhaustion.
 	attemptKey := requestIP(r)
 	if email != "" {
 		attemptKey += "|" + email
@@ -56,12 +54,12 @@ func HandlePasswordLogin(
 			ActorIP:  requestIP(r),
 			Source:   requestSource(r),
 		})
-		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too_many_requests"})
+		httperrors.TooManyRequests(w)
 		return
 	}
 	u, ok, err := backend.AuthenticatePassword(r.Context(), email, req.Password)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "login_failed"})
+		httperrors.LoginFailed(w)
 		return
 	}
 	if !ok {
@@ -74,13 +72,13 @@ func HandlePasswordLogin(
 			ActorIP:  requestIP(r),
 			Source:   requestSource(r),
 		})
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
+		httperrors.InvalidCredentials(w)
 		return
 	}
 	tracker.RecordSuccess(attemptKey)
 	token, err := backend.CreateAccessToken(u, tokenTTL)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to issue token"})
+		httperrors.Internal(w, "failed to issue token")
 		return
 	}
 	backend.WriteAudit(r.Context(), platformstore.AuditEvent{UserID: u.ID, Action: "login", Resource: "user", Namespace: u.Namespace, Status: "success", ActorIP: requestIP(r), Source: requestSource(r) + ":password", AuthIdentity: "password:" + u.Email})

@@ -12,6 +12,7 @@ import (
 
 	"mcp-platform-api/auth"
 	"mcp-platform-api/internal/apiauth"
+	"mcp-platform-api/internal/httperrors"
 	"mcp-platform-api/internal/platformstore"
 )
 
@@ -46,7 +47,7 @@ type passwordUserCreateRequest struct {
 func HandleAuthMe(w http.ResponseWriter, r *http.Request, deps Dependencies) {
 	p, ok := deps.PrincipalFromContext(r.Context())
 	if !ok {
-		deps.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		httperrors.Unauthorized(w)
 		return
 	}
 	type authPrincipal struct {
@@ -73,12 +74,12 @@ func HandleAuthMe(w http.ResponseWriter, r *http.Request, deps Dependencies) {
 
 func HandleSignup(w http.ResponseWriter, r *http.Request, deps Dependencies) {
 	if deps.Platform == nil {
-		deps.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "platform identity database not configured"})
+		httperrors.PlatformUnavailable(w)
 		return
 	}
 	if r.Method != http.MethodPost {
 		w.Header().Set("allow", "POST")
-		deps.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+		httperrors.MethodNotAllowed(w, "POST")
 		return
 	}
 	var req passwordUserCreateRequest
@@ -89,28 +90,28 @@ func HandleSignup(w http.ResponseWriter, r *http.Request, deps Dependencies) {
 	}
 	role, err := NormalizePasswordUserRole(req.Role)
 	if err != nil {
-		deps.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid role"})
+		httperrors.BadRequest(w, "invalid role")
 		return
 	}
 	if role == platformstore.RoleAdmin {
 		p, ok, err := deps.AuthenticateRequest(r)
 		if err != nil {
-			deps.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "auth_failed"})
+			httperrors.AuthFailed(w)
 			return
 		}
 		if !ok || p.Role != platformstore.RoleAdmin {
-			deps.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "admin signup requires an admin principal"})
+			httperrors.Forbidden(w, "admin signup requires an admin principal")
 			return
 		}
 	}
 	u, err := deps.Platform.CreatePasswordUser(r.Context(), req.Email, req.Password, role)
 	if err != nil {
-		deps.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		httperrors.BadRequest(w, err.Error())
 		return
 	}
 	token, err := deps.Platform.CreateAccessToken(u, auth.PlatformAccessTokenTTL)
 	if err != nil {
-		deps.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to issue token"})
+		httperrors.Internal(w, "failed to issue token")
 		return
 	}
 	deps.Platform.WriteAudit(r.Context(), platformstore.AuditEvent{UserID: u.ID, Action: "signup", Resource: "user", Namespace: u.Namespace, Status: "success", ActorIP: deps.RequestIP(r), Source: deps.RequestSource(r), AuthIdentity: "password:" + u.Email})
@@ -119,12 +120,12 @@ func HandleSignup(w http.ResponseWriter, r *http.Request, deps Dependencies) {
 
 func HandleUsers(w http.ResponseWriter, r *http.Request, deps Dependencies) {
 	if deps.Platform == nil {
-		deps.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "platform identity database not configured"})
+		httperrors.PlatformUnavailable(w)
 		return
 	}
 	if r.Method != http.MethodPost {
 		w.Header().Set("allow", "POST")
-		deps.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+		httperrors.MethodNotAllowed(w, "POST")
 		return
 	}
 	var req passwordUserCreateRequest
@@ -135,21 +136,21 @@ func HandleUsers(w http.ResponseWriter, r *http.Request, deps Dependencies) {
 	}
 	role, err := NormalizePasswordUserRole(req.Role)
 	if err != nil {
-		deps.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid role"})
+		httperrors.BadRequest(w, "invalid role")
 		return
 	}
 	p, ok, err := deps.AuthenticateRequest(r)
 	if err != nil {
-		deps.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "auth_failed"})
+		httperrors.AuthFailed(w)
 		return
 	}
 	if !ok || p.Role != platformstore.RoleAdmin {
-		deps.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "admin role required"})
+		httperrors.Forbidden(w, "admin role required")
 		return
 	}
 	u, err := deps.Platform.CreatePasswordUser(r.Context(), req.Email, req.Password, role)
 	if err != nil {
-		deps.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		httperrors.BadRequest(w, err.Error())
 		return
 	}
 	deps.Platform.WriteAudit(r.Context(), platformstore.AuditEvent{UserID: p.UserID(), Action: "user_create", Resource: "user", Namespace: u.Namespace, Status: "success", ActorIP: deps.RequestIP(r), Source: deps.RequestSource(r), AuthIdentity: deps.AuditIdentityLabel(p)})
@@ -159,18 +160,18 @@ func HandleUsers(w http.ResponseWriter, r *http.Request, deps Dependencies) {
 func HandleUserAPIKeys(w http.ResponseWriter, r *http.Request, deps Dependencies) {
 	p, ok := deps.PrincipalFromContext(r.Context())
 	if !ok || p.UserID() == "" {
-		deps.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		httperrors.Unauthorized(w)
 		return
 	}
 	if deps.UserKeys == nil {
-		deps.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "user api key store not configured"})
+		httperrors.UserKeyStoreUnavailable(w)
 		return
 	}
 	switch r.Method {
 	case http.MethodGet:
 		keys, err := deps.UserKeys.ListUserAPIKeys(r.Context(), p.UserID())
 		if err != nil {
-			deps.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list user api keys"})
+			httperrors.QueryFailed(w, "failed to list user api keys")
 			return
 		}
 		deps.WriteJSON(w, http.StatusOK, map[string]any{"keys": keys})
@@ -188,7 +189,7 @@ func HandleUserAPIKeys(w http.ResponseWriter, r *http.Request, deps Dependencies
 			if deps.Platform != nil {
 				deps.Platform.WriteAudit(r.Context(), platformstore.AuditEvent{UserID: p.UserID(), Action: "api_key_create", Resource: strings.TrimSpace(req.Name), Namespace: p.Namespace, Status: "error", Message: err.Error(), ActorIP: deps.RequestIP(r), Source: deps.AuditSource(r, p), AuthIdentity: deps.AuditIdentityLabel(p)})
 			}
-			deps.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			httperrors.BadRequest(w, err.Error())
 			return
 		}
 		if deps.Platform != nil {
@@ -196,29 +197,27 @@ func HandleUserAPIKeys(w http.ResponseWriter, r *http.Request, deps Dependencies
 		}
 		deps.WriteJSON(w, http.StatusOK, map[string]any{"key": key, "api_key": cleartext, "one_time_key": cleartext})
 	default:
-		w.Header().Set("allow", "GET, POST")
-		deps.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+		httperrors.MethodNotAllowed(w, "GET, POST")
 	}
 }
 
 func HandleUserAPIKeyItem(w http.ResponseWriter, r *http.Request, deps Dependencies) {
 	p, ok := deps.PrincipalFromContext(r.Context())
 	if !ok || p.UserID() == "" {
-		deps.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		httperrors.Unauthorized(w)
 		return
 	}
 	if deps.UserKeys == nil {
-		deps.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "user api key store not configured"})
+		httperrors.UserKeyStoreUnavailable(w)
 		return
 	}
 	keyID, allowed, valid := parseUserAPIKeyItemPath(r.Method, r.URL.Path)
 	if !allowed {
-		w.Header().Set("allow", "DELETE, POST")
-		deps.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+		httperrors.MethodNotAllowed(w, "DELETE, POST")
 		return
 	}
 	if !valid {
-		deps.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid key path"})
+		httperrors.BadRequest(w, "invalid key path")
 		return
 	}
 	key, revokeErr := deps.UserKeys.RevokeUserAPIKey(r.Context(), p.UserID(), keyID)
@@ -227,10 +226,10 @@ func HandleUserAPIKeyItem(w http.ResponseWriter, r *http.Request, deps Dependenc
 			deps.Platform.WriteAudit(r.Context(), platformstore.AuditEvent{UserID: p.UserID(), Action: "api_key_revoke", Resource: keyID, Namespace: p.Namespace, Status: "error", Message: revokeErr.Error(), ActorIP: deps.RequestIP(r), Source: deps.AuditSource(r, p), AuthIdentity: deps.AuditIdentityLabel(p)})
 		}
 		if apierrors.IsNotFound(revokeErr) || errors.Is(revokeErr, sql.ErrNoRows) {
-			deps.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "key not found"})
+			httperrors.NotFound(w, "key not found")
 			return
 		}
-		deps.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to revoke key"})
+		httperrors.QueryFailed(w, "failed to revoke key")
 		return
 	}
 	if deps.Platform != nil {
@@ -241,19 +240,19 @@ func HandleUserAPIKeyItem(w http.ResponseWriter, r *http.Request, deps Dependenc
 
 func HandleRegistryCredentials(w http.ResponseWriter, r *http.Request, deps Dependencies) {
 	if deps.Platform == nil {
-		deps.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "platform identity database not configured"})
+		httperrors.PlatformUnavailable(w)
 		return
 	}
 	p, ok := deps.PrincipalFromContext(r.Context())
 	if !ok || p.UserID() == "" {
-		deps.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		httperrors.Unauthorized(w)
 		return
 	}
 	switch r.Method {
 	case http.MethodGet:
 		keys, err := deps.Platform.ListRegistryCredentials(r.Context(), p.UserID())
 		if err != nil {
-			deps.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list registry credentials"})
+			httperrors.QueryFailed(w, "failed to list registry credentials")
 			return
 		}
 		deps.WriteJSON(w, http.StatusOK, map[string]any{"credentials": keys})
@@ -269,45 +268,43 @@ func HandleRegistryCredentials(w http.ResponseWriter, r *http.Request, deps Depe
 		key, cleartext, err := deps.Platform.CreateRegistryCredential(r.Context(), p.UserID(), req.Name)
 		if err != nil {
 			deps.Platform.WriteAudit(r.Context(), platformstore.AuditEvent{UserID: p.UserID(), Action: "registry_credential_create", Resource: strings.TrimSpace(req.Name), Status: "error", Message: err.Error(), ActorIP: deps.RequestIP(r), Source: deps.AuditSource(r, p), AuthIdentity: deps.AuditIdentityLabel(p)})
-			deps.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			httperrors.BadRequest(w, err.Error())
 			return
 		}
 		deps.Platform.WriteAudit(r.Context(), platformstore.AuditEvent{UserID: p.UserID(), Action: "registry_credential_create", Resource: key.ID, Status: "success", ActorIP: deps.RequestIP(r), Source: deps.AuditSource(r, p), AuthIdentity: deps.AuditIdentityLabel(p)})
 		deps.WriteJSON(w, http.StatusCreated, map[string]any{"credential": key, "username": RegistryCredentialUsername(p), "password": cleartext})
 	default:
-		w.Header().Set("allow", "GET, POST")
-		deps.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+		httperrors.MethodNotAllowed(w, "GET, POST")
 	}
 }
 
 func HandleRegistryCredentialItem(w http.ResponseWriter, r *http.Request, deps Dependencies) {
 	if deps.Platform == nil {
-		deps.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "platform identity database not configured"})
+		httperrors.PlatformUnavailable(w)
 		return
 	}
 	p, ok := deps.PrincipalFromContext(r.Context())
 	if !ok || p.UserID() == "" {
-		deps.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		httperrors.Unauthorized(w)
 		return
 	}
 	credentialID, allowed, valid := parseRegistryCredentialItemPath(r.Method, r.URL.Path)
 	if !allowed {
-		w.Header().Set("allow", "DELETE, POST")
-		deps.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+		httperrors.MethodNotAllowed(w, "DELETE, POST")
 		return
 	}
 	if !valid {
-		deps.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid credential path"})
+		httperrors.BadRequest(w, "invalid credential path")
 		return
 	}
 	key, err := deps.Platform.RevokeRegistryCredential(r.Context(), p.UserID(), credentialID)
 	if err != nil {
 		deps.Platform.WriteAudit(r.Context(), platformstore.AuditEvent{UserID: p.UserID(), Action: "registry_credential_revoke", Resource: credentialID, Status: "error", Message: err.Error(), ActorIP: deps.RequestIP(r), Source: deps.AuditSource(r, p), AuthIdentity: deps.AuditIdentityLabel(p)})
 		if errors.Is(err, sql.ErrNoRows) {
-			deps.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "credential not found"})
+			httperrors.NotFound(w, "credential not found")
 			return
 		}
-		deps.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to revoke credential"})
+		httperrors.QueryFailed(w, "failed to revoke credential")
 		return
 	}
 	deps.Platform.WriteAudit(r.Context(), platformstore.AuditEvent{UserID: p.UserID(), Action: "registry_credential_revoke", Resource: key.ID, Status: "success", ActorIP: deps.RequestIP(r), Source: deps.AuditSource(r, p), AuthIdentity: deps.AuditIdentityLabel(p)})
@@ -316,17 +313,17 @@ func HandleRegistryCredentialItem(w http.ResponseWriter, r *http.Request, deps D
 
 func HandleUserImagePublishActivity(w http.ResponseWriter, r *http.Request, deps Dependencies) {
 	if deps.Platform == nil {
-		deps.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "platform identity database not configured"})
+		httperrors.PlatformUnavailable(w)
 		return
 	}
 	if r.Method != http.MethodPost {
 		w.Header().Set("allow", "POST")
-		deps.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+		httperrors.MethodNotAllowed(w, "POST")
 		return
 	}
 	p, ok := deps.PrincipalFromContext(r.Context())
 	if !ok || p.UserID() == "" {
-		deps.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		httperrors.Unauthorized(w)
 		return
 	}
 	var req struct {
@@ -341,11 +338,11 @@ func HandleUserImagePublishActivity(w http.ResponseWriter, r *http.Request, deps
 	}
 	imageRef := strings.TrimSpace(req.ImageRef)
 	if imageRef == "" {
-		deps.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "image_ref is required"})
+		httperrors.BadRequest(w, "image_ref is required")
 		return
 	}
 	if len(imageRef) > 512 || len(req.SourceImage) > 512 || len(req.Mode) > 64 {
-		deps.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "image publish fields are too long"})
+		httperrors.BadRequest(w, "image publish fields are too long")
 		return
 	}
 	message := strings.TrimSpace(req.Mode)

@@ -18,4 +18,5 @@ const (
 	CodePlatformUnavailable   = "platform_unavailable"
 	CodeKubernetesUnavailable = "kubernetes_unavailable"
 	CodeInvalidVersionTag     = "invalid_version_tag"
+	CodeTooManyRequests       = "too_many_requests"
 )

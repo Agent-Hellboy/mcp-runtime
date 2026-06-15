@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"mcp-platform-api/internal/httperrors"
 	"mcp-platform-api/internal/platformstore"
 	"mcp-runtime/pkg/metadata"
 )
@@ -18,17 +19,16 @@ type Dependencies struct {
 
 func HandleNamespaces(w http.ResponseWriter, r *http.Request, deps Dependencies) {
 	if deps.Platform == nil {
-		deps.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "platform identity database not configured"})
+		httperrors.PlatformUnavailable(w)
 		return
 	}
 	if r.Method != http.MethodGet {
-		w.Header().Set("allow", "GET")
-		deps.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+		httperrors.MethodNotAllowed(w, "GET")
 		return
 	}
 	namespaces, err := deps.Platform.ListNamespaces(r.Context())
 	if err != nil {
-		deps.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list namespaces"})
+		httperrors.QueryFailed(w, "failed to list namespaces")
 		return
 	}
 	deps.WriteJSON(w, http.StatusOK, map[string]any{"namespaces": namespaces})
@@ -36,22 +36,21 @@ func HandleNamespaces(w http.ResponseWriter, r *http.Request, deps Dependencies)
 
 func HandleAudit(w http.ResponseWriter, r *http.Request, deps Dependencies) {
 	if deps.Platform == nil {
-		deps.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "platform identity database not configured"})
+		httperrors.PlatformUnavailable(w)
 		return
 	}
 	if r.Method != http.MethodGet {
-		w.Header().Set("allow", "GET")
-		deps.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+		httperrors.MethodNotAllowed(w, "GET")
 		return
 	}
 	filter, err := adminOperationsFilterFromRequest(r)
 	if err != nil {
-		deps.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		httperrors.InvalidQuery(w, err.Error())
 		return
 	}
 	auditLogs, err := deps.Platform.ListAuditLogs(r.Context(), filter)
 	if err != nil {
-		deps.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list audit logs"})
+		httperrors.QueryFailed(w, "failed to list audit logs")
 		return
 	}
 	deps.WriteJSON(w, http.StatusOK, map[string]any{"audit_logs": auditLogs})
@@ -59,33 +58,32 @@ func HandleAudit(w http.ResponseWriter, r *http.Request, deps Dependencies) {
 
 func HandleOperations(w http.ResponseWriter, r *http.Request, deps Dependencies) {
 	if deps.Platform == nil {
-		deps.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "platform identity database not configured"})
+		httperrors.PlatformUnavailable(w)
 		return
 	}
 	if r.Method != http.MethodGet {
-		w.Header().Set("allow", "GET")
-		deps.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+		httperrors.MethodNotAllowed(w, "GET")
 		return
 	}
 	filter, err := adminOperationsFilterFromRequest(r)
 	if err != nil {
-		deps.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		httperrors.InvalidQuery(w, err.Error())
 		return
 	}
 
 	users, err := deps.Platform.ListUserActivity(r.Context(), filter)
 	if err != nil {
-		deps.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list users"})
+		httperrors.QueryFailed(w, "failed to list users")
 		return
 	}
 	auditLogs, err := deps.Platform.ListAuditLogs(r.Context(), filter)
 	if err != nil {
-		deps.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list audit logs"})
+		httperrors.QueryFailed(w, "failed to list audit logs")
 		return
 	}
 	images, err := deps.Platform.ListImageActivity(r.Context(), filter)
 	if err != nil {
-		deps.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list image activity"})
+		httperrors.QueryFailed(w, "failed to list image activity")
 		return
 	}
 

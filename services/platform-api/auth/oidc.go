@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v4"
+	"mcp-platform-api/internal/httperrors"
 	"mcp-platform-api/internal/platformstore"
 )
 
@@ -30,16 +31,15 @@ func HandleOIDCLogin(
 	oidcAudience string,
 ) {
 	if backend == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "platform identity database not configured"})
+		httperrors.PlatformUnavailable(w)
 		return
 	}
 	if r.Method != http.MethodPost {
-		w.Header().Set("allow", "POST")
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+		httperrors.MethodNotAllowed(w, "POST")
 		return
 	}
 	if strings.TrimSpace(oidcIssuer) == "" || strings.TrimSpace(oidcAudience) == "" {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "oidc_not_configured"})
+		httperrors.OIDCNotConfigured(w)
 		return
 	}
 	var req struct {
@@ -52,7 +52,7 @@ func HandleOIDCLogin(
 	}
 	idToken := strings.TrimSpace(req.IDToken)
 	if idToken == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing_id_token"})
+		httperrors.BadRequest(w, "missing id token")
 		return
 	}
 
@@ -85,16 +85,16 @@ func HandleOIDCLogin(
 			Source:   requestSource(r) + ":oidc",
 		})
 		if statusCode == http.StatusUnauthorized {
-			writeJSON(w, statusCode, map[string]string{"error": "unauthorized"})
+			httperrors.Unauthorized(w)
 			return
 		}
-		writeJSON(w, statusCode, map[string]string{"error": "login_failed"})
+		httperrors.LoginFailed(w)
 		return
 	}
 
 	token, err := backend.CreateAccessToken(u, tokenTTL)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to issue token"})
+		httperrors.Internal(w, "failed to issue token")
 		return
 	}
 	backend.WriteAudit(r.Context(), platformstore.AuditEvent{UserID: u.ID, Action: "oidc_login", Resource: "user", Namespace: u.Namespace, Status: "success", ActorIP: requestIP(r), Source: requestSource(r) + ":oidc", AuthIdentity: "oidc:" + u.Email})

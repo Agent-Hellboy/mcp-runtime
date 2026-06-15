@@ -33,6 +33,25 @@ func TestHealthResponseMatchesOpenAPISpec(t *testing.T) {
 	}
 }
 
+func TestAuthMeUnauthorizedMatchesOpenAPISpec(t *testing.T) {
+	doc, err := openapi.Load(openAPISpec)
+	if err != nil {
+		t.Fatalf("Load(openAPISpec) error = %v", err)
+	}
+
+	mux := http.NewServeMux()
+	(&apiServer{}).registerRoutes(mux)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("/api/v1/auth/me status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+	if err := openapi.ValidateResponse(doc, http.MethodGet, "/api/v1/auth/me", rec.Code, rec.Body.Bytes(), "application/json"); err != nil {
+		t.Fatalf("ValidateResponse(/api/v1/auth/me) error = %v", err)
+	}
+}
+
 func TestOpenAPIEndpointServesEmbeddedSpec(t *testing.T) {
 	mux := http.NewServeMux()
 	(&apiServer{}).registerRoutes(mux)
