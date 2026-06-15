@@ -25,6 +25,7 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/util/retry"
 
+	"mcp-runtime/pkg/apihttp"
 	"mcp-runtime/pkg/kubeworkload"
 	"mcp-runtime/pkg/publishscope"
 	"mcp-runtime/pkg/sentinel"
@@ -273,7 +274,7 @@ func (s *RuntimeServer) handleDeploymentApply(w http.ResponseWriter, r *http.Req
 	if req.Version != "" && !strings.Contains(image[strings.LastIndex(image, "/")+1:], ":") {
 		if !deployImageTagPattern.MatchString(req.Version) {
 			s.writeAudit(r.Context(), deploymentAuditEvent(r, p, "deployment_apply", "denied", req.Name, namespace, req.Image, "version must be a valid image tag"))
-			writeAPIError(w, http.StatusBadRequest, "version must be a valid image tag")
+			writeAPIErrorCode(w, http.StatusBadRequest, apihttp.CodeInvalidVersionTag, "version must be a valid image tag")
 			return
 		}
 		image += ":" + req.Version

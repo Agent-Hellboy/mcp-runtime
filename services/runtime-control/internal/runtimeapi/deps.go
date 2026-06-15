@@ -3,15 +3,13 @@ package runtimeapi
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"strings"
-	"unicode"
 
 	"go.uber.org/zap"
 
-	"mcp-runtime-control/internal/apierr"
 	"mcp-runtime-control/internal/platformclient"
+	"mcp-runtime/pkg/apihttp"
 	"mcp-runtime/pkg/platformauth"
 	"mcp-runtime/pkg/serviceutil"
 )
@@ -71,61 +69,59 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 }
 
 func writeBodyDecodeError(w http.ResponseWriter, err error) {
-	var maxBytesErr *http.MaxBytesError
-	if errors.As(err, &maxBytesErr) {
-		writeAPIError(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("request body exceeds %d bytes", maxBytesErr.Limit), err)
-		return
-	}
-	writeAPIError(w, http.StatusBadRequest, "invalid request body", err)
+	apihttp.WriteBodyDecodeError(w, err)
 }
 
 func writeAPIError(w http.ResponseWriter, status int, message string, cause ...error) {
-	apierr.Write(w, zap.L(), newAPIError(status, errorCode(message, status), message, cause...))
+	writeAPIErrorCode(w, status, stableCodeForStatus(status), message, cause...)
 }
 
-func newAPIError(status int, code, message string, cause ...error) error {
+func writeAPIErrorCode(w http.ResponseWriter, status int, code, message string, cause ...error) {
+	apihttp.WriteError(w, zap.L(), newAPIError(status, code, message, cause...))
+}
+
+func stableCodeForStatus(status int) string {
 	switch status {
 	case http.StatusBadRequest:
-		return apierr.BadRequest(code, message, cause...)
+		return apihttp.CodeInvalidRequestBody
 	case http.StatusUnauthorized:
-		return apierr.Unauthorized(code, message, cause...)
+		return apihttp.CodeUnauthorized
 	case http.StatusForbidden:
-		return apierr.Forbidden(code, message, cause...)
+		return apihttp.CodeForbidden
 	case http.StatusNotFound:
-		return apierr.NotFound(code, message, cause...)
+		return apihttp.CodeNotFound
 	case http.StatusConflict:
-		return apierr.Conflict(code, message, cause...)
-	case http.StatusInternalServerError:
-		return apierr.Internal(code, message, cause...)
+		return apihttp.CodeConflict
+	case http.StatusMethodNotAllowed:
+		return apihttp.CodeMethodNotAllowed
+	case http.StatusRequestEntityTooLarge:
+		return apihttp.CodeRequestTooLarge
 	case http.StatusServiceUnavailable:
-		return apierr.ServiceUnavailable(code, message, cause...)
+		return apihttp.CodeKubernetesUnavailable
 	default:
-		return &apierr.Error{Status: status, Code: code, Message: message, Cause: errors.Join(cause...)}
+		return apihttp.CodeInternalError
 	}
 }
 
-func errorCode(message string, status int) string {
-	if message = strings.TrimSpace(message); message == "" {
-		message = http.StatusText(status)
+func newAPIError(status int, code, message string, cause ...error) *apihttp.Error {
+	switch status {
+	case http.StatusBadRequest:
+		return apihttp.BadRequest(code, message, cause...)
+	case http.StatusUnauthorized:
+		return apihttp.Unauthorized(message, cause...)
+	case http.StatusForbidden:
+		return apihttp.Forbidden(message, cause...)
+	case http.StatusNotFound:
+		return apihttp.NotFound(message, cause...)
+	case http.StatusConflict:
+		return apihttp.Conflict(message, cause...)
+	case http.StatusInternalServerError:
+		return apihttp.Internal(message, cause...)
+	case http.StatusServiceUnavailable:
+		return apihttp.ServiceUnavailable(code, message, cause...)
+	default:
+		return &apihttp.Error{Status: status, Code: code, Message: message, Cause: errors.Join(cause...)}
 	}
-	var b strings.Builder
-	previousUnderscore := false
-	for _, r := range strings.ToLower(message) {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
-			b.WriteRune(r)
-			previousUnderscore = false
-			continue
-		}
-		if !previousUnderscore && b.Len() > 0 {
-			b.WriteByte('_')
-			previousUnderscore = true
-		}
-	}
-	code := strings.Trim(b.String(), "_")
-	if code == "" {
-		return "error"
-	}
-	return code
 }
 
 func requestIP(r *http.Request) string {

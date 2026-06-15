@@ -17,4 +17,5 @@ const (
 	CodeAuthFailed            = "auth_failed"
 	CodePlatformUnavailable   = "platform_unavailable"
 	CodeKubernetesUnavailable = "kubernetes_unavailable"
+	CodeInvalidVersionTag     = "invalid_version_tag"
 )
