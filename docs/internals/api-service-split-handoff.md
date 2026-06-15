@@ -39,7 +39,8 @@ Branch: `refactor/api-service`. Work already committed/working-tree:
 **M2 cluster-tested and cutover complete (2026-06-15).** Monolith `services/api` and
 `k8s/08-api.yaml` deleted; Traefik routes `/api/v1/*` to split services. Setup builds three API
 images, doctor probes split deployments, Prometheus scrapes 9090/9094/9095.
-**M2.4:** runtime-control handlers use `pkg/apihttp` stable codes.
+**M2.4:** all three API services use `pkg/apihttp` stable error envelopes.
+**M3.3:** OpenAPI spec-validation tests run in per-service CI jobs; adopt Pact only when external clients consume these APIs (see `docs/sentinel.md`).
 **M2.5:** monolith manifest/tree removed; `08-traefik-watch-rbac.yaml`; k3s rollout builds three APIs.
 **M3.1:** `pkg/internalapi` shared DTOs wired in platform-api + runtime-control.
 **M3.2:** per-service `openapi.yaml`, `GET /api/v1/openapi.yaml`, `pkg/openapi` validation tests in CI.
@@ -317,8 +318,8 @@ After each M1.x carve-out:
    bash hack/milestone-gate.sh all
    ```
 
-Requires `kind-mcp-runtime` with `mcp-platform-api`, `mcp-analytics-api`,
-`mcp-runtime-control`, and the shrinking `mcp-sentinel-api` deployed. CI mirrors
+Requires `kind-mcp-runtime` with `mcp-platform-api`, `mcp-analytics-api`, and
+`mcp-runtime-control` deployed. CI mirrors
 the image scans in `.github/workflows/security-trivy.yaml` (`trivy-sentinel-images`
 matrix). Extend the cluster script when M2+ land (ingress paths, UI proxy removal).
 **Do not start the next milestone while Trivy or any cluster check fails.**

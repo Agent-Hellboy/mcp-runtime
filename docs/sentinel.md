@@ -9,7 +9,7 @@
 | **mcp-gateway** | Transparent sidecar. Extracts identity, evaluates tool-level policy, emits allow/deny audit events, forwards traffic upstream. |
 | **ingest** | Receives `POST /events`, validates ingest-scoped API keys or optional JWTs, writes to Kafka. |
 | **processor** | Consumes Kafka, batches, writes into ClickHouse with indexed audit fields. |
-| **api** | Analytics endpoints, dashboard summaries, user/team-scoped analytics, scoped observability links and Prometheus queries, runtime governance APIs (grants/sessions), platform audit, MCP server catalog, component operations. |
+| **api** (split) | Three HTTP services behind Traefik path routing: **platform-api** (Postgres identity/auth/registry), **runtime-control** (Kubernetes runtime governance + registry push), **analytics-api** (ClickHouse events/stats/usage). OpenAPI at `GET /api/v1/openapi.yaml` per service. |
 | **ui** | Control-plane dashboard: user MCP server dashboard, MCP server catalog and connect config, user API keys, analytics dashboard, governance, MCP operations, and platform management. |
 | **gateway** | Kubernetes deployment fronting the sentinel API, ingest, and UI surfaces. |
 | **workspace assistant sample** | Sample MCP server in `examples/workspace-assistant-mcp` for end-to-end smoke tests. |
@@ -23,7 +23,9 @@ that only use HTTP, Kafka, ClickHouse, Postgres, or local files.
 
 | Component | Kubernetes awareness | Runtime access | Hardening notes |
 |---|---|---|---|
-| **api** | Kubernetes-aware. `services/api` initializes clients through `pkg/k8sclient`, using in-cluster config first and kubeconfig fallback outside the cluster. | Reads `MCPServer`, `MCPAccessGrant`, and `MCPAgentSession`; applies grants/sessions; reads component health; restarts Sentinel workloads; provisions platform deployment namespaces, quotas, limits, and NetworkPolicies; manages Deployments and Services. RBAC is in `k8s/08-api-rbac.yaml`. | Treat this as the main privileged Sentinel service. Keep admin auth tight, keep `ADMIN_API_KEYS` separate from user keys, prefer in-cluster service account credentials in production, and review the broad deployment-management RBAC before enabling user deployment APIs on shared clusters. |
+| **platform-api** | Postgres-backed; no Kubernetes client. | Identity, auth, registry forwardAuth, admin namespaces/audit, `/internal/*` for runtime-control and analytics-api. | `k8s/08-platform-api-rbac.yaml` grants only user-key secret access. |
+| **runtime-control** | Kubernetes-aware via `pkg/k8sclient`. | MCPServer reconciliation helpers, grants/sessions, deployments, registry push (pod-local emptyDir + `POD_IP`). Broad ClusterRole in `k8s/08-runtime-control-rbac.yaml`. | Main privileged API for cluster mutations. NetworkPolicy egress to platform-api:8080 in `k8s/22-split-api-networkpolicy.yaml`. |
+| **analytics-api** | ClickHouse-only; `automountServiceAccountToken: false`. | Events, stats, usage queries; resolves display names via platform-api `/internal/*`. | No Kubernetes RBAC. NetworkPolicy egress to platform-api:8080. |
 | **gateway** | Kubernetes-aware Traefik ingress controller. | Watches Ingress, Service, Endpoint, Secret, and IngressClass resources for the namespaces it serves. The bundled Sentinel-local gateway watches `mcp-sentinel`; the shared ingress overlays watch `registry`, `mcp-sentinel`, `mcp-servers`, `mcp-servers-org`, and `mcp-servers-public`. | Keep watched namespaces explicit, avoid cluster-wide ingress watches unless required, keep Grafana admin-gated, do not expose Prometheus directly on public hosts, and keep redaction middleware limited to routes that need it. |
 | **mcp-gateway** | Kubernetes-integrated but Kubernetes API-agnostic. It is injected into MCP server pods and reads operator-rendered policy from mounted files and env vars. | Does not need a Kubernetes client or service account token. It forwards MCP traffic to the local server container and emits audit events to ingest. | Keep `automountServiceAccountToken: false`, read-only policy mounts, `readOnlyRootFilesystem`, dropped capabilities, and non-root execution. Treat `ANALYTICS_API_KEY` as ingest-scoped, not an admin API key. |
 | **ui** | Kubernetes API-agnostic. | Serves the browser UI and proxies `/api/*` to `api` through `API_UPSTREAM` with UI session credentials or the configured upstream key. | Keep it behind TLS for public hosts, retain the security headers in `services/ui`, set `UI_REQUIRE_HTTPS=false` only for deliberate non-TLS dev ingress, set `UI_FORCE_SECURE_COOKIE=true` when a TLS-terminating proxy does not send `X-Forwarded-Proto: https`, and do not grant it Kubernetes RBAC. |
@@ -32,7 +34,7 @@ that only use HTTP, Kafka, ClickHouse, Postgres, or local files.
 | **storage and observability** | Mixed. ClickHouse, Kafka, Postgres, Grafana, Prometheus, Tempo, Loki, and the OTel collector are Kubernetes API-agnostic in the bundled manifests; Promtail is Kubernetes-aware so it can discover pod logs. | Data stores and dashboards back Sentinel audit, identity, metrics, traces, and logs. Promtail has pod read/watch RBAC. | Review persistence, retention, backups, and dashboard auth before production use. The generated platform-host observability route uses `sentinel-admin-auth@file`; provide equivalent auth if you replace repo-managed Traefik, and review Promtail's cluster log visibility before enabling it on multi-tenant clusters. |
 
 Operationally, the safest production posture is to give Kubernetes API access
-only to `api`, ingress controllers, the runtime operator, and log collectors
+only to **runtime-control**, ingress controllers, the runtime operator, and log collectors
 that need it. Services that do not call Kubernetes should keep service account
 token automounting disabled and should be isolated with NetworkPolicies where
 the cluster supports them.
@@ -99,8 +101,10 @@ For local `setup --test-mode` clusters, setup seeds two email/password logins:
 
 | Surface | Public path in dev | In-cluster service | Notes |
 |---|---|---|---|
-| **UI** | `/` | `mcp-sentinel-ui:8082` | Browser app, browser login/session routes, and `/api` reverse proxy. |
-| **API** | `/api/*` through UI | `mcp-sentinel-api:8080` | Auth, analytics queries, runtime governance, deployments, admin/user APIs. The UI proxy forwards browser origin headers so local connect configs can point at `http://localhost:18080/<server-name>/mcp`. |
+| **UI** | `/` | `mcp-sentinel-ui:8082` | Browser app and server-side auth/OIDC upstream to platform-api. Traefik routes `/api/v1/*` directly to split API services. |
+| **platform-api** | `/api/v1/auth/*`, `/api/v1/registry/authz`, `/api/v1/admin/*` | `mcp-platform-api:8080` | Login, identity, registry forwardAuth, admin namespaces/audit. |
+| **runtime-control** | `/api/v1/runtime/*`, `/api/v1/deployments/*` | `mcp-runtime-control:8084` | Runtime governance, registry push, dashboard summary. |
+| **analytics-api** | `/api/v1/stats`, `/api/v1/events`, `/api/v1/user/analytics/usage` | `mcp-analytics-api:8085` | ClickHouse query surfaces. |
 | **Ingest** | `/ingest/events` | `mcp-sentinel-ingest:8081/events` | Event intake used by `mcp-gateway`; the public ingress strips `/ingest`. |
 | **Grafana** | `/grafana` | `grafana:3000` | Admin observability UI. The generated platform-host route is guarded by `sentinel-admin-auth@file`; Grafana still keeps its own login unless you wire auth proxy settings. Tenant-scoped access is intentionally not exposed by the user dashboard. |
 | **Prometheus** | Not exposed | `prometheus:9090` | Internal metrics backend and Grafana datasource. Use a temporary `kubectl port-forward` only for backend debugging. |

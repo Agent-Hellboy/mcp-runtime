@@ -139,6 +139,7 @@ if [ "$SCOPE" = "m2" ] || [ "$SCOPE" = "all" ]; then
   check gateway-v1-stats 200 "$(curl -sS -o /dev/null -w '%{http_code}' -H "x-api-key: $ADMIN_KEY" http://127.0.0.1:18083/api/v1/stats)"
   check gateway-v1-runtime-servers 200 "$(curl -sS -o /dev/null -w '%{http_code}' -H "x-api-key: $ADMIN_KEY" http://127.0.0.1:18083/api/v1/runtime/servers)"
   check gateway-legacy-api 404 "$(curl -sS -o /dev/null -w '%{http_code}' -H "x-api-key: $ADMIN_KEY" http://127.0.0.1:18083/api/stats)"
+  check platform-openapi 200 "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:18080/api/v1/openapi.yaml)"
 fi
 
 pkill -f 'port-forward svc/mcp-' 2>/dev/null || true

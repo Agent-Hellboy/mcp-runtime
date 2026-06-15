@@ -196,13 +196,13 @@ kubectl create secret docker-registry mcp-runtime-registry-pull \
 
 ### Sentinel API returns 401
 
-The `mcp-sentinel-api` pods may have started with stale API keys from a previous
+The split API pods (`mcp-platform-api`, `mcp-runtime-control`, `mcp-analytics-api`) may have started with stale API keys from a previous
 setup run.
 
 ```bash
 # Restart to pick up current keys
-kubectl rollout restart deployment/mcp-sentinel-api -n mcp-sentinel
-kubectl rollout status deployment/mcp-sentinel-api -n mcp-sentinel --timeout=120s
+kubectl rollout restart deployment/mcp-platform-api deployment/mcp-runtime-control deployment/mcp-analytics-api -n mcp-sentinel
+kubectl rollout status deployment/mcp-platform-api -n mcp-sentinel --timeout=120s
 ```
 
 ---
