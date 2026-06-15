@@ -35,7 +35,9 @@ cmd_go_modules() {
 
 	local mods=(
 		"examples/workspace-assistant-mcp"
-		"services/api"
+		"services/platform-api"
+		"services/runtime-control"
+		"services/analytics-api"
 		"services/ingest"
 		"services/mcp-gateway"
 		"services/processor"

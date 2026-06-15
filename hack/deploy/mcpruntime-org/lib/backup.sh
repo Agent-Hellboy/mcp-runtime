@@ -206,6 +206,6 @@ mcpruntime_org_restore_platform_runtime() {
   if [[ "$MCP_TLS_DRY_RUN" != "1" ]]; then
     echo ""
     echo "Restart Sentinel API/UI so restored platform secrets and config take effect:"
-    echo "  kubectl --kubeconfig \"$KUBECONFIG\" rollout restart deployment/mcp-sentinel-api deployment/mcp-sentinel-ui -n mcp-sentinel"
+    echo "  kubectl --kubeconfig \"$KUBECONFIG\" rollout restart deployment/mcp-platform-api deployment/mcp-runtime-control deployment/mcp-analytics-api deployment/mcp-sentinel-ui -n mcp-sentinel"
   fi
 }
