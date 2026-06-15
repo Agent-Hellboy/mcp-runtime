@@ -1,12 +1,12 @@
 misconfigurations:
   - id: KSV-0041
     paths:
-      - "k8s/08-api-rbac.yaml"
-    statement: "mcp-runtime-traefik-watch is bound through namespace-scoped RoleBindings; the API service account can bind only this ClusterRole and has no broad Secret read permission."
+      - "k8s/08-runtime-control-rbac.yaml"
+    statement: "mcp-runtime-control-team-secrets is bound through namespace-scoped RoleBindings; runtime-control can bind only this ClusterRole for team registry pull secrets."
   - id: KSV-0056
     paths:
-      - "k8s/08-api-rbac.yaml"
-    statement: "mcp-sentinel-api intentionally provisions team namespace Services and default-deny NetworkPolicies; registry pull secrets use namespace-scoped Roles bound to the API service account."
+      - "k8s/08-runtime-control-rbac.yaml"
+    statement: "mcp-runtime-control intentionally provisions team namespace Services and default-deny NetworkPolicies."
   - id: KSV-0014
     paths:
       - "k8s/03-clickhouse.yaml"
