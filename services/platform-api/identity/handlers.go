@@ -407,7 +407,13 @@ func parseUserAPIKeyItemPath(method, path string) (keyID string, allowed bool, v
 }
 
 func parseRegistryCredentialItemPath(method, path string) (credentialID string, allowed bool, valid bool) {
-	parts := strings.Split(strings.Trim(strings.TrimPrefix(path, "/api/user/registry-credentials/"), "/"), "/")
+	const prefix = "/api/v1/user/registry-credentials/"
+	if strings.HasPrefix(path, prefix) {
+		path = strings.TrimPrefix(path, prefix)
+	} else {
+		path = strings.TrimPrefix(path, "/api/user/registry-credentials/")
+	}
+	parts := strings.Split(strings.Trim(path, "/"), "/")
 	switch method {
 	case http.MethodDelete:
 		if len(parts) != 1 || parts[0] == "" {
