@@ -102,6 +102,7 @@ func (s *RuntimeServer) handleRuntimeTeamCreate(w http.ResponseWriter, r *http.R
 		return
 	}
 	if err := s.ensureTeamNamespace(ctx, team); err != nil {
+		log.Printf("ensureTeamNamespace for team %s namespace %s failed: %v", team.Slug, team.Namespace, err)
 		if cleanupErr := s.identity.DeleteTeamBySlug(ctx, team.Slug); cleanupErr != nil {
 			log.Printf("failed to clean up team %s after namespace provisioning failure: %v", team.Slug, cleanupErr)
 			writeAPIError(w, http.StatusInternalServerError, "failed to provision team namespace")

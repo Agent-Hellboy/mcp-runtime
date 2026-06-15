@@ -17,6 +17,7 @@ import (
 )
 
 type PlatformStore interface {
+	PrincipalForUserID(ctx context.Context, userID string) (platformauth.Principal, error)
 	AuthenticateUserAPIKey(ctx context.Context, rawKey string) (platformauth.Principal, bool, error)
 	ResolveUserIDs(ctx context.Context, ids []string) (map[string]string, error)
 	ResolveTeamIDs(ctx context.Context, ids []string) (map[string]string, error)
@@ -41,6 +42,7 @@ type Handler struct {
 
 func (h Handler) Register(mux *http.ServeMux) {
 	mux.Handle("/internal/auth/resolve", h.authorize(http.HandlerFunc(h.resolveAuth)))
+	mux.Handle("/internal/identity/principal", h.authorize(http.HandlerFunc(h.resolvePrincipal)))
 	mux.Handle("/internal/identity/resolve-ids", h.authorize(http.HandlerFunc(h.resolveIDs)))
 	mux.Handle("/internal/audit", h.authorize(http.HandlerFunc(h.audit)))
 	mux.Handle("/internal/identity/teams", h.authorize(http.HandlerFunc(h.teams)))
@@ -81,6 +83,30 @@ func (h Handler) resolveAuth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": ok, "principal": principal})
+}
+
+func (h Handler) resolvePrincipal(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+		return
+	}
+	var request struct {
+		UserID string `json:"user_id"`
+	}
+	if err := decodeJSON(r, &request); err != nil {
+		apihttp.WriteEnvelope(w, http.StatusBadRequest, apihttp.CodeInvalidRequestBody, "invalid request body")
+		return
+	}
+	principal, err := h.Store.PrincipalForUserID(r.Context(), strings.TrimSpace(request.UserID))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			apihttp.WriteEnvelope(w, http.StatusNotFound, apihttp.CodeNotFound, "user not found")
+			return
+		}
+		apihttp.WriteEnvelope(w, http.StatusInternalServerError, apihttp.CodeQueryFailed, "failed to resolve principal")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"principal": principal})
 }
 
 func (h Handler) resolveIDs(w http.ResponseWriter, r *http.Request) {

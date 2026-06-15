@@ -12,6 +12,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"mcp-runtime/pkg/platformauth"
 )
 
 // Client calls platform-api internal identity and audit endpoints.
@@ -115,6 +117,25 @@ func (c *Client) DeleteTeamBySlug(ctx context.Context, slug string) error {
 		return fmt.Errorf("delete team: status %d", status)
 	}
 	return nil
+}
+
+func (c *Client) PrincipalForUserID(ctx context.Context, userID string) (platformauth.Principal, error) {
+	var result struct {
+		Principal platformauth.Principal `json:"principal"`
+	}
+	status, err := c.authorizedJSON(ctx, http.MethodPost, "/internal/identity/principal", map[string]string{
+		"user_id": userID,
+	}, &result)
+	if err != nil {
+		return platformauth.Principal{}, err
+	}
+	if status == http.StatusNotFound {
+		return platformauth.Principal{}, sql.ErrNoRows
+	}
+	if status != http.StatusOK {
+		return platformauth.Principal{}, fmt.Errorf("resolve principal: status %d", status)
+	}
+	return result.Principal, nil
 }
 
 func (c *Client) ListNamespaces(ctx context.Context) ([]map[string]any, error) {

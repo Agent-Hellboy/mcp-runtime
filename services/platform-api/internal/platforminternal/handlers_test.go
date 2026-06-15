@@ -26,6 +26,14 @@ func (f *fakeStore) AuthenticateUserAPIKey(context.Context, string) (platformaut
 	}, true, nil
 }
 
+func (f *fakeStore) PrincipalForUserID(context.Context, string) (platformauth.Principal, error) {
+	return platformauth.Principal{
+		Subject: "user-1",
+		Email:   "user@example.com",
+		Role:    platformauth.RoleUser,
+	}, nil
+}
+
 func (f *fakeStore) ResolveUserIDs(context.Context, []string) (map[string]string, error) {
 	return map[string]string{"user-1": "user@example.com"}, nil
 }

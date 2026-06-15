@@ -132,7 +132,12 @@ func main() {
 	}
 	var userResolver platformauth.UserKeyResolver
 	if store != nil {
-		userResolver = storeAPIKeyResolver{store: store}
+		userResolver = platformauth.ChainUserKeyResolvers(
+			storeAPIKeyResolver{store: store},
+			runtimeControlUserKeyResolver(),
+		)
+	} else {
+		userResolver = runtimeControlUserKeyResolver()
 	}
 	server.authentic = platformauth.Authenticator{
 		Secret:          jwtSecret,
@@ -173,6 +178,21 @@ func (r storeAPIKeyResolver) ResolveAPIKey(ctx context.Context, rawKey string) (
 	}
 	p, ok, err := r.store.AuthenticateUserAPIKey(ctx, rawKey)
 	return platformauth.Principal(p), ok, err
+}
+
+func runtimeControlUserKeyResolver() platformauth.UserKeyResolver {
+	baseURL := strings.TrimSpace(os.Getenv("RUNTIME_CONTROL_URL"))
+	if baseURL == "" {
+		baseURL = "http://mcp-runtime-control.mcp-sentinel.svc.cluster.local:8084"
+	}
+	token := strings.TrimSpace(os.Getenv("INTERNAL_AUTH_TOKEN"))
+	if token == "" {
+		return nil
+	}
+	return &platformauth.HTTPUserKeyResolver{
+		BaseURL: baseURL,
+		Token:   token,
+	}
 }
 
 func (s *apiServer) oidcVerifier() platformauth.OIDCVerifier {

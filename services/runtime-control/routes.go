@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"os"
 	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -11,6 +12,7 @@ import (
 	"mcp-runtime-control/admin"
 	"mcp-runtime-control/deployments"
 	"mcp-runtime-control/internal/platformclient"
+	"mcp-runtime-control/internal/platforminternal"
 	runtimehandlers "mcp-runtime-control/runtime"
 	"mcp-runtime/pkg/apihttp"
 	"mcp-runtime/pkg/platformauth"
@@ -19,6 +21,12 @@ import (
 func (s *server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/health", s.handleHealth)
 	mux.HandleFunc("/ready", s.handleReady)
+
+	platforminternal.Handler{
+		Runtime:  s.runtime,
+		Platform: s.platform,
+		Token:    strings.TrimSpace(os.Getenv("INTERNAL_AUTH_TOKEN")),
+	}.Register(mux)
 
 	auth := s.authentic.Middleware
 	adminOnly := func(h http.Handler) http.Handler {
