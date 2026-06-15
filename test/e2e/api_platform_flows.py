@@ -78,6 +78,13 @@ def merged_headers(*items):
     return out
 
 
+def registry_forwarded_headers(path):
+    # Traefik on the sentinel gateway overwrites X-Forwarded-Uri with the API
+    # route (/api/v1/registry/authz). Keep the registry repository path on
+    # X-Forwarded-URL so scope checks still see /v2/... through the gateway.
+    return {"X-Forwarded-Uri": path, "X-Forwarded-URL": path}
+
+
 def quote_segment(value):
     return urllib.parse.quote(str(value), safe="")
 
@@ -158,14 +165,14 @@ check(team_namespace in {item.get("namespace") for item in namespaces.get("names
 namespace_item = expect_json(f"{api_base}/runtime/namespaces/{quote_segment(team_namespace)}", headers=admin_headers)
 check(namespace_item.get("namespace", {}).get("namespace") == team_namespace, "GET /api/runtime/namespaces/{namespace} returned team namespace", f"namespace item response: {namespace_item}")
 
-expect_status(f"{api_base}/registry/authz", 401, headers={"X-Forwarded-Uri": "/v2/_catalog"})
-expect_status(f"{api_base}/registry/authz", 204, headers=merged_headers(admin_key_headers, {"X-Forwarded-Uri": f"/v2/{team_slug}/demo/manifests/latest"}))
+expect_status(f"{api_base}/registry/authz", 401, headers=registry_forwarded_headers("/v2/_catalog"))
+expect_status(f"{api_base}/registry/authz", 204, headers=merged_headers(admin_key_headers, registry_forwarded_headers(f"/v2/{team_slug}/demo/manifests/latest")))
 personal_scope = user_namespace or registry_username
 if personal_scope:
-    expect_status(f"{api_base}/registry/authz", 403, headers=merged_headers(user_key_headers, {"X-Forwarded-Uri": f"/v2/{personal_scope}/demo/manifests/latest"}))
+    expect_status(f"{api_base}/registry/authz", 403, headers=merged_headers(user_key_headers, registry_forwarded_headers(f"/v2/{personal_scope}/demo/manifests/latest"})))
 registry_basic_headers = basic_headers(registry_username, registry_password)
-expect_status(f"{api_base}/registry/authz", 204, headers=merged_headers(registry_basic_headers, {"X-Forwarded-Uri": f"/v2/{team_slug}/demo/manifests/latest"}))
-expect_status(f"{api_base}/registry/authz", 204, headers=merged_headers(registry_basic_headers, {"X-Forwarded-Uri": f"/v2/{team_namespace}/demo/manifests/latest"}))
+expect_status(f"{api_base}/registry/authz", 204, headers=merged_headers(registry_basic_headers, registry_forwarded_headers(f"/v2/{team_slug}/demo/manifests/latest")))
+expect_status(f"{api_base}/registry/authz", 204, headers=merged_headers(registry_basic_headers, registry_forwarded_headers(f"/v2/{team_namespace}/demo/manifests/latest")))
 
 expect_json(f"{api_base}/analytics/usage?limit=3", headers=admin_key_headers)
 expect_json(f"{api_base}/user/analytics/usage?limit=3", headers=user_headers)
@@ -245,7 +252,7 @@ gateway_summary = expect_json(f"{gateway_api_base}/dashboard/summary", headers=a
 check("total_events" in gateway_summary, "gateway /api/dashboard/summary returned summary", f"gateway summary response: {gateway_summary}")
 
 expect_json(f"{api_base}/user/registry-credentials/{quote_segment(credential_id)}", method="DELETE", headers=user_headers)
-expect_status(f"{api_base}/registry/authz", 401, headers=merged_headers(registry_basic_headers, {"X-Forwarded-Uri": f"/v2/{team_slug}/demo/manifests/latest"}))
+expect_status(f"{api_base}/registry/authz", 401, headers=merged_headers(registry_basic_headers, registry_forwarded_headers(f"/v2/{team_slug}/demo/manifests/latest")))
 expect_json(f"{api_base}/user/api-keys/{quote_segment(user_key_id)}", method="DELETE", headers=user_headers)
 expect_status(f"{api_base}/auth/me", 401, headers=user_key_headers)
 

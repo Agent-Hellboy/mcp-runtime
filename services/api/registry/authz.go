@@ -65,20 +65,39 @@ func RegistryForwardedPath(r *http.Request) string {
 	if r == nil {
 		return ""
 	}
+	var fallback string
 	for _, key := range []string{"X-Forwarded-Uri", "X-Forwarded-URL"} {
-		raw := strings.TrimSpace(r.Header.Get(key))
-		if raw == "" {
+		path := forwardedHeaderPath(r, key)
+		if path == "" {
 			continue
 		}
-		if parsed, err := url.Parse(raw); err == nil && parsed.Path != "" {
-			return parsed.Path
+		if strings.HasPrefix(path, "/v2/") {
+			return path
 		}
-		return raw
+		if fallback == "" {
+			fallback = path
+		}
 	}
 	if r.URL != nil {
-		return r.URL.Path
+		if path := strings.TrimSpace(r.URL.Path); strings.HasPrefix(path, "/v2/") {
+			return path
+		}
+		if fallback == "" {
+			fallback = r.URL.Path
+		}
 	}
-	return ""
+	return fallback
+}
+
+func forwardedHeaderPath(r *http.Request, key string) string {
+	raw := strings.TrimSpace(r.Header.Get(key))
+	if raw == "" {
+		return ""
+	}
+	if parsed, err := url.Parse(raw); err == nil && parsed.Path != "" {
+		return parsed.Path
+	}
+	return raw
 }
 
 func RegistryPathScope(r *http.Request) (string, bool) {

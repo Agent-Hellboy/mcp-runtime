@@ -492,6 +492,9 @@ if deep_request_flows:
         token = base64.b64encode(f"{username}:{password}".encode()).decode()
         return {"Authorization": f"Basic {token}"}
 
+    def registry_forwarded_headers(path):
+        return {"X-Forwarded-Uri": path, "X-Forwarded-URL": path}
+
     def quote_segment(value):
         return urllib.parse.quote(str(value), safe="")
 
@@ -677,30 +680,30 @@ if deep_request_flows:
     expect_status(
         f"{api_base}/api/v1/registry/authz",
         401,
-        headers={"X-Forwarded-Uri": "/v2/_catalog"},
+        headers=registry_forwarded_headers("/v2/_catalog"),
     )
     expect_status(
         f"{api_base}/api/v1/registry/authz",
         204,
-        headers=merged_headers(auth_headers, {"X-Forwarded-Uri": f"/v2/{team_slug}/demo/manifests/latest"}),
+        headers=merged_headers(auth_headers, registry_forwarded_headers(f"/v2/{team_slug}/demo/manifests/latest")),
     )
     personal_scope = user_namespace or registry_username
     if personal_scope:
         expect_status(
             f"{api_base}/api/v1/registry/authz",
             403,
-            headers=merged_headers(user_key_headers, {"X-Forwarded-Uri": f"/v2/{personal_scope}/demo/manifests/latest"}),
+            headers=merged_headers(user_key_headers, registry_forwarded_headers(f"/v2/{personal_scope}/demo/manifests/latest")),
         )
     registry_basic_headers = basic_headers(registry_username, registry_password)
     expect_status(
         f"{api_base}/api/v1/registry/authz",
         204,
-        headers=merged_headers(registry_basic_headers, {"X-Forwarded-Uri": f"/v2/{team_slug}/demo/manifests/latest"}),
+        headers=merged_headers(registry_basic_headers, registry_forwarded_headers(f"/v2/{team_slug}/demo/manifests/latest")),
     )
     expect_status(
         f"{api_base}/api/v1/registry/authz",
         204,
-        headers=merged_headers(registry_basic_headers, {"X-Forwarded-Uri": f"/v2/{team_namespace}/demo/manifests/latest"}),
+        headers=merged_headers(registry_basic_headers, registry_forwarded_headers(f"/v2/{team_namespace}/demo/manifests/latest")),
     )
 
     expect_json(f"{api_base}/api/v1/analytics/usage?limit=3", headers=auth_headers)
@@ -820,7 +823,7 @@ if deep_request_flows:
     expect_status(
         f"{api_base}/api/v1/registry/authz",
         401,
-        headers=merged_headers(registry_basic_headers, {"X-Forwarded-Uri": f"/v2/{team_slug}/demo/manifests/latest"}),
+        headers=merged_headers(registry_basic_headers, registry_forwarded_headers(f"/v2/{team_slug}/demo/manifests/latest")),
     )
     expect_json(
         f"{api_base}/api/v1/user/api-keys/{quote_segment(user_key_id)}",
