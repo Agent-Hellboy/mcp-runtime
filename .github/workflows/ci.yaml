@@ -107,7 +107,7 @@ jobs:
 
           log_dir="${SENTINEL_SERVICE_TEST_LOG_DIR}"
           mkdir -p "${log_dir}"
-          services=(api ingest processor mcp-gateway ui)
+          services=(platform-api analytics-api runtime-control ingest processor mcp-gateway ui)
           pids=()
           log_files=()
           for service in "${services[@]}"; do

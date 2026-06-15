@@ -78,19 +78,21 @@ type analyticsComponent struct {
 }
 
 type AnalyticsImageSet struct {
-	Ingest        string
-	API           string
-	Processor     string
-	UI            string
-	Traefik       string
-	ClickHouse    string
-	Kafka         string
-	Prometheus    string
-	OTelCollector string
-	Tempo         string
-	Loki          string
-	Promtail      string
-	Grafana       string
+	Ingest         string
+	PlatformAPI    string
+	RuntimeControl string
+	AnalyticsAPI   string
+	Processor      string
+	UI             string
+	Traefik        string
+	ClickHouse     string
+	Kafka          string
+	Prometheus     string
+	OTelCollector  string
+	Tempo          string
+	Loki           string
+	Promtail       string
+	Grafana        string
 }
 
 var analyticsComponents = []analyticsComponent{
@@ -101,9 +103,21 @@ var analyticsComponents = []analyticsComponent{
 		BuildContext: ".",
 	},
 	{
-		Name:         "api",
-		Repository:   "mcp-sentinel-api",
-		Dockerfile:   "services/api/Dockerfile",
+		Name:         "platform-api",
+		Repository:   "mcp-platform-api",
+		Dockerfile:   "services/platform-api/Dockerfile",
+		BuildContext: ".",
+	},
+	{
+		Name:         "runtime-control",
+		Repository:   "mcp-runtime-control",
+		Dockerfile:   "services/runtime-control/Dockerfile",
+		BuildContext: ".",
+	},
+	{
+		Name:         "analytics-api",
+		Repository:   "mcp-analytics-api",
+		Dockerfile:   "services/analytics-api/Dockerfile",
 		BuildContext: ".",
 	},
 	{

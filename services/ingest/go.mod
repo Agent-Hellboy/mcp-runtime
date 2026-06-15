@@ -1,6 +1,6 @@
 module mcp-sentinel-ingest
 
-go 1.26.0
+go 1.26.4
 
 require (
 	github.com/MicahParks/keyfunc v1.9.0

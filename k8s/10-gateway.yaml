@@ -590,13 +590,13 @@ spec:
   rules:
     - http:
         paths:
-          - path: /api/runtime/adapter/sessions
+          - path: /api/v1/runtime/adapter/sessions
             pathType: Exact
             backend:
               service:
-                name: mcp-sentinel-ui
+                name: mcp-runtime-control
                 port:
-                  number: 8082
+                  number: 8084
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -608,13 +608,146 @@ spec:
   rules:
     - http:
         paths:
-          - path: /api
+          - path: /api/v1/runtime/registry/push
+            pathType: Exact
+            backend:
+              service:
+                name: mcp-runtime-control
+                port:
+                  number: 8084
+          - path: /api/v1/admin/namespaces
             pathType: Prefix
             backend:
               service:
-                name: mcp-sentinel-ui
+                name: mcp-platform-api
                 port:
-                  number: 8082
+                  number: 8080
+          - path: /api/v1/admin/audit
+            pathType: Prefix
+            backend:
+              service:
+                name: mcp-platform-api
+                port:
+                  number: 8080
+          - path: /api/v1/auth
+            pathType: Prefix
+            backend:
+              service:
+                name: mcp-platform-api
+                port:
+                  number: 8080
+          - path: /api/v1/users
+            pathType: Prefix
+            backend:
+              service:
+                name: mcp-platform-api
+                port:
+                  number: 8080
+          - path: /api/v1/registry/authz
+            pathType: Prefix
+            backend:
+              service:
+                name: mcp-platform-api
+                port:
+                  number: 8080
+          - path: /api/v1/user/registry-credentials
+            pathType: Prefix
+            backend:
+              service:
+                name: mcp-platform-api
+                port:
+                  number: 8080
+          - path: /api/v1/user/activity
+            pathType: Prefix
+            backend:
+              service:
+                name: mcp-platform-api
+                port:
+                  number: 8080
+          - path: /api/v1/user/analytics
+            pathType: Prefix
+            backend:
+              service:
+                name: mcp-analytics-api
+                port:
+                  number: 8085
+          - path: /api/v1/events
+            pathType: Prefix
+            backend:
+              service:
+                name: mcp-analytics-api
+                port:
+                  number: 8085
+          - path: /api/v1/event-types
+            pathType: Prefix
+            backend:
+              service:
+                name: mcp-analytics-api
+                port:
+                  number: 8085
+          - path: /api/v1/stats
+            pathType: Prefix
+            backend:
+              service:
+                name: mcp-analytics-api
+                port:
+                  number: 8085
+          - path: /api/v1/sources
+            pathType: Prefix
+            backend:
+              service:
+                name: mcp-analytics-api
+                port:
+                  number: 8085
+          - path: /api/v1/analytics
+            pathType: Prefix
+            backend:
+              service:
+                name: mcp-analytics-api
+                port:
+                  number: 8085
+          - path: /api/v1/admin/deployments
+            pathType: Prefix
+            backend:
+              service:
+                name: mcp-runtime-control
+                port:
+                  number: 8084
+          - path: /api/v1/user/api-keys
+            pathType: Prefix
+            backend:
+              service:
+                name: mcp-runtime-control
+                port:
+                  number: 8084
+          - path: /api/v1/admin
+            pathType: Prefix
+            backend:
+              service:
+                name: mcp-runtime-control
+                port:
+                  number: 8084
+          - path: /api/v1/runtime
+            pathType: Prefix
+            backend:
+              service:
+                name: mcp-runtime-control
+                port:
+                  number: 8084
+          - path: /api/v1/deployments
+            pathType: Prefix
+            backend:
+              service:
+                name: mcp-runtime-control
+                port:
+                  number: 8084
+          - path: /api/v1/dashboard
+            pathType: Prefix
+            backend:
+              service:
+                name: mcp-runtime-control
+                port:
+                  number: 8084
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress

@@ -69,7 +69,7 @@ classify_path() {
       add_scenario "adapter-proxy"
       return
       ;;
-    internal/cli/team/*|services/api/internal/platformstore/*)
+    internal/cli/team/*|services/platform-api/internal/platformstore/*|services/api/internal/platformstore/*)
       add_scenario "api-platform"
       add_scenario "cli-platform"
       add_scenario "multitenancy"
@@ -79,23 +79,23 @@ classify_path() {
       add_scenario "cli-platform"
       return
       ;;
-    services/api/internal/runtimeapi/*team*|services/api/internal/runtimeapi/*namespace*|services/api/internal/runtimeapi/*registry*|services/api/internal/runtimeapi/*deploy*|services/api/internal/runtimeapi/*server*)
+    services/runtime-control/internal/runtimeapi/*team*|services/runtime-control/internal/runtimeapi/*namespace*|services/runtime-control/internal/runtimeapi/*registry*|services/runtime-control/internal/runtimeapi/*deploy*|services/runtime-control/internal/runtimeapi/*server*|services/api/internal/runtimeapi/*team*|services/api/internal/runtimeapi/*namespace*|services/api/internal/runtimeapi/*registry*|services/api/internal/runtimeapi/*deploy*|services/api/internal/runtimeapi/*server*)
       add_scenario "api-platform"
       add_scenario "multitenancy"
       return
       ;;
-    services/api/internal/runtimeapi/*tool*)
+    services/runtime-control/internal/runtimeapi/*tool*|services/api/internal/runtimeapi/*tool*)
       add_scenario "api-platform"
       add_scenario "cli-platform"
       return
       ;;
-    services/api/internal/runtimeapi/*adapter*|services/api/internal/runtimeapi/*grant*|services/api/internal/runtimeapi/*session*|services/api/internal/runtimeapi/*access*)
+    services/runtime-control/internal/runtimeapi/*adapter*|services/runtime-control/internal/runtimeapi/*grant*|services/runtime-control/internal/runtimeapi/*session*|services/runtime-control/internal/runtimeapi/*access*|services/api/internal/runtimeapi/*adapter*|services/api/internal/runtimeapi/*grant*|services/api/internal/runtimeapi/*session*|services/api/internal/runtimeapi/*access*)
       add_scenario "api-platform"
       add_scenario "governance"
       add_scenario "adapter-proxy"
       return
       ;;
-    services/api/*)
+    services/platform-api/*|services/runtime-control/*|services/analytics-api/*|services/api/*)
       add_scenario "api-platform"
       return
       ;;

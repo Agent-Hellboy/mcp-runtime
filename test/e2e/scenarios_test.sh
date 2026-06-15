@@ -136,8 +136,8 @@ selector_expect() {
 
 selector_expect "docs-only" "smoke-auth" "docs/internals/tests.md"
 selector_expect "ui" "smoke-auth,ui-auth" "services/ui/main.go"
-selector_expect "api" "smoke-auth,api-platform" "services/api/internal/runtimeapi/auth.go"
-selector_expect "runtime-tools-api" "smoke-auth,api-platform,cli-platform" "services/api/internal/runtimeapi/tools.go"
+selector_expect "api" "smoke-auth,api-platform" "services/platform-api/auth/login.go"
+selector_expect "runtime-tools-api" "smoke-auth,api-platform,cli-platform" "services/runtime-control/internal/runtimeapi/tools.go"
 selector_expect "catalog-cli" "smoke-auth,cli-platform" "internal/cli/catalog/catalog.go"
 selector_expect "adapter" "smoke-auth,adapter-proxy,governance" "internal/cli/adapter/proxy.go"
 selector_expect "gateway" "smoke-auth,governance,trust,oauth,adapter-proxy" "services/mcp-gateway/main.go"

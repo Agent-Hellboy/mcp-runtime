@@ -160,13 +160,6 @@ func newMux(apiBase, apiUpstream, apiKey, apiKeys, adminAPIKeys string) (*http.S
 		upstreamAPIKey = apiKey
 		apiKeys = apiKey
 	}
-	target, err := url.Parse(apiUpstream)
-	if err != nil {
-		return nil, err
-	}
-	if target.Scheme == "" || target.Host == "" {
-		return nil, url.InvalidHostError(apiUpstream)
-	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
@@ -175,7 +168,6 @@ func newMux(apiBase, apiUpstream, apiKey, apiKeys, adminAPIKeys string) (*http.S
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	})
 	platformMode := normalizedPlatformMode()
-	publicCatalog := platformMode == "public"
 	defaultNamespace := strings.TrimSpace(os.Getenv("UI_DEFAULT_NAMESPACE"))
 	if defaultNamespace == "" {
 		defaultNamespace = defaultCatalogNamespaceForMode(platformMode)
@@ -214,10 +206,6 @@ func newMux(apiBase, apiUpstream, apiKey, apiKeys, adminAPIKeys string) (*http.S
 	parsedAPIKeys := parseAPIKeyList(apiKeys)
 	parsedAdminAPIKeys := parseAPIKeyList(adminAPIKeys)
 	mux.HandleFunc("/auth/admin-check", handleAdminCheck(sessions, parsedAPIKeys, parsedAdminAPIKeys, legacyAdminAPIKeyFallbackEnabled()))
-
-	apiProxy := newAPIProxy(target, apiBase, upstreamAPIKey, parsedAPIKeys, sessions, publicCatalog)
-	mux.Handle(apiBase+"/", apiProxy)
-	mux.Handle(apiBase, apiProxy)
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/")
@@ -511,7 +499,7 @@ func loginOIDCSession(ctx context.Context, apiUpstream, idToken string) (session
 }
 
 func loginPasswordWithAPI(ctx context.Context, apiUpstream, email, password string) (sessionPrincipal, string, error) {
-	loginURL, err := apiUpstreamURL(apiUpstream, "api", "auth", "login")
+	loginURL, err := apiUpstreamURL(apiUpstream, "api", "v1", "auth", "login")
 	if err != nil {
 		return sessionPrincipal{}, "", err
 	}
@@ -596,7 +584,7 @@ func (e *oidcLoginStatusError) Error() string {
 }
 
 func loginOIDCWithAPI(ctx context.Context, apiUpstream, idToken string) (sessionPrincipal, string, time.Time, error) {
-	oidcURL, err := apiUpstreamURL(apiUpstream, "api", "auth", "oidc")
+	oidcURL, err := apiUpstreamURL(apiUpstream, "api", "v1", "auth", "oidc")
 	if err != nil {
 		return sessionPrincipal{}, "", time.Time{}, err
 	}
@@ -657,7 +645,7 @@ func loginOIDCWithAPI(ctx context.Context, apiUpstream, idToken string) (session
 }
 
 func verifyOIDCTokenWithAPI(ctx context.Context, apiUpstream, idToken string) (sessionPrincipal, error) {
-	meURL, err := apiUpstreamURL(apiUpstream, "api", "auth", "me")
+	meURL, err := apiUpstreamURL(apiUpstream, "api", "v1", "auth", "me")
 	if err != nil {
 		return sessionPrincipal{}, err
 	}

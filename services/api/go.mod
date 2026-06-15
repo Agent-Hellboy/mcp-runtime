@@ -1,6 +1,6 @@
 module mcp-sentinel-api
 
-go 1.26.0
+go 1.26.4
 
 require (
 	github.com/ClickHouse/clickhouse-go/v2 v2.46.0

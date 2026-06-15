@@ -18,19 +18,21 @@ yaml_status="skipped"
 files_status="pending"
 integration_status="skipped"
 
-# Test 0: Build and test services/api
-echo "🔨 Building and testing services/api"
+# Test 0: Build and test split API service modules
+echo "🔨 Building and testing split API service modules"
 if command -v go >/dev/null 2>&1; then
-    hack/ci/go-test.sh services/api
+    for service in platform-api analytics-api runtime-control; do
+        hack/ci/go-test.sh "services/${service}"
+    done
 else
-    echo "⚠️  Go not available, skipping services/api tests"
+    echo "⚠️  Go not available, skipping split API service tests"
 fi
 
 # Test 1: Verify binaries exist and are executable (if built)
 echo "📁 Testing compiled binaries..."
 binaries_found=0
 binaries_tested=0
-for svc in api ingest processor ui mcp-server mcp-gateway; do
+for svc in ingest processor ui mcp-server mcp-gateway; do
     binary_path="services/$svc/$svc"
     if [ -f "$binary_path" ] && [ -x "$binary_path" ]; then
         binaries_found=$((binaries_found + 1))
@@ -58,20 +60,34 @@ fi
 # Test 2: Verify Docker images can be built
 echo "🐳 Testing Docker image builds..."
 if command -v docker >/dev/null 2>&1; then
-    for svc in api ingest processor ui mcp-server mcp-gateway; do
-        dockerfile="services/$svc/Dockerfile"
+    build_docker_image() {
+        local name="$1"
+        local dockerfile="$2"
+        local context_dir="$3"
+        echo "Building ${name}..."
+        if docker build -f "${dockerfile}" -t "${name}:ci-test" "${context_dir}" >/dev/null 2>&1; then
+            echo "✅ ${name}: Docker build successful"
+        else
+            echo "❌ ${name}: Docker build failed"
+            exit 1
+        fi
+    }
+
+    for svc in ingest processor ui mcp-gateway; do
+        dockerfile="services/${svc}/Dockerfile"
         if [ ! -f "$dockerfile" ]; then
             echo "❌ Dockerfile not found: $dockerfile"
             exit 1
         fi
-
-        echo "Building $svc..."
-        if docker build -f "$dockerfile" -t "mcp-$svc:ci-test" "services/$svc" >/dev/null 2>&1; then
-            echo "✅ $svc: Docker build successful"
-        else
-            echo "❌ $svc: Docker build failed"
+        build_docker_image "mcp-${svc}" "${dockerfile}" "."
+    done
+    for svc in platform-api analytics-api runtime-control; do
+        dockerfile="services/${svc}/Dockerfile"
+        if [ ! -f "$dockerfile" ]; then
+            echo "❌ Dockerfile not found: $dockerfile"
             exit 1
         fi
+        build_docker_image "mcp-${svc}" "${dockerfile}" "."
     done
     docker_status="passed"
 else
@@ -123,11 +139,12 @@ fi
 echo "📁 Checking required files..."
 required_files=(
     "README.md"
-    "services/api/main.go"
+    "services/platform-api/main.go"
+    "services/analytics-api/main.go"
+    "services/runtime-control/main.go"
     "services/ingest/main.go"
     "services/processor/main.go"
     "services/ui/main.go"
-    "services/mcp-server/main.go"
     "services/mcp-gateway/main.go"
     "k8s/00-namespace.yaml"
     "k8s/01-config.yaml"

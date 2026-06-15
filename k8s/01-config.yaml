@@ -25,7 +25,7 @@ data:
   MCP_REGISTRY_INGRESS_HOST: ""
   MCP_PLATFORM_DOMAIN: ""
   MCP_MCP_INGRESS_HOST: ""
-  API_BASE: "/api"
+  API_BASE: "/api/v1"
   OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"
   MCP_CLUSTER_NAME: "local"
   # Dashboard observability links

@@ -73,8 +73,9 @@ Standards, NetworkPolicy, and manifest hygiene, use `k8s-hardening-audit`.
      then `govulncheck ./...` from the repo root and from each touched
      `services/<name>/`. Unlike gosec this catches reachable CVEs.
    - **Trivy repo scan:** mirror CI with
-     `trivy fs --scanners vuln,secret,license,misconfig --severity CRITICAL,HIGH --ignore-unfixed --skip-dirs inspirations/mcp-gateway-registry .`.
-     The skip path matches `.github/workflows/security-trivy.yaml`.
+     `bash hack/trivy-sentinel-images.sh` (builds + scans all sentinel images;
+     stdlib CVEs require image/gobinary scan, not `go.mod` alone).
+     For filesystem-only: `trivy fs --scanners vuln,secret,license,misconfig --severity CRITICAL,HIGH --ignore-unfixed --skip-dirs inspirations/mcp-gateway-registry .`.
    - **Dependency or workflow change:** review
      `.github/workflows/dependency-review.yaml`, Go module diffs, and any
      new action permissions or secret references; if the diff adds a

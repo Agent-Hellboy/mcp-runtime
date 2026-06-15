@@ -342,7 +342,7 @@ func checkRuntimeAPIImageDisplayRefs(kubectl core.KubectlRunner) DoctorCheck {
 		"--overrides=" + restrictedRunOverrides(podName, image, "sh", "-c", fmt.Sprintf(
 			"status=$(curl -sS -o doctor-response.json -w '%%{http_code}' --connect-timeout 5 --max-time 20 -H %q %q); cat doctor-response.json; printf '\\nHTTP_STATUS=%%s\\n' \"$status\"",
 			"x-api-key: "+apiKey,
-			fmt.Sprintf("http://%s.%s.svc.cluster.local:8080/api/runtime/servers", doctorSentinelAPIService, doctorSentinelNamespace),
+			fmt.Sprintf("http://%s.%s.svc.cluster.local:%d/api/v1/runtime/servers", doctorRuntimeControlService, doctorSentinelNamespace, doctorRuntimeControlPort),
 		)),
 	})
 	if cmdErr != nil {

@@ -56,15 +56,22 @@ CVEs). Pin the same Trivy action version (currently `0.36.0` →
 
 ```sh
 docker build --pull -f Dockerfile.operator -t mcp-runtime-operator:audit .
-docker build --pull -f services/api/Dockerfile -t mcp-sentinel-api:audit services/api
-docker build --pull -f services/ui/Dockerfile -t mcp-sentinel-ui:audit services/ui
-docker build --pull -f services/ingest/Dockerfile -t mcp-sentinel-ingest:audit services/ingest
-docker build --pull -f services/processor/Dockerfile -t mcp-sentinel-processor:audit services/processor
-docker build --pull -f services/mcp-gateway/Dockerfile -t mcp-sentinel-mcp-gateway:audit services/mcp-gateway
+docker build --pull -f services/platform-api/Dockerfile -t mcp-platform-api:audit .
+docker build --pull -f services/analytics-api/Dockerfile -t mcp-analytics-api:audit .
+docker build --pull -f services/runtime-control/Dockerfile -t mcp-runtime-control:audit .
+docker build --pull -f services/api/Dockerfile -t mcp-sentinel-api:audit .
+docker build --pull -f services/ui/Dockerfile -t mcp-sentinel-ui:audit .
+docker build --pull -f services/ingest/Dockerfile -t mcp-sentinel-ingest:audit .
+docker build --pull -f services/processor/Dockerfile -t mcp-sentinel-processor:audit .
+docker build --pull -f services/mcp-gateway/Dockerfile -t mcp-sentinel-mcp-gateway:audit .
 
-for img in mcp-runtime-operator:audit mcp-sentinel-api:audit \
-           mcp-sentinel-ui:audit mcp-sentinel-ingest:audit \
-           mcp-sentinel-processor:audit mcp-sentinel-mcp-gateway:audit; do
+# Or use the repo helper (same image set + CI-matching flags):
+bash hack/trivy-sentinel-images.sh
+
+for img in mcp-runtime-operator:audit mcp-platform-api:audit mcp-analytics-api:audit \
+           mcp-runtime-control:audit mcp-sentinel-api:audit mcp-sentinel-ui:audit \
+           mcp-sentinel-ingest:audit mcp-sentinel-processor:audit \
+           mcp-sentinel-mcp-gateway:audit; do
   trivy image --exit-code 0 --severity CRITICAL,HIGH --ignore-unfixed \
               --vuln-type os,library --format table "$img"
 done

@@ -37,9 +37,15 @@ data:
     global:
       scrape_interval: 15s
     scrape_configs:
-      - job_name: mcp-sentinel-api
+      - job_name: mcp-platform-api
         static_configs:
-          - targets: ["mcp-sentinel-api:9090"]
+          - targets: ["mcp-platform-api:9090"]
+      - job_name: mcp-runtime-control
+        static_configs:
+          - targets: ["mcp-runtime-control:9094"]
+      - job_name: mcp-analytics-api
+        static_configs:
+          - targets: ["mcp-analytics-api:9095"]
       - job_name: mcp-sentinel-ingest
         static_configs:
           - targets: ["mcp-sentinel-ingest:9091"]

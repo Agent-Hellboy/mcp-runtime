@@ -24,7 +24,7 @@ const defaultDevAdminPassword = auth.DefaultDevAdminPassword
 
 func platformDSNFromEnv() string { return auth.PlatformDSNFromEnv() }
 
-func platformJWTSecretFromEnv() ([]byte, error) { return auth.PlatformJWTSecretFromEnv() }
+func jwtSecretFromEnv() ([]byte, error) { return auth.JWTSecretFromEnv() }
 
 func runPlatformAdminBootstrap(ctx context.Context) error {
 	return auth.RunPlatformAdminBootstrap(ctx, func(ctx context.Context, dsn string, jwtSecret []byte) (auth.PasswordUserEnsurer, error) {

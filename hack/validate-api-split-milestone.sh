@@ -1,0 +1,146 @@
+#!/usr/bin/env bash
+# Live-cluster gate for api-service-split milestones (kind-mcp-runtime).
+# Usage: bash hack/validate-api-split-milestone.sh [m13|m14|m15|m16|m2|all]
+set -euo pipefail
+
+NS="${NAMESPACE:-mcp-sentinel}"
+SCOPE="${1:-all}"
+
+pass=0
+fail=0
+
+check() {
+  local name="$1" expect="$2" got="$3"
+  if [ "$got" = "$expect" ]; then
+    echo "PASS $name"
+    pass=$((pass + 1))
+  else
+    echo "FAIL $name expected=$expect got=$got"
+    fail=$((fail + 1))
+  fi
+}
+
+ADMIN_KEY=$(kubectl -n "$NS" get secret mcp-sentinel-secrets -o jsonpath='{.data.ADMIN_API_KEYS}' | base64 -d | cut -d, -f1)
+API_KEY=$(kubectl -n "$NS" get secret mcp-sentinel-secrets -o jsonpath='{.data.API_KEYS}' | base64 -d | cut -d, -f1)
+INTERNAL_TOKEN=$(kubectl -n "$NS" get secret mcp-sentinel-secrets -o jsonpath='{.data.INTERNAL_AUTH_TOKEN}' | base64 -d)
+
+pkill -f 'port-forward svc/mcp-' 2>/dev/null || true
+sleep 1
+PF_PLATFORM=0
+PF_MONOLITH=0
+PF_ANALYTICS=0
+PF_RUNTIME=0
+
+if [ "$SCOPE" = "m15" ] || [ "$SCOPE" = "m16" ] || [ "$SCOPE" = "all" ]; then
+  kubectl -n "$NS" port-forward svc/mcp-platform-api 18080:8080 >/tmp/pf-platform.log 2>&1 &
+  PF_PLATFORM=1
+fi
+if [ "$SCOPE" = "m14" ] || [ "$SCOPE" = "m15" ] || [ "$SCOPE" = "m16" ] || [ "$SCOPE" = "all" ]; then
+  MONOLITH_REPLICAS=$(kubectl -n "$NS" get deploy mcp-sentinel-api -o jsonpath='{.spec.replicas}' 2>/dev/null || echo 0)
+  if [ "${MONOLITH_REPLICAS:-0}" -gt 0 ] 2>/dev/null; then
+    kubectl -n "$NS" port-forward svc/mcp-sentinel-api 18091:8080 >/tmp/pf-api.log 2>&1 &
+    PF_MONOLITH=1
+  fi
+fi
+if [ "$SCOPE" = "m13" ] || [ "$SCOPE" = "m15" ] || [ "$SCOPE" = "m16" ] || [ "$SCOPE" = "all" ]; then
+  kubectl -n "$NS" port-forward svc/mcp-analytics-api 18095:8085 >/tmp/pf-analytics.log 2>&1 &
+  PF_ANALYTICS=1
+fi
+if [ "$SCOPE" = "m14" ] || [ "$SCOPE" = "m15" ] || [ "$SCOPE" = "m16" ] || [ "$SCOPE" = "all" ]; then
+  kubectl -n "$NS" port-forward svc/mcp-runtime-control 18084:8084 >/tmp/pf-runtime.log 2>&1 &
+  PF_RUNTIME=1
+fi
+sleep 3
+
+MONOLITH_CHECKS=$PF_MONOLITH
+
+JWT=""
+LOGIN_URL=""
+if [ "$PF_PLATFORM" = "1" ]; then
+  LOGIN_URL="http://127.0.0.1:18080/api/v1/auth/login"
+elif [ "$PF_MONOLITH" = "1" ]; then
+  LOGIN_URL="http://127.0.0.1:18091/api/v1/auth/login"
+fi
+
+if [ -n "$LOGIN_URL" ] && { [ "$SCOPE" = "m14" ] || [ "$SCOPE" = "m15" ] || [ "$SCOPE" = "m16" ] || [ "$SCOPE" = "all" ]; }; then
+  JWT=$(curl -sS -X POST "$LOGIN_URL" \
+    -H 'content-type: application/json' \
+    -d '{"email":"admin@mcpruntime.org","password":"admin@123"}' \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')
+fi
+
+if [ "$SCOPE" = "m13" ] || [ "$SCOPE" = "all" ]; then
+  echo "=== M1.3 analytics-api ==="
+  check analytics-health 200 "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:18095/health)"
+  check analytics-ready 200 "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:18095/ready)"
+  check analytics-stats-admin 200 "$(curl -sS -o /dev/null -w '%{http_code}' -H "x-api-key: $ADMIN_KEY" http://127.0.0.1:18095/api/v1/stats)"
+  check analytics-events 200 "$(curl -sS -o /dev/null -w '%{http_code}' -H "x-api-key: $ADMIN_KEY" 'http://127.0.0.1:18095/api/v1/events?limit=1')"
+  if [ -n "$JWT" ]; then
+    check analytics-stats-jwt 200 "$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $JWT" http://127.0.0.1:18095/api/v1/stats)"
+  fi
+  check analytics-stats-nonadmin-403 403 "$(curl -sS -o /dev/null -w '%{http_code}' -H "x-api-key: $API_KEY" http://127.0.0.1:18095/api/v1/stats)"
+  if [ "$MONOLITH_CHECKS" = "1" ] && [ "$PF_MONOLITH" = "1" ]; then
+    check monolith-no-stats 404 "$(curl -sS -o /dev/null -w '%{http_code}' -H "x-api-key: $ADMIN_KEY" http://127.0.0.1:18091/api/stats)"
+    check monolith-no-events 404 "$(curl -sS -o /dev/null -w '%{http_code}' -H "x-api-key: $ADMIN_KEY" http://127.0.0.1:18091/api/events)"
+  fi
+fi
+
+if [ "$SCOPE" = "m14" ] || [ "$SCOPE" = "all" ]; then
+  echo "=== M1.4 runtime-control ==="
+  check runtime-health 200 "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:18084/health)"
+  check runtime-ready 200 "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:18084/ready)"
+  check runtime-servers-v1 200 "$(curl -sS -o /dev/null -w '%{http_code}' -H "x-api-key: $ADMIN_KEY" http://127.0.0.1:18084/api/v1/runtime/servers)"
+  if [ -n "$JWT" ]; then
+    check runtime-servers-jwt 200 "$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $JWT" http://127.0.0.1:18084/api/v1/runtime/servers)"
+  fi
+  if [ "$MONOLITH_CHECKS" = "1" ] && [ "$PF_MONOLITH" = "1" ]; then
+    check monolith-no-runtime-servers 404 "$(curl -sS -o /dev/null -w '%{http_code}' -H "x-api-key: $ADMIN_KEY" http://127.0.0.1:18091/api/runtime/servers)"
+    check monolith-no-deployments 404 "$(curl -sS -o /dev/null -w '%{http_code}' -H "x-api-key: $ADMIN_KEY" http://127.0.0.1:18091/api/deployments)"
+    if [ "$PF_PLATFORM" != "1" ]; then
+      check monolith-auth-me 200 "$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $JWT" http://127.0.0.1:18091/api/v1/auth/me)"
+    fi
+  fi
+fi
+
+if [ "$SCOPE" = "m15" ] || [ "$SCOPE" = "all" ]; then
+  echo "=== M1.5 platform-api ==="
+  check platform-health 200 "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:18080/health)"
+  check platform-ready 200 "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:18080/ready)"
+  check platform-login-v1 200 "$(curl -sS -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:18080/api/v1/auth/login -H 'content-type: application/json' -d '{"email":"admin@mcpruntime.org","password":"admin@123"}')"
+  check platform-auth-me-v1 200 "$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $JWT" http://127.0.0.1:18080/api/v1/auth/me)"
+  RESOLVE_CODE=$(curl -sS -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:18080/internal/auth/resolve \
+    -H "Authorization: Bearer $INTERNAL_TOKEN" \
+    -H 'content-type: application/json' \
+    -d "{\"api_key\":\"$ADMIN_KEY\"}")
+  check platform-internal-resolve 200 "$RESOLVE_CODE"
+  if [ "$MONOLITH_CHECKS" = "1" ] && [ "$PF_MONOLITH" = "1" ]; then
+    check monolith-no-auth-login 404 "$(curl -sS -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:18091/api/v1/auth/login -H 'content-type: application/json' -d '{"email":"admin@mcpruntime.org","password":"admin@123"}')"
+    check monolith-no-auth-me 404 "$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $JWT" http://127.0.0.1:18091/api/v1/auth/me)"
+  fi
+fi
+
+if [ "$SCOPE" = "m16" ] || [ "$SCOPE" = "all" ]; then
+  echo "=== M1.6 /api/v1 only ==="
+  check platform-no-legacy-login 404 "$(curl -sS -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:18080/api/auth/login -H 'content-type: application/json' -d '{"email":"admin@mcpruntime.org","password":"admin@123"}')"
+  check platform-no-legacy-me 404 "$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $JWT" http://127.0.0.1:18080/api/auth/me)"
+  check platform-no-foreign-runtime 404 "$(curl -sS -o /dev/null -w '%{http_code}' -H "x-api-key: $ADMIN_KEY" http://127.0.0.1:18080/api/v1/runtime/servers)"
+  check runtime-no-legacy-servers 404 "$(curl -sS -o /dev/null -w '%{http_code}' -H "x-api-key: $ADMIN_KEY" http://127.0.0.1:18084/api/runtime/servers)"
+  check runtime-no-foreign-login 404 "$(curl -sS -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:18084/api/v1/auth/login -H 'content-type: application/json' -d '{"email":"admin@mcpruntime.org","password":"admin@123"}')"
+  check analytics-no-legacy-stats 404 "$(curl -sS -o /dev/null -w '%{http_code}' -H "x-api-key: $ADMIN_KEY" http://127.0.0.1:18095/api/stats)"
+  check analytics-no-foreign-runtime 404 "$(curl -sS -o /dev/null -w '%{http_code}' -H "x-api-key: $ADMIN_KEY" http://127.0.0.1:18095/api/v1/runtime/servers)"
+fi
+
+if [ "$SCOPE" = "m2" ] || [ "$SCOPE" = "all" ]; then
+  pkill -f 'port-forward svc/mcp-sentinel-gateway' 2>/dev/null || true
+  kubectl -n "$NS" port-forward svc/mcp-sentinel-gateway 18083:8083 >/tmp/pf-gateway.log 2>&1 &
+  sleep 2
+  echo "=== M2.3 Traefik gateway /api/v1 routing ==="
+  check gateway-v1-login 200 "$(curl -sS -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:18083/api/v1/auth/login -H 'content-type: application/json' -d '{"email":"admin@mcpruntime.org","password":"admin@123"}')"
+  check gateway-v1-stats 200 "$(curl -sS -o /dev/null -w '%{http_code}' -H "x-api-key: $ADMIN_KEY" http://127.0.0.1:18083/api/v1/stats)"
+  check gateway-v1-runtime-servers 200 "$(curl -sS -o /dev/null -w '%{http_code}' -H "x-api-key: $ADMIN_KEY" http://127.0.0.1:18083/api/v1/runtime/servers)"
+  check gateway-legacy-api 404 "$(curl -sS -o /dev/null -w '%{http_code}' -H "x-api-key: $ADMIN_KEY" http://127.0.0.1:18083/api/stats)"
+fi
+
+pkill -f 'port-forward svc/mcp-' 2>/dev/null || true
+echo "=== SUMMARY pass=$pass fail=$fail ==="
+[ "$fail" -eq 0 ]

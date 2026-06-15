@@ -216,7 +216,7 @@ No `/authorize`, `/token`, `/.well-known/oauth-authorization-server`, PKCE, or D
 
 These routes are served by `services/api`. Platform identity routes require the
 Postgres-backed platform store (`POSTGRES_DSN` or `DATABASE_URL`) and
-`PLATFORM_JWT_SECRET`.
+`JWT_SECRET`.
 
 ```text
 POST /api/auth/signup

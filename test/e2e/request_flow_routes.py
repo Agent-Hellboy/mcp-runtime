@@ -146,7 +146,7 @@ auth_headers = {"x-api-key": api_key}
 ingest_headers = {"x-api-key": ingest_api_key}
 
 # Gateway-routed UI, API, and example MCP routes.
-gateway_summary = expect_json(f"{gateway_base}/api/dashboard/summary", headers=auth_headers)
+gateway_summary = expect_json(f"{gateway_base}/api/v1/dashboard/summary", headers=auth_headers)
 for key in ("total_events", "active_servers", "active_grants", "active_sessions"):
     check(
         key in gateway_summary,
@@ -232,42 +232,42 @@ expect_mcp_initialize(f"{oauth_upstream_base}{oauth_mcp_path}")
 # API service surfaces.
 expect_status(f"{api_base}/health", 200, contains='"ok":true')
 expect_status(api_metrics_url, 200, contains="# HELP")
-events = expect_json(f"{api_base}/api/events?limit=5", headers=auth_headers)
+events = expect_json(f"{api_base}/api/v1/events?limit=5", headers=auth_headers)
 check(
     bool(events.get("events")),
     "api /api/events returned events",
     f"expected /api/events to return events: {events}",
 )
-stats = expect_json(f"{api_base}/api/stats", headers=auth_headers)
+stats = expect_json(f"{api_base}/api/v1/stats", headers=auth_headers)
 check(
     int(stats.get("events_total", 0)) >= 1,
     "api /api/stats events_total >= 1",
     f"expected /api/stats events_total >= 1: {stats}",
 )
-sources = expect_json(f"{api_base}/api/sources", headers=auth_headers)
+sources = expect_json(f"{api_base}/api/v1/sources", headers=auth_headers)
 check(
     bool(sources.get("sources")),
     "api /api/sources returned sources",
     f"expected /api/sources to return sources: {sources}",
 )
-event_types = expect_json(f"{api_base}/api/event-types", headers=auth_headers)
+event_types = expect_json(f"{api_base}/api/v1/event-types", headers=auth_headers)
 check(
     bool(event_types.get("event_types")),
     "api /api/event-types returned event types",
     f"expected /api/event-types to return event types: {event_types}",
 )
 filtered = wait_for_json(
-    f"{api_base}/api/events/filter?server={urllib.parse.quote(server_name)}&limit=5",
+    f"{api_base}/api/v1/events?server={urllib.parse.quote(server_name)}&limit=5",
     lambda doc: bool(doc.get("events")),
     headers=auth_headers,
-    description="api /api/events/filter events",
+    description="api /api/v1/events filtered events",
 )
 check(
     bool(filtered.get("events")),
-    "api /api/events/filter returned events",
-    f"expected /api/events/filter to return events: {filtered}",
+    "api /api/v1/events returned filtered events",
+    f"expected /api/v1/events to return events: {filtered}",
 )
-summary = expect_json(f"{api_base}/api/dashboard/summary", headers=auth_headers)
+summary = expect_json(f"{api_base}/api/v1/dashboard/summary", headers=auth_headers)
 for key in ("total_events", "active_servers", "active_grants", "active_sessions"):
     check(
         key in summary,
@@ -275,7 +275,7 @@ for key in ("total_events", "active_servers", "active_grants", "active_sessions"
         f"dashboard summary missing {key}: {summary}",
     )
 servers = expect_json(
-    f"{api_base}/api/runtime/servers?namespace={urllib.parse.quote(catalog_namespace)}",
+    f"{api_base}/api/v1/runtime/servers?namespace={urllib.parse.quote(catalog_namespace)}",
     headers=auth_headers,
 )
 server_names = {item.get("name") for item in servers.get("servers", [])}
@@ -284,14 +284,14 @@ check(
     "runtime servers contain expected entries",
     f"runtime servers missing expected entries: {servers}",
 )
-grants = expect_json(f"{api_base}/api/runtime/grants", headers=auth_headers)
+grants = expect_json(f"{api_base}/api/v1/runtime/grants", headers=auth_headers)
 grant_names = {item.get("name") for item in grants.get("grants", [])}
 check(
     grant_name in grant_names,
     f"runtime grants contain {grant_name}",
     f"runtime grants missing {grant_name}: {grants}",
 )
-sessions = expect_json(f"{api_base}/api/runtime/sessions", headers=auth_headers)
+sessions = expect_json(f"{api_base}/api/v1/runtime/sessions", headers=auth_headers)
 session_names = {item.get("name") for item in sessions.get("sessions", [])}
 check(
     session_id in session_names,
@@ -300,7 +300,7 @@ check(
 )
 not_a_server = f"{server_name}-e2e-not-mcpserver"
 bad_grant_body = expect_status(
-    f"{api_base}/api/runtime/grants",
+    f"{api_base}/api/v1/runtime/grants",
     400,
     method="POST",
     headers=auth_headers,
@@ -320,7 +320,7 @@ check(
     f"body: {bad_grant_body}",
 )
 bad_grant_side_effect_body = expect_status(
-    f"{api_base}/api/runtime/grants",
+    f"{api_base}/api/v1/runtime/grants",
     400,
     method="POST",
     headers=auth_headers,
@@ -339,7 +339,7 @@ check(
     f"body: {bad_grant_side_effect_body}",
 )
 bad_session_body = expect_status(
-    f"{api_base}/api/runtime/sessions",
+    f"{api_base}/api/v1/runtime/sessions",
     400,
     method="POST",
     headers=auth_headers,
@@ -359,7 +359,7 @@ check(
 api_runtime_grant = f"{server_name}-e2e-api-grant"
 api_runtime_session = f"{server_name}-e2e-api-session"
 created_grant = expect_json(
-    f"{api_base}/api/runtime/grants",
+    f"{api_base}/api/v1/runtime/grants",
     method="POST",
     headers=auth_headers,
     body={
@@ -378,7 +378,7 @@ check(
     f"body: {created_grant}",
 )
 created_session = expect_json(
-    f"{api_base}/api/runtime/sessions",
+    f"{api_base}/api/v1/runtime/sessions",
     method="POST",
     headers=auth_headers,
     body={
@@ -394,21 +394,21 @@ check(
     "POST /api/runtime/sessions created session",
     f"body: {created_session}",
 )
-grants_after = expect_json(f"{api_base}/api/runtime/grants", headers=auth_headers)
+grants_after = expect_json(f"{api_base}/api/v1/runtime/grants", headers=auth_headers)
 grant_names_after = {item.get("name") for item in grants_after.get("grants", [])}
 check(
     api_runtime_grant in grant_names_after,
     "list grants after API create",
     f"missing {api_runtime_grant}: {grants_after}",
 )
-sessions_after = expect_json(f"{api_base}/api/runtime/sessions", headers=auth_headers)
+sessions_after = expect_json(f"{api_base}/api/v1/runtime/sessions", headers=auth_headers)
 session_names_after = {item.get("name") for item in sessions_after.get("sessions", [])}
 check(
     api_runtime_session in session_names_after,
     "list sessions after API create",
     f"missing {api_runtime_session}: {sessions_after}",
 )
-components = expect_json(f"{api_base}/api/runtime/components", headers=auth_headers)
+components = expect_json(f"{api_base}/api/v1/runtime/components", headers=auth_headers)
 component_keys = {item.get("key") for item in components.get("components", [])}
 check(
     {"api", "gateway", "ui"}.issubset(component_keys),
@@ -416,7 +416,7 @@ check(
     f"runtime components missing expected keys: {components}",
 )
 policy = expect_json(
-    f"{api_base}/api/runtime/policy?namespace=mcp-servers&server={urllib.parse.quote(server_name)}",
+    f"{api_base}/api/v1/runtime/policy?namespace=mcp-servers&server={urllib.parse.quote(server_name)}",
     headers=auth_headers,
 )
 check(
@@ -427,7 +427,7 @@ check(
 
 # Runtime mutation paths through the API.
 disable = expect_json(
-    f"{api_base}/api/runtime/grants/mcp-servers/{urllib.parse.quote(grant_name)}",
+    f"{api_base}/api/v1/runtime/grants/mcp-servers/{urllib.parse.quote(grant_name)}",
     method="PATCH",
     headers=auth_headers,
     body={"disabled": True},
@@ -438,7 +438,7 @@ check(
     f"grant disable response unexpected: {disable}",
 )
 enable = expect_json(
-    f"{api_base}/api/runtime/grants/mcp-servers/{urllib.parse.quote(grant_name)}",
+    f"{api_base}/api/v1/runtime/grants/mcp-servers/{urllib.parse.quote(grant_name)}",
     method="PATCH",
     headers=auth_headers,
     body={"disabled": False},
@@ -449,7 +449,7 @@ check(
     f"grant enable response unexpected: {enable}",
 )
 revoke = expect_json(
-    f"{api_base}/api/runtime/sessions/mcp-servers/{urllib.parse.quote(session_id)}",
+    f"{api_base}/api/v1/runtime/sessions/mcp-servers/{urllib.parse.quote(session_id)}",
     method="PATCH",
     headers=auth_headers,
     body={"revoked": True},
@@ -460,7 +460,7 @@ check(
     f"session revoke response unexpected: {revoke}",
 )
 unrevoke = expect_json(
-    f"{api_base}/api/runtime/sessions/mcp-servers/{urllib.parse.quote(session_id)}",
+    f"{api_base}/api/v1/runtime/sessions/mcp-servers/{urllib.parse.quote(session_id)}",
     method="PATCH",
     headers=auth_headers,
     body={"revoked": False},
@@ -471,7 +471,7 @@ check(
     f"session unrevoke response unexpected: {unrevoke}",
 )
 expect_json(
-    f"{api_base}/api/runtime/actions/restart",
+    f"{api_base}/api/v1/runtime/actions/restart",
     status=400,
     method="POST",
     headers=auth_headers,
@@ -497,13 +497,13 @@ if deep_request_flows:
 
     suffix = str(int(time.time()))
     expect_status(
-        f"{api_base}/api/auth/login",
+        f"{api_base}/api/v1/auth/login",
         401,
         method="POST",
         body={"email": f"missing-{suffix}@mcpruntime.org", "password": "wrong-password"},
     )
     oidc_status, _, oidc_body = request(
-        f"{api_base}/api/auth/oidc",
+        f"{api_base}/api/v1/auth/oidc",
         method="POST",
         body={},
     )
@@ -513,27 +513,27 @@ if deep_request_flows:
         f"unexpected /api/auth/oidc status {oidc_status}: {oidc_body}",
     )
     expect_status(
-        f"{api_base}/api/auth/signup",
+        f"{api_base}/api/v1/auth/signup",
         400,
         method="POST",
         body={"email": f"bad-role-{suffix}@mcpruntime.org", "password": test_user_password, "role": "root"},
     )
     expect_status(
-        f"{api_base}/api/auth/signup",
+        f"{api_base}/api/v1/auth/signup",
         403,
         method="POST",
         body={"email": f"admin-denied-{suffix}@mcpruntime.org", "password": test_user_password, "role": "admin"},
     )
 
     admin_login = expect_json(
-        f"{api_base}/api/auth/login",
+        f"{api_base}/api/v1/auth/login",
         method="POST",
         body={"email": platform_admin_email, "password": platform_admin_password},
     )
     admin_token = admin_login.get("access_token", "")
     check(bool(admin_token), "platform admin login returned access_token", f"admin login missing token: {admin_login}")
     admin_headers = bearer_headers(admin_token)
-    admin_me = expect_json(f"{api_base}/api/auth/me", headers=admin_headers)
+    admin_me = expect_json(f"{api_base}/api/v1/auth/me", headers=admin_headers)
     check(
         admin_me.get("principal", {}).get("role") == "admin",
         "GET /api/auth/me returned admin principal",
@@ -542,7 +542,7 @@ if deep_request_flows:
 
     signup_email = f"e2e-user-{suffix}@mcpruntime.org"
     signup = expect_json(
-        f"{api_base}/api/auth/signup",
+        f"{api_base}/api/v1/auth/signup",
         status=201,
         method="POST",
         body={"email": signup_email, "password": test_user_password},
@@ -553,16 +553,16 @@ if deep_request_flows:
     user_namespace = user.get("namespace", "")
     check(bool(user_token and user_id), "POST /api/auth/signup created user token and id", f"signup response: {signup}")
     user_headers = bearer_headers(user_token)
-    user_me = expect_json(f"{api_base}/api/auth/me", headers=user_headers)
+    user_me = expect_json(f"{api_base}/api/v1/auth/me", headers=user_headers)
     check(
         user_me.get("principal", {}).get("email") == signup_email,
         "GET /api/auth/me returned signup user principal",
         f"unexpected signup /api/auth/me response: {user_me}",
     )
 
-    expect_json(f"{api_base}/api/user/api-keys", headers=user_headers)
+    expect_json(f"{api_base}/api/v1/user/api-keys", headers=user_headers)
     created_user_key = expect_json(
-        f"{api_base}/api/user/api-keys",
+        f"{api_base}/api/v1/user/api-keys",
         method="POST",
         headers=user_headers,
         body={"name": f"e2e-key-{suffix}"},
@@ -571,16 +571,16 @@ if deep_request_flows:
     user_api_key = created_user_key.get("api_key", "")
     check(bool(user_key_id and user_api_key), "POST /api/user/api-keys created one-time key", f"user key response: {created_user_key}")
     user_key_headers = {"x-api-key": user_api_key}
-    user_key_me = expect_json(f"{api_base}/api/auth/me", headers=user_key_headers)
+    user_key_me = expect_json(f"{api_base}/api/v1/auth/me", headers=user_key_headers)
     check(
         user_key_me.get("principal", {}).get("email") == signup_email,
         "user API key authenticated /api/auth/me",
         f"unexpected user API key principal: {user_key_me}",
     )
 
-    expect_json(f"{api_base}/api/user/registry-credentials", headers=user_headers)
+    expect_json(f"{api_base}/api/v1/user/registry-credentials", headers=user_headers)
     created_credential = expect_json(
-        f"{api_base}/api/user/registry-credentials",
+        f"{api_base}/api/v1/user/registry-credentials",
         status=201,
         method="POST",
         headers=user_headers,
@@ -597,7 +597,7 @@ if deep_request_flows:
 
     team_slug = f"e2e-deep-{suffix}"
     team_created = expect_json(
-        f"{api_base}/api/runtime/teams",
+        f"{api_base}/api/v1/runtime/teams",
         method="POST",
         headers=admin_headers,
         body={"slug": team_slug, "name": f"E2E Deep {suffix}"},
@@ -609,16 +609,16 @@ if deep_request_flows:
         "POST /api/runtime/teams created managed team",
         f"team create response: {team_created}",
     )
-    teams = expect_json(f"{api_base}/api/runtime/teams", headers=admin_headers)
+    teams = expect_json(f"{api_base}/api/v1/runtime/teams", headers=admin_headers)
     check(
         team_slug in {item.get("slug") for item in teams.get("teams", [])},
         "GET /api/runtime/teams listed created team",
         f"created team missing from team list: {teams}",
     )
-    expect_json(f"{api_base}/api/runtime/teams/{quote_segment(team_slug)}", headers=admin_headers)
-    expect_json(f"{api_base}/api/runtime/teams/{quote_segment(team_slug)}/members", headers=admin_headers)
+    expect_json(f"{api_base}/api/v1/runtime/teams/{quote_segment(team_slug)}", headers=admin_headers)
+    expect_json(f"{api_base}/api/v1/runtime/teams/{quote_segment(team_slug)}/members", headers=admin_headers)
     membership = expect_json(
-        f"{api_base}/api/runtime/teams/{quote_segment(team_slug)}/members/{quote_segment(user_id)}",
+        f"{api_base}/api/v1/runtime/teams/{quote_segment(team_slug)}/members/{quote_segment(user_id)}",
         method="PUT",
         headers=admin_headers,
         body={"role": "member"},
@@ -630,7 +630,7 @@ if deep_request_flows:
     )
     team_user_email = f"e2e-team-user-{suffix}@mcpruntime.org"
     team_user = expect_json(
-        f"{api_base}/api/users",
+        f"{api_base}/api/v1/users",
         status=201,
         method="POST",
         headers=admin_headers,
@@ -639,12 +639,12 @@ if deep_request_flows:
     team_user_id = team_user.get("user", {}).get("id", "")
     check(bool(team_user_id), "POST /api/users created team user", f"team user response: {team_user}")
     expect_json(
-        f"{api_base}/api/runtime/teams/{quote_segment(team_slug)}/members/{quote_segment(team_user_id)}",
+        f"{api_base}/api/v1/runtime/teams/{quote_segment(team_slug)}/members/{quote_segment(team_user_id)}",
         method="PUT",
         headers=admin_headers,
         body={"role": "owner"},
     )
-    members_after = expect_json(f"{api_base}/api/runtime/teams/{quote_segment(team_slug)}/members", headers=admin_headers)
+    members_after = expect_json(f"{api_base}/api/v1/runtime/teams/{quote_segment(team_slug)}/members", headers=admin_headers)
     member_ids = {item.get("user_id") for item in members_after.get("members", [])}
     check(
         user_id in member_ids and team_user_id in member_ids,
@@ -652,12 +652,12 @@ if deep_request_flows:
         f"expected team members missing: {members_after}",
     )
     expect_json(
-        f"{api_base}/api/runtime/teams/{quote_segment(team_slug)}/members/{quote_segment(team_user_id)}",
+        f"{api_base}/api/v1/runtime/teams/{quote_segment(team_slug)}/members/{quote_segment(team_user_id)}",
         method="DELETE",
         headers=admin_headers,
     )
 
-    namespaces = expect_json(f"{api_base}/api/runtime/namespaces", headers=admin_headers)
+    namespaces = expect_json(f"{api_base}/api/v1/runtime/namespaces", headers=admin_headers)
     namespace_names = {item.get("namespace") for item in namespaces.get("namespaces", [])}
     check(
         team_namespace in namespace_names,
@@ -665,7 +665,7 @@ if deep_request_flows:
         f"team namespace missing from namespace list: {namespaces}",
     )
     namespace_item = expect_json(
-        f"{api_base}/api/runtime/namespaces/{quote_segment(team_namespace)}",
+        f"{api_base}/api/v1/runtime/namespaces/{quote_segment(team_namespace)}",
         headers=admin_headers,
     )
     check(
@@ -675,44 +675,44 @@ if deep_request_flows:
     )
 
     expect_status(
-        f"{api_base}/api/registry/authz",
+        f"{api_base}/api/v1/registry/authz",
         401,
         headers={"X-Forwarded-Uri": "/v2/_catalog"},
     )
     expect_status(
-        f"{api_base}/api/registry/authz",
+        f"{api_base}/api/v1/registry/authz",
         204,
         headers=merged_headers(auth_headers, {"X-Forwarded-Uri": f"/v2/{team_slug}/demo/manifests/latest"}),
     )
     personal_scope = user_namespace or registry_username
     if personal_scope:
         expect_status(
-            f"{api_base}/api/registry/authz",
+            f"{api_base}/api/v1/registry/authz",
             403,
             headers=merged_headers(user_key_headers, {"X-Forwarded-Uri": f"/v2/{personal_scope}/demo/manifests/latest"}),
         )
     registry_basic_headers = basic_headers(registry_username, registry_password)
     expect_status(
-        f"{api_base}/api/registry/authz",
+        f"{api_base}/api/v1/registry/authz",
         204,
         headers=merged_headers(registry_basic_headers, {"X-Forwarded-Uri": f"/v2/{team_slug}/demo/manifests/latest"}),
     )
     expect_status(
-        f"{api_base}/api/registry/authz",
+        f"{api_base}/api/v1/registry/authz",
         204,
         headers=merged_headers(registry_basic_headers, {"X-Forwarded-Uri": f"/v2/{team_namespace}/demo/manifests/latest"}),
     )
 
-    expect_json(f"{api_base}/api/analytics/usage?limit=3", headers=auth_headers)
-    expect_json(f"{api_base}/api/user/analytics/usage?limit=3", headers=user_headers)
-    expect_json(f"{api_base}/api/user/activity/image-publish", status=202, method="POST", headers=user_headers, body={
+    expect_json(f"{api_base}/api/v1/analytics/usage?limit=3", headers=auth_headers)
+    expect_json(f"{api_base}/api/v1/user/analytics/usage?limit=3", headers=user_headers)
+    expect_json(f"{api_base}/api/v1/user/activity/image-publish", status=202, method="POST", headers=user_headers, body={
         "image_ref": f"registry.registry.svc.cluster.local:5000/{team_slug}/demo:{suffix}",
         "source_image": "docker.io/library/nginx:1.27-alpine",
         "mode": "pre-release",
     })
 
     server_item = expect_json(
-        f"{api_base}/api/runtime/servers/mcp-servers/{quote_segment(server_name)}",
+        f"{api_base}/api/v1/runtime/servers/mcp-servers/{quote_segment(server_name)}",
         headers=auth_headers,
     )
     check(
@@ -721,14 +721,14 @@ if deep_request_flows:
         f"server item response: {server_item}",
     )
     server_events = expect_json(
-        f"{api_base}/api/runtime/server-events?namespace=mcp-servers&server={urllib.parse.quote(server_name)}&limit=5",
+        f"{api_base}/api/v1/runtime/server-events?namespace=mcp-servers&server={urllib.parse.quote(server_name)}&limit=5",
         headers=auth_headers,
     )
     check("events" in server_events, "GET /api/runtime/server-events returned events key", f"server events response: {server_events}")
 
     temp_server_name = f"e2e-deep-server-{suffix}"
     temp_server = expect_json(
-        f"{api_base}/api/runtime/servers",
+        f"{api_base}/api/v1/runtime/servers",
         method="POST",
         headers=admin_headers,
         body={
@@ -751,38 +751,38 @@ if deep_request_flows:
         f"temporary server response: {temp_server}",
     )
     expect_json(
-        f"{api_base}/api/runtime/servers/mcp-servers/{quote_segment(temp_server_name)}",
+        f"{api_base}/api/v1/runtime/servers/mcp-servers/{quote_segment(temp_server_name)}",
         headers=admin_headers,
     )
     expect_json(
-        f"{api_base}/api/runtime/servers/mcp-servers/{quote_segment(temp_server_name)}",
+        f"{api_base}/api/v1/runtime/servers/mcp-servers/{quote_segment(temp_server_name)}",
         method="DELETE",
         headers=admin_headers,
     )
 
     expect_json(
-        f"{api_base}/api/runtime/grants/mcp-servers/{quote_segment(api_runtime_grant)}",
+        f"{api_base}/api/v1/runtime/grants/mcp-servers/{quote_segment(api_runtime_grant)}",
         headers=auth_headers,
     )
     expect_json(
-        f"{api_base}/api/runtime/sessions/mcp-servers/{quote_segment(api_runtime_session)}",
+        f"{api_base}/api/v1/runtime/sessions/mcp-servers/{quote_segment(api_runtime_session)}",
         headers=auth_headers,
     )
     expect_json(
-        f"{api_base}/api/runtime/sessions/mcp-servers/{quote_segment(api_runtime_session)}",
+        f"{api_base}/api/v1/runtime/sessions/mcp-servers/{quote_segment(api_runtime_session)}",
         method="DELETE",
         headers=auth_headers,
     )
     expect_json(
-        f"{api_base}/api/runtime/grants/mcp-servers/{quote_segment(api_runtime_grant)}",
+        f"{api_base}/api/v1/runtime/grants/mcp-servers/{quote_segment(api_runtime_grant)}",
         method="DELETE",
         headers=auth_headers,
     )
 
     deployment_name = f"e2e-deep-deploy-{suffix}"
-    expect_json(f"{api_base}/api/deployments?namespace=mcp-servers", headers=admin_headers)
+    expect_json(f"{api_base}/api/v1/deployments?namespace=mcp-servers", headers=admin_headers)
     deployment = expect_json(
-        f"{api_base}/api/deployments",
+        f"{api_base}/api/v1/deployments",
         method="POST",
         headers=admin_headers,
         body={
@@ -798,36 +798,36 @@ if deep_request_flows:
         "POST /api/deployments created temporary deployment",
         f"deployment response: {deployment}",
     )
-    expect_json(f"{api_base}/api/admin/deployments?namespace=mcp-servers", headers=admin_headers)
+    expect_json(f"{api_base}/api/v1/admin/deployments?namespace=mcp-servers", headers=admin_headers)
     expect_json(
-        f"{api_base}/api/deployments/mcp-servers/{quote_segment(deployment_name)}",
+        f"{api_base}/api/v1/deployments/mcp-servers/{quote_segment(deployment_name)}",
         method="DELETE",
         headers=admin_headers,
     )
 
-    admin_namespaces = expect_json(f"{api_base}/api/admin/namespaces", headers=admin_headers)
+    admin_namespaces = expect_json(f"{api_base}/api/v1/admin/namespaces", headers=admin_headers)
     check("namespaces" in admin_namespaces, "GET /api/admin/namespaces returned namespaces", f"admin namespaces response: {admin_namespaces}")
-    admin_audit = expect_json(f"{api_base}/api/admin/audit?limit=5", headers=admin_headers)
+    admin_audit = expect_json(f"{api_base}/api/v1/admin/audit?limit=5", headers=admin_headers)
     check("audit_logs" in admin_audit, "GET /api/admin/audit returned audit_logs", f"admin audit response: {admin_audit}")
-    admin_operations = expect_json(f"{api_base}/api/admin/operations?limit=5", headers=admin_headers)
+    admin_operations = expect_json(f"{api_base}/api/v1/admin/operations?limit=5", headers=admin_headers)
     check("audit_logs" in admin_operations and "users" in admin_operations, "GET /api/admin/operations returned operations payload", f"admin operations response: {admin_operations}")
 
     expect_json(
-        f"{api_base}/api/user/registry-credentials/{quote_segment(credential_id)}",
+        f"{api_base}/api/v1/user/registry-credentials/{quote_segment(credential_id)}",
         method="DELETE",
         headers=user_headers,
     )
     expect_status(
-        f"{api_base}/api/registry/authz",
+        f"{api_base}/api/v1/registry/authz",
         401,
         headers=merged_headers(registry_basic_headers, {"X-Forwarded-Uri": f"/v2/{team_slug}/demo/manifests/latest"}),
     )
     expect_json(
-        f"{api_base}/api/user/api-keys/{quote_segment(user_key_id)}",
+        f"{api_base}/api/v1/user/api-keys/{quote_segment(user_key_id)}",
         method="DELETE",
         headers=user_headers,
     )
-    expect_status(f"{api_base}/api/auth/me", 401, headers=user_key_headers)
+    expect_status(f"{api_base}/api/v1/auth/me", 401, headers=user_key_headers)
 
     expect_status(f"{ui_base}/auth/status", 200, contains='"authenticated":false')
     expect_status(f"{ui_base}/auth/login", 401, method="POST", body={"api_key": "wrong-api-key"})
@@ -991,7 +991,7 @@ for route in (
     "api:/api/stats",
     "api:/api/sources",
     "api:/api/event-types",
-    "api:/api/events/filter",
+    "api:/api/v1/events",
     "api:/api/dashboard/summary",
     "api:/api/runtime/servers",
     "api:/api/runtime/grants",

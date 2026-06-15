@@ -12,7 +12,7 @@ Enable the platform identity database with:
 
 ```bash
 export POSTGRES_DSN='postgres://user:pass@postgres:5432/mcp_runtime?sslmode=disable'
-export PLATFORM_JWT_SECRET='<32+ random bytes>'
+export JWT_SECRET='<32+ random bytes>'
 ```
 
 `DATABASE_URL` is also accepted when `POSTGRES_DSN` is not set. The API applies

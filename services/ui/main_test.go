@@ -1053,7 +1053,7 @@ func TestLoginOIDCSessionFallsBackToTokenVerificationWhenPlatformStoreUnavailabl
 	authHTTPClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		paths = append(paths, r.URL.Path)
 		switch r.URL.Path {
-		case "/api/auth/oidc":
+		case "/api/v1/auth/oidc":
 			if r.Method != http.MethodPost {
 				t.Fatalf("oidc method = %s, want POST", r.Method)
 			}
@@ -1069,7 +1069,7 @@ func TestLoginOIDCSessionFallsBackToTokenVerificationWhenPlatformStoreUnavailabl
 				Header:     http.Header{"content-type": []string{"application/json"}},
 				Body:       io.NopCloser(strings.NewReader(`{"error":"platform identity database not configured"}`)),
 			}, nil
-		case "/api/auth/me":
+		case "/api/v1/auth/me":
 			if got := r.Header.Get("authorization"); got != "Bearer "+idToken {
 				t.Fatalf("fallback authorization = %q, want bearer id token", got)
 			}
@@ -1098,7 +1098,7 @@ func TestLoginOIDCSessionFallsBackToTokenVerificationWhenPlatformStoreUnavailabl
 	if expiresAt.After(exp.Add(time.Second)) || expiresAt.Before(exp.Add(-time.Second)) {
 		t.Fatalf("session expiry = %s, want %s", expiresAt.Format(time.RFC3339), exp.Format(time.RFC3339))
 	}
-	if len(paths) != 2 || paths[0] != "/api/auth/oidc" || paths[1] != "/api/auth/me" {
+	if len(paths) != 2 || paths[0] != "/api/v1/auth/oidc" || paths[1] != "/api/v1/auth/me" {
 		t.Fatalf("request paths = %v, want oidc exchange then auth/me fallback", paths)
 	}
 }

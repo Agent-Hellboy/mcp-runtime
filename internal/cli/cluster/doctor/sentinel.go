@@ -154,7 +154,7 @@ func checkSentinelAPIAuthProbe(kubectl core.KubectlRunner) DoctorCheck {
 		"--connect-timeout", "5",
 		"--max-time", "20",
 		"-H", "x-api-key: " + apiKey,
-		fmt.Sprintf("http://%s.%s.svc.cluster.local:8080/api/runtime/components", doctorSentinelAPIService, doctorSentinelNamespace),
+		fmt.Sprintf("http://%s.%s.svc.cluster.local:%d/api/v1/runtime/components", doctorRuntimeControlService, doctorSentinelNamespace, doctorRuntimeControlPort),
 	}
 	defer func() {
 		_ = kubectl.Run([]string{"delete", "pod", podName, "-n", doctorSentinelNamespace, "--ignore-not-found"})
@@ -219,6 +219,119 @@ func checkSentinelAPIAuthProbe(kubectl core.KubectlRunner) DoctorCheck {
 		Detail: fmt.Sprintf("authenticated probe returned HTTP %s", status),
 		Remedy: "verify API key and sentinel API route availability",
 	}
+}
+
+func checkSentinelPlatformAPIReadiness(kubectl core.KubectlRunner) DoctorCheck {
+	return checkSentinelServiceHealthReadiness(
+		kubectl,
+		"sentinel platform API readiness",
+		doctorPlatformAPIService,
+		doctorPlatformAPIPort,
+	)
+}
+
+func checkSentinelAnalyticsAPIReadiness(kubectl core.KubectlRunner) DoctorCheck {
+	return checkSentinelServiceHealthReadiness(
+		kubectl,
+		"sentinel analytics API readiness",
+		doctorAnalyticsAPIService,
+		doctorAnalyticsAPIPort,
+	)
+}
+
+func checkSentinelServiceHealthReadiness(kubectl core.KubectlRunner, checkName, service string, port int) DoctorCheck {
+	if _, err := readKubectlOutput(kubectl, []string{"get", "namespace", doctorSentinelNamespace, "-o", "jsonpath={.metadata.name}"}); err != nil {
+		return DoctorCheck{
+			Name:   checkName,
+			OK:     true,
+			Detail: "namespace mcp-sentinel not found; skipping service readiness check",
+		}
+	}
+	pair, ready, err := doctorDeploymentReplicaStatus(kubectl, doctorSentinelNamespace, service)
+	if err != nil {
+		return DoctorCheck{
+			Name:   checkName,
+			OK:     false,
+			Detail: fmt.Sprintf("failed reading deployment %s: %v", service, err),
+			Remedy: fmt.Sprintf("inspect `kubectl -n mcp-sentinel get deploy/%s`", service),
+		}
+	}
+	if !ready {
+		return DoctorCheck{
+			Name:   checkName,
+			OK:     false,
+			Detail: fmt.Sprintf("%s replicas ready", pair),
+			Remedy: fmt.Sprintf("inspect `kubectl -n mcp-sentinel get pods -l app=%s`", service),
+		}
+	}
+
+	baseURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", service, doctorSentinelNamespace, port)
+	for _, path := range []string{"/health", "/ready"} {
+		status, probeErr := doctorCurlServiceEndpoint(kubectl, baseURL+path)
+		if probeErr != nil {
+			return DoctorCheck{
+				Name:   checkName,
+				OK:     false,
+				Detail: probeErr.Error(),
+				Remedy: fmt.Sprintf("verify %s deployment/service and %s endpoint", service, path),
+			}
+		}
+		if status != "200" {
+			return DoctorCheck{
+				Name:   checkName,
+				OK:     false,
+				Detail: fmt.Sprintf("%s returned HTTP %s", path, status),
+				Remedy: fmt.Sprintf("verify %s deployment/service and %s endpoint", service, path),
+			}
+		}
+	}
+	return DoctorCheck{
+		Name:   checkName,
+		OK:     true,
+		Detail: fmt.Sprintf("%s replicas ready; /health and /ready returned HTTP 200", pair),
+	}
+}
+
+func doctorCurlServiceEndpoint(kubectl core.KubectlRunner, url string) (string, error) {
+	podName := fmt.Sprintf("doctor-sentinel-probe-%d", time.Now().UnixNano())
+	image := "curlimages/curl:8.7.1"
+	curlArgs := []string{
+		"-sS", "-o", "/dev/null",
+		"-w", "%{http_code}",
+		"--connect-timeout", "5",
+		"--max-time", "20",
+		url,
+	}
+	defer func() {
+		_ = kubectl.Run([]string{"delete", "pod", podName, "-n", doctorSentinelNamespace, "--ignore-not-found"})
+	}()
+	cmd, cmdErr := kubectl.CommandArgs([]string{
+		"run", podName,
+		"-n", doctorSentinelNamespace,
+		"--restart=Never",
+		"--image=" + image,
+		"--overrides=" + restrictedRunOverrides(podName, image, "curl", curlArgs...),
+	})
+	if cmdErr != nil {
+		return "", fmt.Errorf("kubectl error: %v", cmdErr)
+	}
+	createOut, runErr := cmd.CombinedOutput()
+	if runErr != nil {
+		return "", fmt.Errorf("failed creating probe pod: %v: %s", runErr, strings.TrimSpace(string(createOut)))
+	}
+	if err := waitForDoctorPodSucceeded(kubectl, podName, doctorSentinelNamespace, 90*time.Second); err != nil {
+		logs, _ := readKubectlOutput(kubectl, []string{"logs", podName, "-n", doctorSentinelNamespace, "--tail=50"})
+		detail := fmt.Sprintf("probe pod did not complete: %v", err)
+		if strings.TrimSpace(logs) != "" {
+			detail += ": " + strings.TrimSpace(logs)
+		}
+		return "", fmt.Errorf("%s", detail)
+	}
+	out, logsErr := readKubectlOutput(kubectl, []string{"logs", podName, "-n", doctorSentinelNamespace})
+	if logsErr != nil {
+		return "", fmt.Errorf("failed reading probe logs: %v", logsErr)
+	}
+	return strings.TrimSpace(out), nil
 }
 
 func decodeSentinelSecretValue(key, encoded string) (string, *DoctorCheck) {

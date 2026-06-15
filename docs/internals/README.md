@@ -44,13 +44,14 @@ flowchart LR
 | CLI implementation | [`internal-cli.md`](internal-cli.md) | Covers the `internal/cli/root` routing layer plus setup, bootstrap, registry, server, access, adapter, auth, team, status, and sentinel behavior. |
 | Kubernetes API types | [`api-types.md`](api-types.md) | Defines the public CRD shapes consumed by users, tests, and the operator. |
 | Request flows | [`request-flows.md`](request-flows.md) | Maps CLI, UI/API, registry, adapter, MCP runtime, policy, analytics, tenancy, and pre-release paths to components and E2E scenarios. |
+| API service split | [`api-service-split.md`](api-service-split.md) | Spec for splitting `services/api` into platform-api, runtime-control, and analytics-api (routing, RBAC, internal contracts, cutover). |
 | Generated Go reference | [`go-package-reference.md`](go-package-reference.md) | Captures `go doc` output for the main contributor-facing packages. |
 | Agent adapters | `internal/agentadapter/`, `internal/cli/adapter/` | HTTP proxy and stdio shim behavior for forwarding agent MCP traffic with issued governance headers; exposed via `mcp-runtime adapter proxy/stdio`. |
 | Operator | [`cmd-operator.md`](cmd-operator.md) | Explains manager startup and reconciliation from desired state to Kubernetes resources. |
 | Control-plane helpers | `pkg/controlplane/` | Shared MCPServer Kubernetes operations and status projection used outside HTTP/CLI glue. |
 | Shared policy and events | `pkg/policy/`, `pkg/events/`, `pkg/clickhouse/` | Gateway policy contracts/evaluation plus Sentinel event envelopes and ClickHouse query/insert helpers. |
 | Service and workload helpers | `pkg/serviceutil/`, `pkg/kubeworkload/` | Shared service HTTP/env/OTel helpers and restricted Kubernetes workload defaults. |
-| API service internals | `services/api/internal/runtimeapi/`, `services/api/internal/platformstore/`, `services/api/internal/apiauth/`, `services/api/internal/apihttp/` | API-owned runtime HTTP/Kubernetes orchestration, platform Postgres persistence, principal context helpers, and API-specific HTTP decode helpers. |
+| API service internals | `services/api/internal/runtimeapi/`, `services/api/internal/platformstore/`, `pkg/apihttp/`, `pkg/platformauth/` (split) | API-owned runtime HTTP/Kubernetes orchestration, platform Postgres persistence, shared HTTP contract helpers. |
 | Metadata helpers | [`pkg-metadata.md`](pkg-metadata.md) | Covers `.mcp` metadata loading, host resolution, and CRD generation helpers. |
 | Manifests and examples | [`config-and-examples.md`](config-and-examples.md) | Explains Kustomize overlays, registry/ingress config, and example MCP servers. |
 | Tests | [`tests.md`](tests.md) | Maps unit, golden, integration, and Kind e2e coverage. |
