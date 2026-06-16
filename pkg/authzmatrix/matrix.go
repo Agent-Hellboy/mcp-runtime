@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -26,7 +27,18 @@ type Row struct {
 
 // Load reads the machine-readable authz matrix from path.
 func Load(path string) ([]Row, error) {
-	raw, err := os.ReadFile(path)
+	clean := filepath.Clean(path)
+	dir := filepath.Dir(clean)
+	name := filepath.Base(clean)
+	if name == "." || name == string(filepath.Separator) {
+		return nil, fmt.Errorf("invalid authz matrix path: %q", path)
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, fmt.Errorf("open authz matrix root: %w", err)
+	}
+	defer root.Close()
+	raw, err := root.ReadFile(name)
 	if err != nil {
 		return nil, fmt.Errorf("read authz matrix: %w", err)
 	}
