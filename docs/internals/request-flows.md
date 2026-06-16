@@ -147,16 +147,17 @@ Primary request paths:
 
 ## UI And Platform API
 
-The browser first talks to the UI service. UI static assets are served locally,
-while `/api/*` is proxied to the platform API using the active UI session or
-configured upstream key.
+The browser loads static assets from the UI service. `/api/v1/*` calls go
+through Traefik to the split API services using the active UI session bearer
+token or configured API key.
 
 ```mermaid
 sequenceDiagram
     participant Browser
     participant Ingress as Traefik
     participant UI as mcp-sentinel-ui
-    participant API as mcp-sentinel-api
+    participant Platform as mcp-platform-api
+    participant Runtime as mcp-runtime-control
     participant DB as Postgres
     participant K8s as Kubernetes API
     participant Store as ClickHouse
@@ -165,15 +166,16 @@ sequenceDiagram
     Ingress->>UI: static app shell
     Browser->>UI: POST /auth/login
     UI-->>Browser: mcp_ui_session cookie
-    Browser->>UI: GET /runtime/servers via API base
-    UI->>API: GET /api/runtime/servers
-    API->>DB: authenticate principal and team membership
-    API->>K8s: list MCPServer resources in allowed namespaces
-    API-->>UI: server list
-    Browser->>UI: GET dashboard
-    UI->>API: GET /api/dashboard/summary
-    API->>K8s: grants, sessions, servers
-    API->>Store: analytics summary
+    Browser->>Ingress: GET /api/v1/runtime/servers
+    Ingress->>Runtime: GET /api/v1/runtime/servers
+    Runtime->>Platform: POST /internal/auth/resolve (service token)
+    Platform->>DB: authenticate principal and team membership
+    Runtime->>K8s: list MCPServer resources in allowed namespaces
+    Runtime-->>Browser: server list
+    Browser->>Ingress: GET /api/v1/dashboard/summary
+    Ingress->>Runtime: dashboard summary
+    Runtime->>K8s: grants, sessions, servers
+    Runtime->>Store: analytics summary
 ```
 
 Primary request paths:

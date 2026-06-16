@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"mcp-runtime-control/internal/platforminternal"
 	"mcp-runtime/pkg/openapi"
 )
 
@@ -30,6 +32,25 @@ func TestHealthResponseMatchesOpenAPISpec(t *testing.T) {
 	}
 	if err := openapi.ValidateResponse(doc, http.MethodGet, "/health", rec.Code, rec.Body.Bytes(), "application/json"); err != nil {
 		t.Fatalf("ValidateResponse(/health) error = %v", err)
+	}
+}
+
+func TestInternalAuthResolveUnauthorizedMatchesOpenAPISpec(t *testing.T) {
+	doc, err := openapi.Load(openAPISpec)
+	if err != nil {
+		t.Fatalf("Load(openAPISpec) error = %v", err)
+	}
+
+	mux := http.NewServeMux()
+	platforminternal.Handler{Token: "internal-token"}.Register(mux)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/internal/auth/resolve", bytes.NewBufferString(`{"api_key":"key"}`)))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("/internal/auth/resolve status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+	if err := openapi.ValidateResponse(doc, http.MethodPost, "/internal/auth/resolve", rec.Code, rec.Body.Bytes(), "application/json"); err != nil {
+		t.Fatalf("ValidateResponse(/internal/auth/resolve) error = %v", err)
 	}
 }
 

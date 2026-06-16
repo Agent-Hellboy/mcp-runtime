@@ -43,19 +43,22 @@ images, doctor probes split deployments, Prometheus scrapes 9090/9094/9095.
 **M3.3:** OpenAPI spec-validation tests run in per-service CI jobs; adopt Pact only when external clients consume these APIs (see `docs/sentinel.md`).
 **M2.5:** monolith manifest/tree removed; `08-traefik-watch-rbac.yaml`; k3s rollout builds three APIs.
 **M3.1:** `pkg/internalapi` shared DTOs wired in platform-api + runtime-control.
-**M3.2:** per-service `openapi.yaml`, `GET /api/v1/openapi.yaml`, `pkg/openapi` validation tests in CI.
+**M3.2 (complete):** OpenAPI spec-validation tests cover `/internal/*`, per-service
+public unauthorized envelopes, and `GET /api/v1/openapi.yaml` on all three services.
+**Docs/skills (complete):** sentinel, api.md, internals README, request-flows,
+contributor runbooks, authz-matrix header, validate gate script split-only.
 
-Verification completed for M1.1-M1.2:
+Verification completed for M1.1-M3.2:
 
 - `go test -race -count=1 ./pkg/platformauth/... ./pkg/apihttp/... ./pkg/openapi/...`
 - `cd services/platform-api && go test -race -count=1 ./...`
 - `cd services/runtime-control && go test -race -count=1 ./...`
 - `cd services/analytics-api && go test -race -count=1 ./...`
 - Fresh Kind cluster: all 38 permissive development `cluster doctor` checks passed.
-- Rolled the checkout-built API image to all three replicas and verified login minted
-  the enriched multi-audience token and `/api/runtime/servers` returned HTTP `200`.
-- Rolled the M1.2 image and exercised the internal API through the in-cluster Service:
-  missing token `401`, ID resolution `200`, audit ingestion `202`, and teams list `200`.
+- Rolled the checkout-built API images and verified login minted the enriched
+  multi-audience token and `/api/v1/runtime/servers` returned HTTP `200`.
+- Exercised internal API through platform-api Service: missing token `401`, ID
+  resolution `200`, audit ingestion `202`, and teams list `200`.
 - `E2E_CACHE_MODE=1 E2E_KEEP_CLUSTER=1 CLUSTER_NAME=mcp-runtime
   E2E_SCENARIOS=smoke-auth,governance bash test/e2e/kind.sh` passed.
 
@@ -342,10 +345,10 @@ matrix). Extend the cluster script when M2+ land (ingress paths, UI proxy remova
 
 ---
 
-## 5. Docs/skills to refresh at cutover
+## 5. Docs/skills to refresh at cutover — **COMPLETE**
 
-`docs/sentinel.md`, `docs/internals/request-flows.md` (split the diagram participant into
-three), `docs/security/authz-matrix.md`, troubleshooting runbooks, and skills
-`mcp-runtime-troubleshooting`, `k3s-public-ops`, `qa-e2e-operations`, `k8s-hardening-audit`,
-`supply-chain-audit` (three images, three SAs, one broad ClusterRole). Propose `ai-assist/`
-notes for user review per `CLAUDE.md`.
+`docs/sentinel.md`, `docs/api.md`, `docs/internals/request-flows.md`,
+`docs/security/authz-matrix.md`, contributor troubleshooting/service-iteration,
+and skills `supply-chain-audit`, `security-audit`, `qa-e2e-ui` updated for
+three-service routing. Remaining historical references in `api-service-split.md`
+and authz-matrix row paths are intentional migration notes.

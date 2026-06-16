@@ -1,19 +1,25 @@
 # Sentinel API authn/authz matrix
 
-This is the **source of truth** for which roles can call which endpoint on
-`mcp-sentinel-api`. The `security-audit-platform` skill (see
+This is the **source of truth** for which roles can call which endpoint on the
+split Sentinel API services (`mcp-platform-api`, `mcp-runtime-control`,
+`mcp-analytics-api`). The `security-audit-platform` skill (see
 `.codex/skills/security-audit-platform/SKILL.md`, Step 2) compares the live
-service against this table. A divergence in either direction is a finding:
+services against this table. A divergence in either direction is a finding:
 
-- A route in `services/api/main.go` that is missing from this table → add a
+- A route in `services/platform-api/routes.go`, `services/runtime-control/routes.go`,
+  or `services/analytics-api/routes.go` that is missing from this table → add a
   row, then verify the expected status.
 - A row whose expected status differs from the live response → fix the
   route or fix the matrix, but do not silently change one to match the
   other.
 
-Source of routes: `services/api/main.go:269-332` (top-level mux). Path
-items ending with `/` route to a handler that parses sub-paths internally;
-include both the prefix and the meaningful sub-paths in the table.
+Source of routes: per-service `routes.go` files (public surface is `/api/v1/*`
+only). Path items ending with `/` route to a handler that parses sub-paths
+internally; include both the prefix and the meaningful sub-paths in the table.
+
+> **Migration note:** Rows below still use legacy `/api/*` path prefixes from the
+> monolith era. When auditing live clusters, prefix each path with `/api/v1` and
+> route to the owning service per [`api-service-split.md`](../internals/api-service-split.md).
 
 ## Roles
 
@@ -25,8 +31,8 @@ include both the prefix and the meaningful sub-paths in the table.
 | `admin-key`      | `x-api-key` matching `ADMIN_API_KEYS` entry                  | `mcp-sentinel-secrets.ADMIN_API_KEYS`                         |
 | `ingest-key`     | `x-api-key` matching `INGEST_API_KEYS` entry                 | `mcp-sentinel-secrets.INGEST_API_KEYS`                        |
 
-`admin-role` is enforced by the `requireRole(roleAdmin, …)` wrap in
-`services/api/main.go`. `user-cookie` and `user-key` distinguish which
+`admin-role` is enforced by `platformauth.Authenticator.RequireRole` wraps in
+each split service's `routes.go`. `user-cookie` and `user-key` distinguish which
 calls require browser identity vs accept a bearer-style key.
 When `ADMIN_API_KEYS` is unset, static `API_KEYS` authenticate as `user`
 unless the explicit legacy dev/test fallback is enabled.

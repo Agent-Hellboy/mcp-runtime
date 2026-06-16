@@ -140,81 +140,42 @@ cardinality.
 
 | Service | Auth behavior |
 |---|---|
-| **api** | `/health` is open. Authenticated `/api/*` routes accept `x-api-key` from `API_KEYS`, user-generated API keys, platform JWT bearer tokens, or OIDC JWT bearer tokens when OIDC is configured. Only keys listed in `ADMIN_API_KEYS` get admin role; other `API_KEYS` values are user role unless the explicit legacy dev/test fallback is enabled. Registry forward-auth keeps admin credentials global and allows normal user credentials only on repository paths scoped to the caller's team slug or team namespace. |
-| **ui** | `/auth/login` creates an HttpOnly UI session from `api_key`, `id_token`, or `email`/`password`. The UI then proxies `/api/*` with an upstream API key or bearer token. `/auth/admin-check` accepts admin UI sessions or keys from `ADMIN_API_KEYS`; it falls back to `API_KEYS` only when the explicit legacy dev/test fallback is enabled. |
+| **platform-api** | `/health` and `/ready` are open. Authenticated `/api/v1/*` identity, admin, and registry routes accept `x-api-key`, user-generated API keys, platform JWT bearer tokens, or OIDC JWT bearer tokens when OIDC is configured. Only keys listed in `ADMIN_API_KEYS` get admin role. Registry forward-auth (`/api/v1/registry/authz`) keeps admin credentials global and allows normal user credentials only on repository paths scoped to the caller's team slug or team namespace. Token-gated `/internal/*` serves runtime-control and analytics-api. |
+| **runtime-control** | `/health` and `/ready` are open. `/api/v1/runtime/*`, `/api/v1/deployments`, and admin operations routes accept platform JWTs (audience `runtime-control`) or scoped API keys via `pkg/platformauth`. |
+| **analytics-api** | `/health` and `/ready` are open. `/api/v1/events`, `/api/v1/stats`, and usage analytics accept platform JWTs (audience `analytics-api`) or scoped API keys. Admin-only routes require admin role. |
+| **ui** | `/auth/login` creates an HttpOnly UI session from `api_key`, `id_token`, or `email`/`password`. Browser `/api/v1/*` calls go through Traefik ingress (not a UI reverse proxy). `/auth/admin-check` accepts admin UI sessions or keys from `ADMIN_API_KEYS`; it falls back to `API_KEYS` only when the explicit legacy dev/test fallback is enabled. |
 | **ingest** | `/live`, `/ready`, and `/health` are open. `/events` accepts `x-api-key` from `INGEST_API_KEYS`, legacy `API_KEYS`, or a configured OIDC bearer token. If no API keys and no JWKS are configured, intake auth is bypassed. |
 | **processor** | No data API. It exposes metrics and a simple health check on the metrics port. |
 | **mcp-gateway** | No admin API. It authenticates MCP requests according to the rendered server policy and exposes Prometheus metrics at `/metrics`. |
 
-### API service
+### Split API services
 
-`services/api` runs the main API on `PORT` (default `8080`) and Prometheus
-metrics on `METRICS_PORT` (default `9090`).
+The monolith `services/api` (`mcp-sentinel-api`) was split into three binaries.
+Traefik routes `/api/v1/*` by path prefix; there is no `/api/*` compatibility
+layer. Each service publishes `GET /api/v1/openapi.yaml` and uses `pkg/apihttp`
+stable error envelopes.
 
-| Method | Path | Purpose |
-|---|---|---|
-| `GET` | `/health` | API health and runtime initialization status. |
-| `GET` | `/metrics` | Prometheus metrics on the metrics server. |
-| `POST` | `/api/auth/signup` | Create a platform user when platform identity storage is configured. Returns `201` with `access_token`, `token_type`, `expires_in`, and `user`. Admin signup requires an admin principal. |
-| `POST` | `/api/auth/login` | Exchange platform email/password for a bearer token. Returns `200` with `access_token`, `token_type`, `expires_in`, and `user`. |
-| `POST` | `/api/auth/oidc` | Exchange a configured OIDC ID token for a platform bearer token. Returns `200` with `access_token`, `token_type`, `expires_in`, and `user`. |
-| `GET` | `/api/auth/me` | Return the authenticated principal. |
-| `GET` | `/api/dashboard/summary` | Dashboard cards: event totals, active grants/sessions, latest event metadata. Admin role required. |
-| `GET` | `/api/analytics/usage` | Dashboard usage analytics from ClickHouse: totals, top MCP servers, human/agent pairs, tools, decision counts, recent activity, and request buckets. Query: `limit` (1-50, default 10), `window_days` (1-365, default 30), `namespace`, `team_id`, `server`, `decision`, and `tool_name`. Admin role required. |
-| `GET` | `/api/user/analytics/usage` | User dashboard analytics from ClickHouse. Normal users are scoped to team namespaces they belong to; the shared catalog is excluded. Query: `limit`, `window_days`, `namespace`, `server`, `decision`, and `tool_name`. |
-| `GET` | `/api/events` | Recent ClickHouse-backed audit events, newest first. Query: `limit` (1-1000, default 100). Admin role required. |
-| `GET` | `/api/events/filter` | Filtered audit events. Query: `trace_id`, `source`, `event_type`, `server`, `namespace`, `team_id`, `cluster`, `human_id`, `agent_id`, `session_id`, `decision`, `tool_name`, `limit`. Admin role required. |
-| `GET` | `/api/stats` | Total event count. Admin role required. |
-| `GET` | `/api/sources` | Event counts grouped by source. Admin role required. |
-| `GET` | `/api/event-types` | Event counts grouped by event type. Admin role required. |
-| `GET`, `POST` | `/api/runtime/servers` | List or apply `MCPServer` resources through runtime authz scope. `tenant` mode defaults signed-in users to team namespaces they belong to; `org` mode includes the org catalog plus team namespaces; `public` mode allows anonymous catalog reads and signed-in publishes in the public catalog plus team namespaces. Responses include `publish_policy` for active-server quota/cooldown visibility. |
-| `DELETE` | `/api/runtime/servers/{namespace}/{name}` | Retire an owned MCPServer. Retiring deletes the MCPServer from Kubernetes and frees one active-server quota slot. |
-| `GET` | `/api/runtime/server-events?namespace=&server=` | Recent analytics events for one administered MCPServer; full identity/session/payload details are not exposed to regular namespace readers. |
-| `GET` | `/api/runtime/observability/links?namespace=&server=` | Return scoped observability actions for one authorized MCPServer. |
-| `GET` | `/api/runtime/observability/grafana/dashboard?namespace=&server=` | Render an API-scoped dashboard backed by allowlisted Prometheus queries. |
-| `GET` | `/api/runtime/observability/prometheus/query?namespace=&server=&query_id=` | Run one allowlisted, server-scoped Prometheus query. |
-| `GET`, `POST` | `/api/runtime/grants` | List or apply `MCPAccessGrant` resources. Lists are scoped to administered servers; apply requires admin, server owner, or team owner. |
-| `GET`, `DELETE` | `/api/runtime/grants/{namespace}/{name}` | Read or delete one grant for an administered server. |
-| `PATCH` | `/api/runtime/grants/{namespace}/{name}` | Set `spec.disabled` with `{"disabled":true|false}`; requires admin, server owner, or team owner. |
-| `GET`, `POST` | `/api/runtime/sessions` | List scoped `MCPAgentSession` resources; direct session apply is admin/internal-only. User adapter flows use `/api/runtime/adapter/sessions`. |
-| `GET`, `DELETE` | `/api/runtime/sessions/{namespace}/{name}` | Read or delete one session for an administered server. |
-| `PATCH` | `/api/runtime/sessions/{namespace}/{name}` | Set `spec.revoked` with `{"revoked":true|false}`; requires admin, server owner, or team owner. |
-| `GET`, `POST` | `/api/runtime/teams` | List teams (admin: all, user: memberships) or create a team+namespace (admin-only). |
-| `GET` | `/api/runtime/teams/{team}` | Read team metadata for admins and team members. |
-| `GET` | `/api/runtime/teams/{team}/members` | List team memberships for admins and team members. |
-| `PUT` | `/api/runtime/teams/{team}/members/{userID}` | Add/update team membership (admin or team owner). |
-| `POST` | `/api/users` | Create a password-login user. Admin role required. |
-| `DELETE` | `/api/runtime/teams/{team}/members/{userID}` | Remove team membership (admin or team owner). |
-| `GET` | `/api/runtime/namespaces` | List allowed namespaces and org catalog metadata for caller scope. |
-| `GET` | `/api/runtime/namespaces/{namespace}` | Read one namespace metadata entry when authorized. |
-| `GET` | `/api/runtime/components` | Admin-only operator, Sentinel service, and observability component health from Kubernetes. |
-| `GET` | `/api/runtime/policy?namespace=&server=` | Rendered gateway policy for one administered server. |
-| `POST` | `/api/runtime/actions/restart` | Restart one Sentinel component or all components. Admin role required. |
-| `GET`, `POST` | `/api/deployments` | User-scoped platform deployment list/apply. |
-| `DELETE` | `/api/deployments/{namespace}/{name}` | Delete a platform-managed deployment and service. |
-| `GET` | `/api/admin/namespaces` | Platform namespace inventory. Admin role required. |
-| `GET` | `/api/admin/deployments` | Deployment inventory across namespaces, optionally filtered by `namespace`. Admin role required. |
-| `GET` | `/api/admin/audit` | Recent platform audit logs such as login, signup, namespace, deploy, image publish, API key, and registry credential activity. Query: `user`, `since`, `until`, `limit` (1-200, default 50). Admin role required. |
-| `GET` | `/api/admin/operations` | Admin operations snapshot for the UI: user activity, last login/activity, image activity, platform timeline, and deployment inventory. Same filters as `/api/admin/audit`. |
-| `GET`, `POST` | `/api/user/api-keys` | List or create caller-owned API keys. |
-| `DELETE` | `/api/user/api-keys/{id}` | Revoke one caller-owned API key. |
-| `GET` | `/api/user/analytics/usage` | Caller-scoped MCP server analytics used by the user dashboard. |
-| `GET`, `POST` | `/api/user/registry-credentials` | List or create caller-owned registry credentials. |
-| `DELETE` | `/api/user/registry-credentials/{id}` | Revoke one registry credential. |
-| `*` | `/api/registry/authz` | Forward-auth guard used by the bundled registry ingress. Admin credentials have global access; user credentials are limited to caller-scoped repository paths. |
-| `POST` | `/api/user/activity/image-publish` | Record a successful image publish event for the authenticated user. The authenticated CLI calls this after `registry push`. |
+| Service | Deployment | Port / metrics | Owns |
+|---|---|---|---|
+| **platform-api** | `mcp-platform-api` | 8080 / 9090 | Postgres identity, auth, admin, registry forward-auth, `/internal/*` |
+| **runtime-control** | `mcp-runtime-control` | 8084 / 9094 | MCPServer governance, grants/sessions, deployments, dashboard summary |
+| **analytics-api** | `mcp-analytics-api` | 8085 / 9095 | ClickHouse events, stats, usage analytics |
 
-Restart request body examples:
+Route tables and request bodies live in [API reference](api.md). Per-service
+OpenAPI specs: `services/platform-api/openapi.yaml`,
+`services/runtime-control/openapi.yaml`, `services/analytics-api/openapi.yaml`.
+
+Restart request body examples (runtime-control admin operations):
 
 ```json
-{"component": "api"}
+{"component": "platform-api"}
 ```
 
 ```json
 {"all": true}
 ```
 
-The grant/session apply bodies and CRD field details are in the
+Grant/session apply bodies and CRD field details are in the
 [API reference](api.md#runtime-governance-api).
 
 ### UI service
@@ -229,8 +190,7 @@ wraps API auth for browser users.
 | `POST` | `/auth/login` | Create a UI session from `{"api_key": "..."}`, `{"id_token": "..."}`, or `{"email": "...", "password": "..."}`. |
 | `POST` | `/auth/logout` | Clear the UI session cookie. |
 | `GET` | `/auth/status` | Return UI session authentication state and principal. |
-| any | `/api/*` | Reverse proxy to `services/api`. API calls require a UI session or API key, including MCP catalog reads. |
-| `GET` | `/*` | Static dashboard assets. |
+| `GET` | `/*` | Static dashboard assets. Browser `/api/v1/*` calls use Traefik ingress directly (see split API services above). |
 
 ### Ingest service
 
@@ -386,7 +346,7 @@ source subject preserved, never on the other server.
 
 | Group | Files |
 |---|---|
-| **Core app** | `00-namespace`, `01-config`, `02-secrets`, `03-clickhouse`, `04-clickhouse-init`, `05-kafka`, `06-ingest`, `07-processor`, `08-api-rbac`, `08-api`, `09-ui`, `10-gateway`, `20-postgres`, `21-platform-admin-bootstrap-job` |
+| **Core app** | `00-namespace`, `01-config`, `02-secrets`, `03-clickhouse`, `04-clickhouse-init`, `05-kafka`, `06-ingest`, `07-processor`, `08-platform-api`, `08-runtime-control`, `08-analytics-api`, `08-traefik-watch-rbac`, `09-ui`, `10-gateway`, `20-postgres`, `21-platform-admin-bootstrap-job`, `22-split-api-networkpolicy` |
 | **Observability** | `11-prometheus`, `12-grafana`, `15-otel-collector`, `16-tempo`, `17-loki`, `18-promtail`, `19-grafana-datasources` |
 | **Example wiring** | `13-mcp-example`, `14-mcp-gateway-sidecar` |
 
@@ -395,7 +355,7 @@ source subject preserved, never on the other server.
 ## Operating the stack
 
 These commands require **admin/operator kubectl** access. Normal users should
-use the platform dashboard and `/api/*` instead.
+use the platform dashboard and `/api/v1/*` instead.
 
 ```bash
 # Health + Kubernetes events

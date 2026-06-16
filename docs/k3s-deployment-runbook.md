@@ -255,7 +255,8 @@ platform rebuild, use the targeted Sentinel rollout:
 hack/deploy/mcpruntime-org/rollout.sh
 ```
 
-That rebuilds/pushes `mcp-sentinel-api` and `mcp-sentinel-ui`, applies RBAC,
+That rebuilds/pushes the three split API images (`mcp-platform-api`,
+`mcp-runtime-control`, `mcp-analytics-api`) and `mcp-sentinel-ui`, applies RBAC,
 patches `mcp-sentinel-config` (`PLATFORM_TEAM_TRAEFIK_WATCH=disabled`,
 `MCP_REGISTRY_ENDPOINT=registry.mcpruntime.org`), and waits for rollouts.
 

@@ -36,7 +36,7 @@ Standards, NetworkPolicy, and manifest hygiene, use `k8s-hardening-audit`.
    - Admin and platform APIs must enforce the intended role, namespace,
      grant, session, and trust checks before mutating resources or
      returning sensitive data. The check is the `requireRole(roleAdmin, …)`
-     wrap in `services/api/main.go`; absence on a mutating handler is a
+     wrap in each split service `routes.go`; absence on a mutating handler is a
      finding.
    - Gateway policy denies by default, scopes decisions to the rendered
      grant/session policy, and emits audit events for allow and deny paths

@@ -4,7 +4,9 @@ The MCP Runtime API surface comes in three layers:
 
 1. **CRDs** under `mcpruntime.org/v1alpha1`: `MCPServer`, `MCPAccessGrant`, `MCPAgentSession`.
 2. **Gateway headers** carried on live MCP requests when `gateway.enabled`.
-3. **Sentinel HTTP APIs** exposed by `services/api`: dashboard, runtime governance, governance actions, analytics.
+3. **Sentinel HTTP APIs** exposed by **platform-api**, **runtime-control**, and **analytics-api** (routed at `/api/v1/*` via Traefik): platform identity, runtime governance, governance actions, and analytics.
+
+> **Path prefix:** Public HTTP routes use `/api/v1/*` only. Legacy `/api/*` paths return `404`. Ingress maps prefixes to the three API Deployments; see [`docs/internals/api-service-split.md`](internals/api-service-split.md).
 
 ```mermaid
 flowchart LR
@@ -13,11 +15,10 @@ flowchart LR
         Grant[MCPAccessGrant]
         Session[MCPAgentSession]
     end
-    subgraph HTTP["Sentinel HTTP APIs"]
-        Dash[/api/dashboard/]
-        Run[/api/runtime/]
-        Act[/api/runtime/.../disable etc/]
-        Ana[/api/events, /api/stats/]
+    subgraph HTTP["Sentinel HTTP APIs /api/v1"]
+        Plat[platform-api auth admin registry]
+        Run[runtime-control governance]
+        Ana[analytics-api events stats]
     end
     CRDs -- rendered into --> Policy[Policy ConfigMap]
     Policy --> Gateway[mcp-gateway]
@@ -214,7 +215,7 @@ No `/authorize`, `/token`, `/.well-known/oauth-authorization-server`, PKCE, or D
 
 ## Authentication API
 
-These routes are served by `services/api`. Platform identity routes require the
+These routes are served by the split API services (`platform-api`, `runtime-control`, `analytics-api`) at `/api/v1/*`. Platform identity routes require the
 Postgres-backed platform store (`POSTGRES_DSN` or `DATABASE_URL`) and
 `JWT_SECRET`.
 
