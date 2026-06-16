@@ -147,8 +147,12 @@ func deployAnalyticsManifestsClientGo(logger *zap.Logger, images AnalyticsImageS
 		postgresManifest,
 		"k8s/06-ingest.yaml",
 		"k8s/07-processor.yaml",
-		"k8s/08-api.yaml",
-		"k8s/08-api-rbac.yaml",
+		"k8s/08-platform-api.yaml",
+		"k8s/08-platform-api-rbac.yaml",
+		"k8s/08-runtime-api.yaml",
+		"k8s/08-runtime-api-rbac.yaml",
+		"k8s/08-analytics-api.yaml",
+		"k8s/22-split-api-networkpolicy.yaml",
 		"k8s/09-ui.yaml",
 		"k8s/10-gateway.yaml",
 		"k8s/11-prometheus.yaml",
@@ -183,7 +187,9 @@ func deployAnalyticsManifestsClientGo(logger *zap.Logger, images AnalyticsImageS
 		{kind: "statefulset", name: "mcp-sentinel-postgres"},
 		{kind: "deployment", name: "mcp-sentinel-ingest"},
 		{kind: "deployment", name: "mcp-sentinel-processor"},
-		{kind: "deployment", name: "mcp-sentinel-api"},
+		{kind: "deployment", name: "mcp-platform-api"},
+		{kind: "deployment", name: "mcp-runtime-api"},
+		{kind: "deployment", name: "mcp-analytics-api"},
 		{kind: "deployment", name: "mcp-sentinel-ui"},
 		{kind: "deployment", name: "mcp-sentinel-gateway"},
 		{kind: "deployment", name: "prometheus"},
@@ -311,8 +317,12 @@ func deployAnalyticsManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap
 		postgresManifest,
 		"k8s/06-ingest.yaml",
 		"k8s/07-processor.yaml",
-		"k8s/08-api.yaml",
-		"k8s/08-api-rbac.yaml",
+		"k8s/08-platform-api.yaml",
+		"k8s/08-platform-api-rbac.yaml",
+		"k8s/08-runtime-api.yaml",
+		"k8s/08-runtime-api-rbac.yaml",
+		"k8s/08-analytics-api.yaml",
+		"k8s/22-split-api-networkpolicy.yaml",
 		"k8s/09-ui.yaml",
 		"k8s/10-gateway.yaml",
 		"k8s/11-prometheus.yaml",
@@ -340,7 +350,9 @@ func deployAnalyticsManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap
 		{kind: "statefulset", name: "mcp-sentinel-postgres"},
 		{kind: "deployment", name: "mcp-sentinel-ingest"},
 		{kind: "deployment", name: "mcp-sentinel-processor"},
-		{kind: "deployment", name: "mcp-sentinel-api"},
+		{kind: "deployment", name: "mcp-platform-api"},
+		{kind: "deployment", name: "mcp-runtime-api"},
+		{kind: "deployment", name: "mcp-analytics-api"},
 		{kind: "deployment", name: "mcp-sentinel-ui"},
 		{kind: "deployment", name: "mcp-sentinel-gateway"},
 		{kind: "deployment", name: "prometheus"},
@@ -668,8 +680,14 @@ func renderAnalyticsManifest(content string, images AnalyticsImageSet, imagePull
 	if strings.TrimSpace(images.Ingest) != "" {
 		replacements["image: mcp-sentinel-ingest:latest"] = "image: " + images.Ingest
 	}
-	if strings.TrimSpace(images.API) != "" {
-		replacements["image: mcp-sentinel-api:latest"] = "image: " + images.API
+	if strings.TrimSpace(images.PlatformAPI) != "" {
+		replacements["image: mcp-platform-api:latest"] = "image: " + images.PlatformAPI
+	}
+	if strings.TrimSpace(images.RuntimeAPI) != "" {
+		replacements["image: mcp-runtime-api:latest"] = "image: " + images.RuntimeAPI
+	}
+	if strings.TrimSpace(images.AnalyticsAPI) != "" {
+		replacements["image: mcp-analytics-api:latest"] = "image: " + images.AnalyticsAPI
 	}
 	if strings.TrimSpace(images.Processor) != "" {
 		replacements["image: mcp-sentinel-processor:latest"] = "image: " + images.Processor
@@ -975,7 +993,11 @@ func renderAnalyticsSecretManifestWithReader(readSecret analyticsSecretValueRead
 			postgresDB,
 		)
 	}
-	platformJWTSecret, err := existingSecretDataValueOrRandomWithReader(readSecret, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "PLATFORM_JWT_SECRET", 32)
+	jwtSecret, err := existingSecretDataValueOrRandomWithReader(readSecret, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "JWT_SECRET", 32)
+	if err != nil {
+		return "", core.WrapWithSentinel(core.ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
+	}
+	internalAuthToken, err := existingSecretDataValueOrRandomWithReader(readSecret, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "INTERNAL_AUTH_TOKEN", 32)
 	if err != nil {
 		return "", core.WrapWithSentinel(core.ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
 	}
@@ -1061,7 +1083,8 @@ func renderAnalyticsSecretManifestWithReader(readSecret analyticsSecretValueRead
 		"POSTGRES_PASSWORD":       postgresPassword,
 		"POSTGRES_DB":             postgresDB,
 		"POSTGRES_DSN":            postgresDSN,
-		"PLATFORM_JWT_SECRET":     platformJWTSecret,
+		"JWT_SECRET":              jwtSecret,
+		"INTERNAL_AUTH_TOKEN":     internalAuthToken,
 		"GRAFANA_ADMIN_USER":      "admin",
 		"GRAFANA_ADMIN_PASSWORD":  grafanaPassword,
 	}
@@ -1253,7 +1276,14 @@ func ensureBundledPublicRegistryPullSecretClientGo(namespace string, images []st
 }
 
 func analyticsImagePullSecretCandidates(images AnalyticsImageSet) []string {
-	return []string{images.Ingest, images.API, images.Processor, images.UI}
+	return []string{
+		images.Ingest,
+		images.PlatformAPI,
+		images.RuntimeAPI,
+		images.AnalyticsAPI,
+		images.Processor,
+		images.UI,
+	}
 }
 
 func bundledPublicRegistryPullSecretHost(images []string) string {
@@ -1596,7 +1626,9 @@ func restartAnalyticsDeploymentsClientGo() error {
 	ctx := context.Background()
 	now := time.Now()
 	deployments := []string{
-		"mcp-sentinel-api",
+		"mcp-platform-api",
+		"mcp-runtime-api",
+		"mcp-analytics-api",
 		"mcp-sentinel-ui",
 		"mcp-sentinel-ingest",
 		"mcp-sentinel-processor",

@@ -28,14 +28,18 @@ fi
 
 kubectl config use-context "kind-${KIND_CLUSTER_NAME}" >/dev/null
 
-docker build -t mcp-sentinel-api:latest -f services/api/Dockerfile .
+docker build -t mcp-platform-api:latest -f services/platform-api/Dockerfile .
+docker build -t mcp-runtime-api:latest -f services/runtime-api/Dockerfile .
+docker build -t mcp-analytics-api:latest -f services/analytics-api/Dockerfile .
 docker build -t mcp-sentinel-ingest:latest -f services/ingest/Dockerfile .
 docker build -t mcp-sentinel-processor:latest -f services/processor/Dockerfile .
 docker build -t mcp-sentinel-ui:latest -f services/ui/Dockerfile .
 docker build -t workspace-assistant-mcp:latest examples/workspace-assistant-mcp
 docker build -t mcp-sentinel-mcp-gateway:latest -f services/mcp-gateway/Dockerfile .
 
-kind load docker-image mcp-sentinel-api:latest --name "$KIND_CLUSTER_NAME"
+kind load docker-image mcp-platform-api:latest --name "$KIND_CLUSTER_NAME"
+kind load docker-image mcp-runtime-api:latest --name "$KIND_CLUSTER_NAME"
+kind load docker-image mcp-analytics-api:latest --name "$KIND_CLUSTER_NAME"
 kind load docker-image mcp-sentinel-ingest:latest --name "$KIND_CLUSTER_NAME"
 kind load docker-image mcp-sentinel-processor:latest --name "$KIND_CLUSTER_NAME"
 kind load docker-image mcp-sentinel-ui:latest --name "$KIND_CLUSTER_NAME"
@@ -44,7 +48,9 @@ kind load docker-image mcp-sentinel-mcp-gateway:latest --name "$KIND_CLUSTER_NAM
 
 kubectl apply -f k8s
 
-kubectl -n "$NAMESPACE" rollout restart deployment/mcp-sentinel-api
+kubectl -n "$NAMESPACE" rollout restart deployment/mcp-platform-api
+kubectl -n "$NAMESPACE" rollout restart deployment/mcp-runtime-api
+kubectl -n "$NAMESPACE" rollout restart deployment/mcp-analytics-api
 kubectl -n "$NAMESPACE" rollout restart deployment/mcp-sentinel-ingest
 kubectl -n "$NAMESPACE" rollout restart deployment/mcp-sentinel-processor
 kubectl -n "$NAMESPACE" rollout restart deployment/mcp-sentinel-ui
@@ -57,7 +63,9 @@ kubectl -n "$NAMESPACE" rollout status statefulset/kafka --timeout=180s
 kubectl -n "$NAMESPACE" wait --for=condition=complete job/kafka-topic-init --timeout=180s
 kubectl -n "$NAMESPACE" rollout status deployment/mcp-sentinel-ingest --timeout=180s
 kubectl -n "$NAMESPACE" rollout status deployment/mcp-sentinel-processor --timeout=180s
-kubectl -n "$NAMESPACE" rollout status deployment/mcp-sentinel-api --timeout=180s
+kubectl -n "$NAMESPACE" rollout status deployment/mcp-platform-api --timeout=180s
+kubectl -n "$NAMESPACE" rollout status deployment/mcp-runtime-api --timeout=180s
+kubectl -n "$NAMESPACE" rollout status deployment/mcp-analytics-api --timeout=180s
 kubectl -n "$NAMESPACE" rollout status deployment/mcp-sentinel-ui --timeout=180s
 kubectl -n "$NAMESPACE" rollout status deployment/mcp-sentinel-gateway --timeout=180s
 kubectl -n "$NAMESPACE" rollout status deployment/workspace-assistant-server --timeout=180s
@@ -114,7 +122,7 @@ wait_port "$PROMETHEUS_PORT"
 wait_port "$TEMPO_PORT"
 wait_port "$LOKI_PORT"
 
-wait_http "http://127.0.0.1:${GATEWAY_PORT}/api/events?limit=1" "x-api-key: ${API_KEY}"
+wait_http "http://127.0.0.1:${GATEWAY_PORT}/api/v1/events?limit=1" "x-api-key: ${API_KEY}"
 wait_http "http://127.0.0.1:${PROMETHEUS_PORT}/api/v1/status/buildinfo" ""
 wait_http "http://127.0.0.1:${TEMPO_PORT}/ready" ""
 wait_http "http://127.0.0.1:${LOKI_PORT}/ready" ""
@@ -260,11 +268,11 @@ rows = []
 
 try:
     events = get_json(
-        f"http://127.0.0.1:{gateway_port}/api/events?limit=400",
+        f"http://127.0.0.1:{gateway_port}/api/v1/events?limit=400",
         headers={"x-api-key": api_key},
     ).get("events", [])
     stats = get_json(
-        f"http://127.0.0.1:{gateway_port}/api/stats",
+        f"http://127.0.0.1:{gateway_port}/api/v1/stats",
         headers={"x-api-key": api_key},
     )
     total = stats.get("events_total", len(events))
@@ -291,7 +299,7 @@ except Exception as exc:
     rows.append(("analytics.error", str(exc)))
 
 try:
-    jobs = ["mcp-sentinel-api", "mcp-sentinel-ingest", "mcp-sentinel-processor"]
+    jobs = ["mcp-platform-api", "mcp-runtime-api", "mcp-analytics-api", "mcp-sentinel-ingest", "mcp-sentinel-processor"]
     up_values = []
     for job in jobs:
         query = urllib.parse.urlencode({"query": f'up{{job=\"{job}\"}}'})

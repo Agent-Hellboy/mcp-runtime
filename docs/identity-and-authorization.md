@@ -9,7 +9,7 @@ decision**.
 
 | Identity plane | Identity shape | Used for | Enforced by |
 |---|---|---|---|
-| Platform | User or service principal with role, subject, teams, and namespaces | UI, CLI, and platform API operations | Sentinel API |
+| Platform | User or service principal with role, subject, teams, and namespaces | UI, CLI, and platform API operations | Split Sentinel API services (`platform-api`, `runtime-api`, `analytics-api`) |
 | Agent governance | `humanID + agentID + teamID + sessionID` | MCP `tools/call` authorization | MCP gateway |
 | Kubernetes workload | ServiceAccount plus RBAC bindings | Reading and changing cluster resources | Kubernetes API server |
 
@@ -19,7 +19,7 @@ is not a Kubernetes ServiceAccount.
 
 ## Platform identity: who controls the platform
 
-The Sentinel API authenticates a request using one of these credentials:
+The split Sentinel API services authenticate a request using one of these credentials:
 
 - A browser or CLI bearer token issued after local or OIDC login
 - A user-owned API key sent as `x-api-key`
@@ -52,12 +52,28 @@ Creating or changing an access grant requires authority over the referenced
 server. In normal platform flows, that means the caller is the server owner, a
 team owner for the server namespace, or a platform administrator.
 
-Direct creation of an `MCPAgentSession` through `/api/runtime/sessions` is
+Direct creation of an `MCPAgentSession` through `/api/v1/runtime/sessions` is
 administrator/internal-only. Normal users obtain a session through the adapter
 session endpoint.
 
 See the complete endpoint matrix in
 [Sentinel API authn/authz matrix](security/authz-matrix.md).
+
+### Trusted ingress and client IP
+
+The API derives the caller's client IP from the left-most `X-Forwarded-For`
+hop, falling back to `RemoteAddr`. This IP is used both for audit `ActorIP`
+labelling and for **login-lockout bucketing** (brute-force throttling on
+`/api/v1/auth/login`). Because clients can set `X-Forwarded-For` freely, the
+ingress in front of platform-api **must** set/overwrite this header
+authoritatively and strip any client-supplied value — otherwise a caller can
+rotate the header to evade lockout or poison another address's bucket.
+
+Operators are responsible for this at the ingress layer: configure Traefik (and
+any upstream load balancer) so the real client address is the value
+platform-api sees, and so inbound `X-Forwarded-For` from untrusted clients is
+discarded rather than appended. This is the single trusted boundary for client
+IP; platform-api does not attempt to second-guess the proxy chain.
 
 ## Agent identity: who is using an MCP tool
 
@@ -227,7 +243,7 @@ grant must also permit `destructive`.
 
 ## Kubernetes workload identity
 
-The operator and Sentinel API use Kubernetes ServiceAccounts and RBAC to perform
+The operator and runtime-api use Kubernetes ServiceAccounts and RBAC to perform
 cluster operations. This identity plane controls actions such as:
 
 - Reading and reconciling `MCPServer`, `MCPAccessGrant`, and

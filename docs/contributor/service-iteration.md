@@ -11,7 +11,9 @@ Use focused tests while iterating:
 ```bash
 go test ./internal/operator/... ./internal/cli/... -count=1
 go test ./internal/agentadapter -count=1
-(cd services/api && go test ./... -count=1)
+(cd services/platform-api && go test ./... -count=1)
+(cd services/runtime-api && go test ./... -count=1)
+(cd services/analytics-api && go test ./... -count=1)
 (cd services/ui && go test ./... -count=1)
 node --check services/ui/static/app.js
 ```
@@ -27,9 +29,9 @@ git diff --check
 
 ## API and UI
 
-API and UI changes often need to roll together because the browser talks to the
-API through the UI service. The UI forwards origin headers so connect configs
-can point at the reachable local MCP route.
+API and UI changes often need coordinated rollout when browser flows depend on
+new `/api/v1/*` behavior. Traefik routes API traffic directly; the UI serves
+static assets and auth session cookies only.
 
 Build and roll the UI:
 
@@ -59,16 +61,23 @@ kubectl -n mcp-sentinel set image \
 kubectl -n mcp-sentinel rollout status "deployment/$DEPLOYMENT" --timeout=90s
 ```
 
-Use the same shape for API:
+Use the same shape for each split API service:
 
-| Variable | Value |
-|---|---|
-| `SERVICE` | `api` |
-| `IMAGE_REPO` | `mcp-sentinel-api` |
-| `DOCKERFILE` | `services/api/Dockerfile` |
-| `BUILD_CONTEXT` | `.` |
-| `DEPLOYMENT` | `mcp-sentinel-api` |
-| `CONTAINER` | `api` |
+| Service | `IMAGE_REPO` | `DOCKERFILE` | `DEPLOYMENT` | `CONTAINER` | Port |
+|---|---|---|---|---|---|
+| platform-api | `mcp-platform-api` | `services/platform-api/Dockerfile` | `mcp-platform-api` | `platform-api` | 8080 |
+| runtime-api | `mcp-runtime-api` | `services/runtime-api/Dockerfile` | `mcp-runtime-api` | `runtime-api` | 8084 |
+| analytics-api | `mcp-analytics-api` | `services/analytics-api/Dockerfile` | `mcp-analytics-api` | `analytics-api` | 8085 |
+
+Set `BUILD_CONTEXT=.` and pick a unique `TAG` per build. Example for platform-api:
+
+```bash
+SERVICE=platform-api
+IMAGE_REPO=mcp-platform-api
+DOCKERFILE=services/platform-api/Dockerfile
+DEPLOYMENT=mcp-platform-api
+CONTAINER=platform-api
+```
 
 Use a new tag for every build. Reusing `latest` with `IfNotPresent` can leave
 old images cached on the node.

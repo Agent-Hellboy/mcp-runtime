@@ -4940,7 +4940,7 @@ type AdapterSessionRequest struct {
 	RequestedTTL   string `json:"requestedTTL,omitempty"`
 }
     AdapterSessionRequest is the input contract for the platform API endpoint
-    POST /api/runtime/adapter/sessions. RequestedTTL/Trust are optional;
+    POST /api/v1/runtime/adapter/sessions. RequestedTTL/Trust are optional;
     empty values fall back to platform-side defaults.
 
 ```
@@ -5301,7 +5301,9 @@ var DefaultPlatformStatusWorkloads = []PlatformWorkload{
 	{Component: "Kafka", Namespace: core.DefaultAnalyticsNamespace, Kind: "statefulset", Name: "kafka"},
 	{Component: "Ingest", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-sentinel-ingest"},
 	{Component: "Processor", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-sentinel-processor"},
-	{Component: "API", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-sentinel-api"},
+	{Component: "Platform API", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-platform-api"},
+	{Component: "Runtime Control", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-runtime-api"},
+	{Component: "Analytics API", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-analytics-api"},
 	{Component: "UI", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-sentinel-ui"},
 	{Component: "Gateway", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-sentinel-gateway"},
 	{Component: "Prometheus", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "prometheus"},
@@ -6114,12 +6116,15 @@ Ingress.
 - [Index](#cli-setup-ingress-manifests-index)
 - [Constants](#cli-setup-ingress-manifests-constants)
 - [Functions](#cli-setup-ingress-manifests-functions)
+- [Types](#cli-setup-ingress-manifests-types)
 
 <a id="cli-setup-ingress-manifests-index"></a>
 ### Index
 
 - [`Constants`](#cli-setup-ingress-manifests-constants)
 - [`func RenderPlatformUIIngress(host, issuerName, analyticsNamespace string) string`](#cli-setup-ingress-manifests-func-renderplatformuiingress-host-issuername-analyticsnamespace-string-string)
+- [`type APIPath struct`](#cli-setup-ingress-manifests-type-apipath-struct)
+- [`func PlatformAPIPaths() []APIPath`](#cli-setup-ingress-manifests-func-platformapipaths-apipath)
 
 <a id="cli-setup-ingress-manifests-constants"></a>
 ### Constants
@@ -6143,9 +6148,9 @@ const (
 <a id="cli-setup-ingress-manifests-func-renderplatformuiingress-host-issuername-analyticsnamespace-string-string"></a>
 ```text
 func RenderPlatformUIIngress(host, issuerName, analyticsNamespace string) string
-    RenderPlatformUIIngress emits an Ingress that maps platform.<domain> to
-    the dashboard UI and /api on the same UI service (which reverse-proxies to
-    mcp-sentinel-api via API_UPSTREAM). It also emits a separate admin-gated
+    RenderPlatformUIIngress emits an Ingress that maps platform.<domain> to the
+    dashboard UI and /api/v1/* to the split API services. Server-side UI auth
+    still uses API_UPSTREAM against platform-api. A separate admin-gated Ingress
     Ingress on the same host for /grafana. The observability Ingress uses the
     repo-managed sentinel-admin-auth@file Traefik middleware so Grafana is
     reachable from admin UI links without exposing it raw on the public platform
@@ -6161,6 +6166,28 @@ func RenderPlatformUIIngress(host, issuerName, analyticsNamespace string) string
     requests to the same host hit the UI service, which redirects to HTTPS.
     (We can't rely on Traefik's entrypoint-level redirect because the prod
     overlay disables it to keep HTTP-01 ACME challenges working on first issue.)
+```
+
+<a id="cli-setup-ingress-manifests-types"></a>
+### Types
+
+<a id="cli-setup-ingress-manifests-type-apipath-struct"></a>
+```text
+type APIPath struct {
+	Path     string
+	PathType string
+	Service  string
+	Port     int
+}
+    APIPath describes a Traefik/Kubernetes ingress route for /api/v1 split
+    services.
+
+```
+
+<a id="cli-setup-ingress-manifests-func-platformapipaths-apipath"></a>
+```text
+func PlatformAPIPaths() []APIPath
+    PlatformAPIPaths returns ingress rules ordered most-specific first.
 ```
 
 <a id="cli-setup-plan"></a>
@@ -6429,7 +6456,9 @@ func ValidateTLSSetupCLIFlags(
 ```text
 type AnalyticsImageSet struct {
 	Ingest        string
-	API           string
+	PlatformAPI   string
+	RuntimeAPI    string
+	AnalyticsAPI  string
 	Processor     string
 	UI            string
 	Traefik       string

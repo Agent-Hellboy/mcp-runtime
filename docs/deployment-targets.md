@@ -328,7 +328,7 @@ If you bring your own ingress controller:
   second Traefik stack.
 - Provide an equivalent registry auth guard before exposing
   `registry.<domain>` publicly. The repo-managed Traefik stack uses
-  `registry-admin-auth@file` backed by `/api/registry/authz`.
+  `registry-admin-auth@file` backed by `/api/v1/registry/authz`.
 - Use `./bin/mcp-runtime setup --ingress none ...` only when that external
   ingress path is already prepared.
 

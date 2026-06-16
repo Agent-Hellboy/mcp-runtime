@@ -77,6 +77,35 @@ func TestNormalizeEventLimit(t *testing.T) {
 	}
 }
 
+func TestNormalizeEventOffset(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		input int
+		want  int
+	}{
+		{input: -5, want: 0},
+		{input: 0, want: 0},
+		{input: 25, want: 25},
+		{input: maxEventOffset + 1, want: maxEventOffset},
+	}
+
+	for _, tc := range tests {
+		if got := normalizeEventOffset(tc.input); got != tc.want {
+			t.Fatalf("normalizeEventOffset(%d) = %d, want %d", tc.input, got, tc.want)
+		}
+	}
+}
+
+func TestEventFilterQueryCapsOffset(t *testing.T) {
+	t.Parallel()
+
+	query := buildEventFilterQuery("mcp", "", 25, maxEventOffset+1)
+	if !strings.Contains(query, "OFFSET 100000") {
+		t.Fatalf("query = %q, want capped OFFSET", query)
+	}
+}
+
 func TestEventQueriesUseMaterializedTeamIDColumn(t *testing.T) {
 	t.Parallel()
 
@@ -98,9 +127,12 @@ func TestEventQueriesUseMaterializedTeamIDColumn(t *testing.T) {
 		t.Fatalf("args = %#v, want trace-123 and team-acme", args)
 	}
 
-	query := buildEventFilterQuery("mcp", whereClause, 25)
+	query := buildEventFilterQuery("mcp", whereClause, 25, 0)
 	if !strings.Contains(query, "FROM mcp.events WHERE") {
 		t.Fatalf("query = %q, want filtered events query", query)
+	}
+	if !strings.Contains(query, "OFFSET 0") {
+		t.Fatalf("query = %q, want OFFSET clause", query)
 	}
 }
 

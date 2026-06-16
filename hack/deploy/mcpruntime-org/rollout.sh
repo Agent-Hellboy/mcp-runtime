@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Targeted rollout for mcpruntime.org k3s: build/push Sentinel API+UI and apply RBAC/config.
+# Targeted rollout for mcpruntime.org k3s: build/push split Sentinel APIs + UI and apply RBAC/config.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -31,7 +31,6 @@ echo "registry host: $REGISTRY_HOST"
 echo "building ./bin/mcp-runtime ..."
 go build -o bin/mcp-runtime ./cmd/mcp-runtime
 
-mcpruntime_org_kubectl apply -f k8s/08-api-rbac.yaml
 mcpruntime_org_ensure_platform_pull_secret
 
 mcpruntime_org_kubectl patch configmap mcp-sentinel-config -n mcp-sentinel --type merge -p "$(cat <<PATCH
@@ -46,29 +45,47 @@ mcpruntime_org_kubectl patch configmap mcp-sentinel-config -n mcp-sentinel --typ
 PATCH
 )"
 
-echo "Building mcp-sentinel-api:${TAG} (${PLATFORM})..."
-docker build --platform "$PLATFORM" -f services/api/Dockerfile -t "${REGISTRY_INTERNAL}/mcp-sentinel-api:${TAG}" .
+declare -a API_SERVICES=(
+  "platform-api:mcp-platform-api:platform-api"
+  "runtime-api:mcp-runtime-api:runtime-api"
+  "analytics-api:mcp-analytics-api:analytics-api"
+)
+
+for entry in "${API_SERVICES[@]}"; do
+  IFS=: read -r dir image container <<<"$entry"
+  echo "Building ${image}:${TAG} (${PLATFORM})..."
+  docker build --platform "$PLATFORM" -f "services/${dir}/Dockerfile" -t "${REGISTRY_INTERNAL}/${image}:${TAG}" .
+done
 
 echo "Building mcp-sentinel-ui:${TAG} (${PLATFORM})..."
 docker build --platform "$PLATFORM" -f services/ui/Dockerfile -t "${REGISTRY_INTERNAL}/mcp-sentinel-ui:${TAG}" .
 
 MCP_REGISTRY_PF_PID="$(mcpruntime_org_registry_ensure_port_forward "$PF_PORT" "$MCP_REGISTRY_PF_PID")"
 
-if ! mcpruntime_org_registry_push_via_port_forward "$REGISTRY_INTERNAL" "$PF_PORT" "mcp-sentinel-api" "$TAG"; then
-  echo "failed to push mcp-sentinel-api:${TAG}" >&2
-  exit 1
-fi
+for entry in "${API_SERVICES[@]}"; do
+  IFS=: read -r _ image _ <<<"$entry"
+  if ! mcpruntime_org_registry_push_via_port_forward "$REGISTRY_INTERNAL" "$PF_PORT" "$image" "$TAG"; then
+    echo "failed to push ${image}:${TAG}" >&2
+    exit 1
+  fi
+done
 if ! mcpruntime_org_registry_push_via_port_forward "$REGISTRY_INTERNAL" "$PF_PORT" "mcp-sentinel-ui" "$TAG"; then
   echo "failed to push mcp-sentinel-ui:${TAG}" >&2
   exit 1
 fi
 
-mcpruntime_org_kubectl set image deployment/mcp-sentinel-api -n mcp-sentinel \
-  "api=${REGISTRY_HOST}/mcp-sentinel-api:${TAG}"
+for entry in "${API_SERVICES[@]}"; do
+  IFS=: read -r _ image container <<<"$entry"
+  mcpruntime_org_kubectl set image "deployment/${image}" -n mcp-sentinel \
+    "${container}=${REGISTRY_HOST}/${image}:${TAG}"
+done
 mcpruntime_org_kubectl set image deployment/mcp-sentinel-ui -n mcp-sentinel \
   "ui=${REGISTRY_HOST}/mcp-sentinel-ui:${TAG}"
 
-mcpruntime_org_kubectl rollout status deployment/mcp-sentinel-api -n mcp-sentinel --timeout=180s
+for entry in "${API_SERVICES[@]}"; do
+  IFS=: read -r _ image _ <<<"$entry"
+  mcpruntime_org_kubectl rollout status "deployment/${image}" -n mcp-sentinel --timeout=180s
+done
 mcpruntime_org_kubectl rollout status deployment/mcp-sentinel-ui -n mcp-sentinel --timeout=180s
 
 echo "Patching team namespace NetworkPolicies for ingress controller (${PLATFORM_TRAEFIK_NAMESPACE:-kube-system})..."
@@ -89,4 +106,4 @@ for ns in $(mcpruntime_org_kubectl get ns -o jsonpath='{range .items[*]}{.metada
   ]"
 done
 
-echo "Rollout complete: api/ui tag ${TAG}"
+echo "Rollout complete: platform-api/runtime-api/analytics-api/ui tag ${TAG}"

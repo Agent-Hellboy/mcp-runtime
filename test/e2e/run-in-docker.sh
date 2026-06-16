@@ -16,11 +16,18 @@ echo "[build] building e2e tooling image ${IMAGE_NAME}"
 DOCKER_CONFIG="${DOCKER_CONFIG}" docker build -f test/e2e/Dockerfile -t "${IMAGE_NAME}" .
 
 echo "[run] executing e2e-kind.sh inside container"
+if stat -c '%g' /var/run/docker.sock >/dev/null 2>&1; then
+  DOCKER_SOCK_GID="$(stat -c '%g' /var/run/docker.sock)"
+elif stat -f '%g' /var/run/docker.sock >/dev/null 2>&1; then
+  DOCKER_SOCK_GID="$(stat -f '%g' /var/run/docker.sock)"
+else
+  DOCKER_SOCK_GID=999
+fi
 DOCKER_FLAGS=(-i --rm --privileged)
 if [ -t 0 ]; then
   DOCKER_FLAGS=(-it --rm --privileged)
 fi
-DOCKER_BASE_ARGS=(--network=host -v /var/run/docker.sock:/var/run/docker.sock)
+DOCKER_BASE_ARGS=(--network=host -v /var/run/docker.sock:/var/run/docker.sock --group-add "${DOCKER_SOCK_GID}")
 MOUNT_ARGS=(-v "${ROOT}":/workspace -w /workspace)
 
 # Test if bind mounts work with a simple check first (suppress errors for clean fallback)

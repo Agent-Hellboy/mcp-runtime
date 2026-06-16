@@ -79,7 +79,9 @@ type analyticsComponent struct {
 
 type AnalyticsImageSet struct {
 	Ingest        string
-	API           string
+	PlatformAPI   string
+	RuntimeAPI    string
+	AnalyticsAPI  string
 	Processor     string
 	UI            string
 	Traefik       string
@@ -101,9 +103,21 @@ var analyticsComponents = []analyticsComponent{
 		BuildContext: ".",
 	},
 	{
-		Name:         "api",
-		Repository:   "mcp-sentinel-api",
-		Dockerfile:   "services/api/Dockerfile",
+		Name:         "platform-api",
+		Repository:   "mcp-platform-api",
+		Dockerfile:   "services/platform-api/Dockerfile",
+		BuildContext: ".",
+	},
+	{
+		Name:         "runtime-api",
+		Repository:   "mcp-runtime-api",
+		Dockerfile:   "services/runtime-api/Dockerfile",
+		BuildContext: ".",
+	},
+	{
+		Name:         "analytics-api",
+		Repository:   "mcp-analytics-api",
+		Dockerfile:   "services/analytics-api/Dockerfile",
 		BuildContext: ".",
 	},
 	{
@@ -455,7 +469,7 @@ func setupClusterSteps(logger *zap.Logger, kubeconfig, context string, ingressOp
 
 // catalogNamespaceLabels returns the labels the platform API expects to find on
 // a shared catalog namespace. Keeping these aligned with EnsureCatalogNamespace
-// in services/api/internal/runtimeapi/deployments.go lets the runtime-side
+// in services/runtime-api/internal/runtimeapi/deployments.go lets the runtime-side
 // ensure call degrade to an idempotent patch instead of a create, which is
 // what allows non-admin users to publish into the catalog without giving the
 // API ServiceAccount cluster-wide namespace-create RBAC.

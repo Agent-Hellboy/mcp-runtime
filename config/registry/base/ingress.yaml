@@ -7,6 +7,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.entrypoints: web
     traefik.ingress.kubernetes.io/router.middlewares: registry-admin-auth@file
 spec:
+  ingressClassName: traefik
   rules:
   - host: registry.local
     http:

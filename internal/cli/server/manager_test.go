@@ -323,7 +323,7 @@ func TestServerManager_ListServersModeSelection(t *testing.T) {
 		apiCalls := 0
 		api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			apiCalls++
-			if r.URL.Path != "/api/runtime/servers" {
+			if r.URL.Path != "/api/v1/runtime/servers" {
 				t.Fatalf("unexpected platform path %q", r.URL.Path)
 			}
 			if r.Header.Get("x-api-key") != "token-1" {
@@ -1092,13 +1092,13 @@ func TestDeployServerWaitsForReadyStatus(t *testing.T) {
 	apiCalls := 0
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api/runtime/teams/core":
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/runtime/teams/core":
 			w.Header().Set("content-type", "application/json")
 			_, _ = w.Write([]byte(`{"team":{"slug":"core","name":"Core","namespace":"mcp-team-core"}}`))
-		case r.Method == http.MethodPost && r.URL.Path == "/api/runtime/servers":
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/runtime/servers":
 			w.Header().Set("content-type", "application/json")
 			_, _ = w.Write([]byte(`{"server":{"name":"data-utility","namespace":"mcp-team-core","ready":"False","status":"PartiallyReady","age":"0s"}}`))
-		case r.Method == http.MethodGet && r.URL.Path == "/api/runtime/servers":
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/runtime/servers":
 			apiCalls++
 			w.Header().Set("content-type", "application/json")
 			if apiCalls == 1 {
@@ -1153,10 +1153,10 @@ servers:
 	var appliedNamespace string
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api/auth/me":
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/auth/me":
 			w.Header().Set("content-type", "application/json")
 			_, _ = w.Write([]byte(`{"authenticated":true,"principal":{"role":"user","teams":[{"slug":"core","namespace":"mcp-team-core"}]}}`))
-		case r.Method == http.MethodPost && r.URL.Path == "/api/runtime/servers":
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/runtime/servers":
 			var payload struct {
 				Namespace string `json:"namespace"`
 			}
@@ -1166,7 +1166,7 @@ servers:
 			appliedNamespace = payload.Namespace
 			w.Header().Set("content-type", "application/json")
 			_, _ = w.Write([]byte(`{"server":{"name":"data-utility","namespace":"mcp-team-core","ready":"True","status":"Ready","age":"0s"}}`))
-		case r.Method == http.MethodGet && r.URL.Path == "/api/runtime/servers":
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/runtime/servers":
 			w.Header().Set("content-type", "application/json")
 			_, _ = w.Write([]byte(`{"servers":[{"name":"data-utility","namespace":"mcp-team-core","ready":"True","status":"Ready","age":"1s"}]}`))
 		default:
@@ -1198,7 +1198,7 @@ servers:
 func TestDeployServerTenantScopeRequiresTeamWhenAmbiguous(t *testing.T) {
 	t.Setenv("MCP_RUNTIME_CONFIG_DIR", t.TempDir())
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/api/auth/me" {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/auth/me" {
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
 		w.Header().Set("content-type", "application/json")
@@ -1219,13 +1219,13 @@ func TestDeployServerFailsWhenServerDoesNotBecomeReady(t *testing.T) {
 	t.Setenv("MCP_RUNTIME_CONFIG_DIR", t.TempDir())
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api/runtime/teams/core":
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/runtime/teams/core":
 			w.Header().Set("content-type", "application/json")
 			_, _ = w.Write([]byte(`{"team":{"slug":"core","name":"Core","namespace":"mcp-team-core"}}`))
-		case r.Method == http.MethodPost && r.URL.Path == "/api/runtime/servers":
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/runtime/servers":
 			w.Header().Set("content-type", "application/json")
 			_, _ = w.Write([]byte(`{"server":{"name":"data-utility","namespace":"mcp-team-core","ready":"False","status":"PartiallyReady","age":"0s"}}`))
-		case r.Method == http.MethodGet && r.URL.Path == "/api/runtime/servers":
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/runtime/servers":
 			w.Header().Set("content-type", "application/json")
 			_, _ = w.Write([]byte(`{"servers":[{"name":"data-utility","namespace":"mcp-team-core","ready":"False","status":"PartiallyReady","age":"1s"}]}`))
 		default:

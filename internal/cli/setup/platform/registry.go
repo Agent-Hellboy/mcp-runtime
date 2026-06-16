@@ -449,7 +449,7 @@ func platformRegistryHostForConfig(images AnalyticsImageSet) string {
 		(host != core.DefaultRegistryIngressHost || registryIngressHostExplicitlyConfigured()) {
 		return host
 	}
-	return registryHostFromImage(images.API)
+	return registryHostFromImage(images.PlatformAPI)
 }
 
 func registryIngressHostExplicitlyConfigured() bool {

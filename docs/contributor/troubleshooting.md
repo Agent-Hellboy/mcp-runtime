@@ -7,7 +7,7 @@ Start from the symptom and inspect the narrowest surface first.
 Expected behavior:
 
 ```bash
-curl -i http://localhost:18080/api/runtime/servers
+curl -i http://localhost:18080/api/v1/runtime/servers
 ```
 
 The response should be `401 Unauthorized`.
@@ -17,14 +17,15 @@ If it returns servers:
 1. Confirm the UI and API Deployments are on the current images.
 
    ```bash
-   kubectl get deploy mcp-sentinel-api mcp-sentinel-ui -n mcp-sentinel \
+   kubectl get deploy mcp-platform-api mcp-runtime-api mcp-analytics-api mcp-sentinel-ui -n mcp-sentinel \
      -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.spec.template.spec.containers[0].image}{"\n"}{end}'
    ```
 
 2. Roll both Deployments after patching auth or catalog code.
 
    ```bash
-   kubectl rollout status deployment/mcp-sentinel-api -n mcp-sentinel --timeout=90s
+   kubectl rollout status deployment/mcp-platform-api -n mcp-sentinel --timeout=90s
+   kubectl rollout status deployment/mcp-runtime-api -n mcp-sentinel --timeout=90s
    kubectl rollout status deployment/mcp-sentinel-ui -n mcp-sentinel --timeout=90s
    ```
 
@@ -37,7 +38,7 @@ Check the API path first:
 
 ```bash
 curl -sS -b /tmp/mcp-tenant-a-cookie.txt \
-  http://localhost:18080/api/runtime/servers |
+  http://localhost:18080/api/v1/runtime/servers |
   jq '[.servers[] | {namespace,name,team_id}]'
 ```
 
@@ -150,14 +151,14 @@ http://localhost:18080/
 
 The HTTP ingress overlay can include the `pii-redactor@file` Traefik middleware.
 That middleware is useful for request-path testing on ingest traffic, but it
-must not be attached to control-plane `/api` routes because API keys, team IDs,
+must not be attached to control-plane `/api/v1` routes because API keys, team IDs,
 server names, namespaces, and grant/session subjects must stay exact. If local
 API responses show `[redacted]`, verify that `mcp-sentinel-gateway-api` does not
 reference `pii-redactor@file`. For identity-store debugging, port-forward the
-API directly:
+platform API directly:
 
 ```bash
-kubectl port-forward -n mcp-sentinel svc/mcp-sentinel-api 18081:8080
+kubectl port-forward -n mcp-sentinel svc/mcp-platform-api 18081:8080
 ```
 
 Then use `http://localhost:18081` for direct API debugging and stop the

@@ -276,7 +276,13 @@ func TestShowPlatformStatus(t *testing.T) {
 			commandKey("kubectl", "get", "deployment", "mcp-sentinel-processor", "-n", "mcp-sentinel", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
 				Stdout: "1/1",
 			},
-			commandKey("kubectl", "get", "deployment", "mcp-sentinel-api", "-n", "mcp-sentinel", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
+			commandKey("kubectl", "get", "deployment", "mcp-platform-api", "-n", "mcp-sentinel", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
+				Stdout: "1/1",
+			},
+			commandKey("kubectl", "get", "deployment", "mcp-runtime-api", "-n", "mcp-sentinel", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
+				Stdout: "1/1",
+			},
+			commandKey("kubectl", "get", "deployment", "mcp-analytics-api", "-n", "mcp-sentinel", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {
 				Stdout: "1/1",
 			},
 			commandKey("kubectl", "get", "deployment", "mcp-sentinel-ui", "-n", "mcp-sentinel", "-o", "jsonpath={.status.readyReplicas}/{.spec.replicas}"): {

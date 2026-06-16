@@ -137,7 +137,7 @@ CI/test surface has an owning skill:
 |---|---|---|
 | `gofmt`, `go vet`, `staticcheck` | `qa-e2e-operations` | CI parity gate for merge/release readiness |
 | Root unit tests and `test/integration` envtest | `qa-e2e-operations` | CI parity gate; envtest asset setup included |
-| Sentinel service module tests (`services/api`, `ingest`, `processor`, `mcp-gateway`, `ui`) | `qa-e2e-operations` plus focused QA skills | CI parity gate plus live rollout checks |
+| Sentinel service module tests (`services/platform-api`, `services/runtime-api`, `services/analytics-api`, `ingest`, `processor`, `mcp-gateway`, `ui`) | `qa-e2e-operations` plus focused QA skills | CI parity gate plus live rollout checks |
 | CLI golden tests | `repo-guidance-sync`, `qa-e2e-operations`, `qa-e2e-ui` | Docs/help drift and UI-adjacent CLI changes |
 | `test/e2e/scenarios_test.sh` selector validation | `qa-e2e-operations` | CI parity gate covers scenario parsing edge cases |
 | Kind E2E `all` plus cached `smoke-auth,governance` | `qa-cluster-bringup`, `qa-e2e-operations`, `qa-e2e-security`, `mcp-spec-compliance` | Full merge gate and targeted live regression gates |

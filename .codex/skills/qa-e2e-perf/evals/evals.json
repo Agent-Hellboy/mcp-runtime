@@ -13,7 +13,7 @@
     },
     {
       "id": "api-analytics-hot-path",
-      "prompt": "Perf-check the /api/analytics/usage path under load after this API change.",
+      "prompt": "Perf-check the /api/v1/analytics/usage path under load after this API change.",
       "expected_output": "A scoped perf pass that runs the analytics latency scenario, records sample counts and p95, and flags regressions above threshold.",
       "assertions": [
         "Runs the analytics scenario against the live cluster",

@@ -9,7 +9,7 @@
 | **mcp-gateway** | Transparent sidecar. Extracts identity, evaluates tool-level policy, emits allow/deny audit events, forwards traffic upstream. |
 | **ingest** | Receives `POST /events`, validates ingest-scoped API keys or optional JWTs, writes to Kafka. |
 | **processor** | Consumes Kafka, batches, writes into ClickHouse with indexed audit fields. |
-| **api** | Analytics endpoints, dashboard summaries, user/team-scoped analytics, scoped observability links and Prometheus queries, runtime governance APIs (grants/sessions), platform audit, MCP server catalog, component operations. |
+| **api** | Three HTTP services behind Traefik path routing: **platform-api** (Postgres identity/auth/registry), **runtime-api** (Kubernetes runtime governance + registry push), **analytics-api** (ClickHouse events/stats/usage). OpenAPI at `GET /api/v1/openapi.yaml` per service. |
 | **ui** | Control-plane dashboard: user MCP server dashboard, MCP server catalog and connect config, user API keys, analytics dashboard, governance, MCP operations, and platform management. |
 | **gateway** | Kubernetes deployment fronting the sentinel API, ingest, and UI surfaces. |
 | **workspace assistant sample** | Sample MCP server in `examples/workspace-assistant-mcp` for end-to-end smoke tests. |
@@ -23,16 +23,18 @@ that only use HTTP, Kafka, ClickHouse, Postgres, or local files.
 
 | Component | Kubernetes awareness | Runtime access | Hardening notes |
 |---|---|---|---|
-| **api** | Kubernetes-aware. `services/api` initializes clients through `pkg/k8sclient`, using in-cluster config first and kubeconfig fallback outside the cluster. | Reads `MCPServer`, `MCPAccessGrant`, and `MCPAgentSession`; applies grants/sessions; reads component health; restarts Sentinel workloads; provisions platform deployment namespaces, quotas, limits, and NetworkPolicies; manages Deployments and Services. RBAC is in `k8s/08-api-rbac.yaml`. | Treat this as the main privileged Sentinel service. Keep admin auth tight, keep `ADMIN_API_KEYS` separate from user keys, prefer in-cluster service account credentials in production, and review the broad deployment-management RBAC before enabling user deployment APIs on shared clusters. |
+| **platform-api** | Postgres-backed; no Kubernetes client. | Identity, auth, registry forwardAuth, admin namespaces/audit, `/internal/*` for runtime-api and analytics-api. | `k8s/08-platform-api-rbac.yaml` grants only user-key secret access. |
+| **runtime-api** | Kubernetes-aware via `pkg/k8sclient`. | MCPServer reconciliation helpers, grants/sessions, deployments, registry push (pod-local emptyDir + `POD_IP`). Broad ClusterRole in `k8s/08-runtime-api-rbac.yaml`. | Main privileged API for cluster mutations. NetworkPolicy egress to platform-api:8080 in `k8s/22-split-api-networkpolicy.yaml`. |
+| **analytics-api** | ClickHouse-only; `automountServiceAccountToken: false`. | Events, stats, usage queries; resolves display names via platform-api `/internal/*`. | No Kubernetes RBAC. NetworkPolicy egress to platform-api:8080. |
 | **gateway** | Kubernetes-aware Traefik ingress controller. | Watches Ingress, Service, Endpoint, Secret, and IngressClass resources for the namespaces it serves. The bundled Sentinel-local gateway watches `mcp-sentinel`; the shared ingress overlays watch `registry`, `mcp-sentinel`, `mcp-servers`, `mcp-servers-org`, and `mcp-servers-public`. | Keep watched namespaces explicit, avoid cluster-wide ingress watches unless required, keep Grafana admin-gated, do not expose Prometheus directly on public hosts, and keep redaction middleware limited to routes that need it. |
 | **mcp-gateway** | Kubernetes-integrated but Kubernetes API-agnostic. It is injected into MCP server pods and reads operator-rendered policy from mounted files and env vars. | Does not need a Kubernetes client or service account token. It forwards MCP traffic to the local server container and emits audit events to ingest. | Keep `automountServiceAccountToken: false`, read-only policy mounts, `readOnlyRootFilesystem`, dropped capabilities, and non-root execution. Treat `ANALYTICS_API_KEY` as ingest-scoped, not an admin API key. |
-| **ui** | Kubernetes API-agnostic. | Serves the browser UI and proxies `/api/*` to `api` through `API_UPSTREAM` with UI session credentials or the configured upstream key. | Keep it behind TLS for public hosts, retain the security headers in `services/ui`, set `UI_REQUIRE_HTTPS=false` only for deliberate non-TLS dev ingress, set `UI_FORCE_SECURE_COOKIE=true` when a TLS-terminating proxy does not send `X-Forwarded-Proto: https`, and do not grant it Kubernetes RBAC. |
+| **ui** | Kubernetes API-agnostic. | Serves the browser UI and proxies `/api/v1/*` to `api` through `API_UPSTREAM` with UI session credentials or the configured upstream key. | Keep it behind TLS for public hosts, retain the security headers in `services/ui`, set `UI_REQUIRE_HTTPS=false` only for deliberate non-TLS dev ingress, set `UI_FORCE_SECURE_COOKIE=true` when a TLS-terminating proxy does not send `X-Forwarded-Proto: https`, and do not grant it Kubernetes RBAC. |
 | **ingest** | Kubernetes API-agnostic. | Authenticates `/events`, validates request size and event shape, and writes to Kafka. | Require `INGEST_API_KEYS` or OIDC for real deployments, use ingest-only keys, restrict network access to proxy/gateway callers, and keep the public `/ingest` route off production hosts unless intentionally exposed. |
 | **processor** | Kubernetes API-agnostic. | Consumes Kafka and writes ClickHouse. It only exposes health and metrics. | Do not expose it through ingress. Restrict network access to Kafka, ClickHouse, metrics scraping, and tracing endpoints. |
 | **storage and observability** | Mixed. ClickHouse, Kafka, Postgres, Grafana, Prometheus, Tempo, Loki, and the OTel collector are Kubernetes API-agnostic in the bundled manifests; Promtail is Kubernetes-aware so it can discover pod logs. | Data stores and dashboards back Sentinel audit, identity, metrics, traces, and logs. Promtail has pod read/watch RBAC. | Review persistence, retention, backups, and dashboard auth before production use. The generated platform-host observability route uses `sentinel-admin-auth@file`; provide equivalent auth if you replace repo-managed Traefik, and review Promtail's cluster log visibility before enabling it on multi-tenant clusters. |
 
 Operationally, the safest production posture is to give Kubernetes API access
-only to `api`, ingress controllers, the runtime operator, and log collectors
+only to **runtime-api**, ingress controllers, the runtime operator, and log collectors
 that need it. Services that do not call Kubernetes should keep service account
 token automounting disabled and should be isolated with NetworkPolicies where
 the cluster supports them.
@@ -99,8 +101,10 @@ For local `setup --test-mode` clusters, setup seeds two email/password logins:
 
 | Surface | Public path in dev | In-cluster service | Notes |
 |---|---|---|---|
-| **UI** | `/` | `mcp-sentinel-ui:8082` | Browser app, browser login/session routes, and `/api` reverse proxy. |
-| **API** | `/api/*` through UI | `mcp-sentinel-api:8080` | Auth, analytics queries, runtime governance, deployments, admin/user APIs. The UI proxy forwards browser origin headers so local connect configs can point at `http://localhost:18080/<server-name>/mcp`. |
+| **UI** | `/` | `mcp-sentinel-ui:8082` | Browser app and server-side auth/OIDC upstream to platform-api. Traefik routes `/api/v1/*` directly to the API services. |
+| **platform-api** | `/api/v1/auth/*`, `/api/v1/registry/authz`, `/api/v1/admin/*` | `mcp-platform-api:8080` | Login, identity, registry forwardAuth, admin namespaces/audit. |
+| **runtime-api** | `/api/v1/runtime/*`, `/api/v1/deployments/*` | `mcp-runtime-api:8084` | Runtime governance, registry push, dashboard summary. |
+| **analytics-api** | `/api/v1/stats`, `/api/v1/events`, `/api/v1/user/analytics/usage` | `mcp-analytics-api:8085` | ClickHouse query surfaces. |
 | **Ingest** | `/ingest/events` | `mcp-sentinel-ingest:8081/events` | Event intake used by `mcp-gateway`; the public ingress strips `/ingest`. |
 | **Grafana** | `/grafana` | `grafana:3000` | Admin observability UI. The generated platform-host route is guarded by `sentinel-admin-auth@file`; Grafana still keeps its own login unless you wire auth proxy settings. Tenant-scoped access is intentionally not exposed by the user dashboard. |
 | **Prometheus** | Not exposed | `prometheus:9090` | Internal metrics backend and Grafana datasource. Use a temporary `kubectl port-forward` only for backend debugging. |
@@ -114,7 +118,7 @@ server before returning links or querying Prometheus, and normal users are
 limited to their team namespaces or explicitly caller-owned catalog servers.
 
 Prometheus requests use
-`/api/runtime/observability/prometheus/query?namespace=<namespace>&server=<server>&query_id=<id>`.
+`/api/v1/runtime/observability/prometheus/query?namespace=<namespace>&server=<server>&query_id=<id>`.
 The `query_id` is allowlisted (`up`, `request_rate`, `deny_rate`,
 `latency_p95`); arbitrary PromQL is never accepted. `PROMETHEUS_API_URL`
 defaults to `http://prometheus:9090/prometheus`.
@@ -136,81 +140,47 @@ cardinality.
 
 | Service | Auth behavior |
 |---|---|
-| **api** | `/health` is open. Authenticated `/api/*` routes accept `x-api-key` from `API_KEYS`, user-generated API keys, platform JWT bearer tokens, or OIDC JWT bearer tokens when OIDC is configured. Only keys listed in `ADMIN_API_KEYS` get admin role; other `API_KEYS` values are user role unless the explicit legacy dev/test fallback is enabled. Registry forward-auth keeps admin credentials global and allows normal user credentials only on repository paths scoped to the caller's team slug or team namespace. |
-| **ui** | `/auth/login` creates an HttpOnly UI session from `api_key`, `id_token`, or `email`/`password`. The UI then proxies `/api/*` with an upstream API key or bearer token. `/auth/admin-check` accepts admin UI sessions or keys from `ADMIN_API_KEYS`; it falls back to `API_KEYS` only when the explicit legacy dev/test fallback is enabled. |
+| **platform-api** | `/health` and `/ready` are open. Authenticated `/api/v1/*` identity, admin, and registry routes accept `x-api-key`, user-generated API keys, platform JWT bearer tokens (audience `platform-api`), or OIDC JWT bearer tokens when OIDC is configured. Only keys listed in `ADMIN_API_KEYS` get admin role. Registry forward-auth (`/api/v1/registry/authz`) keeps admin credentials global and allows normal user credentials only on repository paths scoped to the caller's team slug or team namespace. Token-gated `/internal/*` serves runtime-api and analytics-api. |
+| **runtime-api** | `/health` and `/ready` are open. `/api/v1/runtime/*`, `/api/v1/deployments`, and admin operations routes accept platform JWTs (audience `runtime-api`) or scoped API keys via `pkg/platformauth`. |
+| **analytics-api** | `/health` and `/ready` are open. `/api/v1/events`, `/api/v1/stats`, and usage analytics accept platform JWTs (audience `analytics-api`) or scoped API keys. Admin-only routes require admin role. |
+| **ui** | `/auth/login` creates an HttpOnly UI session from `api_key`, `id_token`, or `email`/`password`. Browser `/api/v1/*` calls go through Traefik ingress (not a UI reverse proxy). `/auth/admin-check` accepts admin UI sessions or keys from `ADMIN_API_KEYS`; it falls back to `API_KEYS` only when the explicit legacy dev/test fallback is enabled. |
 | **ingest** | `/live`, `/ready`, and `/health` are open. `/events` accepts `x-api-key` from `INGEST_API_KEYS`, legacy `API_KEYS`, or a configured OIDC bearer token. If no API keys and no JWKS are configured, intake auth is bypassed. |
 | **processor** | No data API. It exposes metrics and a simple health check on the metrics port. |
 | **mcp-gateway** | No admin API. It authenticates MCP requests according to the rendered server policy and exposes Prometheus metrics at `/metrics`. |
 
-### API service
+### API services
 
-`services/api` runs the main API on `PORT` (default `8080`) and Prometheus
-metrics on `METRICS_PORT` (default `9090`).
+Traefik routes `/api/v1/*` by path prefix to three HTTP services; there is no `/api/*` compatibility
+layer. Each service publishes `GET /api/v1/openapi.yaml` and uses `pkg/apihttp`
+stable error envelopes.
 
-| Method | Path | Purpose |
-|---|---|---|
-| `GET` | `/health` | API health and runtime initialization status. |
-| `GET` | `/metrics` | Prometheus metrics on the metrics server. |
-| `POST` | `/api/auth/signup` | Create a platform user when platform identity storage is configured. Returns `201` with `access_token`, `token_type`, `expires_in`, and `user`. Admin signup requires an admin principal. |
-| `POST` | `/api/auth/login` | Exchange platform email/password for a bearer token. Returns `200` with `access_token`, `token_type`, `expires_in`, and `user`. |
-| `POST` | `/api/auth/oidc` | Exchange a configured OIDC ID token for a platform bearer token. Returns `200` with `access_token`, `token_type`, `expires_in`, and `user`. |
-| `GET` | `/api/auth/me` | Return the authenticated principal. |
-| `GET` | `/api/dashboard/summary` | Dashboard cards: event totals, active grants/sessions, latest event metadata. Admin role required. |
-| `GET` | `/api/analytics/usage` | Dashboard usage analytics from ClickHouse: totals, top MCP servers, human/agent pairs, tools, decision counts, recent activity, and request buckets. Query: `limit` (1-50, default 10), `window_days` (1-365, default 30), `namespace`, `team_id`, `server`, `decision`, and `tool_name`. Admin role required. |
-| `GET` | `/api/user/analytics/usage` | User dashboard analytics from ClickHouse. Normal users are scoped to team namespaces they belong to; the shared catalog is excluded. Query: `limit`, `window_days`, `namespace`, `server`, `decision`, and `tool_name`. |
-| `GET` | `/api/events` | Recent ClickHouse-backed audit events, newest first. Query: `limit` (1-1000, default 100). Admin role required. |
-| `GET` | `/api/events/filter` | Filtered audit events. Query: `trace_id`, `source`, `event_type`, `server`, `namespace`, `team_id`, `cluster`, `human_id`, `agent_id`, `session_id`, `decision`, `tool_name`, `limit`. Admin role required. |
-| `GET` | `/api/stats` | Total event count. Admin role required. |
-| `GET` | `/api/sources` | Event counts grouped by source. Admin role required. |
-| `GET` | `/api/event-types` | Event counts grouped by event type. Admin role required. |
-| `GET`, `POST` | `/api/runtime/servers` | List or apply `MCPServer` resources through runtime authz scope. `tenant` mode defaults signed-in users to team namespaces they belong to; `org` mode includes the org catalog plus team namespaces; `public` mode allows anonymous catalog reads and signed-in publishes in the public catalog plus team namespaces. Responses include `publish_policy` for active-server quota/cooldown visibility. |
-| `DELETE` | `/api/runtime/servers/{namespace}/{name}` | Retire an owned MCPServer. Retiring deletes the MCPServer from Kubernetes and frees one active-server quota slot. |
-| `GET` | `/api/runtime/server-events?namespace=&server=` | Recent analytics events for one administered MCPServer; full identity/session/payload details are not exposed to regular namespace readers. |
-| `GET` | `/api/runtime/observability/links?namespace=&server=` | Return scoped observability actions for one authorized MCPServer. |
-| `GET` | `/api/runtime/observability/grafana/dashboard?namespace=&server=` | Render an API-scoped dashboard backed by allowlisted Prometheus queries. |
-| `GET` | `/api/runtime/observability/prometheus/query?namespace=&server=&query_id=` | Run one allowlisted, server-scoped Prometheus query. |
-| `GET`, `POST` | `/api/runtime/grants` | List or apply `MCPAccessGrant` resources. Lists are scoped to administered servers; apply requires admin, server owner, or team owner. |
-| `GET`, `DELETE` | `/api/runtime/grants/{namespace}/{name}` | Read or delete one grant for an administered server. |
-| `PATCH` | `/api/runtime/grants/{namespace}/{name}` | Set `spec.disabled` with `{"disabled":true|false}`; requires admin, server owner, or team owner. |
-| `GET`, `POST` | `/api/runtime/sessions` | List scoped `MCPAgentSession` resources; direct session apply is admin/internal-only. User adapter flows use `/api/runtime/adapter/sessions`. |
-| `GET`, `DELETE` | `/api/runtime/sessions/{namespace}/{name}` | Read or delete one session for an administered server. |
-| `PATCH` | `/api/runtime/sessions/{namespace}/{name}` | Set `spec.revoked` with `{"revoked":true|false}`; requires admin, server owner, or team owner. |
-| `GET`, `POST` | `/api/runtime/teams` | List teams (admin: all, user: memberships) or create a team+namespace (admin-only). |
-| `GET` | `/api/runtime/teams/{team}` | Read team metadata for admins and team members. |
-| `GET` | `/api/runtime/teams/{team}/members` | List team memberships for admins and team members. |
-| `PUT` | `/api/runtime/teams/{team}/members/{userID}` | Add/update team membership (admin or team owner). |
-| `POST` | `/api/users` | Create a password-login user. Admin role required. |
-| `DELETE` | `/api/runtime/teams/{team}/members/{userID}` | Remove team membership (admin or team owner). |
-| `GET` | `/api/runtime/namespaces` | List allowed namespaces and org catalog metadata for caller scope. |
-| `GET` | `/api/runtime/namespaces/{namespace}` | Read one namespace metadata entry when authorized. |
-| `GET` | `/api/runtime/components` | Admin-only operator, Sentinel service, and observability component health from Kubernetes. |
-| `GET` | `/api/runtime/policy?namespace=&server=` | Rendered gateway policy for one administered server. |
-| `POST` | `/api/runtime/actions/restart` | Restart one Sentinel component or all components. Admin role required. |
-| `GET`, `POST` | `/api/deployments` | User-scoped platform deployment list/apply. |
-| `DELETE` | `/api/deployments/{namespace}/{name}` | Delete a platform-managed deployment and service. |
-| `GET` | `/api/admin/namespaces` | Platform namespace inventory. Admin role required. |
-| `GET` | `/api/admin/deployments` | Deployment inventory across namespaces, optionally filtered by `namespace`. Admin role required. |
-| `GET` | `/api/admin/audit` | Recent platform audit logs such as login, signup, namespace, deploy, image publish, API key, and registry credential activity. Query: `user`, `since`, `until`, `limit` (1-200, default 50). Admin role required. |
-| `GET` | `/api/admin/operations` | Admin operations snapshot for the UI: user activity, last login/activity, image activity, platform timeline, and deployment inventory. Same filters as `/api/admin/audit`. |
-| `GET`, `POST` | `/api/user/api-keys` | List or create caller-owned API keys. |
-| `DELETE` | `/api/user/api-keys/{id}` | Revoke one caller-owned API key. |
-| `GET` | `/api/user/analytics/usage` | Caller-scoped MCP server analytics used by the user dashboard. |
-| `GET`, `POST` | `/api/user/registry-credentials` | List or create caller-owned registry credentials. |
-| `DELETE` | `/api/user/registry-credentials/{id}` | Revoke one registry credential. |
-| `*` | `/api/registry/authz` | Forward-auth guard used by the bundled registry ingress. Admin credentials have global access; user credentials are limited to caller-scoped repository paths. |
-| `POST` | `/api/user/activity/image-publish` | Record a successful image publish event for the authenticated user. The authenticated CLI calls this after `registry push`. |
+| Service | Deployment | Port / metrics | Owns |
+|---|---|---|---|
+| **platform-api** | `mcp-platform-api` | 8080 / 9090 | Postgres identity, auth, admin, registry forward-auth, `/internal/*` |
+| **runtime-api** | `mcp-runtime-api` | 8084 / 9094 | MCPServer governance, grants/sessions, deployments, dashboard summary |
+| **analytics-api** | `mcp-analytics-api` | 8085 / 9095 | ClickHouse events, stats, usage analytics |
 
-Restart request body examples:
+JWT `aud` values: `platform-api`, `runtime-api`, `analytics-api` (`pkg/platformauth`).
+Login at `POST /api/v1/auth/login` issues tokens accepted by all three services.
+
+Route tables and request bodies live in [API reference](api.md). Per-service
+OpenAPI specs: `services/platform-api/openapi.yaml`,
+`services/runtime-api/openapi.yaml`, `services/analytics-api/openapi.yaml`.
+Per-service CI runs OpenAPI response validation tests against those specs.
+Adopt consumer-driven contracts (Pact) only when external clients or independently
+released teams start consuming these APIs.
+
+Restart request body examples (runtime-api admin operations):
 
 ```json
-{"component": "api"}
+{"component": "platform-api"}
 ```
 
 ```json
 {"all": true}
 ```
 
-The grant/session apply bodies and CRD field details are in the
+Grant/session apply bodies and CRD field details are in the
 [API reference](api.md#runtime-governance-api).
 
 ### UI service
@@ -225,8 +195,7 @@ wraps API auth for browser users.
 | `POST` | `/auth/login` | Create a UI session from `{"api_key": "..."}`, `{"id_token": "..."}`, or `{"email": "...", "password": "..."}`. |
 | `POST` | `/auth/logout` | Clear the UI session cookie. |
 | `GET` | `/auth/status` | Return UI session authentication state and principal. |
-| any | `/api/*` | Reverse proxy to `services/api`. API calls require a UI session or API key, including MCP catalog reads. |
-| `GET` | `/*` | Static dashboard assets. |
+| `GET` | `/*` | Static dashboard assets. Browser `/api/v1/*` calls use Traefik ingress directly (see API services above). |
 
 ### Ingest service
 
@@ -311,7 +280,7 @@ refund_invoice:allow:high
 CLI parity: `mcp-runtime access grant init|apply` covers grant CRUD for
 authorized principals. `access session init|apply` matches the UI for
 **admin** session writes; agents and normal users should use
-`POST /api/runtime/adapter/sessions` via `adapter stdio|proxy --server …
+`POST /api/v1/runtime/adapter/sessions` via `adapter stdio|proxy --server …
 --agent …`. CRs are the source of truth — the UI is a convenience layer.
 
 For platform API writes, grants and sessions must reference a server in the same
@@ -374,7 +343,7 @@ outcomes distinguish the two deny modes:
 The 401-vs-403 split is the isolation signal: cross-server traffic is rejected
 at session lookup before tool evaluation; same-server unallowed tools are
 rejected by allow-list policy. Audit confirms it:
-`/api/events/filter?server=<name>` returns events scoped to that server only,
+`/api/v1/events?server=<name>` returns events scoped to that server only,
 and cross-server attempts appear as denies on the targeted server with the
 source subject preserved, never on the other server.
 
@@ -382,7 +351,7 @@ source subject preserved, never on the other server.
 
 | Group | Files |
 |---|---|
-| **Core app** | `00-namespace`, `01-config`, `02-secrets`, `03-clickhouse`, `04-clickhouse-init`, `05-kafka`, `06-ingest`, `07-processor`, `08-api-rbac`, `08-api`, `09-ui`, `10-gateway`, `20-postgres`, `21-platform-admin-bootstrap-job` |
+| **Core app** | `00-namespace`, `01-config`, `02-secrets`, `03-clickhouse`, `04-clickhouse-init`, `05-kafka`, `06-ingest`, `07-processor`, `08-platform-api`, `08-runtime-api`, `08-analytics-api`, `09-ui`, `10-gateway`, `20-postgres`, `21-platform-admin-bootstrap-job`, `22-split-api-networkpolicy` |
 | **Observability** | `11-prometheus`, `12-grafana`, `15-otel-collector`, `16-tempo`, `17-loki`, `18-promtail`, `19-grafana-datasources` |
 | **Example wiring** | `13-mcp-example`, `14-mcp-gateway-sidecar` |
 
@@ -391,7 +360,7 @@ source subject preserved, never on the other server.
 ## Operating the stack
 
 These commands require **admin/operator kubectl** access. Normal users should
-use the platform dashboard and `/api/*` instead.
+use the platform dashboard and `/api/v1/*` instead.
 
 ```bash
 # Health + Kubernetes events
@@ -412,7 +381,7 @@ mcp-runtime sentinel restart --all
 ```
 
 `sentinel events` is a Kubernetes event view for the `mcp-sentinel` namespace.
-Use `/api/events` or `/api/events/filter` when you need the request/audit
+Use `/api/v1/events` with query filters when you need the request/audit
 events emitted by `mcp-gateway`.
 
 See [CLI → sentinel](cli.md#sentinel) for component keys and flag details.

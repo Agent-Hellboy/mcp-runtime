@@ -66,17 +66,48 @@ var Components = []Component{
 		Label:     "mcp-sentinel-ingest",
 	},
 	{
-		Key:       "api",
-		Display:   "API",
+		Key:       "platform-api",
+		Display:   "Platform API",
 		Namespace: DefaultNamespace,
 		Kind:      "deployment",
-		Resource:  "mcp-sentinel-api",
-		Label:     "mcp-sentinel-api",
+		Resource:  "mcp-platform-api",
+		Label:     "mcp-platform-api",
+		Aliases:   []string{"api", "platform"},
 		PortTarget: &PortTarget{
 			ResourceKind: "service",
-			ResourceName: "mcp-sentinel-api",
+			ResourceName: "mcp-platform-api",
 			LocalPort:    8080,
 			RemotePort:   8080,
+		},
+	},
+	{
+		Key:       "runtime-api",
+		Display:   "Runtime Control",
+		Namespace: DefaultNamespace,
+		Kind:      "deployment",
+		Resource:  "mcp-runtime-api",
+		Label:     "mcp-runtime-api",
+		Aliases:   []string{"runtime"},
+		PortTarget: &PortTarget{
+			ResourceKind: "service",
+			ResourceName: "mcp-runtime-api",
+			LocalPort:    8084,
+			RemotePort:   8084,
+		},
+	},
+	{
+		Key:       "analytics-api",
+		Display:   "Analytics API",
+		Namespace: DefaultNamespace,
+		Kind:      "deployment",
+		Resource:  "mcp-analytics-api",
+		Label:     "mcp-analytics-api",
+		Aliases:   []string{"analytics"},
+		PortTarget: &PortTarget{
+			ResourceKind: "service",
+			ResourceName: "mcp-analytics-api",
+			LocalPort:    8085,
+			RemotePort:   8085,
 		},
 	},
 	{
@@ -215,11 +246,14 @@ func FindPortTarget(name string) (*PortTarget, error) {
 // IsCoreComponent returns true if the component is part of the core Sentinel runtime.
 func IsCoreComponent(key string) bool {
 	core := map[string]bool{
-		"api":       true,
-		"ingest":    true,
-		"processor": true,
-		"gateway":   true,
-		"ui":        true,
+		"platform-api":  true,
+		"runtime-api":   true,
+		"analytics-api": true,
+		"api":           true,
+		"ingest":        true,
+		"processor":     true,
+		"gateway":       true,
+		"ui":            true,
 	}
 	return core[key]
 }

@@ -35,7 +35,7 @@ spec:
       containers:
         - name: ui
           image: mcp-sentinel-ui:latest
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
             runAsNonRoot: true
@@ -59,7 +59,7 @@ spec:
                   name: mcp-sentinel-config
                   key: API_BASE
             - name: API_UPSTREAM
-              value: "http://mcp-sentinel-api.mcp-sentinel.svc.cluster.local:8080"
+              value: "http://mcp-platform-api.mcp-sentinel.svc.cluster.local:8080"
             - name: API_KEY
               valueFrom:
                 secretKeyRef:

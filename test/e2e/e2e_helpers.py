@@ -1,8 +1,11 @@
 """Shared assertion helpers for e2e test Python blocks.
 
-Load in a heredoc with:
-    import os
-    exec(open(os.environ["E2E_HELPERS"]).read())
+Load in E2E scripts with:
+
+    from _helpers_loader import load_e2e_helpers
+
+    _helpers = load_e2e_helpers()
+    check = _helpers.check
 """
 from __future__ import annotations
 
