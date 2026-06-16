@@ -6,7 +6,19 @@ The MCP Runtime API surface comes in three layers:
 2. **Gateway headers** carried on live MCP requests when `gateway.enabled`.
 3. **Sentinel HTTP APIs** exposed by **platform-api**, **runtime-api**, and **analytics-api** (routed at `/api/v1/*` via Traefik): platform identity, runtime governance, governance actions, and analytics.
 
-> **Path prefix:** Public HTTP routes use `/api/v1/*` only. Legacy `/api/*` paths return `404`. Ingress maps prefixes to the three API Deployments; see [`docs/sentinel.md`](sentinel.md).
+> **Path prefix:** Public HTTP routes use `/api/v1/*` only. Legacy `/api/*` paths return `404`. Traefik routes each prefix to **platform-api**, **runtime-api**, or **analytics-api**; see [route ownership](#route-ownership) below and [`docs/sentinel.md`](sentinel.md).
+
+### Route ownership
+
+Traefik ingress (`internal/cli/setup/ingressmanifest/paths.go`, `k8s/10-gateway.yaml`) maps prefixes to Deployments. Direct port-forward to a single service is useful for debugging but does not match public routing.
+
+| Service | Deployment | Owns (prefix examples) |
+|---|---|---|
+| **platform-api** | `mcp-platform-api` | `/api/v1/auth/*`, `/api/v1/users`, `/api/v1/registry/authz`, `/api/v1/user/registry-credentials`, `/api/v1/user/activity/*`, `/api/v1/admin/namespaces`, `/api/v1/admin/audit` |
+| **runtime-api** | `mcp-runtime-api` | `/api/v1/runtime/*`, `/api/v1/deployments`, `/api/v1/dashboard/*`, `/api/v1/user/api-keys`, `/api/v1/admin/deployments`, `/api/v1/admin/operations` |
+| **analytics-api** | `mcp-analytics-api` | `/api/v1/events`, `/api/v1/stats`, `/api/v1/sources`, `/api/v1/event-types`, `/api/v1/analytics/*`, `/api/v1/user/analytics/*` |
+
+Platform login (`POST /api/v1/auth/login`) issues JWTs whose `aud` claim includes `platform-api`, `runtime-api`, and `analytics-api` so one bearer token works across the split surface (`pkg/platformauth`).
 
 ```mermaid
 flowchart LR
@@ -200,7 +212,7 @@ spec:
 ### Implemented today
 
 - **Header-based identity** at the gateway (default path).
-- **Optional bearer-token validation** against JWKS / issuer / audience on `mcp-sentinel` API + ingest services.
+- **Optional bearer-token validation** against JWKS / issuer / audience on the split Sentinel API services (`platform-api`, `runtime-api`, `analytics-api`) and on ingest.
 - `spec.auth.mode: oauth` exists on the type as a forward-looking shape.
 
 ### Not yet implemented
@@ -370,11 +382,11 @@ responses include `next_allowed_at` and `Retry-After`. `GET /api/v1/runtime/serv
 includes `publish_policy` so UI clients can show the active limit and count.
 Server list/get responses keep CRD `tools`, `prompts`, `resources`, and
 `tasks` as governance metadata and add `liveInventory` from the running MCP
-server when the API service's short-TTL gateway probe has completed. On a cold
+server when runtime-api's short-TTL gateway probe has completed. On a cold
 cache miss or probe failure, `liveInventory` is `null` and
 `liveInventoryError` contains a short reason. `DELETE /api/v1/runtime/servers/{namespace}/{name}` retires a server and frees one
 active-server slot for the owning publisher. The active-server limit is
-enforced by the platform API before Kubernetes apply; strict serialization of
+enforced by runtime-api before Kubernetes apply; strict serialization of
 concurrent publishes would require a shared reservation or admission-control
 layer.
 
@@ -433,7 +445,7 @@ POST /api/v1/runtime/actions/restart     # Body: {component: "platform-api"} or 
 
 ## Platform Admin and User API
 
-Additional authenticated routes exposed by the API service:
+Additional authenticated routes on the split API services (see [route ownership](#route-ownership)):
 
 ```text
 GET  /api/v1/deployments                  # User-scoped deployment list

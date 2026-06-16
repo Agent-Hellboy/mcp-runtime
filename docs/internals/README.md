@@ -31,9 +31,13 @@ flowchart LR
     Gateway --> Ingest[Analytics ingest]
     Ingest --> Processor[Processor]
     Processor --> Store[(ClickHouse/Postgres)]
-    UI[Sentinel UI] --> API[Sentinel API]
-    API --> K8s
-    API --> Store
+    UI[Sentinel UI] --> Ingress[Traefik /api/v1]
+    Ingress --> PlatAPI[platform-api]
+    Ingress --> RunAPI[runtime-api]
+    Ingress --> AnaAPI[analytics-api]
+    RunAPI --> K8s
+    PlatAPI --> Store
+    AnaAPI --> Store
 ```
 
 ## Repository map

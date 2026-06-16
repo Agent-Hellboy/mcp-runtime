@@ -58,7 +58,7 @@ on the day-to-day loop for contributors.
 The contributor Kind flow installs a full local stack:
 
 - CRDs and the operator in `mcp-runtime`
-- Sentinel API/UI/ingest/processor/proxy services in `mcp-sentinel`
+- Split Sentinel API services (`platform-api`, `runtime-api`, `analytics-api`), UI, ingest, processor, and gateway in `mcp-sentinel`
 - Traefik ingress on the local gateway path
 - A bundled registry for runtime images
 - `mcp-servers` as the legacy single-team/example MCP namespace

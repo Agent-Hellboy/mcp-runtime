@@ -194,7 +194,7 @@ kubectl create secret docker-registry mcp-runtime-registry-pull \
 
 ---
 
-### Sentinel API returns 401
+### Split Sentinel API returns 401
 
 The split API pods (`mcp-platform-api`, `mcp-runtime-api`, `mcp-analytics-api`) may have started with stale API keys from a previous
 setup run.

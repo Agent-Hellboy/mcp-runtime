@@ -90,8 +90,8 @@ while IFS= read -r row; do
 done < <(jq -c '.[]' docs/security/authz-matrix.json)
 ```
 
-If `authz-matrix.json` does not yet exist, generate it from the markdown table
-or treat building it as the first finding.
+The starter matrix is `docs/security/authz-matrix.json` (subset of rows). Expand it
+toward full parity with `docs/security/authz-matrix.md` when auditing finds gaps.
 
 Any 200/204 response on a path-role combo where the matrix expects 401/403 is
 **Critical** until proven otherwise.

@@ -140,7 +140,7 @@ cardinality.
 
 | Service | Auth behavior |
 |---|---|
-| **platform-api** | `/health` and `/ready` are open. Authenticated `/api/v1/*` identity, admin, and registry routes accept `x-api-key`, user-generated API keys, platform JWT bearer tokens, or OIDC JWT bearer tokens when OIDC is configured. Only keys listed in `ADMIN_API_KEYS` get admin role. Registry forward-auth (`/api/v1/registry/authz`) keeps admin credentials global and allows normal user credentials only on repository paths scoped to the caller's team slug or team namespace. Token-gated `/internal/*` serves runtime-api and analytics-api. |
+| **platform-api** | `/health` and `/ready` are open. Authenticated `/api/v1/*` identity, admin, and registry routes accept `x-api-key`, user-generated API keys, platform JWT bearer tokens (audience `platform-api`), or OIDC JWT bearer tokens when OIDC is configured. Only keys listed in `ADMIN_API_KEYS` get admin role. Registry forward-auth (`/api/v1/registry/authz`) keeps admin credentials global and allows normal user credentials only on repository paths scoped to the caller's team slug or team namespace. Token-gated `/internal/*` serves runtime-api and analytics-api. |
 | **runtime-api** | `/health` and `/ready` are open. `/api/v1/runtime/*`, `/api/v1/deployments`, and admin operations routes accept platform JWTs (audience `runtime-api`) or scoped API keys via `pkg/platformauth`. |
 | **analytics-api** | `/health` and `/ready` are open. `/api/v1/events`, `/api/v1/stats`, and usage analytics accept platform JWTs (audience `analytics-api`) or scoped API keys. Admin-only routes require admin role. |
 | **ui** | `/auth/login` creates an HttpOnly UI session from `api_key`, `id_token`, or `email`/`password`. Browser `/api/v1/*` calls go through Traefik ingress (not a UI reverse proxy). `/auth/admin-check` accepts admin UI sessions or keys from `ADMIN_API_KEYS`; it falls back to `API_KEYS` only when the explicit legacy dev/test fallback is enabled. |
@@ -160,6 +160,9 @@ stable error envelopes.
 | **platform-api** | `mcp-platform-api` | 8080 / 9090 | Postgres identity, auth, admin, registry forward-auth, `/internal/*` |
 | **runtime-api** | `mcp-runtime-api` | 8084 / 9094 | MCPServer governance, grants/sessions, deployments, dashboard summary |
 | **analytics-api** | `mcp-analytics-api` | 8085 / 9095 | ClickHouse events, stats, usage analytics |
+
+JWT `aud` values: `platform-api`, `runtime-api`, `analytics-api` (`pkg/platformauth`).
+Login at `POST /api/v1/auth/login` issues tokens accepted by all three services.
 
 Route tables and request bodies live in [API reference](api.md). Per-service
 OpenAPI specs: `services/platform-api/openapi.yaml`,

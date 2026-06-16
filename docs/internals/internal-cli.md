@@ -210,7 +210,7 @@ inside `services/platform-api` and `services/runtime-api`.
 
 `internal/cli/auth/` handles platform API login, logout, and credential profiles.
 `internal/cli/sentinel/` and `internal/cli/platformapi/` provide CLI access to
-Sentinel APIs and platform API URL normalization. These commands should stay
+the split Sentinel APIs and platform API URL normalization. These commands should stay
 aligned with split API service routes (`/api/v1/*`) and the public docs.
 
 Tests: `sentinel/*_test.go`, `auth/*_test.go`, and `platformapi/*_test.go`.

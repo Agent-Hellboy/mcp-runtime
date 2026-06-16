@@ -9,7 +9,7 @@ decision**.
 
 | Identity plane | Identity shape | Used for | Enforced by |
 |---|---|---|---|
-| Platform | User or service principal with role, subject, teams, and namespaces | UI, CLI, and platform API operations | Sentinel API |
+| Platform | User or service principal with role, subject, teams, and namespaces | UI, CLI, and platform API operations | Split Sentinel API services (`platform-api`, `runtime-api`, `analytics-api`) |
 | Agent governance | `humanID + agentID + teamID + sessionID` | MCP `tools/call` authorization | MCP gateway |
 | Kubernetes workload | ServiceAccount plus RBAC bindings | Reading and changing cluster resources | Kubernetes API server |
 
@@ -19,7 +19,7 @@ is not a Kubernetes ServiceAccount.
 
 ## Platform identity: who controls the platform
 
-The Sentinel API authenticates a request using one of these credentials:
+The split Sentinel API services authenticate a request using one of these credentials:
 
 - A browser or CLI bearer token issued after local or OIDC login
 - A user-owned API key sent as `x-api-key`
@@ -227,7 +227,7 @@ grant must also permit `destructive`.
 
 ## Kubernetes workload identity
 
-The operator and Sentinel API use Kubernetes ServiceAccounts and RBAC to perform
+The operator and runtime-api use Kubernetes ServiceAccounts and RBAC to perform
 cluster operations. This identity plane controls actions such as:
 
 - Reading and reconciling `MCPServer`, `MCPAccessGrant`, and

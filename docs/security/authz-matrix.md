@@ -124,9 +124,10 @@ row above, the auditor must also confirm:
 
 The platform audit harness in
 `.codex/skills/security-audit-platform/SKILL.md` (Step 2) reads this table
-and exercises each row. To regenerate the machine-readable form for that
-harness, hand-translate this markdown to `docs/security/authz-matrix.json`
-with one object per row:
+and exercises each row. The starter harness lives in
+`docs/security/authz-matrix.json` (subset of rows); unit tests in each split
+service load that file via `pkg/authzmatrix`. Expand the JSON toward full table
+parity over time. Each row object looks like:
 
 ```json
 { "path": "/api/v1/events", "method": "GET", "role": "ingest", "expect": 403 }
