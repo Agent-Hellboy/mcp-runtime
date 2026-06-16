@@ -9,7 +9,7 @@
 | **mcp-gateway** | Transparent sidecar. Extracts identity, evaluates tool-level policy, emits allow/deny audit events, forwards traffic upstream. |
 | **ingest** | Receives `POST /events`, validates ingest-scoped API keys or optional JWTs, writes to Kafka. |
 | **processor** | Consumes Kafka, batches, writes into ClickHouse with indexed audit fields. |
-| **api** (split) | Three HTTP services behind Traefik path routing: **platform-api** (Postgres identity/auth/registry), **runtime-api** (Kubernetes runtime governance + registry push), **analytics-api** (ClickHouse events/stats/usage). OpenAPI at `GET /api/v1/openapi.yaml` per service. |
+| **api** | Three HTTP services behind Traefik path routing: **platform-api** (Postgres identity/auth/registry), **runtime-api** (Kubernetes runtime governance + registry push), **analytics-api** (ClickHouse events/stats/usage). OpenAPI at `GET /api/v1/openapi.yaml` per service. |
 | **ui** | Control-plane dashboard: user MCP server dashboard, MCP server catalog and connect config, user API keys, analytics dashboard, governance, MCP operations, and platform management. |
 | **gateway** | Kubernetes deployment fronting the sentinel API, ingest, and UI surfaces. |
 | **workspace assistant sample** | Sample MCP server in `examples/workspace-assistant-mcp` for end-to-end smoke tests. |
@@ -101,7 +101,7 @@ For local `setup --test-mode` clusters, setup seeds two email/password logins:
 
 | Surface | Public path in dev | In-cluster service | Notes |
 |---|---|---|---|
-| **UI** | `/` | `mcp-sentinel-ui:8082` | Browser app and server-side auth/OIDC upstream to platform-api. Traefik routes `/api/v1/*` directly to split API services. |
+| **UI** | `/` | `mcp-sentinel-ui:8082` | Browser app and server-side auth/OIDC upstream to platform-api. Traefik routes `/api/v1/*` directly to the API services. |
 | **platform-api** | `/api/v1/auth/*`, `/api/v1/registry/authz`, `/api/v1/admin/*` | `mcp-platform-api:8080` | Login, identity, registry forwardAuth, admin namespaces/audit. |
 | **runtime-api** | `/api/v1/runtime/*`, `/api/v1/deployments/*` | `mcp-runtime-api:8084` | Runtime governance, registry push, dashboard summary. |
 | **analytics-api** | `/api/v1/stats`, `/api/v1/events`, `/api/v1/user/analytics/usage` | `mcp-analytics-api:8085` | ClickHouse query surfaces. |
@@ -148,10 +148,9 @@ cardinality.
 | **processor** | No data API. It exposes metrics and a simple health check on the metrics port. |
 | **mcp-gateway** | No admin API. It authenticates MCP requests according to the rendered server policy and exposes Prometheus metrics at `/metrics`. |
 
-### Split API services
+### API services
 
-The monolith `services/api` (`mcp-sentinel-api`) was split into three binaries.
-Traefik routes `/api/v1/*` by path prefix; there is no `/api/*` compatibility
+Traefik routes `/api/v1/*` by path prefix to three HTTP services; there is no `/api/*` compatibility
 layer. Each service publishes `GET /api/v1/openapi.yaml` and uses `pkg/apihttp`
 stable error envelopes.
 
@@ -196,7 +195,7 @@ wraps API auth for browser users.
 | `POST` | `/auth/login` | Create a UI session from `{"api_key": "..."}`, `{"id_token": "..."}`, or `{"email": "...", "password": "..."}`. |
 | `POST` | `/auth/logout` | Clear the UI session cookie. |
 | `GET` | `/auth/status` | Return UI session authentication state and principal. |
-| `GET` | `/*` | Static dashboard assets. Browser `/api/v1/*` calls use Traefik ingress directly (see split API services above). |
+| `GET` | `/*` | Static dashboard assets. Browser `/api/v1/*` calls use Traefik ingress directly (see API services above). |
 
 ### Ingest service
 
