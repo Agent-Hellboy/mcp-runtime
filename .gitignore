@@ -29,11 +29,7 @@ tags
 # Local/generated artifacts
 /.playwright-mcp/
 /mcp-sentinel/
-/services/mcp-server/mcp-sentinel-mcp-server
-/services/ui/mcp-sentinel-ui
-/services/ingest/mcp-sentinel-ingest
-/services/processor/mcp-sentinel-processor
-/services/mcp-gateway/mcp-sentinel-mcp-gateway
+/services/*/mcp-sentinel-*
 /unit.out
 /chain-bench-results.json
 docs/COVERAGE_IMPROVEMENT_PLAN.md
