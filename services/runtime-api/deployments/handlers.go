@@ -3,7 +3,7 @@ package deployments
 import (
 	"net/http"
 
-	"mcp-runtime-control/internal/runtimeapi"
+	"mcp-runtime-api/internal/runtimeapi"
 )
 
 // HandleDeployments routes deployment collection requests through the runtime API server.

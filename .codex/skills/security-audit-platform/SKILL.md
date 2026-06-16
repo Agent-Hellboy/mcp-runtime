@@ -26,7 +26,7 @@ Produce a STRIDE table per component. Components to cover:
 - **mcp-gateway** (`services/mcp-gateway/`): in-pod sidecar enforcing
   rendered policy, emitting audit events.
 - **platform-api** (`services/platform-api/`): identity, admin, registry forward-auth.
-- **runtime-control** (`services/runtime-control/`): runtime governance, deployments, registry push.
+- **runtime-api** (`services/runtime-api/`): runtime governance, deployments, registry push.
 - **analytics-api** (`services/analytics-api/`): ClickHouse events and usage analytics.
 - **sentinel-ui** (`services/ui/`): browser UI, login, dashboards.
 - **sentinel-ingest** (`services/ingest/`): high-volume event intake.
@@ -60,7 +60,7 @@ Out of scope must be stated explicitly (e.g., "physical access to nodes",
 
 ## Step 2 — Authentication and authorization matrix
 
-For every route in `services/platform-api/routes.go`, `services/runtime-control/routes.go`, and `services/analytics-api/routes.go` produce a row:
+For every route in `services/platform-api/routes.go`, `services/runtime-api/routes.go`, and `services/analytics-api/routes.go` produce a row:
 
 | Path | Method | Anon | UI cookie | UI API key | Admin API key | Ingest API key | Notes |
 

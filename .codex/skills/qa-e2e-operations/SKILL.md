@@ -44,7 +44,7 @@ Mode dispatch by changed paths:
 | `internal/operator/**`, `api/v1alpha1/**`, `config/crd/**` | Operator, CRD reconciliation, ingress, generated-file drift |
 | `cmd/operator/**`, `cmd/mcp-runtime/**`, `internal/cli/**` | CLI smoke, generated-file drift |
 | `internal/cli/setup/**`, `pkg/k8sclient/**`, `pkg/manifest/**`, `pkg/metadata/**` | Setup re-run, registry pulls, ingress, rollout |
-| `services/platform-api/**`, `services/runtime-control/**`, `services/analytics-api/**`, `services/ui/**`, `services/ingest/**`, `services/processor/**`, `services/mcp-gateway/**` | Service rollout matrix, gateway sidecar refresh |
+| `services/platform-api/**`, `services/runtime-api/**`, `services/analytics-api/**`, `services/ui/**`, `services/ingest/**`, `services/processor/**`, `services/mcp-gateway/**` | Service rollout matrix, gateway sidecar refresh |
 | `k8s/**`, `config/**` | Manifest re-apply + rollout |
 | `docs/**` only | Skip — not an operations regression surface |
 
@@ -66,7 +66,7 @@ go vet ./...
 staticcheck ./...
 go test -race -count=1 $(go list ./... | grep -v '/test/integration$')
 
-for d in services/platform-api services/runtime-control services/analytics-api services/ingest services/processor services/mcp-gateway services/ui; do
+for d in services/platform-api services/runtime-api services/analytics-api services/ingest services/processor services/mcp-gateway services/ui; do
   (cd "$d" && go test -race -count=1 ./...)
 done
 
@@ -188,10 +188,10 @@ setup output, not a host issue.
 
 For each touched Sentinel service, follow the contributor iterate-on-one
 loop from `docs/contributor/service-iteration.md` (split API table for
-`platform-api`, `runtime-control`, and `analytics-api`):
+`platform-api`, `runtime-api`, and `analytics-api`):
 
 ```bash
-# Example: platform-api (see service-iteration.md for runtime-control / analytics-api)
+# Example: platform-api (see service-iteration.md for runtime-api / analytics-api)
 SERVICE=platform-api
 IMAGE_REPO=mcp-platform-api
 DOCKERFILE=services/platform-api/Dockerfile
@@ -235,11 +235,11 @@ kubectl -n mcp-runtime delete pod -l control-plane=controller-manager
 kubectl -n mcp-runtime rollout status \
   deploy/mcp-runtime-operator-controller-manager --timeout=120s
 
-# Bounce runtime-control mid grant-apply.
-kubectl -n mcp-sentinel scale deploy/mcp-runtime-control --replicas=0
+# Bounce runtime-api mid grant-apply.
+kubectl -n mcp-sentinel scale deploy/mcp-runtime-api --replicas=0
 kubectl apply -f /tmp/go-example-access.yaml
-kubectl -n mcp-sentinel scale deploy/mcp-runtime-control --replicas=1
-kubectl -n mcp-sentinel rollout status deploy/mcp-runtime-control --timeout=90s
+kubectl -n mcp-sentinel scale deploy/mcp-runtime-api --replicas=1
+kubectl -n mcp-sentinel rollout status deploy/mcp-runtime-api --timeout=90s
 ./bin/mcp-runtime server policy inspect go-example-mcp --namespace mcp-servers \
   | grep -q local-session
 ```

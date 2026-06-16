@@ -1851,12 +1851,12 @@ func TestPrepareAnalyticsImagesUsesTestModeImageSet(t *testing.T) {
 	}
 
 	want := AnalyticsImageSet{
-		Ingest:         "registry.example.com/mcp-sentinel-ingest:latest",
-		PlatformAPI:    "registry.example.com/mcp-platform-api:latest",
-		RuntimeControl: "registry.example.com/mcp-runtime-control:latest",
-		AnalyticsAPI:   "registry.example.com/mcp-analytics-api:latest",
-		Processor:      "registry.example.com/mcp-sentinel-processor:latest",
-		UI:             "registry.example.com/mcp-sentinel-ui:latest",
+		Ingest:       "registry.example.com/mcp-sentinel-ingest:latest",
+		PlatformAPI:  "registry.example.com/mcp-platform-api:latest",
+		RuntimeAPI:   "registry.example.com/mcp-runtime-api:latest",
+		AnalyticsAPI: "registry.example.com/mcp-analytics-api:latest",
+		Processor:    "registry.example.com/mcp-sentinel-processor:latest",
+		UI:           "registry.example.com/mcp-sentinel-ui:latest",
 	}
 	if got != want {
 		t.Fatalf("prepareAnalyticsImages() = %+v, want %+v", got, want)
@@ -2027,12 +2027,12 @@ func TestPrepareAnalyticsImagesParallelBuildsPreparesInternalRegistryOnce(t *tes
 	}
 
 	want := AnalyticsImageSet{
-		Ingest:         "registry.local:5000/mcp-sentinel-ingest:latest",
-		PlatformAPI:    "registry.local:5000/mcp-platform-api:latest",
-		RuntimeControl: "registry.local:5000/mcp-runtime-control:latest",
-		AnalyticsAPI:   "registry.local:5000/mcp-analytics-api:latest",
-		Processor:      "registry.local:5000/mcp-sentinel-processor:latest",
-		UI:             "registry.local:5000/mcp-sentinel-ui:latest",
+		Ingest:       "registry.local:5000/mcp-sentinel-ingest:latest",
+		PlatformAPI:  "registry.local:5000/mcp-platform-api:latest",
+		RuntimeAPI:   "registry.local:5000/mcp-runtime-api:latest",
+		AnalyticsAPI: "registry.local:5000/mcp-analytics-api:latest",
+		Processor:    "registry.local:5000/mcp-sentinel-processor:latest",
+		UI:           "registry.local:5000/mcp-sentinel-ui:latest",
 	}
 	if got != want {
 		t.Fatalf("prepareAnalyticsImages() = %+v, want %+v", got, want)
@@ -2121,8 +2121,8 @@ func TestDeployAnalyticsManifestsWithKubectl_RecreatesInitializationJobs(t *test
 		"07-processor.yaml",
 		"08-platform-api.yaml",
 		"08-platform-api-rbac.yaml",
-		"08-runtime-control.yaml",
-		"08-runtime-control-rbac.yaml",
+		"08-runtime-api.yaml",
+		"08-runtime-api-rbac.yaml",
 		"08-analytics-api.yaml",
 		"22-split-api-networkpolicy.yaml",
 		"09-ui.yaml",
@@ -2182,12 +2182,12 @@ func TestDeployAnalyticsManifestsWithKubectl_RecreatesInitializationJobs(t *test
 	kubectl := core.NewTestKubectlClient(mock)
 
 	err = deployAnalyticsManifestsWithKubectl(kubectl, zap.NewNop(), AnalyticsImageSet{
-		Ingest:         "example.com/mcp-sentinel-ingest:latest",
-		PlatformAPI:    "example.com/mcp-platform-api:latest",
-		RuntimeControl: "example.com/mcp-runtime-control:latest",
-		AnalyticsAPI:   "example.com/mcp-analytics-api:latest",
-		Processor:      "example.com/mcp-sentinel-processor:latest",
-		UI:             "example.com/mcp-sentinel-ui:latest",
+		Ingest:       "example.com/mcp-sentinel-ingest:latest",
+		PlatformAPI:  "example.com/mcp-platform-api:latest",
+		RuntimeAPI:   "example.com/mcp-runtime-api:latest",
+		AnalyticsAPI: "example.com/mcp-analytics-api:latest",
+		Processor:    "example.com/mcp-sentinel-processor:latest",
+		UI:           "example.com/mcp-sentinel-ui:latest",
 	}, "", setupplan.PlatformModeTenant)
 	if err != nil {
 		t.Fatalf("deployAnalyticsManifestsWithKubectl returned error: %v", err)
@@ -2265,8 +2265,8 @@ func TestPrometheusScrapesSplitAPIJobs(t *testing.T) {
 	for _, want := range []string{
 		"job_name: mcp-platform-api",
 		`targets: ["mcp-platform-api:9090"]`,
-		"job_name: mcp-runtime-control",
-		`targets: ["mcp-runtime-control:9094"]`,
+		"job_name: mcp-runtime-api",
+		`targets: ["mcp-runtime-api:9094"]`,
 		"job_name: mcp-analytics-api",
 		`targets: ["mcp-analytics-api:9095"]`,
 	} {
@@ -2394,8 +2394,8 @@ func TestDeployAnalyticsManifestsReturnsRolloutFailures(t *testing.T) {
 		"07-processor.yaml",
 		"08-platform-api.yaml",
 		"08-platform-api-rbac.yaml",
-		"08-runtime-control.yaml",
-		"08-runtime-control-rbac.yaml",
+		"08-runtime-api.yaml",
+		"08-runtime-api-rbac.yaml",
 		"08-analytics-api.yaml",
 		"22-split-api-networkpolicy.yaml",
 		"09-ui.yaml",
@@ -2444,12 +2444,12 @@ func TestDeployAnalyticsManifestsReturnsRolloutFailures(t *testing.T) {
 	kubectl := core.NewTestKubectlClient(mock)
 
 	err = deployAnalyticsManifestsWithKubectl(kubectl, zap.NewNop(), AnalyticsImageSet{
-		Ingest:         "example.com/mcp-sentinel-ingest:latest",
-		PlatformAPI:    "example.com/mcp-platform-api:latest",
-		RuntimeControl: "example.com/mcp-runtime-control:latest",
-		AnalyticsAPI:   "example.com/mcp-analytics-api:latest",
-		Processor:      "example.com/mcp-sentinel-processor:latest",
-		UI:             "example.com/mcp-sentinel-ui:latest",
+		Ingest:       "example.com/mcp-sentinel-ingest:latest",
+		PlatformAPI:  "example.com/mcp-platform-api:latest",
+		RuntimeAPI:   "example.com/mcp-runtime-api:latest",
+		AnalyticsAPI: "example.com/mcp-analytics-api:latest",
+		Processor:    "example.com/mcp-sentinel-processor:latest",
+		UI:           "example.com/mcp-sentinel-ui:latest",
 	}, "", setupplan.PlatformModeTenant)
 	if err == nil {
 		t.Fatal("expected rollout failure")
@@ -2515,12 +2515,12 @@ func TestDeployAnalyticsManifestsWithKubectl_HostpathUsesHostpathManifests(t *te
 	kubectl := core.NewTestKubectlClient(mock)
 
 	err = deployAnalyticsManifestsWithKubectl(kubectl, zap.NewNop(), AnalyticsImageSet{
-		Ingest:         "example.com/mcp-sentinel-ingest:latest",
-		PlatformAPI:    "example.com/mcp-platform-api:latest",
-		RuntimeControl: "example.com/mcp-runtime-control:latest",
-		AnalyticsAPI:   "example.com/mcp-analytics-api:latest",
-		Processor:      "example.com/mcp-sentinel-processor:latest",
-		UI:             "example.com/mcp-sentinel-ui:latest",
+		Ingest:       "example.com/mcp-sentinel-ingest:latest",
+		PlatformAPI:  "example.com/mcp-platform-api:latest",
+		RuntimeAPI:   "example.com/mcp-runtime-api:latest",
+		AnalyticsAPI: "example.com/mcp-analytics-api:latest",
+		Processor:    "example.com/mcp-sentinel-processor:latest",
+		UI:           "example.com/mcp-sentinel-ui:latest",
 	}, setupplan.StorageModeHostpath, setupplan.PlatformModeTenant)
 	if err == nil {
 		t.Fatal("expected failure from rollout timeout")
@@ -2563,8 +2563,8 @@ func TestDeployAnalyticsManifestsWithKubectl_WaitsForPostgresStatefulSet(t *test
 		"07-processor.yaml",
 		"08-platform-api.yaml",
 		"08-platform-api-rbac.yaml",
-		"08-runtime-control.yaml",
-		"08-runtime-control-rbac.yaml",
+		"08-runtime-api.yaml",
+		"08-runtime-api-rbac.yaml",
 		"08-analytics-api.yaml",
 		"22-split-api-networkpolicy.yaml",
 		"09-ui.yaml",
@@ -2605,12 +2605,12 @@ func TestDeployAnalyticsManifestsWithKubectl_WaitsForPostgresStatefulSet(t *test
 	kubectl := core.NewTestKubectlClient(mock)
 
 	err = deployAnalyticsManifestsWithKubectl(kubectl, zap.NewNop(), AnalyticsImageSet{
-		Ingest:         "example.com/mcp-sentinel-ingest:latest",
-		PlatformAPI:    "example.com/mcp-platform-api:latest",
-		RuntimeControl: "example.com/mcp-runtime-control:latest",
-		AnalyticsAPI:   "example.com/mcp-analytics-api:latest",
-		Processor:      "example.com/mcp-sentinel-processor:latest",
-		UI:             "example.com/mcp-sentinel-ui:latest",
+		Ingest:       "example.com/mcp-sentinel-ingest:latest",
+		PlatformAPI:  "example.com/mcp-platform-api:latest",
+		RuntimeAPI:   "example.com/mcp-runtime-api:latest",
+		AnalyticsAPI: "example.com/mcp-analytics-api:latest",
+		Processor:    "example.com/mcp-sentinel-processor:latest",
+		UI:           "example.com/mcp-sentinel-ui:latest",
 	}, "", setupplan.PlatformModeTenant)
 	if err == nil {
 		t.Fatal("expected failure from postgres rollout timeout")

@@ -16,7 +16,7 @@ import (
 	sentinelaccess "mcp-runtime/pkg/access"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	runtimeaccess "mcp-runtime-control/internal/runtimeapi/access"
+	runtimeaccess "mcp-runtime-api/internal/runtimeapi/access"
 )
 
 // Adapter-session bounds: the issued session's lifetime is constrained so a

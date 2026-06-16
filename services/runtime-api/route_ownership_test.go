@@ -5,7 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"mcp-runtime-control/internal/runtimeapi"
+	"mcp-runtime-api/internal/runtimeapi"
 )
 
 func TestRouteOwnershipV1Only(t *testing.T) {

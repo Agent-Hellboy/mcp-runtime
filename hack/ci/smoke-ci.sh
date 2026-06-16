@@ -21,7 +21,7 @@ integration_status="skipped"
 # Test 0: Build and test split API service modules
 echo "🔨 Building and testing split API service modules"
 if command -v go >/dev/null 2>&1; then
-    for service in platform-api analytics-api runtime-control; do
+    for service in platform-api analytics-api runtime-api; do
         hack/ci/go-test.sh "services/${service}"
     done
 else
@@ -81,7 +81,7 @@ if command -v docker >/dev/null 2>&1; then
         fi
         build_docker_image "mcp-${svc}" "${dockerfile}" "."
     done
-    for svc in platform-api analytics-api runtime-control; do
+    for svc in platform-api analytics-api runtime-api; do
         dockerfile="services/${svc}/Dockerfile"
         if [ ! -f "$dockerfile" ]; then
             echo "❌ Dockerfile not found: $dockerfile"
@@ -141,7 +141,7 @@ required_files=(
     "README.md"
     "services/platform-api/main.go"
     "services/analytics-api/main.go"
-    "services/runtime-control/main.go"
+    "services/runtime-api/main.go"
     "services/ingest/main.go"
     "services/processor/main.go"
     "services/ui/main.go"

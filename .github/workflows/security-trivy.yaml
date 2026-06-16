@@ -87,9 +87,9 @@ jobs:
           - image: analytics-api
             dockerfile: services/analytics-api/Dockerfile
             tag: mcp-analytics-api:ci
-          - image: runtime-control
-            dockerfile: services/runtime-control/Dockerfile
-            tag: mcp-runtime-control:ci
+          - image: runtime-api
+            dockerfile: services/runtime-api/Dockerfile
+            tag: mcp-runtime-api:ci
           - image: ui
             dockerfile: services/ui/Dockerfile
             tag: mcp-sentinel-ui:ci

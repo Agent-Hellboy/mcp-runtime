@@ -75,4 +75,4 @@ Kind e2e applies generated access YAML and exercises allow/deny over real MCP tr
 
 - CRDs: `api/v1alpha1/`, `config/crd/bases/`
 - Shared policy: `pkg/access/`, `pkg/policy/`
-- Adapters: `internal/cli/adapter/`, `internal/agentadapter/`, `services/runtime-control/internal/runtimeapi/adapter.go`
+- Adapters: `internal/cli/adapter/`, `internal/agentadapter/`, `services/runtime-api/internal/runtimeapi/adapter.go`

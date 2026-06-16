@@ -183,7 +183,7 @@ func (r storeAPIKeyResolver) ResolveAPIKey(ctx context.Context, rawKey string) (
 func runtimeControlUserKeyResolver() platformauth.UserKeyResolver {
 	baseURL := strings.TrimSpace(os.Getenv("RUNTIME_CONTROL_URL"))
 	if baseURL == "" {
-		baseURL = "http://mcp-runtime-control.mcp-sentinel.svc.cluster.local:8084"
+		baseURL = "http://mcp-runtime-api.mcp-sentinel.svc.cluster.local:8084"
 	}
 	token := strings.TrimSpace(os.Getenv("INTERNAL_AUTH_TOKEN"))
 	if token == "" {

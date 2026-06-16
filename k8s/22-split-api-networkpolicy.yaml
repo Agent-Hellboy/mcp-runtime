@@ -1,12 +1,12 @@
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: mcp-runtime-control-platform-egress
+  name: mcp-runtime-api-platform-egress
   namespace: mcp-sentinel
 spec:
   podSelector:
     matchLabels:
-      app: mcp-runtime-control
+      app: mcp-runtime-api
   policyTypes:
     - Egress
   egress:

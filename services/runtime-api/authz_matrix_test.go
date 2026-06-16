@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"mcp-runtime-control/internal/runtimeapi"
+	"mcp-runtime-api/internal/runtimeapi"
 	"mcp-runtime/pkg/authzmatrix"
 	"mcp-runtime/pkg/platformauth"
 )
@@ -17,9 +17,9 @@ func TestAuthzMatrixRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	rows = authzmatrix.Filter(rows, "runtime-control")
+	rows = authzmatrix.Filter(rows, "runtime-api")
 	if len(rows) == 0 {
-		t.Fatal("expected runtime-control authz rows")
+		t.Fatal("expected runtime-api authz rows")
 	}
 
 	srv := &server{

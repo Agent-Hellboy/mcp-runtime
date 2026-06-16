@@ -67,8 +67,8 @@ assume a server supports a method because it appears in static metadata.
 
 Likely ownership:
 
-- `services/runtime-control/internal/runtimeapi/live_inventory.go`
-- `services/runtime-control/internal/runtimeapi/tools.go`
+- `services/runtime-api/internal/runtimeapi/live_inventory.go`
+- `services/runtime-api/internal/runtimeapi/tools.go`
 - `api/v1alpha1/mcpserver_types.go`
 - `services/ui/static/app.js`
 

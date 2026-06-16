@@ -1,12 +1,12 @@
 misconfigurations:
   - id: KSV-0041
     paths:
-      - "k8s/08-runtime-control-rbac.yaml"
-    statement: "mcp-runtime-control-team-secrets is bound through namespace-scoped RoleBindings; runtime-control can bind only this ClusterRole for team registry pull secrets."
+      - "k8s/08-runtime-api-rbac.yaml"
+    statement: "mcp-runtime-api-team-secrets is bound through namespace-scoped RoleBindings; runtime-api can bind only this ClusterRole for team registry pull secrets."
   - id: KSV-0056
     paths:
-      - "k8s/08-runtime-control-rbac.yaml"
-    statement: "mcp-runtime-control intentionally provisions team namespace Services and default-deny NetworkPolicies."
+      - "k8s/08-runtime-api-rbac.yaml"
+    statement: "mcp-runtime-api intentionally provisions team namespace Services and default-deny NetworkPolicies."
   - id: KSV-0014
     paths:
       - "k8s/03-clickhouse.yaml"

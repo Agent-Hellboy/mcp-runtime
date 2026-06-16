@@ -1,4 +1,4 @@
-module mcp-runtime-control
+module mcp-runtime-api
 
 go 1.26.4
 

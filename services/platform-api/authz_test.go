@@ -123,7 +123,7 @@ func TestRequireRole(t *testing.T) {
 }
 
 func TestAuthOrPublicCatalogAllowsAnonymousPublicServerList(t *testing.T) {
-	t.Skip("public catalog auth is owned by runtime-control, not platform-api")
+	t.Skip("public catalog auth is owned by runtime-api, not platform-api")
 }
 
 type fakeRegistryCredentialAuth struct {

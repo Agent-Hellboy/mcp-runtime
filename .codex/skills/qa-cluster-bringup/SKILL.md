@@ -110,7 +110,7 @@ kubectl get pods -A | grep -Ev 'Running|Completed' || echo OK
 ```
 
 If `cluster doctor` reports admin/UI/ingest key mismatches, roll
-`mcp-platform-api`, `mcp-runtime-control`, `mcp-analytics-api`, UI, ingest,
+`mcp-platform-api`, `mcp-runtime-api`, `mcp-analytics-api`, UI, ingest,
 and gateway deployments after patching `mcp-sentinel-secrets`
 (see `CLAUDE.md` → API keys). Do not paper over a `Degraded` reading.
 

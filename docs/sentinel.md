@@ -9,7 +9,7 @@
 | **mcp-gateway** | Transparent sidecar. Extracts identity, evaluates tool-level policy, emits allow/deny audit events, forwards traffic upstream. |
 | **ingest** | Receives `POST /events`, validates ingest-scoped API keys or optional JWTs, writes to Kafka. |
 | **processor** | Consumes Kafka, batches, writes into ClickHouse with indexed audit fields. |
-| **api** (split) | Three HTTP services behind Traefik path routing: **platform-api** (Postgres identity/auth/registry), **runtime-control** (Kubernetes runtime governance + registry push), **analytics-api** (ClickHouse events/stats/usage). OpenAPI at `GET /api/v1/openapi.yaml` per service. |
+| **api** (split) | Three HTTP services behind Traefik path routing: **platform-api** (Postgres identity/auth/registry), **runtime-api** (Kubernetes runtime governance + registry push), **analytics-api** (ClickHouse events/stats/usage). OpenAPI at `GET /api/v1/openapi.yaml` per service. |
 | **ui** | Control-plane dashboard: user MCP server dashboard, MCP server catalog and connect config, user API keys, analytics dashboard, governance, MCP operations, and platform management. |
 | **gateway** | Kubernetes deployment fronting the sentinel API, ingest, and UI surfaces. |
 | **workspace assistant sample** | Sample MCP server in `examples/workspace-assistant-mcp` for end-to-end smoke tests. |
@@ -23,8 +23,8 @@ that only use HTTP, Kafka, ClickHouse, Postgres, or local files.
 
 | Component | Kubernetes awareness | Runtime access | Hardening notes |
 |---|---|---|---|
-| **platform-api** | Postgres-backed; no Kubernetes client. | Identity, auth, registry forwardAuth, admin namespaces/audit, `/internal/*` for runtime-control and analytics-api. | `k8s/08-platform-api-rbac.yaml` grants only user-key secret access. |
-| **runtime-control** | Kubernetes-aware via `pkg/k8sclient`. | MCPServer reconciliation helpers, grants/sessions, deployments, registry push (pod-local emptyDir + `POD_IP`). Broad ClusterRole in `k8s/08-runtime-control-rbac.yaml`. | Main privileged API for cluster mutations. NetworkPolicy egress to platform-api:8080 in `k8s/22-split-api-networkpolicy.yaml`. |
+| **platform-api** | Postgres-backed; no Kubernetes client. | Identity, auth, registry forwardAuth, admin namespaces/audit, `/internal/*` for runtime-api and analytics-api. | `k8s/08-platform-api-rbac.yaml` grants only user-key secret access. |
+| **runtime-api** | Kubernetes-aware via `pkg/k8sclient`. | MCPServer reconciliation helpers, grants/sessions, deployments, registry push (pod-local emptyDir + `POD_IP`). Broad ClusterRole in `k8s/08-runtime-api-rbac.yaml`. | Main privileged API for cluster mutations. NetworkPolicy egress to platform-api:8080 in `k8s/22-split-api-networkpolicy.yaml`. |
 | **analytics-api** | ClickHouse-only; `automountServiceAccountToken: false`. | Events, stats, usage queries; resolves display names via platform-api `/internal/*`. | No Kubernetes RBAC. NetworkPolicy egress to platform-api:8080. |
 | **gateway** | Kubernetes-aware Traefik ingress controller. | Watches Ingress, Service, Endpoint, Secret, and IngressClass resources for the namespaces it serves. The bundled Sentinel-local gateway watches `mcp-sentinel`; the shared ingress overlays watch `registry`, `mcp-sentinel`, `mcp-servers`, `mcp-servers-org`, and `mcp-servers-public`. | Keep watched namespaces explicit, avoid cluster-wide ingress watches unless required, keep Grafana admin-gated, do not expose Prometheus directly on public hosts, and keep redaction middleware limited to routes that need it. |
 | **mcp-gateway** | Kubernetes-integrated but Kubernetes API-agnostic. It is injected into MCP server pods and reads operator-rendered policy from mounted files and env vars. | Does not need a Kubernetes client or service account token. It forwards MCP traffic to the local server container and emits audit events to ingest. | Keep `automountServiceAccountToken: false`, read-only policy mounts, `readOnlyRootFilesystem`, dropped capabilities, and non-root execution. Treat `ANALYTICS_API_KEY` as ingest-scoped, not an admin API key. |
@@ -34,7 +34,7 @@ that only use HTTP, Kafka, ClickHouse, Postgres, or local files.
 | **storage and observability** | Mixed. ClickHouse, Kafka, Postgres, Grafana, Prometheus, Tempo, Loki, and the OTel collector are Kubernetes API-agnostic in the bundled manifests; Promtail is Kubernetes-aware so it can discover pod logs. | Data stores and dashboards back Sentinel audit, identity, metrics, traces, and logs. Promtail has pod read/watch RBAC. | Review persistence, retention, backups, and dashboard auth before production use. The generated platform-host observability route uses `sentinel-admin-auth@file`; provide equivalent auth if you replace repo-managed Traefik, and review Promtail's cluster log visibility before enabling it on multi-tenant clusters. |
 
 Operationally, the safest production posture is to give Kubernetes API access
-only to **runtime-control**, ingress controllers, the runtime operator, and log collectors
+only to **runtime-api**, ingress controllers, the runtime operator, and log collectors
 that need it. Services that do not call Kubernetes should keep service account
 token automounting disabled and should be isolated with NetworkPolicies where
 the cluster supports them.
@@ -103,7 +103,7 @@ For local `setup --test-mode` clusters, setup seeds two email/password logins:
 |---|---|---|---|
 | **UI** | `/` | `mcp-sentinel-ui:8082` | Browser app and server-side auth/OIDC upstream to platform-api. Traefik routes `/api/v1/*` directly to split API services. |
 | **platform-api** | `/api/v1/auth/*`, `/api/v1/registry/authz`, `/api/v1/admin/*` | `mcp-platform-api:8080` | Login, identity, registry forwardAuth, admin namespaces/audit. |
-| **runtime-control** | `/api/v1/runtime/*`, `/api/v1/deployments/*` | `mcp-runtime-control:8084` | Runtime governance, registry push, dashboard summary. |
+| **runtime-api** | `/api/v1/runtime/*`, `/api/v1/deployments/*` | `mcp-runtime-api:8084` | Runtime governance, registry push, dashboard summary. |
 | **analytics-api** | `/api/v1/stats`, `/api/v1/events`, `/api/v1/user/analytics/usage` | `mcp-analytics-api:8085` | ClickHouse query surfaces. |
 | **Ingest** | `/ingest/events` | `mcp-sentinel-ingest:8081/events` | Event intake used by `mcp-gateway`; the public ingress strips `/ingest`. |
 | **Grafana** | `/grafana` | `grafana:3000` | Admin observability UI. The generated platform-host route is guarded by `sentinel-admin-auth@file`; Grafana still keeps its own login unless you wire auth proxy settings. Tenant-scoped access is intentionally not exposed by the user dashboard. |
@@ -140,8 +140,8 @@ cardinality.
 
 | Service | Auth behavior |
 |---|---|
-| **platform-api** | `/health` and `/ready` are open. Authenticated `/api/v1/*` identity, admin, and registry routes accept `x-api-key`, user-generated API keys, platform JWT bearer tokens, or OIDC JWT bearer tokens when OIDC is configured. Only keys listed in `ADMIN_API_KEYS` get admin role. Registry forward-auth (`/api/v1/registry/authz`) keeps admin credentials global and allows normal user credentials only on repository paths scoped to the caller's team slug or team namespace. Token-gated `/internal/*` serves runtime-control and analytics-api. |
-| **runtime-control** | `/health` and `/ready` are open. `/api/v1/runtime/*`, `/api/v1/deployments`, and admin operations routes accept platform JWTs (audience `runtime-control`) or scoped API keys via `pkg/platformauth`. |
+| **platform-api** | `/health` and `/ready` are open. Authenticated `/api/v1/*` identity, admin, and registry routes accept `x-api-key`, user-generated API keys, platform JWT bearer tokens, or OIDC JWT bearer tokens when OIDC is configured. Only keys listed in `ADMIN_API_KEYS` get admin role. Registry forward-auth (`/api/v1/registry/authz`) keeps admin credentials global and allows normal user credentials only on repository paths scoped to the caller's team slug or team namespace. Token-gated `/internal/*` serves runtime-api and analytics-api. |
+| **runtime-api** | `/health` and `/ready` are open. `/api/v1/runtime/*`, `/api/v1/deployments`, and admin operations routes accept platform JWTs (audience `runtime-api`) or scoped API keys via `pkg/platformauth`. |
 | **analytics-api** | `/health` and `/ready` are open. `/api/v1/events`, `/api/v1/stats`, and usage analytics accept platform JWTs (audience `analytics-api`) or scoped API keys. Admin-only routes require admin role. |
 | **ui** | `/auth/login` creates an HttpOnly UI session from `api_key`, `id_token`, or `email`/`password`. Browser `/api/v1/*` calls go through Traefik ingress (not a UI reverse proxy). `/auth/admin-check` accepts admin UI sessions or keys from `ADMIN_API_KEYS`; it falls back to `API_KEYS` only when the explicit legacy dev/test fallback is enabled. |
 | **ingest** | `/live`, `/ready`, and `/health` are open. `/events` accepts `x-api-key` from `INGEST_API_KEYS`, legacy `API_KEYS`, or a configured OIDC bearer token. If no API keys and no JWKS are configured, intake auth is bypassed. |
@@ -158,17 +158,17 @@ stable error envelopes.
 | Service | Deployment | Port / metrics | Owns |
 |---|---|---|---|
 | **platform-api** | `mcp-platform-api` | 8080 / 9090 | Postgres identity, auth, admin, registry forward-auth, `/internal/*` |
-| **runtime-control** | `mcp-runtime-control` | 8084 / 9094 | MCPServer governance, grants/sessions, deployments, dashboard summary |
+| **runtime-api** | `mcp-runtime-api` | 8084 / 9094 | MCPServer governance, grants/sessions, deployments, dashboard summary |
 | **analytics-api** | `mcp-analytics-api` | 8085 / 9095 | ClickHouse events, stats, usage analytics |
 
 Route tables and request bodies live in [API reference](api.md). Per-service
 OpenAPI specs: `services/platform-api/openapi.yaml`,
-`services/runtime-control/openapi.yaml`, `services/analytics-api/openapi.yaml`.
+`services/runtime-api/openapi.yaml`, `services/analytics-api/openapi.yaml`.
 Per-service CI runs OpenAPI response validation tests against those specs.
 Adopt consumer-driven contracts (Pact) only when external clients or independently
 released teams start consuming these APIs.
 
-Restart request body examples (runtime-control admin operations):
+Restart request body examples (runtime-api admin operations):
 
 ```json
 {"component": "platform-api"}
@@ -349,7 +349,7 @@ source subject preserved, never on the other server.
 
 | Group | Files |
 |---|---|
-| **Core app** | `00-namespace`, `01-config`, `02-secrets`, `03-clickhouse`, `04-clickhouse-init`, `05-kafka`, `06-ingest`, `07-processor`, `08-platform-api`, `08-runtime-control`, `08-analytics-api`, `09-ui`, `10-gateway`, `20-postgres`, `21-platform-admin-bootstrap-job`, `22-split-api-networkpolicy` |
+| **Core app** | `00-namespace`, `01-config`, `02-secrets`, `03-clickhouse`, `04-clickhouse-init`, `05-kafka`, `06-ingest`, `07-processor`, `08-platform-api`, `08-runtime-api`, `08-analytics-api`, `09-ui`, `10-gateway`, `20-postgres`, `21-platform-admin-bootstrap-job`, `22-split-api-networkpolicy` |
 | **Observability** | `11-prometheus`, `12-grafana`, `15-otel-collector`, `16-tempo`, `17-loki`, `18-promtail`, `19-grafana-datasources` |
 | **Example wiring** | `13-mcp-example`, `14-mcp-gateway-sidecar` |
 

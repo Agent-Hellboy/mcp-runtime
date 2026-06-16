@@ -16,7 +16,7 @@ func TestLoadAndFilter(t *testing.T) {
 	if len(rows) == 0 {
 		t.Fatal("expected non-empty authz matrix")
 	}
-	for _, service := range []string{"platform-api", "runtime-control", "analytics-api"} {
+	for _, service := range []string{"platform-api", "runtime-api", "analytics-api"} {
 		if len(Filter(rows, service)) == 0 {
 			t.Fatalf("expected rows for service %q", service)
 		}

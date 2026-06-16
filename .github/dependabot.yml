@@ -27,12 +27,12 @@ updates:
           - "*"
 
   - package-ecosystem: gomod
-    directory: /services/runtime-control
+    directory: /services/runtime-api
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
     groups:
-      services-runtime-control-go-modules:
+      services-runtime-api-go-modules:
         patterns:
           - "*"
 

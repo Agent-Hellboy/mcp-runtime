@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"strings"
 
-	runtimeaccess "mcp-runtime-control/internal/runtimeapi/access"
+	runtimeaccess "mcp-runtime-api/internal/runtimeapi/access"
 	sentinelaccess "mcp-runtime/pkg/access"
 	"mcp-runtime/pkg/k8sclient"
 )

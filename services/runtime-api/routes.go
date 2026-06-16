@@ -9,11 +9,11 @@ import (
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 
-	"mcp-runtime-control/admin"
-	"mcp-runtime-control/deployments"
-	"mcp-runtime-control/internal/platformclient"
-	"mcp-runtime-control/internal/platforminternal"
-	runtimehandlers "mcp-runtime-control/runtime"
+	"mcp-runtime-api/admin"
+	"mcp-runtime-api/deployments"
+	"mcp-runtime-api/internal/platformclient"
+	"mcp-runtime-api/internal/platforminternal"
+	runtimehandlers "mcp-runtime-api/runtime"
 	"mcp-runtime/pkg/apihttp"
 	"mcp-runtime/pkg/openapi"
 	"mcp-runtime/pkg/platformauth"

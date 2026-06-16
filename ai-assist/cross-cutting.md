@@ -32,7 +32,7 @@ Added: 2026-05-12
 
 ### Sentinel service image change → set image + roll, do not rerun `setup`
 
-When iterating on `services/platform-api`, `services/runtime-control`,
+When iterating on `services/platform-api`, `services/runtime-api`,
 `services/analytics-api`, `services/ui`, `services/ingest`, or
 `services/processor`, the contributor loop is: build a new tag, push
 to the bundled registry, `kubectl set image`, `rollout status`. Do not

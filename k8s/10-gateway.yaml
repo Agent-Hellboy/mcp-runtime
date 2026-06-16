@@ -594,7 +594,7 @@ spec:
             pathType: Exact
             backend:
               service:
-                name: mcp-runtime-control
+                name: mcp-runtime-api
                 port:
                   number: 8084
 ---
@@ -612,7 +612,7 @@ spec:
             pathType: Exact
             backend:
               service:
-                name: mcp-runtime-control
+                name: mcp-runtime-api
                 port:
                   number: 8084
           - path: /api/v1/admin/namespaces
@@ -710,42 +710,42 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: mcp-runtime-control
+                name: mcp-runtime-api
                 port:
                   number: 8084
           - path: /api/v1/user/api-keys
             pathType: Prefix
             backend:
               service:
-                name: mcp-runtime-control
+                name: mcp-runtime-api
                 port:
                   number: 8084
           - path: /api/v1/admin
             pathType: Prefix
             backend:
               service:
-                name: mcp-runtime-control
+                name: mcp-runtime-api
                 port:
                   number: 8084
           - path: /api/v1/runtime
             pathType: Prefix
             backend:
               service:
-                name: mcp-runtime-control
+                name: mcp-runtime-api
                 port:
                   number: 8084
           - path: /api/v1/deployments
             pathType: Prefix
             backend:
               service:
-                name: mcp-runtime-control
+                name: mcp-runtime-api
                 port:
                   number: 8084
           - path: /api/v1/dashboard
             pathType: Prefix
             backend:
               service:
-                name: mcp-runtime-control
+                name: mcp-runtime-api
                 port:
                   number: 8084
 ---

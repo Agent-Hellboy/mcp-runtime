@@ -12,7 +12,7 @@ Use focused tests while iterating:
 go test ./internal/operator/... ./internal/cli/... -count=1
 go test ./internal/agentadapter -count=1
 (cd services/platform-api && go test ./... -count=1)
-(cd services/runtime-control && go test ./... -count=1)
+(cd services/runtime-api && go test ./... -count=1)
 (cd services/analytics-api && go test ./... -count=1)
 (cd services/ui && go test ./... -count=1)
 node --check services/ui/static/app.js
@@ -66,7 +66,7 @@ Use the same shape for each split API service:
 | Service | `IMAGE_REPO` | `DOCKERFILE` | `DEPLOYMENT` | `CONTAINER` | Port |
 |---|---|---|---|---|---|
 | platform-api | `mcp-platform-api` | `services/platform-api/Dockerfile` | `mcp-platform-api` | `platform-api` | 8080 |
-| runtime-control | `mcp-runtime-control` | `services/runtime-control/Dockerfile` | `mcp-runtime-control` | `runtime-control` | 8084 |
+| runtime-api | `mcp-runtime-api` | `services/runtime-api/Dockerfile` | `mcp-runtime-api` | `runtime-api` | 8084 |
 | analytics-api | `mcp-analytics-api` | `services/analytics-api/Dockerfile` | `mcp-analytics-api` | `analytics-api` | 8085 |
 
 Set `BUILD_CONTEXT=.` and pick a unique `TAG` per build. Example for platform-api:

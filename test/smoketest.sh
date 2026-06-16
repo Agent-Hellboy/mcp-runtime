@@ -29,7 +29,7 @@ fi
 kubectl config use-context "kind-${KIND_CLUSTER_NAME}" >/dev/null
 
 docker build -t mcp-platform-api:latest -f services/platform-api/Dockerfile .
-docker build -t mcp-runtime-control:latest -f services/runtime-control/Dockerfile .
+docker build -t mcp-runtime-api:latest -f services/runtime-api/Dockerfile .
 docker build -t mcp-analytics-api:latest -f services/analytics-api/Dockerfile .
 docker build -t mcp-sentinel-ingest:latest -f services/ingest/Dockerfile .
 docker build -t mcp-sentinel-processor:latest -f services/processor/Dockerfile .
@@ -38,7 +38,7 @@ docker build -t workspace-assistant-mcp:latest examples/workspace-assistant-mcp
 docker build -t mcp-sentinel-mcp-gateway:latest -f services/mcp-gateway/Dockerfile .
 
 kind load docker-image mcp-platform-api:latest --name "$KIND_CLUSTER_NAME"
-kind load docker-image mcp-runtime-control:latest --name "$KIND_CLUSTER_NAME"
+kind load docker-image mcp-runtime-api:latest --name "$KIND_CLUSTER_NAME"
 kind load docker-image mcp-analytics-api:latest --name "$KIND_CLUSTER_NAME"
 kind load docker-image mcp-sentinel-ingest:latest --name "$KIND_CLUSTER_NAME"
 kind load docker-image mcp-sentinel-processor:latest --name "$KIND_CLUSTER_NAME"
@@ -49,7 +49,7 @@ kind load docker-image mcp-sentinel-mcp-gateway:latest --name "$KIND_CLUSTER_NAM
 kubectl apply -f k8s
 
 kubectl -n "$NAMESPACE" rollout restart deployment/mcp-platform-api
-kubectl -n "$NAMESPACE" rollout restart deployment/mcp-runtime-control
+kubectl -n "$NAMESPACE" rollout restart deployment/mcp-runtime-api
 kubectl -n "$NAMESPACE" rollout restart deployment/mcp-analytics-api
 kubectl -n "$NAMESPACE" rollout restart deployment/mcp-sentinel-ingest
 kubectl -n "$NAMESPACE" rollout restart deployment/mcp-sentinel-processor
@@ -64,7 +64,7 @@ kubectl -n "$NAMESPACE" wait --for=condition=complete job/kafka-topic-init --tim
 kubectl -n "$NAMESPACE" rollout status deployment/mcp-sentinel-ingest --timeout=180s
 kubectl -n "$NAMESPACE" rollout status deployment/mcp-sentinel-processor --timeout=180s
 kubectl -n "$NAMESPACE" rollout status deployment/mcp-platform-api --timeout=180s
-kubectl -n "$NAMESPACE" rollout status deployment/mcp-runtime-control --timeout=180s
+kubectl -n "$NAMESPACE" rollout status deployment/mcp-runtime-api --timeout=180s
 kubectl -n "$NAMESPACE" rollout status deployment/mcp-analytics-api --timeout=180s
 kubectl -n "$NAMESPACE" rollout status deployment/mcp-sentinel-ui --timeout=180s
 kubectl -n "$NAMESPACE" rollout status deployment/mcp-sentinel-gateway --timeout=180s
@@ -299,7 +299,7 @@ except Exception as exc:
     rows.append(("analytics.error", str(exc)))
 
 try:
-    jobs = ["mcp-platform-api", "mcp-runtime-control", "mcp-analytics-api", "mcp-sentinel-ingest", "mcp-sentinel-processor"]
+    jobs = ["mcp-platform-api", "mcp-runtime-api", "mcp-analytics-api", "mcp-sentinel-ingest", "mcp-sentinel-processor"]
     up_values = []
     for job in jobs:
         query = urllib.parse.urlencode({"query": f'up{{job=\"{job}\"}}'})

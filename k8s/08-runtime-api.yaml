@@ -1,11 +1,11 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: mcp-runtime-control
+  name: mcp-runtime-api
   namespace: mcp-sentinel
 spec:
   selector:
-    app: mcp-runtime-control
+    app: mcp-runtime-api
   ports:
     - name: http
       port: 8084
@@ -17,27 +17,27 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: mcp-runtime-control
+  name: mcp-runtime-api
   namespace: mcp-sentinel
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: mcp-runtime-control
+      app: mcp-runtime-api
   template:
     metadata:
       labels:
-        app: mcp-runtime-control
+        app: mcp-runtime-api
     spec:
-      serviceAccountName: mcp-runtime-control
+      serviceAccountName: mcp-runtime-api
       automountServiceAccountToken: true
       securityContext:
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
       containers:
-        - name: runtime-control
-          image: mcp-runtime-control:latest
+        - name: runtime-api
+          image: mcp-runtime-api:latest
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
@@ -87,7 +87,7 @@ spec:
                   name: mcp-sentinel-secrets
                   key: INTERNAL_AUTH_TOKEN
             - name: OTEL_SERVICE_NAME
-              value: mcp-runtime-control
+              value: mcp-runtime-api
           resources:
             requests:
               cpu: 50m

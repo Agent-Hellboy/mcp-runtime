@@ -78,21 +78,21 @@ type analyticsComponent struct {
 }
 
 type AnalyticsImageSet struct {
-	Ingest         string
-	PlatformAPI    string
-	RuntimeControl string
-	AnalyticsAPI   string
-	Processor      string
-	UI             string
-	Traefik        string
-	ClickHouse     string
-	Kafka          string
-	Prometheus     string
-	OTelCollector  string
-	Tempo          string
-	Loki           string
-	Promtail       string
-	Grafana        string
+	Ingest        string
+	PlatformAPI   string
+	RuntimeAPI    string
+	AnalyticsAPI  string
+	Processor     string
+	UI            string
+	Traefik       string
+	ClickHouse    string
+	Kafka         string
+	Prometheus    string
+	OTelCollector string
+	Tempo         string
+	Loki          string
+	Promtail      string
+	Grafana       string
 }
 
 var analyticsComponents = []analyticsComponent{
@@ -109,9 +109,9 @@ var analyticsComponents = []analyticsComponent{
 		BuildContext: ".",
 	},
 	{
-		Name:         "runtime-control",
-		Repository:   "mcp-runtime-control",
-		Dockerfile:   "services/runtime-control/Dockerfile",
+		Name:         "runtime-api",
+		Repository:   "mcp-runtime-api",
+		Dockerfile:   "services/runtime-api/Dockerfile",
 		BuildContext: ".",
 	},
 	{
@@ -469,7 +469,7 @@ func setupClusterSteps(logger *zap.Logger, kubeconfig, context string, ingressOp
 
 // catalogNamespaceLabels returns the labels the platform API expects to find on
 // a shared catalog namespace. Keeping these aligned with EnsureCatalogNamespace
-// in services/runtime-control/internal/runtimeapi/deployments.go lets the runtime-side
+// in services/runtime-api/internal/runtimeapi/deployments.go lets the runtime-side
 // ensure call degrade to an idempotent patch instead of a create, which is
 // what allows non-admin users to publish into the catalog without giving the
 // API ServiceAccount cluster-wide namespace-create RBAC.

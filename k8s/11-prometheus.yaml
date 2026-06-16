@@ -40,9 +40,9 @@ data:
       - job_name: mcp-platform-api
         static_configs:
           - targets: ["mcp-platform-api:9090"]
-      - job_name: mcp-runtime-control
+      - job_name: mcp-runtime-api
         static_configs:
-          - targets: ["mcp-runtime-control:9094"]
+          - targets: ["mcp-runtime-api:9094"]
       - job_name: mcp-analytics-api
         static_configs:
           - targets: ["mcp-analytics-api:9095"]

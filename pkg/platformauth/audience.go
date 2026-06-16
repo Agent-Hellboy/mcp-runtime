@@ -3,8 +3,8 @@ package platformauth
 import "mcp-runtime/pkg/serviceutil"
 
 const (
-	AudiencePlatform  = "platform"
-	AudienceRuntime   = "runtime-control"
+	AudiencePlatform  = "platform-api"
+	AudienceRuntime   = "runtime-api"
 	AudienceAnalytics = "analytics-api"
 )
 

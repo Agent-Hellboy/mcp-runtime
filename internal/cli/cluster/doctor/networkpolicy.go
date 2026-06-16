@@ -158,7 +158,7 @@ func networkPolicyAllowsPlatformAPI(raw string) bool {
 
 func sentinelAPIPodAppAllowed(app string) bool {
 	switch app {
-	case doctorPlatformAPIService, doctorRuntimeControlService, doctorAnalyticsAPIService:
+	case doctorPlatformAPIService, doctorRuntimeAPIService, doctorAnalyticsAPIService:
 		return true
 	default:
 		return false

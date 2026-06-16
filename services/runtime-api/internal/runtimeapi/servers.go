@@ -15,7 +15,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	runtimeaccess "mcp-runtime-control/internal/runtimeapi/access"
+	runtimeaccess "mcp-runtime-api/internal/runtimeapi/access"
 	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
 	"mcp-runtime/pkg/controlplane"
 	"mcp-runtime/pkg/k8sclient"

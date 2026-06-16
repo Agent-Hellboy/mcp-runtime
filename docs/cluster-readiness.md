@@ -362,7 +362,7 @@ Before assuming a database or auth bug, inspect the deployment and the managed
 secret:
 
 ```bash
-kubectl get deploy mcp-platform-api mcp-runtime-control mcp-analytics-api -n mcp-sentinel -o yaml
+kubectl get deploy mcp-platform-api mcp-runtime-api mcp-analytics-api -n mcp-sentinel -o yaml
 kubectl get secret mcp-sentinel-secrets -n mcp-sentinel -o yaml
 ```
 

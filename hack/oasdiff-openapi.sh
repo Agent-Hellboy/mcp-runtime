@@ -23,7 +23,7 @@ fi
 
 specs=(
   services/platform-api/openapi.yaml
-  services/runtime-control/openapi.yaml
+  services/runtime-api/openapi.yaml
   services/analytics-api/openapi.yaml
 )
 

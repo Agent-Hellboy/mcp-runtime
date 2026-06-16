@@ -58,9 +58,9 @@ CVEs). Pin the same Trivy action version (currently `0.36.0` →
 docker build --pull -f Dockerfile.operator -t mcp-runtime-operator:audit .
 docker build --pull -f services/platform-api/Dockerfile -t mcp-platform-api:audit .
 docker build --pull -f services/analytics-api/Dockerfile -t mcp-analytics-api:audit .
-docker build --pull -f services/runtime-control/Dockerfile -t mcp-runtime-control:audit .
+docker build --pull -f services/runtime-api/Dockerfile -t mcp-runtime-api:audit .
 docker build --pull -f services/platform-api/Dockerfile -t mcp-platform-api:audit .
-docker build --pull -f services/runtime-control/Dockerfile -t mcp-runtime-control:audit .
+docker build --pull -f services/runtime-api/Dockerfile -t mcp-runtime-api:audit .
 docker build --pull -f services/analytics-api/Dockerfile -t mcp-analytics-api:audit .
 docker build --pull -f services/ui/Dockerfile -t mcp-sentinel-ui:audit .
 docker build --pull -f services/ingest/Dockerfile -t mcp-sentinel-ingest:audit .
@@ -70,7 +70,7 @@ docker build --pull -f services/mcp-gateway/Dockerfile -t mcp-sentinel-mcp-gatew
 # Or use the repo helper (same image set + CI-matching flags):
 bash hack/trivy-sentinel-images.sh
 
-for img in mcp-runtime-operator:audit mcp-platform-api:audit mcp-runtime-control:audit \
+for img in mcp-runtime-operator:audit mcp-platform-api:audit mcp-runtime-api:audit \
            mcp-analytics-api:audit mcp-sentinel-ui:audit \
            mcp-sentinel-ingest:audit mcp-sentinel-processor:audit \
            mcp-sentinel-mcp-gateway:audit; do
@@ -100,7 +100,7 @@ Match the CI step using `anchore/sbom-action` (currently
 ```sh
 go install github.com/anchore/syft/cmd/syft@latest
 
-for img in mcp-runtime-operator:audit mcp-platform-api:audit mcp-runtime-control:audit \
+for img in mcp-runtime-operator:audit mcp-platform-api:audit mcp-runtime-api:audit \
            mcp-analytics-api:audit mcp-sentinel-ui:audit mcp-sentinel-ingest:audit \
            mcp-sentinel-processor:audit mcp-sentinel-mcp-gateway:audit; do
   out=$(echo "$img" | tr ':/' '__').spdx.json

@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	runtimeaccess "mcp-runtime-control/internal/runtimeapi/access"
+	runtimeaccess "mcp-runtime-api/internal/runtimeapi/access"
 	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
 	sentinelaccess "mcp-runtime/pkg/access"
 )

@@ -6,8 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"mcp-runtime-control/internal/platforminternal"
-	"mcp-runtime-control/internal/runtimeapi"
+	"mcp-runtime-api/internal/platforminternal"
+	"mcp-runtime-api/internal/runtimeapi"
 	"mcp-runtime/pkg/openapi"
 	"mcp-runtime/pkg/platformauth"
 )

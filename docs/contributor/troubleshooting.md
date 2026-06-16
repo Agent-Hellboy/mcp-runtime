@@ -17,7 +17,7 @@ If it returns servers:
 1. Confirm the UI and API Deployments are on the current images.
 
    ```bash
-   kubectl get deploy mcp-platform-api mcp-runtime-control mcp-analytics-api mcp-sentinel-ui -n mcp-sentinel \
+   kubectl get deploy mcp-platform-api mcp-runtime-api mcp-analytics-api mcp-sentinel-ui -n mcp-sentinel \
      -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.spec.template.spec.containers[0].image}{"\n"}{end}'
    ```
 
@@ -25,7 +25,7 @@ If it returns servers:
 
    ```bash
    kubectl rollout status deployment/mcp-platform-api -n mcp-sentinel --timeout=90s
-   kubectl rollout status deployment/mcp-runtime-control -n mcp-sentinel --timeout=90s
+   kubectl rollout status deployment/mcp-runtime-api -n mcp-sentinel --timeout=90s
    kubectl rollout status deployment/mcp-sentinel-ui -n mcp-sentinel --timeout=90s
    ```
 

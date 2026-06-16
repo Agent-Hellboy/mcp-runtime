@@ -54,21 +54,21 @@ type doctorCheckSpec struct {
 }
 
 const (
-	doctorMCPServersNamespace   = "mcp-servers"
-	doctorTraefikNamespace      = "traefik"
-	doctorK3sTraefikNamespace   = "kube-system"
-	doctorTraefikServiceName    = "traefik"
-	doctorTraefikWebPort        = 8000
-	doctorK3sTraefikWebPort     = 80
-	doctorSentinelNamespace     = "mcp-sentinel"
-	doctorPlatformAPIService    = "mcp-platform-api"
-	doctorPlatformAPIPort       = 8080
-	doctorRuntimeControlService = "mcp-runtime-control"
-	doctorRuntimeControlPort    = 8084
-	doctorAnalyticsAPIService   = "mcp-analytics-api"
-	doctorAnalyticsAPIPort      = 8085
-	doctorRestrictedRunAsUser   = int64(65532)
-	doctorProbePodRunTimeout    = "90s"
+	doctorMCPServersNamespace = "mcp-servers"
+	doctorTraefikNamespace    = "traefik"
+	doctorK3sTraefikNamespace = "kube-system"
+	doctorTraefikServiceName  = "traefik"
+	doctorTraefikWebPort      = 8000
+	doctorK3sTraefikWebPort   = 80
+	doctorSentinelNamespace   = "mcp-sentinel"
+	doctorPlatformAPIService  = "mcp-platform-api"
+	doctorPlatformAPIPort     = 8080
+	doctorRuntimeAPIService   = "mcp-runtime-api"
+	doctorRuntimeAPIPort      = 8084
+	doctorAnalyticsAPIService = "mcp-analytics-api"
+	doctorAnalyticsAPIPort    = 8085
+	doctorRestrictedRunAsUser = int64(65532)
+	doctorProbePodRunTimeout  = "90s"
 
 	registryHTTPPullMismatch = "http: server gave HTTP response to HTTPS client"
 
@@ -277,7 +277,7 @@ func doctorCheckSpecs(kubectl core.KubectlRunner, distro Distribution) []doctorC
 		{Name: "sentinel session-local deployment scaling", Detail: "checking UI and gateway stay at one replica until shared session storage exists", Run: func() DoctorCheck { return checkSessionLocalDeploymentScaling(kubectl) }},
 		{Name: "sentinel secrets", Detail: "reading Sentinel API, admin, UI, and ingest keys from mcp-sentinel-secrets", Run: func() DoctorCheck { return checkSentinelSecrets(kubectl) }},
 		{Name: "gateway analytics credentials", Detail: "checking gateway sidecars have ingest credentials when analytics is enabled", Run: func() DoctorCheck { return checkGatewayAnalyticsCredentials(kubectl) }},
-		{Name: "sentinel API auth probe", Detail: "launching a temporary curl pod with UI_API_KEY against runtime-control", Run: func() DoctorCheck { return checkSentinelAPIAuthProbe(kubectl) }},
+		{Name: "sentinel API auth probe", Detail: "launching a temporary curl pod with UI_API_KEY against runtime-api", Run: func() DoctorCheck { return checkSentinelAPIAuthProbe(kubectl) }},
 		{Name: "runtime API image display refs", Detail: "checking runtime API server listings do not leak internal registry pull hosts", Run: func() DoctorCheck { return checkRuntimeAPIImageDisplayRefs(kubectl) }},
 		{Name: "node capacity", Detail: "checking node metrics, then falling back to allocatable resources if metrics-server is absent", Run: func() DoctorCheck { return checkNodeCapacity(kubectl) }},
 		{Name: "pending pods", Detail: "listing Pending pods across all namespaces", Run: func() DoctorCheck { return checkPendingPodsByNamespace(kubectl) }},

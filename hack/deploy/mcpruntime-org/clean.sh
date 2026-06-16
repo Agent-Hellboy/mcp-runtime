@@ -139,7 +139,7 @@ Next steps:
   2. Ensure config/deployments/mcpruntime-org.env exports GOOGLE_CLIENT_ID (and OIDC_* if used).
   3. hack/deploy/mcpruntime-org/setup.sh
      (restores platform-runtime backup automatically when $MCP_TLS_BACKUP_ROOT/latest exists)
-  4. kubectl rollout restart deployment/mcp-platform-api deployment/mcp-runtime-control deployment/mcp-analytics-api deployment/mcp-sentinel-ui -n mcp-sentinel
+  4. kubectl rollout restart deployment/mcp-platform-api deployment/mcp-runtime-api deployment/mcp-analytics-api deployment/mcp-sentinel-ui -n mcp-sentinel
   5. hack/deploy/mcpruntime-org/multitenancy-test.sh   # PLATFORM_URL / MCP_URL / REGISTRY_HOST
 
 For code-only changes without a wipe: hack/deploy/mcpruntime-org/rollout.sh

@@ -2996,8 +2996,8 @@ image_build_label() {
     docker.io/library/mcp-platform-api:*)
       echo "build platform-api image (${image})"
       ;;
-    docker.io/library/mcp-runtime-control:*)
-      echo "build runtime-control image (${image})"
+    docker.io/library/mcp-runtime-api:*)
+      echo "build runtime-api image (${image})"
       ;;
     docker.io/library/mcp-analytics-api:*)
       echo "build analytics-api image (${image})"
@@ -3088,7 +3088,7 @@ wait_core_platform_rollouts() {
   run_logged_stage "verify operator rollout" rollout_status_with_logs mcp-runtime deploy mcp-runtime-operator-controller-manager 180s
   run_logged_stage "verify traefik rollout" rollout_status_with_logs traefik deploy traefik 180s
   run_logged_stage "verify platform-api rollout" rollout_status_with_logs mcp-sentinel deploy mcp-platform-api 180s
-  run_logged_stage "verify runtime-control rollout" rollout_status_with_logs mcp-sentinel deploy mcp-runtime-control 180s
+  run_logged_stage "verify runtime-api rollout" rollout_status_with_logs mcp-sentinel deploy mcp-runtime-api 180s
   run_logged_stage "verify analytics-api rollout" rollout_status_with_logs mcp-sentinel deploy mcp-analytics-api 180s
   run_logged_stage "verify sentinel gateway rollout" rollout_status_with_logs mcp-sentinel deploy mcp-sentinel-gateway 180s
   run_logged_stage "verify tempo rollout" rollout_status_with_logs mcp-sentinel statefulset tempo 180s
@@ -3165,7 +3165,7 @@ platform_cache_ready() {
   kubectl rollout status deploy/mcp-runtime-operator-controller-manager -n mcp-runtime --timeout=5s >/dev/null 2>&1 || return 1
   kubectl rollout status deploy/traefik -n traefik --timeout=5s >/dev/null 2>&1 || return 1
   kubectl rollout status deploy/mcp-platform-api -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
-  kubectl rollout status deploy/mcp-runtime-control -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
+  kubectl rollout status deploy/mcp-runtime-api -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
   kubectl rollout status deploy/mcp-analytics-api -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
   kubectl rollout status deploy/mcp-sentinel-gateway -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
   kubectl rollout status statefulset/clickhouse -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
@@ -3297,7 +3297,7 @@ else
     "docker.io/library/mcp-sentinel-mcp-gateway:latest" "${SENTINEL_ROOT}/services/mcp-gateway/Dockerfile" "${SENTINEL_ROOT}" \
     "docker.io/library/mcp-sentinel-ingest:latest" "${SENTINEL_ROOT}/services/ingest/Dockerfile" "${SENTINEL_ROOT}" \
     "docker.io/library/mcp-platform-api:latest" "${SENTINEL_ROOT}/services/platform-api/Dockerfile" "${SENTINEL_ROOT}" \
-    "docker.io/library/mcp-runtime-control:latest" "${SENTINEL_ROOT}/services/runtime-control/Dockerfile" "${SENTINEL_ROOT}" \
+    "docker.io/library/mcp-runtime-api:latest" "${SENTINEL_ROOT}/services/runtime-api/Dockerfile" "${SENTINEL_ROOT}" \
     "docker.io/library/mcp-analytics-api:latest" "${SENTINEL_ROOT}/services/analytics-api/Dockerfile" "${SENTINEL_ROOT}" \
     "docker.io/library/mcp-sentinel-processor:latest" "${SENTINEL_ROOT}/services/processor/Dockerfile" "${SENTINEL_ROOT}" \
     "docker.io/library/mcp-sentinel-ui:latest" "${SENTINEL_ROOT}/services/ui/Dockerfile" "${SENTINEL_ROOT}"
@@ -5167,7 +5167,7 @@ def wait_for_prometheus_up(base_url, *, headers=None, description):
         value = result.get("value", [])
         if len(value) >= 2 and metric.get("job"):
             jobs[metric["job"]] = str(value[1])
-    for job in ("mcp-platform-api", "mcp-runtime-control", "mcp-analytics-api", "mcp-sentinel-ingest", "mcp-sentinel-processor", "clickhouse"):
+    for job in ("mcp-platform-api", "mcp-runtime-api", "mcp-analytics-api", "mcp-sentinel-ingest", "mcp-sentinel-processor", "clickhouse"):
         check(
             jobs.get(job) == "1",
             f"{description} reports {job}=1",

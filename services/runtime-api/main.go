@@ -12,8 +12,8 @@ import (
 	chdriver "github.com/ClickHouse/clickhouse-go/v2"
 	_ "go.uber.org/automaxprocs"
 
-	"mcp-runtime-control/internal/platformclient"
-	"mcp-runtime-control/internal/runtimeapi"
+	"mcp-runtime-api/internal/platformclient"
+	"mcp-runtime-api/internal/runtimeapi"
 	clickhousepkg "mcp-runtime/pkg/clickhouse"
 	"mcp-runtime/pkg/platformauth"
 	"mcp-runtime/pkg/serviceutil"
@@ -90,7 +90,7 @@ func main() {
 	srv.registerRoutes(mux)
 
 	if err := svcboot.Run(svcboot.Config{
-		ServiceName: "mcp-runtime-control",
+		ServiceName: "mcp-runtime-api",
 		Port:        port,
 		MetricsPort: metricsPort,
 		Handler:     mux,

@@ -79,23 +79,23 @@ classify_path() {
       add_scenario "cli-platform"
       return
       ;;
-    services/runtime-control/internal/runtimeapi/*team*|services/runtime-control/internal/runtimeapi/*namespace*|services/runtime-control/internal/runtimeapi/*registry*|services/runtime-control/internal/runtimeapi/*deploy*|services/runtime-control/internal/runtimeapi/*server*)
+    services/runtime-api/internal/runtimeapi/*team*|services/runtime-api/internal/runtimeapi/*namespace*|services/runtime-api/internal/runtimeapi/*registry*|services/runtime-api/internal/runtimeapi/*deploy*|services/runtime-api/internal/runtimeapi/*server*)
       add_scenario "api-platform"
       add_scenario "multitenancy"
       return
       ;;
-    services/runtime-control/internal/runtimeapi/*tool*)
+    services/runtime-api/internal/runtimeapi/*tool*)
       add_scenario "api-platform"
       add_scenario "cli-platform"
       return
       ;;
-    services/runtime-control/internal/runtimeapi/*adapter*|services/runtime-control/internal/runtimeapi/*grant*|services/runtime-control/internal/runtimeapi/*session*|services/runtime-control/internal/runtimeapi/*access*)
+    services/runtime-api/internal/runtimeapi/*adapter*|services/runtime-api/internal/runtimeapi/*grant*|services/runtime-api/internal/runtimeapi/*session*|services/runtime-api/internal/runtimeapi/*access*)
       add_scenario "api-platform"
       add_scenario "governance"
       add_scenario "adapter-proxy"
       return
       ;;
-    services/platform-api/*|services/runtime-control/*|services/analytics-api/*)
+    services/platform-api/*|services/runtime-api/*|services/analytics-api/*)
       add_scenario "api-platform"
       return
       ;;

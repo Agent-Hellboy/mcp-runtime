@@ -24,7 +24,7 @@ var DefaultPlatformStatusWorkloads = []PlatformWorkload{
 	{Component: "Ingest", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-sentinel-ingest"},
 	{Component: "Processor", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-sentinel-processor"},
 	{Component: "Platform API", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-platform-api"},
-	{Component: "Runtime Control", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-runtime-control"},
+	{Component: "Runtime Control", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-runtime-api"},
 	{Component: "Analytics API", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-analytics-api"},
 	{Component: "UI", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-sentinel-ui"},
 	{Component: "Gateway", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-sentinel-gateway"},

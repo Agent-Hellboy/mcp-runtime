@@ -4,7 +4,7 @@ The MCP Runtime API surface comes in three layers:
 
 1. **CRDs** under `mcpruntime.org/v1alpha1`: `MCPServer`, `MCPAccessGrant`, `MCPAgentSession`.
 2. **Gateway headers** carried on live MCP requests when `gateway.enabled`.
-3. **Sentinel HTTP APIs** exposed by **platform-api**, **runtime-control**, and **analytics-api** (routed at `/api/v1/*` via Traefik): platform identity, runtime governance, governance actions, and analytics.
+3. **Sentinel HTTP APIs** exposed by **platform-api**, **runtime-api**, and **analytics-api** (routed at `/api/v1/*` via Traefik): platform identity, runtime governance, governance actions, and analytics.
 
 > **Path prefix:** Public HTTP routes use `/api/v1/*` only. Legacy `/api/*` paths return `404`. Ingress maps prefixes to the three API Deployments; see [`docs/sentinel.md`](sentinel.md).
 
@@ -17,7 +17,7 @@ flowchart LR
     end
     subgraph HTTP["Sentinel HTTP APIs /api/v1"]
         Plat[platform-api auth admin registry]
-        Run[runtime-control governance]
+        Run[runtime-api governance]
         Ana[analytics-api events stats]
     end
     CRDs -- rendered into --> Policy[Policy ConfigMap]
@@ -215,7 +215,7 @@ No `/authorize`, `/token`, `/.well-known/oauth-authorization-server`, PKCE, or D
 
 ## Authentication API
 
-These routes are served by the split API services (`platform-api`, `runtime-control`, `analytics-api`) at `/api/v1/*`. Platform identity routes require the
+These routes are served by the split API services (`platform-api`, `runtime-api`, `analytics-api`) at `/api/v1/*`. Platform identity routes require the
 Postgres-backed platform store (`POSTGRES_DSN` or `DATABASE_URL`) and
 `JWT_SECRET`.
 
@@ -429,7 +429,7 @@ POST /api/v1/runtime/actions/restart     # Body: {component: "platform-api"} or 
 |---|---|
 | **Grant Toggle** | Enable / disable an `MCPAccessGrant` without deleting it. Disabled grants deny access at the gateway. |
 | **Session Revoke** | Revoke / unrevoke an `MCPAgentSession`. Revoked sessions cannot be used for tool calls. |
-| **Component Restart** | Rolling restart of Sentinel components (`platform-api`, `runtime-control`, `analytics-api`, `ingest`, `processor`, `gateway`, `ui`) or all. |
+| **Component Restart** | Rolling restart of Sentinel components (`platform-api`, `runtime-api`, `analytics-api`, `ingest`, `processor`, `gateway`, `ui`) or all. |
 
 ## Platform Admin and User API
 

@@ -47,7 +47,7 @@ PATCH
 
 declare -a API_SERVICES=(
   "platform-api:mcp-platform-api:platform-api"
-  "runtime-control:mcp-runtime-control:runtime-control"
+  "runtime-api:mcp-runtime-api:runtime-api"
   "analytics-api:mcp-analytics-api:analytics-api"
 )
 
@@ -106,4 +106,4 @@ for ns in $(mcpruntime_org_kubectl get ns -o jsonpath='{range .items[*]}{.metada
   ]"
 done
 
-echo "Rollout complete: platform-api/runtime-control/analytics-api/ui tag ${TAG}"
+echo "Rollout complete: platform-api/runtime-api/analytics-api/ui tag ${TAG}"

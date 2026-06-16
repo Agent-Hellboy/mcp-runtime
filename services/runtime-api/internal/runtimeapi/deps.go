@@ -8,7 +8,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"mcp-runtime-control/internal/platformclient"
+	"mcp-runtime-api/internal/platformclient"
 	"mcp-runtime/pkg/apihttp"
 	"mcp-runtime/pkg/platformauth"
 	"mcp-runtime/pkg/serviceutil"

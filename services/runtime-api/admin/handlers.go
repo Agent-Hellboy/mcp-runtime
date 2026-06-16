@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"mcp-runtime-control/internal/platformclient"
-	"mcp-runtime-control/internal/runtimeapi"
+	"mcp-runtime-api/internal/platformclient"
+	"mcp-runtime-api/internal/runtimeapi"
 	"mcp-runtime/pkg/metadata"
 )
 

@@ -10,7 +10,7 @@ import (
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	runtimeaccess "mcp-runtime-control/internal/runtimeapi/access"
+	runtimeaccess "mcp-runtime-api/internal/runtimeapi/access"
 	sentinelaccess "mcp-runtime/pkg/access"
 	"mcp-runtime/pkg/k8sclient"
 	"mcp-runtime/pkg/serviceutil"

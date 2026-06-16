@@ -1,14 +1,14 @@
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: mcp-runtime-control
+  name: mcp-runtime-api
   namespace: mcp-sentinel
 automountServiceAccountToken: true
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: mcp-runtime-control
+  name: mcp-runtime-api
 rules:
   - apiGroups: ["cert-manager.io"]
     resources: ["certificaterequests"]
@@ -57,7 +57,7 @@ rules:
     verbs: ["get", "list", "watch", "create", "update", "patch"]
   - apiGroups: ["rbac.authorization.k8s.io"]
     resources: ["clusterroles"]
-    resourceNames: ["mcp-runtime-control-team-secrets"]
+    resourceNames: ["mcp-runtime-api-team-secrets"]
     verbs: ["bind"]
   - apiGroups: [""]
     resources: ["users", "groups"]
@@ -78,14 +78,14 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: mcp-runtime-control
+  name: mcp-runtime-api
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: mcp-runtime-control
+  name: mcp-runtime-api
 subjects:
   - kind: ServiceAccount
-    name: mcp-runtime-control
+    name: mcp-runtime-api
     namespace: mcp-sentinel
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -95,7 +95,7 @@ metadata:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: mcp-runtime-control
+  name: mcp-runtime-api
 subjects:
   - kind: Group
     name: platform:role:admin
@@ -104,7 +104,7 @@ subjects:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: mcp-runtime-control-registry-push
+  name: mcp-runtime-api-registry-push
   namespace: mcp-sentinel
 rules:
   - apiGroups: [""]
@@ -120,21 +120,21 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: mcp-runtime-control-registry-push
+  name: mcp-runtime-api-registry-push
   namespace: mcp-sentinel
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: mcp-runtime-control-registry-push
+  name: mcp-runtime-api-registry-push
 subjects:
   - kind: ServiceAccount
-    name: mcp-runtime-control
+    name: mcp-runtime-api
     namespace: mcp-sentinel
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: mcp-runtime-control-team-secrets
+  name: mcp-runtime-api-team-secrets
 rules:
   - apiGroups: [""]
     resources: ["secrets"]
@@ -143,7 +143,7 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: mcp-runtime-control-user-key-secret
+  name: mcp-runtime-api-user-key-secret
   namespace: mcp-sentinel
 rules:
   - apiGroups: [""]
@@ -161,13 +161,13 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: mcp-runtime-control-user-key-secret
+  name: mcp-runtime-api-user-key-secret
   namespace: mcp-sentinel
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: mcp-runtime-control-user-key-secret
+  name: mcp-runtime-api-user-key-secret
 subjects:
   - kind: ServiceAccount
-    name: mcp-runtime-control
+    name: mcp-runtime-api
     namespace: mcp-sentinel

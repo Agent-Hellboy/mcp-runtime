@@ -1,12 +1,12 @@
 # Sentinel API authn/authz matrix
 
 This is the **source of truth** for which roles can call which endpoint on the
-split Sentinel API services (`mcp-platform-api`, `mcp-runtime-control`,
+split Sentinel API services (`mcp-platform-api`, `mcp-runtime-api`,
 `mcp-analytics-api`). The `security-audit-platform` skill (see
 `.codex/skills/security-audit-platform/SKILL.md`, Step 2) compares the live
 services against this table. A divergence in either direction is a finding:
 
-- A route in `services/platform-api/routes.go`, `services/runtime-control/routes.go`,
+- A route in `services/platform-api/routes.go`, `services/runtime-api/routes.go`,
   or `services/analytics-api/routes.go` that is missing from this table → add a
   row, then verify the expected status.
 - A row whose expected status differs from the live response → fix the

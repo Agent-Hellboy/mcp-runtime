@@ -34,7 +34,7 @@ kubectl get secret mcp-sentinel-secrets -n mcp-sentinel -o jsonpath='{.data.INGE
 
 - `UI_API_KEY` must appear in both `API_KEYS` and `ADMIN_API_KEYS` for admin curl + browser login
 - `INGEST_API_KEYS` for analytics ingest only
-- After secret changes: roll platform-api, runtime-control, analytics-api, UI, ingest, and gateway workloads
+- After secret changes: roll platform-api, runtime-api, analytics-api, UI, ingest, and gateway workloads
 - `/api/v1` 401 → `./bin/mcp-runtime cluster doctor`
 
 ## Test-mode logins

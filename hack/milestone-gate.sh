@@ -9,7 +9,7 @@ cd "$ROOT"
 SCOPE="${1:-all}"
 
 echo "=== Step 1/3: Trivy sentinel API images ==="
-bash hack/trivy-sentinel-images.sh platform-api analytics-api runtime-control
+bash hack/trivy-sentinel-images.sh platform-api analytics-api runtime-api
 
 echo "=== Step 2/3: OpenAPI breaking-change check (optional) ==="
 bash hack/oasdiff-openapi.sh

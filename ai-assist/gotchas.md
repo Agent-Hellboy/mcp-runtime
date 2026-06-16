@@ -146,8 +146,8 @@ not direct access to cluster secrets.
 
 References:
 - `services/analytics-api/internal/analytics/handlers.go` (`Events`)
-- `services/runtime-control/internal/runtimeapi/server_events.go` (`HandleRuntimeServerEvents`)
-- `services/runtime-control/routes.go` route `/api/v1/runtime/server-events`
+- `services/runtime-api/internal/runtimeapi/server_events.go` (`HandleRuntimeServerEvents`)
+- `services/runtime-api/routes.go` route `/api/v1/runtime/server-events`
 
 Added: 2026-05-24
 

@@ -154,7 +154,7 @@ func checkSentinelAPIAuthProbe(kubectl core.KubectlRunner) DoctorCheck {
 		"--connect-timeout", "5",
 		"--max-time", "20",
 		"-H", "x-api-key: " + apiKey,
-		fmt.Sprintf("http://%s.%s.svc.cluster.local:%d/api/v1/runtime/components", doctorRuntimeControlService, doctorSentinelNamespace, doctorRuntimeControlPort),
+		fmt.Sprintf("http://%s.%s.svc.cluster.local:%d/api/v1/runtime/components", doctorRuntimeAPIService, doctorSentinelNamespace, doctorRuntimeAPIPort),
 	}
 	defer func() {
 		_ = kubectl.Run([]string{"delete", "pod", podName, "-n", doctorSentinelNamespace, "--ignore-not-found"})

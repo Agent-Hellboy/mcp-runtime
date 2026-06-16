@@ -21,7 +21,7 @@ mcpruntime_org_ensure_platform_pull_secret() {
     --docker-username=platform-service \
     --docker-password="$api_key" \
     --dry-run=client -o yaml | mcpruntime_org_kubectl apply -f -
-  mcpruntime_org_kubectl patch deployment/mcp-platform-api deployment/mcp-runtime-control deployment/mcp-analytics-api deployment/mcp-sentinel-ui \
+  mcpruntime_org_kubectl patch deployment/mcp-platform-api deployment/mcp-runtime-api deployment/mcp-analytics-api deployment/mcp-sentinel-ui \
     -n mcp-sentinel \
     -p '{"spec":{"template":{"spec":{"imagePullSecrets":[{"name":"mcp-runtime-registry-pull"}]}}}}'
 }

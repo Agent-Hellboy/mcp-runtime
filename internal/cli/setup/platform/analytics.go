@@ -149,8 +149,8 @@ func deployAnalyticsManifestsClientGo(logger *zap.Logger, images AnalyticsImageS
 		"k8s/07-processor.yaml",
 		"k8s/08-platform-api.yaml",
 		"k8s/08-platform-api-rbac.yaml",
-		"k8s/08-runtime-control.yaml",
-		"k8s/08-runtime-control-rbac.yaml",
+		"k8s/08-runtime-api.yaml",
+		"k8s/08-runtime-api-rbac.yaml",
 		"k8s/08-analytics-api.yaml",
 		"k8s/22-split-api-networkpolicy.yaml",
 		"k8s/09-ui.yaml",
@@ -188,7 +188,7 @@ func deployAnalyticsManifestsClientGo(logger *zap.Logger, images AnalyticsImageS
 		{kind: "deployment", name: "mcp-sentinel-ingest"},
 		{kind: "deployment", name: "mcp-sentinel-processor"},
 		{kind: "deployment", name: "mcp-platform-api"},
-		{kind: "deployment", name: "mcp-runtime-control"},
+		{kind: "deployment", name: "mcp-runtime-api"},
 		{kind: "deployment", name: "mcp-analytics-api"},
 		{kind: "deployment", name: "mcp-sentinel-ui"},
 		{kind: "deployment", name: "mcp-sentinel-gateway"},
@@ -319,8 +319,8 @@ func deployAnalyticsManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap
 		"k8s/07-processor.yaml",
 		"k8s/08-platform-api.yaml",
 		"k8s/08-platform-api-rbac.yaml",
-		"k8s/08-runtime-control.yaml",
-		"k8s/08-runtime-control-rbac.yaml",
+		"k8s/08-runtime-api.yaml",
+		"k8s/08-runtime-api-rbac.yaml",
 		"k8s/08-analytics-api.yaml",
 		"k8s/22-split-api-networkpolicy.yaml",
 		"k8s/09-ui.yaml",
@@ -351,7 +351,7 @@ func deployAnalyticsManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap
 		{kind: "deployment", name: "mcp-sentinel-ingest"},
 		{kind: "deployment", name: "mcp-sentinel-processor"},
 		{kind: "deployment", name: "mcp-platform-api"},
-		{kind: "deployment", name: "mcp-runtime-control"},
+		{kind: "deployment", name: "mcp-runtime-api"},
 		{kind: "deployment", name: "mcp-analytics-api"},
 		{kind: "deployment", name: "mcp-sentinel-ui"},
 		{kind: "deployment", name: "mcp-sentinel-gateway"},
@@ -683,8 +683,8 @@ func renderAnalyticsManifest(content string, images AnalyticsImageSet, imagePull
 	if strings.TrimSpace(images.PlatformAPI) != "" {
 		replacements["image: mcp-platform-api:latest"] = "image: " + images.PlatformAPI
 	}
-	if strings.TrimSpace(images.RuntimeControl) != "" {
-		replacements["image: mcp-runtime-control:latest"] = "image: " + images.RuntimeControl
+	if strings.TrimSpace(images.RuntimeAPI) != "" {
+		replacements["image: mcp-runtime-api:latest"] = "image: " + images.RuntimeAPI
 	}
 	if strings.TrimSpace(images.AnalyticsAPI) != "" {
 		replacements["image: mcp-analytics-api:latest"] = "image: " + images.AnalyticsAPI
@@ -1279,7 +1279,7 @@ func analyticsImagePullSecretCandidates(images AnalyticsImageSet) []string {
 	return []string{
 		images.Ingest,
 		images.PlatformAPI,
-		images.RuntimeControl,
+		images.RuntimeAPI,
 		images.AnalyticsAPI,
 		images.Processor,
 		images.UI,
@@ -1627,7 +1627,7 @@ func restartAnalyticsDeploymentsClientGo() error {
 	now := time.Now()
 	deployments := []string{
 		"mcp-platform-api",
-		"mcp-runtime-control",
+		"mcp-runtime-api",
 		"mcp-analytics-api",
 		"mcp-sentinel-ui",
 		"mcp-sentinel-ingest",

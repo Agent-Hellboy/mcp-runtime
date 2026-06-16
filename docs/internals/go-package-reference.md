@@ -5302,7 +5302,7 @@ var DefaultPlatformStatusWorkloads = []PlatformWorkload{
 	{Component: "Ingest", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-sentinel-ingest"},
 	{Component: "Processor", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-sentinel-processor"},
 	{Component: "Platform API", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-platform-api"},
-	{Component: "Runtime Control", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-runtime-control"},
+	{Component: "Runtime Control", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-runtime-api"},
 	{Component: "Analytics API", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-analytics-api"},
 	{Component: "UI", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-sentinel-ui"},
 	{Component: "Gateway", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-sentinel-gateway"},
@@ -6455,21 +6455,21 @@ func ValidateTLSSetupCLIFlags(
 <a id="cli-setup-platform-type-analyticsimageset-struct"></a>
 ```text
 type AnalyticsImageSet struct {
-	Ingest         string
-	PlatformAPI    string
-	RuntimeControl string
-	AnalyticsAPI   string
-	Processor      string
-	UI             string
-	Traefik        string
-	ClickHouse     string
-	Kafka          string
-	Prometheus     string
-	OTelCollector  string
-	Tempo          string
-	Loki           string
-	Promtail       string
-	Grafana        string
+	Ingest        string
+	PlatformAPI   string
+	RuntimeAPI    string
+	AnalyticsAPI  string
+	Processor     string
+	UI            string
+	Traefik       string
+	ClickHouse    string
+	Kafka         string
+	Prometheus    string
+	OTelCollector string
+	Tempo         string
+	Loki          string
+	Promtail      string
+	Grafana       string
 }
 
 ```

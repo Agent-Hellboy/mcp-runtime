@@ -37,7 +37,7 @@ func TestRenderPlatformUIIngressNoTLS(t *testing.T) {
 		"- path: /\n",
 		"name: mcp-platform-api",
 		"name: mcp-analytics-api",
-		"name: mcp-runtime-control",
+		"name: mcp-runtime-api",
 		"name: mcp-sentinel-ui",
 		"name: grafana",
 		"number: 8082",

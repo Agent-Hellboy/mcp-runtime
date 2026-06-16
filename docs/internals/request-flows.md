@@ -157,7 +157,7 @@ sequenceDiagram
     participant Ingress as Traefik
     participant UI as mcp-sentinel-ui
     participant Platform as mcp-platform-api
-    participant Runtime as mcp-runtime-control
+    participant Runtime as mcp-runtime-api
     participant DB as Postgres
     participant K8s as Kubernetes API
     participant Store as ClickHouse

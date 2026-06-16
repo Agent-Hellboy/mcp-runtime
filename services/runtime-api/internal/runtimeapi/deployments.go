@@ -503,8 +503,8 @@ func (s *RuntimeServer) ensureManagedNamespace(ctx context.Context, namespace st
 }
 
 const registryPullSecretName = "mcp-runtime-registry-pull" // #nosec G101 -- Kubernetes Secret object name, not credential material.
-const platformNamespaceAPISecretAccessName = "mcp-runtime-control-team-secrets"
-const platformNamespaceAPIServiceAccountName = "mcp-runtime-control"
+const platformNamespaceAPISecretAccessName = "mcp-runtime-api-team-secrets"
+const platformNamespaceAPIServiceAccountName = "mcp-runtime-api"
 
 func (s *RuntimeServer) ensureNamespaceRegistryPullSecret(ctx context.Context, client kubernetes.Interface, namespace string) error {
 	registryHost := registryPullSecretHost()

@@ -89,7 +89,7 @@ spec:
                   key: INTERNAL_AUTH_TOKEN
                   optional: true
             - name: RUNTIME_CONTROL_URL
-              value: "http://mcp-runtime-control.mcp-sentinel.svc.cluster.local:8084"
+              value: "http://mcp-runtime-api.mcp-sentinel.svc.cluster.local:8084"
             - name: ADMIN_USERS
               valueFrom:
                 secretKeyRef:

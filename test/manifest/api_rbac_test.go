@@ -33,7 +33,7 @@ type rbacDoc struct {
 }
 
 func TestRegistryPushRBACIsNamespaceScoped(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("..", "..", "k8s", "08-runtime-control-rbac.yaml"))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "k8s", "08-runtime-api-rbac.yaml"))
 	if err != nil {
 		t.Fatalf("read RBAC manifest: %v", err)
 	}
@@ -52,26 +52,26 @@ func TestRegistryPushRBACIsNamespaceScoped(t *testing.T) {
 			t.Fatalf("decode RBAC manifest: %v", err)
 		}
 		switch {
-		case doc.Kind == "ClusterRole" && doc.Metadata.Name == "mcp-runtime-control":
+		case doc.Kind == "ClusterRole" && doc.Metadata.Name == "mcp-runtime-api":
 			for _, rule := range doc.Rules {
 				if containsAll(rule.Resources, "pods") && containsAny(rule.Verbs, "create", "delete", "watch") {
-					t.Fatalf("cluster role mcp-runtime-control must not grant mutating pod access cluster-wide")
+					t.Fatalf("cluster role mcp-runtime-api must not grant mutating pod access cluster-wide")
 				}
 				if containsAll(rule.Resources, "pods/exec") {
 					foundClusterPodsExec = true
 				}
 			}
-		case doc.Kind == "Role" && doc.Metadata.Name == "mcp-runtime-control-registry-push" && doc.Metadata.Namespace == "mcp-sentinel":
+		case doc.Kind == "Role" && doc.Metadata.Name == "mcp-runtime-api-registry-push" && doc.Metadata.Namespace == "mcp-sentinel":
 			foundSentinelRole = true
 			for _, rule := range doc.Rules {
 				if containsAll(rule.Resources, "pods/exec") {
 					t.Fatalf("registry push role in mcp-sentinel must not grant pods/exec")
 				}
 			}
-		case doc.Kind == "RoleBinding" && doc.Metadata.Name == "mcp-runtime-control-registry-push" && doc.Metadata.Namespace == "mcp-sentinel":
-			if doc.RoleRef.Kind == "Role" && doc.RoleRef.Name == "mcp-runtime-control-registry-push" {
+		case doc.Kind == "RoleBinding" && doc.Metadata.Name == "mcp-runtime-api-registry-push" && doc.Metadata.Namespace == "mcp-sentinel":
+			if doc.RoleRef.Kind == "Role" && doc.RoleRef.Name == "mcp-runtime-api-registry-push" {
 				for _, subject := range doc.Subjects {
-					if subject.Kind == "ServiceAccount" && subject.Name == "mcp-runtime-control" && subject.Namespace == "mcp-sentinel" {
+					if subject.Kind == "ServiceAccount" && subject.Name == "mcp-runtime-api" && subject.Namespace == "mcp-sentinel" {
 						foundSentinelRoleBinding = true
 					}
 				}
@@ -85,7 +85,7 @@ func TestRegistryPushRBACIsNamespaceScoped(t *testing.T) {
 		}
 	}
 	if foundClusterPodsExec {
-		t.Fatal("cluster role mcp-runtime-control must not grant pods/exec cluster-wide")
+		t.Fatal("cluster role mcp-runtime-api must not grant pods/exec cluster-wide")
 	}
 	if foundRegistryPodsExec {
 		t.Fatal("registry namespace must not grant pods/exec for registry push")

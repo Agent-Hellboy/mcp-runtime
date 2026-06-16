@@ -81,16 +81,16 @@ var Components = []Component{
 		},
 	},
 	{
-		Key:       "runtime-control",
+		Key:       "runtime-api",
 		Display:   "Runtime Control",
 		Namespace: DefaultNamespace,
 		Kind:      "deployment",
-		Resource:  "mcp-runtime-control",
-		Label:     "mcp-runtime-control",
+		Resource:  "mcp-runtime-api",
+		Label:     "mcp-runtime-api",
 		Aliases:   []string{"runtime"},
 		PortTarget: &PortTarget{
 			ResourceKind: "service",
-			ResourceName: "mcp-runtime-control",
+			ResourceName: "mcp-runtime-api",
 			LocalPort:    8084,
 			RemotePort:   8084,
 		},
@@ -246,14 +246,14 @@ func FindPortTarget(name string) (*PortTarget, error) {
 // IsCoreComponent returns true if the component is part of the core Sentinel runtime.
 func IsCoreComponent(key string) bool {
 	core := map[string]bool{
-		"platform-api":    true,
-		"runtime-control": true,
-		"analytics-api":   true,
-		"api":             true,
-		"ingest":          true,
-		"processor":       true,
-		"gateway":         true,
-		"ui":              true,
+		"platform-api":  true,
+		"runtime-api":   true,
+		"analytics-api": true,
+		"api":           true,
+		"ingest":        true,
+		"processor":     true,
+		"gateway":       true,
+		"ui":            true,
 	}
 	return core[key]
 }

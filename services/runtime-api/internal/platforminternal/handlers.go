@@ -6,12 +6,12 @@ import (
 	"net/http"
 	"strings"
 
-	"mcp-runtime-control/internal/platformclient"
-	"mcp-runtime-control/internal/runtimeapi"
+	"mcp-runtime-api/internal/platformclient"
+	"mcp-runtime-api/internal/runtimeapi"
 	"mcp-runtime/pkg/apihttp"
 )
 
-// Handler serves runtime-control internal endpoints for peer services.
+// Handler serves runtime-api internal endpoints for peer services.
 type Handler struct {
 	Runtime  *runtimeapi.RuntimeServer
 	Platform *platformclient.Client

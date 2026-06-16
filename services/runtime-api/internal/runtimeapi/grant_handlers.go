@@ -4,19 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
 	"time"
 
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	runtimeaccess "mcp-runtime-control/internal/runtimeapi/access"
+	runtimeaccess "mcp-runtime-api/internal/runtimeapi/access"
 	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
 	sentinelaccess "mcp-runtime/pkg/access"
 )
 
-func validateSessionRequest(req *accessSessionRequest) error {
+func validateGrantRequest(req *accessGrantRequest) error {
 	req.Name = strings.TrimSpace(req.Name)
 	req.Namespace = runtimeaccess.DefaultAccessNamespace(req.Namespace)
 	req.ServerRef.Name = sentinelaccess.ServerName(strings.TrimSpace(string(req.ServerRef.Name)))
@@ -25,7 +25,7 @@ func validateSessionRequest(req *accessSessionRequest) error {
 	req.Subject.AgentID = sentinelaccess.AgentID(strings.TrimSpace(string(req.Subject.AgentID)))
 	req.Subject.TeamID = sentinelaccess.TeamID(strings.TrimSpace(string(req.Subject.TeamID)))
 	req.PolicyVersion = runtimeaccess.DefaultPolicyVersion(req.PolicyVersion)
-	req.ConsentedTrust = runtimeaccess.NormalizeTrust(req.ConsentedTrust)
+	req.MaxTrust = runtimeaccess.NormalizeTrust(req.MaxTrust)
 	if err := sentinelaccess.ValidateResourceName("name", req.Name); err != nil {
 		return err
 	}
@@ -44,13 +44,44 @@ func validateSessionRequest(req *accessSessionRequest) error {
 	if err := runtimeaccess.ValidateTeamIDValue("subject.teamID", string(req.Subject.TeamID)); err != nil {
 		return err
 	}
-	if req.ConsentedTrust != "" && !runtimeaccess.ValidTrust(req.ConsentedTrust) {
-		return errors.New("consentedTrust must be low, medium, or high")
+	if req.MaxTrust != "" && !runtimeaccess.ValidTrust(req.MaxTrust) {
+		return errors.New("maxTrust must be low, medium, or high")
+	}
+	if len(req.AllowedSideEffects) == 0 {
+		return errors.New("at least one allowed side effect is required")
+	}
+	seenSideEffects := map[sentinelaccess.ToolSideEffect]struct{}{}
+	for i := range req.AllowedSideEffects {
+		req.AllowedSideEffects[i] = runtimeaccess.NormalizeSideEffect(req.AllowedSideEffects[i])
+		if req.AllowedSideEffects[i] == "" {
+			return fmt.Errorf("allowedSideEffects[%d] is required", i)
+		}
+		if !runtimeaccess.ValidSideEffect(req.AllowedSideEffects[i]) {
+			return fmt.Errorf("allowedSideEffects[%d] must be read, write, or destructive", i)
+		}
+		if _, ok := seenSideEffects[req.AllowedSideEffects[i]]; ok {
+			return fmt.Errorf("allowedSideEffects[%d] is a duplicate", i)
+		}
+		seenSideEffects[req.AllowedSideEffects[i]] = struct{}{}
+	}
+	for i := range req.ToolRules {
+		req.ToolRules[i].Name = strings.TrimSpace(req.ToolRules[i].Name)
+		req.ToolRules[i].Decision = sentinelaccess.PolicyDecision(strings.TrimSpace(string(req.ToolRules[i].Decision)))
+		req.ToolRules[i].RequiredTrust = runtimeaccess.NormalizeTrust(req.ToolRules[i].RequiredTrust)
+		if req.ToolRules[i].Name == "" {
+			return fmt.Errorf("toolRules[%d].name is required", i)
+		}
+		if !runtimeaccess.ValidDecision(req.ToolRules[i].Decision) {
+			return fmt.Errorf("toolRules[%d].decision must be allow or deny", i)
+		}
+		if req.ToolRules[i].RequiredTrust != "" && !runtimeaccess.ValidTrust(req.ToolRules[i].RequiredTrust) {
+			return fmt.Errorf("toolRules[%d].requiredTrust must be low, medium, or high", i)
+		}
 	}
 	return nil
 }
 
-func (s *RuntimeServer) handleRuntimeSessionList(w http.ResponseWriter, r *http.Request) {
+func (s *RuntimeServer) handleRuntimeGrantList(w http.ResponseWriter, r *http.Request) {
 	if s.accessMgr == nil {
 		writeAPIError(w, http.StatusServiceUnavailable, "kubernetes not available")
 		return
@@ -64,9 +95,9 @@ func (s *RuntimeServer) handleRuntimeSessionList(w http.ResponseWriter, r *http.
 		writeAPIError(w, http.StatusForbidden, err.Error())
 		return
 	}
-	sessions, err := s.accessMgr.ListSessions(ctx, namespace)
+	grants, err := s.accessMgr.ListGrants(ctx, namespace)
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "failed to list sessions")
+		writeAPIError(w, http.StatusInternalServerError, "failed to list grants")
 		return
 	}
 
@@ -74,17 +105,17 @@ func (s *RuntimeServer) handleRuntimeSessionList(w http.ResponseWriter, r *http.
 	filterByPrincipal = filterByPrincipal && p.Role != roleAdmin
 	var serverCache accessServerCache
 	if filterByPrincipal {
-		serverCache, err = s.accessServerCacheForSessionRefs(ctx, namespace, sessions.Items)
+		serverCache, err = s.accessServerCacheForGrantRefs(ctx, namespace, grants.Items)
 		if err != nil {
-			log.Printf("runtime session list: list MCPServers for visibility failed: %v", err)
+			log.Printf("runtime grant list: list MCPServers for visibility failed: %v", err)
 			writeAPIError(w, http.StatusInternalServerError, "failed to inspect server references")
 			return
 		}
 	}
 
-	summaries := make([]sentinelaccess.SessionSummary, 0, len(sessions.Items))
-	for _, sess := range sessions.Items {
-		if filterByPrincipal && !runtimeaccess.AccessRefVisibleWithServerCache(sess.Namespace, sess.Spec.ServerRef, serverCache,
+	summaries := make([]sentinelaccess.GrantSummary, 0, len(grants.Items))
+	for _, g := range grants.Items {
+		if filterByPrincipal && !runtimeaccess.AccessRefVisibleWithServerCache(g.Namespace, g.Spec.ServerRef, serverCache,
 			func(server mcpv1alpha1.MCPServer) bool { return principalCanAdministerMCPServer(p, server) },
 			func(namespace string, serverLabels map[string]string) bool {
 				return principalCanAdministerServerLabels(p, namespace, serverLabels)
@@ -92,23 +123,19 @@ func (s *RuntimeServer) handleRuntimeSessionList(w http.ResponseWriter, r *http.
 		) {
 			continue
 		}
-		summaries = append(summaries, sentinelaccess.ToSessionSummary(sess))
+		summaries = append(summaries, sentinelaccess.ToGrantSummary(g))
 	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{"sessions": summaries})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"grants": summaries})
 }
 
-func (s *RuntimeServer) handleRuntimeSessionApply(w http.ResponseWriter, r *http.Request) {
+func (s *RuntimeServer) handleRuntimeGrantApply(w http.ResponseWriter, r *http.Request) {
 	if s.accessMgr == nil {
 		writeAPIError(w, http.StatusServiceUnavailable, "kubernetes not available")
 		return
 	}
-	if p, ok := principalFromContext(r.Context()); ok && p.Role != roleAdmin {
-		writeAPIError(w, http.StatusForbidden, "admin role required")
-		return
-	}
 
-	var req accessSessionRequest
+	var req accessGrantRequest
 	r.Body = http.MaxBytesReader(w, r.Body, accessApplyMaxBytes)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeBodyDecodeError(w, err)
@@ -117,7 +144,7 @@ func (s *RuntimeServer) handleRuntimeSessionApply(w http.ResponseWriter, r *http
 	if p, ok := principalFromContext(r.Context()); ok && p.Role != roleAdmin && strings.TrimSpace(req.Namespace) == "" {
 		req.Namespace = strings.TrimSpace(p.Namespace)
 	}
-	if err := validateSessionRequest(&req); err != nil {
+	if err := validateGrantRequest(&req); err != nil {
 		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -140,7 +167,7 @@ func (s *RuntimeServer) handleRuntimeSessionApply(w http.ResponseWriter, r *http
 		if sentinelaccess.IsMCPServerNotFoundForRef(err) {
 			writeAPIError(w, http.StatusBadRequest, err.Error())
 		} else {
-			log.Printf("runtime session: assert MCPServer ref failed: %v", err)
+			log.Printf("runtime grant: assert MCPServer ref failed: %v", err)
 			writeAPIError(w, http.StatusInternalServerError, "failed to verify server reference")
 		}
 		return
@@ -154,45 +181,32 @@ func (s *RuntimeServer) handleRuntimeSessionApply(w http.ResponseWriter, r *http
 		return
 	}
 
-	revoked, err := s.sessionRevokedForApply(ctx, req)
+	disabled, err := s.grantDisabledForApply(ctx, req)
 	if err != nil {
-		log.Printf("read session state %s/%s failed: %v", req.Namespace, req.Name, err)
-		writeAPIError(w, http.StatusInternalServerError, "failed to read session state")
+		log.Printf("read grant state %s/%s failed: %v", req.Namespace, req.Name, err)
+		writeAPIError(w, http.StatusInternalServerError, "failed to read grant state")
 		return
 	}
 
-	session := &sentinelaccess.MCPAgentSession{
+	grant := &sentinelaccess.MCPAccessGrant{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      req.Name,
 			Namespace: runtimeaccess.DefaultAccessNamespace(req.Namespace),
 		},
-		Spec: sentinelaccess.MCPAgentSessionSpec{
-			ServerRef:      req.ServerRef,
-			Subject:        req.Subject,
-			ConsentedTrust: req.ConsentedTrust,
-			ExpiresAt:      req.ExpiresAt,
-			Revoked:        revoked,
-			PolicyVersion:  runtimeaccess.DefaultPolicyVersion(req.PolicyVersion),
+		Spec: sentinelaccess.MCPAccessGrantSpec{
+			ServerRef:          req.ServerRef,
+			Subject:            req.Subject,
+			MaxTrust:           req.MaxTrust,
+			AllowedSideEffects: req.AllowedSideEffects,
+			PolicyVersion:      runtimeaccess.DefaultPolicyVersion(req.PolicyVersion),
+			Disabled:           disabled,
+			ToolRules:          req.ToolRules,
 		},
 	}
-	applied, err := s.accessMgr.ApplySession(ctx, session)
+	applied, err := s.accessMgr.ApplyGrant(ctx, grant)
 	if err != nil {
-		writeK8sApplyError(w, "session", session.Namespace, session.Name, err)
+		writeK8sApplyError(w, "grant", grant.Namespace, grant.Name, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"session": sentinelaccess.ToSessionSummary(*applied)})
-}
-
-func (s *RuntimeServer) sessionRevokedForApply(ctx context.Context, req accessSessionRequest) (bool, error) {
-	if req.Revoked != nil {
-		return *req.Revoked, nil
-	}
-	existing, err := s.accessMgr.GetSession(ctx, req.Name, runtimeaccess.DefaultAccessNamespace(req.Namespace))
-	if apierrors.IsNotFound(err) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	return existing.Spec.Revoked, nil
+	writeJSON(w, http.StatusOK, map[string]interface{}{"grant": sentinelaccess.ToGrantSummary(*applied)})
 }

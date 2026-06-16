@@ -34,7 +34,7 @@ if [ "$SCOPE" = "m13" ] || [ "$SCOPE" = "m15" ] || [ "$SCOPE" = "m16" ] || [ "$S
   kubectl -n "$NS" port-forward svc/mcp-analytics-api 18095:8085 >/tmp/pf-analytics.log 2>&1 &
 fi
 if [ "$SCOPE" = "m14" ] || [ "$SCOPE" = "m15" ] || [ "$SCOPE" = "m16" ] || [ "$SCOPE" = "m2" ] || [ "$SCOPE" = "all" ]; then
-  kubectl -n "$NS" port-forward svc/mcp-runtime-control 18084:8084 >/tmp/pf-runtime.log 2>&1 &
+  kubectl -n "$NS" port-forward svc/mcp-runtime-api 18084:8084 >/tmp/pf-runtime.log 2>&1 &
 fi
 sleep 3
 
@@ -59,7 +59,7 @@ if [ "$SCOPE" = "m13" ] || [ "$SCOPE" = "all" ]; then
 fi
 
 if [ "$SCOPE" = "m14" ] || [ "$SCOPE" = "all" ]; then
-  echo "=== M1.4 runtime-control ==="
+  echo "=== M1.4 runtime-api ==="
   check runtime-health 200 "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:18084/health)"
   check runtime-ready 200 "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:18084/ready)"
   check runtime-servers-v1 200 "$(curl -sS -o /dev/null -w '%{http_code}' -H "x-api-key: $ADMIN_KEY" http://127.0.0.1:18084/api/v1/runtime/servers)"

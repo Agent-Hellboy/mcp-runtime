@@ -3,7 +3,7 @@ package runtimehandlers
 import (
 	"net/http"
 
-	"mcp-runtime-control/internal/runtimeapi"
+	"mcp-runtime-api/internal/runtimeapi"
 )
 
 // HandleDashboardSummary routes the admin dashboard summary through the runtime API server.
