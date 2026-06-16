@@ -8,10 +8,13 @@ cd "$ROOT"
 
 SCOPE="${1:-all}"
 
-echo "=== Step 1/2: Trivy sentinel API images ==="
+echo "=== Step 1/3: Trivy sentinel API images ==="
 bash hack/trivy-sentinel-images.sh platform-api analytics-api runtime-control
 
-echo "=== Step 2/2: Live cluster validation ($SCOPE) ==="
+echo "=== Step 2/3: OpenAPI breaking-change check (optional) ==="
+bash hack/oasdiff-openapi.sh
+
+echo "=== Step 3/3: Live cluster validation ($SCOPE) ==="
 bash hack/validate-api-split-milestone.sh "$SCOPE"
 
 echo "=== MILESTONE GATE OK ==="

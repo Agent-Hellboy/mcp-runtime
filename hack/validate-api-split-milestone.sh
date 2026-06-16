@@ -95,10 +95,10 @@ fi
 if [ "$SCOPE" = "m2" ] || [ "$SCOPE" = "all" ]; then
   echo "=== M2 split cutover ==="
   MONOLITH_REPLICAS=$(kubectl -n "$NS" get deploy mcp-sentinel-api -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "absent")
-  if [ "$MONOLITH_REPLICAS" != "absent" ] && [ "${MONOLITH_REPLICAS:-0}" != "0" ]; then
-    check monolith-scaled-to-zero 0 "$MONOLITH_REPLICAS"
+  if [ "$MONOLITH_REPLICAS" = "absent" ] || [ "${MONOLITH_REPLICAS:-0}" = "0" ]; then
+    check monolith-scaled-to-zero 0 "${MONOLITH_REPLICAS:-0}"
   else
-    check monolith-absent absent "${MONOLITH_REPLICAS:-absent}"
+    check monolith-scaled-to-zero 0 "$MONOLITH_REPLICAS"
   fi
 
   pkill -f 'port-forward svc/mcp-sentinel-gateway' 2>/dev/null || true
@@ -112,6 +112,12 @@ if [ "$SCOPE" = "m2" ] || [ "$SCOPE" = "all" ]; then
   check platform-openapi 200 "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:18080/api/v1/openapi.yaml)"
   check runtime-openapi 200 "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:18084/api/v1/openapi.yaml)"
   check analytics-openapi 200 "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:18095/api/v1/openapi.yaml)"
+  if [ -n "$ADMIN_KEY" ]; then
+    BODY=$(curl -sS -H "x-api-key: $ADMIN_KEY" 'http://127.0.0.1:18083/api/v1/events?limit=1')
+    echo "$BODY" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert "meta" in d, d' >/dev/null 2>&1 \
+      && check analytics-events-meta present "present" \
+      || check analytics-events-meta present "missing"
+  fi
 fi
 
 pkill -f 'port-forward svc/mcp-' 2>/dev/null || true

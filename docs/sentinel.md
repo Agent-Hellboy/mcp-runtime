@@ -151,7 +151,7 @@ cardinality.
 ### Split API services
 
 The monolith `services/api` (`mcp-sentinel-api`) was split into three binaries.
-Traefik routes `/api/v1/*` by path prefix; there is no `/api/v1/*` compatibility
+Traefik routes `/api/v1/*` by path prefix; there is no `/api/*` compatibility
 layer. Each service publishes `GET /api/v1/openapi.yaml` and uses `pkg/apihttp`
 stable error envelopes.
 

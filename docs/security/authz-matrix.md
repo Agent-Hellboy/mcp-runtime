@@ -137,11 +137,8 @@ review, the JSON is canonical for the harness.
 
 ## Open follow-ups
 
-- Add Go tests in `services/platform-api/`, `services/runtime-control/`, and
-  `services/analytics-api/` that load `authz-matrix.json` and assert each row
-  against the live `http.Handler` using `httptest.NewServer`. Today this matrix
-  is verified manually; the test should fail when a route is added without a
-  matrix entry.
+- Expand `docs/security/authz-matrix.json` toward full parity with the markdown
+  table; run `bash hack/validate-authz-matrix.sh` on a live cluster for drift.
 - Confirm whether `user-key` and `user-cookie` should be merged for
   authorization purposes, or whether some routes (e.g., billing, admin
   bootstrap) intentionally accept only one credential type.
