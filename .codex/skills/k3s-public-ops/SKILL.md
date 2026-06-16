@@ -102,7 +102,7 @@ Then verify:
 
 ```bash
 kubectl --kubeconfig /private/tmp/mcpruntime-k3s.yaml \
-  get deploy mcp-sentinel-api mcp-sentinel-ui -n mcp-sentinel \
+  get deploy mcp-platform-api mcp-runtime-control mcp-analytics-api mcp-sentinel-ui -n mcp-sentinel \
   -o jsonpath='{range .items[*]}{.metadata.name}{"|"}{range .spec.template.spec.imagePullSecrets[*]}{.name}{","}{end}{"|"}{range .spec.template.spec.containers[*]}{.image}{";"}{end}{"|"}{.status.readyReplicas}{"/"}{.status.replicas}{"\n"}{end}'
 
 KUBECONFIG=/private/tmp/mcpruntime-k3s.yaml ./bin/mcp-runtime cluster doctor
@@ -123,7 +123,7 @@ Check public registry route:
 ```bash
 curl -k -i -H "x-api-key: $ADMIN_KEY" https://registry.mcpruntime.org/v2/
 curl -k -I -u "platform-service:$ADMIN_KEY" \
-  https://registry.mcpruntime.org/v2/mcp-sentinel-api/manifests/<tag>
+  https://registry.mcpruntime.org/v2/mcp-platform-api/manifests/<tag>
 ```
 
 Expected:

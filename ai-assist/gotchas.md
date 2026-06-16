@@ -131,22 +131,23 @@ Added: 2026-05-24
 
 ---
 
-### Events API (`/api/events/filter`) requires Sentinel static key; server-events uses platform JWT
+### Events API (`GET /api/v1/events`) is admin-only; server-events uses platform JWT
 
 Two analytics query paths exist with different auth requirements:
 
-- `GET /api/events/filter` — legacy Sentinel ingest endpoint; requires the
-  static `UI_API_KEY` from `mcp-sentinel-secrets`, NOT a platform JWT.
-- `GET /api/runtime/server-events` — platform-layer events proxy; accepts
+- `GET /api/v1/events` — ClickHouse event log on analytics-api; requires an
+  admin `x-api-key` or admin platform JWT.
+- `GET /api/v1/runtime/server-events` — platform-layer events proxy; accepts
   the platform JWT (`Authorization: Bearer <token>`).
 
 For scripts and tests that need to verify tool-call events, prefer
-`/api/runtime/server-events` so the caller only needs a platform login,
+`/api/v1/runtime/server-events` so the caller only needs a platform login,
 not direct access to cluster secrets.
 
 References:
-- `services/api/internal/runtimeapi/server_events.go` (`HandleRuntimeServerEvents`)
-- `services/api/main.go` route `/api/runtime/server-events`
+- `services/analytics-api/internal/analytics/handlers.go` (`Events`)
+- `services/runtime-control/internal/runtimeapi/server_events.go` (`HandleRuntimeServerEvents`)
+- `services/runtime-control/routes.go` route `/api/v1/runtime/server-events`
 
 Added: 2026-05-24
 
@@ -157,7 +158,7 @@ Added: 2026-05-24
 Using `registry.mcpruntime.org` (the auth-gated public ingress) as the
 platform pod image pull URL causes a circular bootstrap deadlock on fresh
 installs: kubelet can't pull the Sentinel API pod image because the
-`registry-admin-auth@file` Traefik middleware calls `/api/registry/authz`
+`registry-admin-auth@file` Traefik middleware calls `/api/v1/registry/authz`
 on Sentinel API — which isn't running yet.
 
 **Fix:** `resolveInternalPlatformRegistryURLClientGo` returns the ClusterIP

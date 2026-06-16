@@ -180,7 +180,7 @@ Tests: `access/manager_test.go` and `access/validation_test.go`.
 
 `internal/cli/adapter/` provides the `adapter proxy` and `adapter stdio`
 commands. The CLI layer resolves shared flags, optional platform-issued adapter
-sessions from `POST /api/runtime/adapter/sessions`, and explicit
+sessions from `POST /api/v1/runtime/adapter/sessions`, and explicit
 `MCP_RUNTIME_*` identity values, then delegates HTTP proxy and stdio transport
 behavior to `internal/agentadapter`.
 

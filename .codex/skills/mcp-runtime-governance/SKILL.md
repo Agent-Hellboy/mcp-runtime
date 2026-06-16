@@ -11,7 +11,7 @@ description: Apply and debug MCP Runtime access grants, agent sessions, gateway 
 |------|--------|
 | **UI** | Create/apply grants and sessions; toggle enable/revoke |
 | **CLI (default)** | `mcp-runtime auth login --api-url <url>` → `access grant init` / `access grant apply --file …` |
-| **Adapter (recommended for agents)** | `adapter stdio\|proxy --server <name> --agent <id> [--auto-refresh]` → `POST /api/runtime/adapter/sessions` |
+| **Adapter (recommended for agents)** | `adapter stdio\|proxy --server <name> --agent <id> [--auto-refresh]` → `POST /api/v1/runtime/adapter/sessions` |
 | **Admin kube fallback** | `kubectl apply -f` or `access … --use-kube` (bypasses platform auth) |
 
 Session apply via platform API is **admin-only**. Adapters usually skip manual session apply.
@@ -53,9 +53,9 @@ spec:
 
 ## HTTP API (admin `x-api-key`)
 
-- `POST /api/runtime/grants`, `POST /api/runtime/sessions`
-- `POST /api/runtime/grants/{ns}/{name}/enable|disable`
-- `POST /api/runtime/sessions/{ns}/{name}/revoke|unrevoke`
+- `POST /api/v1/runtime/grants`, `POST /api/v1/runtime/sessions`
+- `POST /api/v1/runtime/grants/{ns}/{name}/enable|disable`
+- `POST /api/v1/runtime/sessions/{ns}/{name}/revoke|unrevoke`
 
 ## MCP JSON-RPC (local Kind, port-forward 18080)
 
@@ -75,4 +75,4 @@ Kind e2e applies generated access YAML and exercises allow/deny over real MCP tr
 
 - CRDs: `api/v1alpha1/`, `config/crd/bases/`
 - Shared policy: `pkg/access/`, `pkg/policy/`
-- Adapters: `internal/cli/adapter/`, `internal/agentadapter/`, `services/api/internal/runtimeapi/adapter.go`
+- Adapters: `internal/cli/adapter/`, `internal/agentadapter/`, `services/runtime-control/internal/runtimeapi/adapter.go`

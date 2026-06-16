@@ -32,7 +32,8 @@ Added: 2026-05-12
 
 ### Sentinel service image change → set image + roll, do not rerun `setup`
 
-When iterating on `services/api`, `services/ui`, `services/ingest`, or
+When iterating on `services/platform-api`, `services/runtime-control`,
+`services/analytics-api`, `services/ui`, `services/ingest`, or
 `services/processor`, the contributor loop is: build a new tag, push
 to the bundled registry, `kubectl set image`, `rollout status`. Do not
 rerun `setup --test-mode` per service edit — that rebuilds and
@@ -93,7 +94,7 @@ Added: 2026-05-24
 
 ### `pipeline deploy` uses platform API when KUBECONFIG is unavailable
 
-`pipeline deploy` now falls back to `POST /api/runtime/servers` (platform
+`pipeline deploy` now falls back to `POST /api/v1/runtime/servers` (platform
 API) when `kubectl version` fails but platform auth is available. The
 fallback parses each generated YAML file as an `MCPServer` and applies it
 through `plat.ApplyRuntimeServerWithScope`. This means:

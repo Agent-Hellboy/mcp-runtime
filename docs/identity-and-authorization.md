@@ -52,7 +52,7 @@ Creating or changing an access grant requires authority over the referenced
 server. In normal platform flows, that means the caller is the server owner, a
 team owner for the server namespace, or a platform administrator.
 
-Direct creation of an `MCPAgentSession` through `/api/runtime/sessions` is
+Direct creation of an `MCPAgentSession` through `/api/v1/runtime/sessions` is
 administrator/internal-only. Normal users obtain a session through the adapter
 session endpoint.
 

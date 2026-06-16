@@ -123,9 +123,9 @@ Tenant user only:
 - Analytics empty response and API error render clear states.
 - If a selected server disappears, selector and tables recover cleanly.
 - Scoped observability: clicking Prometheus for a temporary tenant server opens
-  an allowlisted `/api/runtime/observability/prometheus/query` URL with
+  an allowlisted `/api/v1/runtime/observability/prometheus/query` URL with
   `namespace` and `server` filters for that exact server.
-- Scoped observability links: `/api/runtime/observability/links` returns only
+- Scoped observability links: `/api/v1/runtime/observability/links` returns only
   queries for the authorized tenant server and does not expose arbitrary PromQL.
 - Grafana tenant action: clicking Grafana opens the default scoped platform
   Grafana dashboard endpoint for that namespace/server. It must not open the raw

@@ -11,7 +11,9 @@ unittesting_strategy.md
 
 # Local service binaries produced by ad-hoc `go build` runs should not enter
 # image build contexts that copy the repository root.
-services/api/api
+services/platform-api/platform-api
+services/runtime-control/runtime-control
+services/analytics-api/analytics-api
 services/ingest/ingest
 services/mcp-gateway/mcp-gateway
 services/processor/processor

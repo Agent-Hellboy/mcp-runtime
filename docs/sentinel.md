@@ -28,7 +28,7 @@ that only use HTTP, Kafka, ClickHouse, Postgres, or local files.
 | **analytics-api** | ClickHouse-only; `automountServiceAccountToken: false`. | Events, stats, usage queries; resolves display names via platform-api `/internal/*`. | No Kubernetes RBAC. NetworkPolicy egress to platform-api:8080. |
 | **gateway** | Kubernetes-aware Traefik ingress controller. | Watches Ingress, Service, Endpoint, Secret, and IngressClass resources for the namespaces it serves. The bundled Sentinel-local gateway watches `mcp-sentinel`; the shared ingress overlays watch `registry`, `mcp-sentinel`, `mcp-servers`, `mcp-servers-org`, and `mcp-servers-public`. | Keep watched namespaces explicit, avoid cluster-wide ingress watches unless required, keep Grafana admin-gated, do not expose Prometheus directly on public hosts, and keep redaction middleware limited to routes that need it. |
 | **mcp-gateway** | Kubernetes-integrated but Kubernetes API-agnostic. It is injected into MCP server pods and reads operator-rendered policy from mounted files and env vars. | Does not need a Kubernetes client or service account token. It forwards MCP traffic to the local server container and emits audit events to ingest. | Keep `automountServiceAccountToken: false`, read-only policy mounts, `readOnlyRootFilesystem`, dropped capabilities, and non-root execution. Treat `ANALYTICS_API_KEY` as ingest-scoped, not an admin API key. |
-| **ui** | Kubernetes API-agnostic. | Serves the browser UI and proxies `/api/*` to `api` through `API_UPSTREAM` with UI session credentials or the configured upstream key. | Keep it behind TLS for public hosts, retain the security headers in `services/ui`, set `UI_REQUIRE_HTTPS=false` only for deliberate non-TLS dev ingress, set `UI_FORCE_SECURE_COOKIE=true` when a TLS-terminating proxy does not send `X-Forwarded-Proto: https`, and do not grant it Kubernetes RBAC. |
+| **ui** | Kubernetes API-agnostic. | Serves the browser UI and proxies `/api/v1/*` to `api` through `API_UPSTREAM` with UI session credentials or the configured upstream key. | Keep it behind TLS for public hosts, retain the security headers in `services/ui`, set `UI_REQUIRE_HTTPS=false` only for deliberate non-TLS dev ingress, set `UI_FORCE_SECURE_COOKIE=true` when a TLS-terminating proxy does not send `X-Forwarded-Proto: https`, and do not grant it Kubernetes RBAC. |
 | **ingest** | Kubernetes API-agnostic. | Authenticates `/events`, validates request size and event shape, and writes to Kafka. | Require `INGEST_API_KEYS` or OIDC for real deployments, use ingest-only keys, restrict network access to proxy/gateway callers, and keep the public `/ingest` route off production hosts unless intentionally exposed. |
 | **processor** | Kubernetes API-agnostic. | Consumes Kafka and writes ClickHouse. It only exposes health and metrics. | Do not expose it through ingress. Restrict network access to Kafka, ClickHouse, metrics scraping, and tracing endpoints. |
 | **storage and observability** | Mixed. ClickHouse, Kafka, Postgres, Grafana, Prometheus, Tempo, Loki, and the OTel collector are Kubernetes API-agnostic in the bundled manifests; Promtail is Kubernetes-aware so it can discover pod logs. | Data stores and dashboards back Sentinel audit, identity, metrics, traces, and logs. Promtail has pod read/watch RBAC. | Review persistence, retention, backups, and dashboard auth before production use. The generated platform-host observability route uses `sentinel-admin-auth@file`; provide equivalent auth if you replace repo-managed Traefik, and review Promtail's cluster log visibility before enabling it on multi-tenant clusters. |
@@ -118,7 +118,7 @@ server before returning links or querying Prometheus, and normal users are
 limited to their team namespaces or explicitly caller-owned catalog servers.
 
 Prometheus requests use
-`/api/runtime/observability/prometheus/query?namespace=<namespace>&server=<server>&query_id=<id>`.
+`/api/v1/runtime/observability/prometheus/query?namespace=<namespace>&server=<server>&query_id=<id>`.
 The `query_id` is allowlisted (`up`, `request_rate`, `deny_rate`,
 `latency_p95`); arbitrary PromQL is never accepted. `PROMETHEUS_API_URL`
 defaults to `http://prometheus:9090/prometheus`.
@@ -151,7 +151,7 @@ cardinality.
 ### Split API services
 
 The monolith `services/api` (`mcp-sentinel-api`) was split into three binaries.
-Traefik routes `/api/v1/*` by path prefix; there is no `/api/*` compatibility
+Traefik routes `/api/v1/*` by path prefix; there is no `/api/v1/*` compatibility
 layer. Each service publishes `GET /api/v1/openapi.yaml` and uses `pkg/apihttp`
 stable error envelopes.
 
@@ -278,7 +278,7 @@ refund_invoice:allow:high
 CLI parity: `mcp-runtime access grant init|apply` covers grant CRUD for
 authorized principals. `access session init|apply` matches the UI for
 **admin** session writes; agents and normal users should use
-`POST /api/runtime/adapter/sessions` via `adapter stdio|proxy --server …
+`POST /api/v1/runtime/adapter/sessions` via `adapter stdio|proxy --server …
 --agent …`. CRs are the source of truth — the UI is a convenience layer.
 
 For platform API writes, grants and sessions must reference a server in the same

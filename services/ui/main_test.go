@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -637,277 +636,6 @@ func TestStaticAppRoutesDecisionAuditThroughGovernance(t *testing.T) {
 	}
 }
 
-func TestAPIProxyRequiresAuthenticatedSession(t *testing.T) {
-	upstreamCalled := false
-	store := newUISessionStore(time.Now)
-	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		upstreamCalled = true
-		if got := r.Header.Get("x-api-key"); got != "api-secret" {
-			t.Fatalf("x-api-key = %q, want %q", got, "api-secret")
-		}
-		if got := r.Header.Get("Cookie"); got != "" {
-			t.Fatalf("Cookie header forwarded upstream: %q", got)
-		}
-		if got := r.URL.Path; got != "/api/dashboard/summary" {
-			t.Fatalf("path = %q, want /api/dashboard/summary", got)
-		}
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     http.Header{"content-type": []string{"application/json"}},
-			Body:       io.NopCloser(strings.NewReader(`{"ok":true}`)),
-		}, nil
-	})
-	target, err := url.Parse("http://api.example")
-	if err != nil {
-		t.Fatalf("url.Parse() error = %v", err)
-	}
-	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", []string{"api-secret"}, store, false, transport)
-
-	recorder := httptest.NewRecorder()
-	proxy.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/dashboard/summary", nil))
-	if recorder.Code != http.StatusUnauthorized {
-		t.Fatalf("unauthenticated status = %d, want %d", recorder.Code, http.StatusUnauthorized)
-	}
-	if upstreamCalled {
-		t.Fatal("unauthenticated request reached upstream")
-	}
-
-	login := httptest.NewRecorder()
-	handleLogin("ui-secret", "api-secret", "http://api.example", store).ServeHTTP(login, httptest.NewRequest(http.MethodPost, "/auth/login", strings.NewReader(`{"api_key":"ui-secret"}`)))
-	if login.Code != http.StatusOK {
-		t.Fatalf("login status = %d, want %d; body=%s", login.Code, http.StatusOK, login.Body.String())
-	}
-	cookies := login.Result().Cookies()
-	if len(cookies) != 1 {
-		t.Fatalf("login cookies = %d, want 1", len(cookies))
-	}
-	if strings.Contains(cookies[0].Value, "ui-secret") {
-		t.Fatal("session cookie contains raw API key")
-	}
-
-	authed := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/dashboard/summary", nil)
-	req.AddCookie(cookies[0])
-	proxy.ServeHTTP(authed, req)
-	if authed.Code != http.StatusOK {
-		t.Fatalf("authenticated status = %d, want %d; body=%s", authed.Code, http.StatusOK, authed.Body.String())
-	}
-	if !upstreamCalled {
-		t.Fatal("authenticated request did not reach upstream")
-	}
-}
-
-func TestAPIProxyAllowsPlatformLoginWithoutSession(t *testing.T) {
-	upstreamCalled := false
-	store := newUISessionStore(time.Now)
-	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		upstreamCalled = true
-		if got := r.URL.Path; got != "/api/auth/login" {
-			t.Fatalf("path = %q, want /api/auth/login", got)
-		}
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     http.Header{"content-type": []string{"application/json"}},
-			Body:       io.NopCloser(strings.NewReader(`{"access_token":"tok","token_type":"bearer","user":{"role":"user"}}`)),
-		}, nil
-	})
-	target, err := url.Parse("http://api.example")
-	if err != nil {
-		t.Fatalf("url.Parse() error = %v", err)
-	}
-	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", []string{"api-secret"}, store, false, transport)
-
-	recorder := httptest.NewRecorder()
-	proxy.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"email":"test@mcpruntime.org","password":"test@123"}`)))
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
-	}
-	if !upstreamCalled {
-		t.Fatal("platform login request did not reach upstream")
-	}
-}
-
-func TestAPIProxyAllowsDirectAPIKeyClients(t *testing.T) {
-	upstreamCalled := false
-	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		upstreamCalled = true
-		if got := r.Header.Get("x-api-key"); got != "api-secret" {
-			t.Fatalf("x-api-key forwarded upstream = %q, want %q", got, "api-secret")
-		}
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     http.Header{"content-type": []string{"application/json"}},
-			Body:       io.NopCloser(strings.NewReader(`{"ok":true}`)),
-		}, nil
-	})
-	target, err := url.Parse("http://api.example")
-	if err != nil {
-		t.Fatalf("url.Parse() error = %v", err)
-	}
-	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", []string{"api-secret", "backup-secret"}, newUISessionStore(time.Now), false, transport)
-
-	recorder := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
-	req.Header.Set("x-api-key", "backup-secret")
-	proxy.ServeHTTP(recorder, req)
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("direct API-key status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
-	}
-	if !upstreamCalled {
-		t.Fatal("direct API-key request did not reach upstream")
-	}
-}
-
-func TestAPIProxyForwardsUserAPIKeyClients(t *testing.T) {
-	upstreamCalled := false
-	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		upstreamCalled = true
-		if got := r.Header.Get("x-api-key"); got != "mcpu-user-key" {
-			t.Fatalf("x-api-key forwarded upstream = %q, want user key", got)
-		}
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     http.Header{"content-type": []string{"application/json"}},
-			Body:       io.NopCloser(strings.NewReader(`{"authenticated":true}`)),
-		}, nil
-	})
-	target, err := url.Parse("http://api.example")
-	if err != nil {
-		t.Fatalf("url.Parse() error = %v", err)
-	}
-	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", []string{"api-secret"}, newUISessionStore(time.Now), false, transport)
-
-	recorder := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
-	req.Header.Set("x-api-key", "mcpu-user-key")
-	proxy.ServeHTTP(recorder, req)
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("user API-key status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
-	}
-	if !upstreamCalled {
-		t.Fatal("user API-key request did not reach upstream")
-	}
-}
-
-func TestAPIProxyRejectsAnonymousRuntimeServers(t *testing.T) {
-	upstreamCalled := false
-	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		upstreamCalled = true
-		return nil, fmt.Errorf("anonymous request unexpectedly reached upstream: %s", r.URL.String())
-	})
-	target, err := url.Parse("http://api.example")
-	if err != nil {
-		t.Fatalf("url.Parse() error = %v", err)
-	}
-	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", []string{"api-secret"}, newUISessionStore(time.Now), false, transport)
-
-	recorder := httptest.NewRecorder()
-	proxy.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "http://localhost:18080/api/runtime/servers?namespace=user-private", nil))
-	if recorder.Code != http.StatusUnauthorized {
-		t.Fatalf("anonymous runtime servers status = %d, want %d; body=%s", recorder.Code, http.StatusUnauthorized, recorder.Body.String())
-	}
-	if upstreamCalled {
-		t.Fatal("anonymous runtime servers request reached upstream")
-	}
-}
-
-func TestAPIProxyAllowsAnonymousPublicCatalog(t *testing.T) {
-	t.Setenv("PLATFORM_PUBLIC_NAMESPACE", "mcp-servers-public")
-	upstreamCalled := false
-	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		upstreamCalled = true
-		if got := r.Header.Get("x-api-key"); got != "api-secret" {
-			t.Fatalf("x-api-key = %q, want %q", got, "api-secret")
-		}
-		if got := r.Header.Get("authorization"); got != "" {
-			t.Fatalf("authorization forwarded upstream: %q", got)
-		}
-		if got := r.URL.Path; got != "/api/runtime/servers" && got != "/api/runtime/tools" {
-			t.Fatalf("path = %q, want /api/runtime/servers or /api/runtime/tools", got)
-		}
-		if got := r.URL.Query().Get("namespace"); got != "mcp-servers-public" {
-			t.Fatalf("namespace = %q, want mcp-servers-public", got)
-		}
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     http.Header{"content-type": []string{"application/json"}},
-			Body:       io.NopCloser(strings.NewReader(`{"servers":[]}`)),
-		}, nil
-	})
-	target, err := url.Parse("http://api.example")
-	if err != nil {
-		t.Fatalf("url.Parse() error = %v", err)
-	}
-	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", []string{"api-secret"}, newUISessionStore(time.Now), true, transport)
-
-	recorder := httptest.NewRecorder()
-	proxy.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "http://localhost:18080/api/runtime/servers", nil))
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("anonymous public catalog status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
-	}
-	if !upstreamCalled {
-		t.Fatal("anonymous public catalog request did not reach upstream")
-	}
-
-	upstreamCalled = false
-	proxy.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "http://localhost:18080/api/runtime/tools", nil))
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("anonymous public tools status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
-	}
-	if !upstreamCalled {
-		t.Fatal("anonymous public tools request did not reach upstream")
-	}
-
-	forbidden := httptest.NewRecorder()
-	proxy.ServeHTTP(forbidden, httptest.NewRequest(http.MethodGet, "http://localhost:18080/api/runtime/servers?namespace=user-private", nil))
-	if forbidden.Code != http.StatusForbidden {
-		t.Fatalf("private namespace status = %d, want %d; body=%s", forbidden.Code, http.StatusForbidden, forbidden.Body.String())
-	}
-}
-
-func TestAPIProxyUsesSessionBeforeAnonymousPublicCatalog(t *testing.T) {
-	store := newUISessionStore(time.Now)
-	sess, err := store.createSession(context.Background(), uiSession{
-		Principal:      sessionPrincipal{Role: "admin", Subject: "admin-1"},
-		UpstreamAPIKey: "session-secret",
-	})
-	if err != nil {
-		t.Fatalf("createSession() error = %v", err)
-	}
-
-	upstreamCalled := false
-	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		upstreamCalled = true
-		if got := r.Header.Get("x-api-key"); got != "session-secret" {
-			t.Fatalf("x-api-key = %q, want session-secret", got)
-		}
-		if got := r.URL.Query().Get("namespace"); got != "admin-private" {
-			t.Fatalf("namespace = %q, want admin-private", got)
-		}
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     http.Header{"content-type": []string{"application/json"}},
-			Body:       io.NopCloser(strings.NewReader(`{"servers":[]}`)),
-		}, nil
-	})
-	target, err := url.Parse("http://api.example")
-	if err != nil {
-		t.Fatalf("url.Parse() error = %v", err)
-	}
-	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", []string{"api-secret"}, store, true, transport)
-
-	recorder := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "http://localhost:18080/api/runtime/servers?namespace=admin-private", nil)
-	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sess.ID})
-	proxy.ServeHTTP(recorder, req)
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("authenticated public-mode status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
-	}
-	if !upstreamCalled {
-		t.Fatal("authenticated public-mode request did not reach upstream")
-	}
-}
-
 func TestCatalogNamespacesForModeScopesPublicEnvToPublicMode(t *testing.T) {
 	t.Setenv("PLATFORM_PUBLIC_NAMESPACES", "mcp-servers-public,preview-extra")
 
@@ -973,31 +701,6 @@ func TestHandleLoginWithOIDCToken(t *testing.T) {
 	}
 	if got := sess.UpstreamAuthHeader; strings.Contains(got, "id-token") {
 		t.Fatalf("stored upstream authorization leaked raw id token: %q", got)
-	}
-
-	upstreamCalled := false
-	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		upstreamCalled = true
-		if got := r.Header.Get("authorization"); got != "Bearer platform-token" {
-			t.Fatalf("authorization forwarded = %q", got)
-		}
-		if got := r.Header.Get("x-api-key"); got != "" {
-			t.Fatalf("x-api-key unexpectedly set: %q", got)
-		}
-		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"content-type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"ok":true}`))}, nil
-	})
-	target, _ := url.Parse("http://api.example")
-	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", []string{"api-secret"}, store, false, transport)
-
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/user/api-keys", nil)
-	req.AddCookie(cookies[0])
-	proxy.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("proxy status = %d body=%s", rec.Code, rec.Body.String())
-	}
-	if !upstreamCalled {
-		t.Fatal("proxy did not call upstream")
 	}
 }
 
@@ -1173,28 +876,6 @@ func TestHandleLoginWithPassword(t *testing.T) {
 	cookies := login.Result().Cookies()
 	if len(cookies) != 1 {
 		t.Fatalf("cookies = %d, want 1", len(cookies))
-	}
-
-	upstreamCalled := false
-	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		upstreamCalled = true
-		if got := r.Header.Get("authorization"); got != "Bearer platform-token" {
-			t.Fatalf("authorization forwarded = %q", got)
-		}
-		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"content-type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"ok":true}`))}, nil
-	})
-	target, _ := url.Parse("http://api.example")
-	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", []string{"api-secret"}, store, false, transport)
-
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/user/api-keys", nil)
-	req.AddCookie(cookies[0])
-	proxy.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("proxy status = %d body=%s", rec.Code, rec.Body.String())
-	}
-	if !upstreamCalled {
-		t.Fatal("proxy did not call upstream")
 	}
 }
 
@@ -1406,7 +1087,7 @@ func TestSecurityHeadersMiddlewareSetsCacheControlOnAPI(t *testing.T) {
 	}))
 
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/runtime/servers", nil))
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/runtime/servers", nil))
 	if got := rec.Header().Get("Cache-Control"); got != "no-store, no-cache, must-revalidate" {
 		t.Fatalf("Cache-Control on /api = %q, want no-store, no-cache, must-revalidate", got)
 	}

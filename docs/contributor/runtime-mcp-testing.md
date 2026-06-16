@@ -16,7 +16,7 @@ Expected UI/API behavior:
 
 | Principal | Expected catalog |
 |---|---|
-| Anonymous | `401` for `/api/runtime/servers`, except public mode can read `mcp-servers-public` |
+| Anonymous | `401` for `/api/v1/runtime/servers`, except public mode can read `mcp-servers-public` |
 | Normal user in tenant mode | MCPs from team namespaces they belong to |
 | Tenant user in tenant mode | MCPs from their own team namespace |
 | User in org mode | MCPs from `mcp-servers-org` |
@@ -251,6 +251,6 @@ Confirm the catalog through the UI/API after cleanup:
 
 ```bash
 curl -sS -b /tmp/mcp-test-user-cookie.txt \
-  http://localhost:18080/api/runtime/servers |
+  http://localhost:18080/api/v1/runtime/servers |
   jq '{count: (.servers|length), names: [.servers[] | (.namespace + "/" + .name)]}'
 ```

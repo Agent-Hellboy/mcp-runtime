@@ -13,7 +13,7 @@
     },
     {
       "id": "service-rollout-regression",
-      "prompt": "Check whether a services/api change regressed rollout health, ingress wiring, or observability in the contributor cluster.",
+      "prompt": "Check whether a split API service change regressed rollout health, ingress wiring, or observability in the contributor cluster.",
       "expected_output": "A live operations QA pass covering platform status, rollout matrix, ingress routes, service logs, and relevant e2e paths for the touched service.",
       "assertions": [
         "Verifies rollout readiness for touched services",

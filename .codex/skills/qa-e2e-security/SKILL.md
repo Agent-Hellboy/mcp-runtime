@@ -56,7 +56,7 @@ Sub-suites by changed paths:
 
 | Diff touches | Required sub-suites |
 |---|---|
-| `services/api/**`, `pkg/access/**` | A. Backend auth, B. Grants/sessions, C. Audit |
+| `services/platform-api/**`, `services/runtime-control/**`, `services/analytics-api/**`, `pkg/access/**` | A. Backend auth, B. Grants/sessions, C. Audit |
 | `services/mcp-gateway/**`, `internal/operator/**` (policy/render) | B. Grants/sessions, D. Trust escalation, C. Audit |
 | `services/ui/**` (middleware, login, proxy) | E. UI security headers, F. Login + lockout, G. UI→API proxy |
 | `config/ingress/**`, `services/traefik-plugins/**` | H. Ingress + PII redactor, E (re-run) |
@@ -69,32 +69,32 @@ Always run **I. Live-log secret scan** regardless of diff.
 ```bash
 # Anonymous → 401 on admin paths.
 curl -sS -o /dev/null -w "anon=%{http_code}\n" \
-  http://localhost:18080/api/dashboard/summary           # want 401
+  http://localhost:18080/api/v1/dashboard/summary           # want 401
 curl -sS -o /dev/null -w "anon=%{http_code}\n" \
-  http://localhost:18080/api/analytics/usage             # want 401
+  http://localhost:18080/api/v1/analytics/usage             # want 401
 
 # Bad key → 401.
 curl -sS -o /dev/null -w "bad=%{http_code}\n" \
-  -H "x-api-key: NOPE" http://localhost:18080/api/dashboard/summary
+  -H "x-api-key: NOPE" http://localhost:18080/api/v1/dashboard/summary
 
 # Ingest-only key on admin → 401/403 (must NOT be admin).
 curl -sS -o /dev/null -w "ingest_only=%{http_code}\n" \
-  -H "x-api-key: $INGEST_KEY" http://localhost:18080/api/dashboard/summary
+  -H "x-api-key: $INGEST_KEY" http://localhost:18080/api/v1/dashboard/summary
 
 # Admin/UI key → 200.
 curl -sS -o /dev/null -w "admin=%{http_code}\n" \
-  -H "x-api-key: $UI_KEY" http://localhost:18080/api/dashboard/summary
+  -H "x-api-key: $UI_KEY" http://localhost:18080/api/v1/dashboard/summary
 
 # Mutating admin endpoints require admin (not just user). Try a write with
 # only the ingest key and confirm 401/403:
 curl -sS -o /dev/null -w "ingest_write=%{http_code}\n" -X POST \
   -H "x-api-key: $INGEST_KEY" -H "content-type: application/json" \
-  -d '{}' http://localhost:18080/api/runtime/grants
+  -d '{}' http://localhost:18080/api/v1/runtime/grants
 ```
 
 Any admin response code other than 200 with `$UI_KEY` is a finding. Any non-401/403
 on the anonymous / bad-key / ingest-only paths is a **High** severity finding —
-matches `requireRole(roleAdmin, …)` enforcement in `services/api/main.go`.
+matches `RequireRole` enforcement in each split service `routes.go`.
 
 ## Step 4 — Sub-suite B: Grants & sessions enforce on the gateway
 
@@ -188,7 +188,7 @@ common regression.
 ```bash
 ADMIN_KEY="$UI_KEY"
 BEFORE="$(curl -sS -H "x-api-key: $ADMIN_KEY" \
-  "http://localhost:18080/api/events/filter?server=go-example-mcp&limit=100" \
+  "http://localhost:18080/api/v1/events?server=go-example-mcp&limit=100" \
   | jq '.events | length // length // 0')"
 # fire one allow + one deny (tool not in policy)
 init
@@ -196,7 +196,7 @@ call '{"name":"add","arguments":{"a":1,"b":1}}'               >/dev/null
 call '{"name":"definitely-not-a-tool","arguments":{}}'        >/dev/null
 sleep 3
 AFTER="$(curl -sS -H "x-api-key: $ADMIN_KEY" \
-  "http://localhost:18080/api/events/filter?server=go-example-mcp&limit=100" \
+  "http://localhost:18080/api/v1/events?server=go-example-mcp&limit=100" \
   | jq '.events | length // length // 0')"
 [ "$AFTER" -ge "$((BEFORE + 2))" ] || echo "FAIL: missing audit events"
 ```
@@ -238,10 +238,10 @@ curl -sSI -H "X-Forwarded-Proto: https" http://localhost:18080/ \
   | tr -d '\r' | grep -qi '^Strict-Transport-Security: max-age=' \
   || echo "FAIL: HSTS missing on forwarded HTTPS"
 
-# /api responses must be uncacheable.
-curl -sSI -H "x-api-key: $UI_KEY" http://localhost:18080/api/health \
+# /api/v1 responses must be uncacheable.
+curl -sSI -H "x-api-key: $UI_KEY" http://localhost:18080/api/v1/dashboard/summary \
   | tr -d '\r' | grep -qi '^Cache-Control:.*no-store' \
-  || echo "FAIL: /api Cache-Control"
+  || echo "FAIL: /api/v1 Cache-Control"
 ```
 
 ## Step 8 — Sub-suite F: Login + lockout
@@ -278,11 +278,11 @@ curl -sS http://localhost:18080/config | jq . | grep -i apiKey \
   && echo "FAIL: api key leaked via /config" || echo "OK: no key in /config"
 
 # Authenticated browser session can reach /api.
-curl -sS -b /tmp/c.txt http://localhost:18080/api/dashboard/summary | jq -e '.servers // .summary // 0' >/dev/null \
+curl -sS -b /tmp/c.txt http://localhost:18080/api/v1/dashboard/summary | jq -e '.servers // .summary // 0' >/dev/null \
   || echo "FAIL: authed browser cannot reach /api"
 
 # Direct API-key client should also work.
-curl -sS -H "x-api-key: $UI_KEY" http://localhost:18080/api/dashboard/summary \
+curl -sS -H "x-api-key: $UI_KEY" http://localhost:18080/api/v1/dashboard/summary \
   | jq -e '.' >/dev/null || echo "FAIL: direct key client"
 ```
 
@@ -294,7 +294,7 @@ kubectl logs -n traefik deploy/traefik --tail=120 \
   | grep -iE 'middleware.*does not exist|panic|error' || echo OK
 # PII redactor on the documented dev overlay should redact known patterns in
 # request/response bodies. Probe with a synthetic SSN/email payload to a tool
-# that echoes; verify the audit body in /api/events does not contain the raw value.
+# that echoes; verify the audit body in /api/v1/events does not contain the raw value.
 ```
 
 ## Step 11 — Sub-suite I: Live-log secret scan (always)
@@ -321,8 +321,7 @@ finding should include:
   low→high trust, pod→secret).
 - The **command + response code or body fragment** that demonstrates the
   failure (with secrets redacted).
-- A **regression test** suggestion that lands in `services/api/main_test.go`,
-  `services/ui/main_test.go`, `services/mcp-gateway/...`, or `pkg/access/...`.
+- A **regression test** suggestion that lands in the relevant split API service package (for example `services/platform-api/` or `services/runtime-control/`), `services/ui/main_test.go`, `services/mcp-gateway/...`, or `pkg/access/...`.
 
 Cross-link to `security-audit` / `security-audit-platform` for any static
 counterpart, to `k8s-hardening-audit` for cluster-policy gaps, and to

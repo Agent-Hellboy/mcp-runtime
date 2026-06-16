@@ -14,7 +14,6 @@ import (
 	"mime"
 	"net"
 	"net/http"
-	"net/http/httputil"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -109,7 +108,7 @@ var (
 // with API configuration for the frontend. Includes tracing support.
 func main() {
 	port := serviceutil.EnvOr("PORT", "8082")
-	apiBase := serviceutil.EnvOr("API_BASE", "/api")
+	apiBase := serviceutil.EnvOr("API_BASE", "/api/v1")
 	apiKey := strings.TrimSpace(os.Getenv("API_KEY"))
 	apiKeys := strings.TrimSpace(os.Getenv("API_KEYS"))
 	adminAPIKeys := strings.TrimSpace(os.Getenv("ADMIN_API_KEYS"))
@@ -245,114 +244,6 @@ func newMux(apiBase, apiUpstream, apiKey, apiKeys, adminAPIKeys string) (*http.S
 	})
 
 	return mux, nil
-}
-
-func newAPIProxy(target *url.URL, apiBase, upstreamAPIKey string, apiKeys []string, store *uiSessionStore, publicCatalog bool) http.Handler {
-	return newAPIProxyWithTransport(target, apiBase, upstreamAPIKey, apiKeys, store, publicCatalog, nil)
-}
-
-func newAPIProxyWithTransport(target *url.URL, apiBase, upstreamAPIKey string, apiKeys []string, store *uiSessionStore, publicCatalog bool, transport http.RoundTripper) http.Handler {
-	proxy := httputil.NewSingleHostReverseProxy(target)
-	if transport != nil {
-		proxy.Transport = transport
-	}
-	originalDirector := proxy.Director
-	proxy.Director = func(req *http.Request) {
-		forwardedHost := strings.TrimSpace(req.Header.Get("X-Forwarded-Host"))
-		if forwardedHost == "" {
-			forwardedHost = req.Host
-		}
-		forwardedProto := strings.TrimSpace(req.Header.Get("X-Forwarded-Proto"))
-		if forwardedProto == "" {
-			forwardedProto = "http"
-			if req.TLS != nil {
-				forwardedProto = "https"
-			}
-		}
-		originalDirector(req)
-		req.Host = target.Host
-		req.Header.Del("Cookie")
-		if forwardedHost != "" {
-			req.Header.Set("X-Forwarded-Host", forwardedHost)
-		}
-		if forwardedProto != "" {
-			req.Header.Set("X-Forwarded-Proto", forwardedProto)
-		}
-		req.Header.Set("X-MCP-Source", "ui")
-		if strings.TrimSpace(req.Header.Get("authorization")) == "" && strings.TrimSpace(req.Header.Get("x-api-key")) == "" {
-			req.Header.Set("x-api-key", upstreamAPIKey)
-		}
-	}
-	proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, err error) {
-		log.Printf("api proxy error: %v", err)
-		serviceutil.WriteJSON(w, http.StatusBadGateway, map[string]string{"error": "api_unavailable"})
-	}
-
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if isUnauthenticatedPlatformAuthRequest(r, apiBase) {
-			proxy.ServeHTTP(w, r.Clone(r.Context()))
-			return
-		}
-
-		if validAPIKeyHeader(r, apiKeys) {
-			req := r.Clone(r.Context())
-			req.Header.Del("x-api-key")
-			req.Header.Del("authorization")
-			proxy.ServeHTTP(w, req)
-			return
-		}
-
-		if hasAPIAuthHeader(r) {
-			proxy.ServeHTTP(w, r.Clone(r.Context()))
-			return
-		}
-
-		if sess, ok := store.sessionFromRequest(r); ok {
-			req := r.Clone(r.Context())
-			req.Header.Del("x-api-key")
-			req.Header.Del("authorization")
-			if sess.UpstreamAuthHeader != "" {
-				req.Header.Set("authorization", sess.UpstreamAuthHeader)
-			} else if sess.UpstreamAPIKey != "" {
-				req.Header.Set("x-api-key", sess.UpstreamAPIKey)
-			}
-			proxy.ServeHTTP(w, req)
-			return
-		}
-
-		if publicCatalog && isPublicCatalogAPIRequest(r, apiBase) {
-			namespace := strings.TrimSpace(r.URL.Query().Get("namespace"))
-			if namespace != "" && !isPublicCatalogNamespace(namespace) {
-				serviceutil.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden namespace"})
-				return
-			}
-			req := r.Clone(r.Context())
-			req.Header.Del("x-api-key")
-			req.Header.Del("authorization")
-			if namespace == "" {
-				q := req.URL.Query()
-				q.Set("namespace", defaultPublicCatalogNamespace())
-				req.URL.RawQuery = q.Encode()
-			}
-			proxy.ServeHTTP(w, req)
-			return
-		}
-
-		serviceutil.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
-	})
-}
-
-func isUnauthenticatedPlatformAuthRequest(r *http.Request, apiBase string) bool {
-	if r == nil || r.URL == nil {
-		return false
-	}
-	path := strings.TrimRight(normalizePathPrefix(apiBase), "/") + "/auth/"
-	switch r.URL.Path {
-	case path + "login", path + "signup", path + "oidc":
-		return true
-	default:
-		return false
-	}
 }
 
 func handleLogin(apiKey, upstreamAPIKey, apiUpstream string, store *uiSessionStore) http.HandlerFunc {
@@ -1065,13 +956,6 @@ func validAPIKeyHeader(r *http.Request, keys []string) bool {
 	return matchAPIKey(presented, keys)
 }
 
-func hasAPIAuthHeader(r *http.Request) bool {
-	if r == nil {
-		return false
-	}
-	return strings.TrimSpace(r.Header.Get("authorization")) != "" || strings.TrimSpace(r.Header.Get("x-api-key")) != ""
-}
-
 func firstAPIKey(apiKeys string) string {
 	for _, key := range strings.Split(apiKeys, ",") {
 		if trimmed := strings.TrimSpace(key); trimmed != "" {
@@ -1184,15 +1068,6 @@ func isPublicCatalogNamespace(namespace string) bool {
 	return false
 }
 
-func isPublicCatalogAPIRequest(r *http.Request, apiBase string) bool {
-	if r.Method != http.MethodGet {
-		return false
-	}
-	expectedBase := strings.TrimRight(normalizePathPrefix(apiBase), "/") + "/runtime/"
-	path := strings.TrimRight(r.URL.Path, "/")
-	return path == expectedBase+"servers" || path == expectedBase+"tools"
-}
-
 func secureCookie(r *http.Request) bool {
 	if forceSecureCookie {
 		return true
@@ -1206,14 +1081,14 @@ func secureCookie(r *http.Request) bool {
 func normalizePathPrefix(value string) string {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
-		return "/api"
+		return "/api/v1"
 	}
 	if parsed, err := url.Parse(trimmed); err == nil && parsed.Path != "" && parsed.Path != trimmed {
 		trimmed = parsed.Path
 	}
 	trimmed = "/" + strings.Trim(trimmed, "/")
 	if trimmed == "/" {
-		return "/api"
+		return "/api/v1"
 	}
 	return trimmed
 }

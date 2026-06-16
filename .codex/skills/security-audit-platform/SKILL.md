@@ -25,7 +25,9 @@ Produce a STRIDE table per component. Components to cover:
   `MCPAccessGrant`, `MCPAgentSession`; injects gateway sidecar.
 - **mcp-gateway** (`services/mcp-gateway/`): in-pod sidecar enforcing
   rendered policy, emitting audit events.
-- **sentinel-api** (`services/api/`): admin and runtime HTTP API.
+- **platform-api** (`services/platform-api/`): identity, admin, registry forward-auth.
+- **runtime-control** (`services/runtime-control/`): runtime governance, deployments, registry push.
+- **analytics-api** (`services/analytics-api/`): ClickHouse events and usage analytics.
 - **sentinel-ui** (`services/ui/`): browser UI, login, dashboards.
 - **sentinel-ingest** (`services/ingest/`): high-volume event intake.
 - **sentinel-processor** (`services/processor/`): event processing, ClickHouse
@@ -58,7 +60,7 @@ Out of scope must be stated explicitly (e.g., "physical access to nodes",
 
 ## Step 2 — Authentication and authorization matrix
 
-For every route in `services/api/main.go` produce a row:
+For every route in `services/platform-api/routes.go`, `services/runtime-control/routes.go`, and `services/analytics-api/routes.go` produce a row:
 
 | Path | Method | Anon | UI cookie | UI API key | Admin API key | Ingest API key | Notes |
 
@@ -109,7 +111,7 @@ Probes (each is a finding when it succeeds):
   namespace; confirm rejection (CLAUDE.md notes the API check is best-effort,
   not transactional — race it during reconcile).
 - Disable a grant mid-call: hold an in-flight `tools/call` open, toggle
-  `POST /api/runtime/grants/{ns}/{name}/disable`, assert the next request is
+  `POST /api/v1/runtime/grants/{ns}/{name}/disable`, assert the next request is
   denied within the proxy poll window.
 - Toggle `revoke` on a session and immediately reuse the session ID.
 - Apply `MCPServer` whose `ingressHost` collides with another tenant's host.
@@ -213,7 +215,7 @@ variables — any of those is Medium.
   `json.NewDecoder(r.Body).Decode(...)`. Missing limit is Medium.
 - SQL/ClickHouse: `grep -RIn 'fmt.Sprintf' services/processor/` for any
   format-string into a query. Any hit is High until proven safe.
-- Postgres in `mcp-sentinel`: same search across `services/api/` for query
+- Postgres in `mcp-sentinel`: same search across `services/platform-api/` for query
   building.
 - Shell exec: `grep -RIn 'exec.Command' --include='*.go'`. Any non-constant
   first arg is High.
@@ -227,7 +229,7 @@ variables — any of those is Medium.
   contain a path or query (e.g., `example.com/../`).
 - Manifest paths: `--ingress-manifest` and any other CLI path flag must not
   follow symlinks out of the repo root.
-- Registry credential storage in `services/api/registry_credentials.go`: any
+- Registry credential storage in `services/platform-api/registry/credentials.go`: any
   file path comes from request input must be normalized via `filepath.Clean`
   and rejected if it escapes a known base.
 

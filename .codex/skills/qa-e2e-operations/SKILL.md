@@ -174,7 +174,9 @@ MCP_SETUP_WAIT_TIMEOUT=900 \
 ./bin/mcp-runtime cluster doctor
 kubectl get ingress -A
 curl -fsS -o /dev/null -w "%{http_code}\n" http://localhost:18080/    # 200
-curl -fsS -o /dev/null -w "%{http_code}\n" http://localhost:18080/api/health  # 200
+ADMIN_KEY=$(kubectl get secret mcp-sentinel-secrets -n mcp-sentinel -o jsonpath='{.data.ADMIN_API_KEYS}' | base64 -d | cut -d, -f1)
+curl -fsS -o /dev/null -w "%{http_code}\n" \
+  -H "x-api-key: $ADMIN_KEY" http://localhost:18080/api/v1/dashboard/summary  # 200
 curl -fsS -o /dev/null -w "%{http_code}\n" http://localhost:18080/go-example-mcp/mcp # 405/406 expected (POST-only)
 ```
 
@@ -185,15 +187,17 @@ setup output, not a host issue.
 ## Step 8 — Service rollout matrix (when services/**/ changed)
 
 For each touched Sentinel service, follow the contributor iterate-on-one
-loop from `docs/getting-started.md#iterate-on-one-sentinel-service`:
+loop from `docs/contributor/service-iteration.md` (split API table for
+`platform-api`, `runtime-control`, and `analytics-api`):
 
 ```bash
-SERVICE=api          # or ui, ingest, processor
-IMAGE_REPO=mcp-sentinel-$SERVICE
-DOCKERFILE=services/$SERVICE/Dockerfile
-BUILD_CONTEXT=$([ "$SERVICE" = api ] && echo "." || echo "services/$SERVICE")
-DEPLOYMENT=mcp-sentinel-$SERVICE
-CONTAINER=$SERVICE
+# Example: platform-api (see service-iteration.md for runtime-control / analytics-api)
+SERVICE=platform-api
+IMAGE_REPO=mcp-platform-api
+DOCKERFILE=services/platform-api/Dockerfile
+BUILD_CONTEXT=.
+DEPLOYMENT=mcp-platform-api
+CONTAINER=platform-api
 TAG="$SERVICE-qa-$(date +%s)"
 LOCAL_IMAGE="$IMAGE_REPO:$TAG"
 REGISTRY=registry.registry.svc.cluster.local:5000
