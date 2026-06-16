@@ -7,7 +7,9 @@ import (
 	"testing"
 
 	"mcp-runtime-control/internal/platforminternal"
+	"mcp-runtime-control/internal/runtimeapi"
 	"mcp-runtime/pkg/openapi"
+	"mcp-runtime/pkg/platformauth"
 )
 
 func TestOpenAPISpecLoads(t *testing.T) {
@@ -51,6 +53,31 @@ func TestInternalAuthResolveUnauthorizedMatchesOpenAPISpec(t *testing.T) {
 	}
 	if err := openapi.ValidateResponse(doc, http.MethodPost, "/internal/auth/resolve", rec.Code, rec.Body.Bytes(), "application/json"); err != nil {
 		t.Fatalf("ValidateResponse(/internal/auth/resolve) error = %v", err)
+	}
+}
+
+func TestRuntimeServersUnauthorizedMatchesOpenAPISpec(t *testing.T) {
+	doc, err := openapi.Load(openAPISpec)
+	if err != nil {
+		t.Fatalf("Load(openAPISpec) error = %v", err)
+	}
+
+	mux := http.NewServeMux()
+	(&server{
+		runtime: &runtimeapi.RuntimeServer{},
+		authentic: platformauth.Authenticator{
+			Secret:   []byte("test-secret"),
+			Audience: platformauth.AudienceRuntime,
+		},
+	}).registerRoutes(mux)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/runtime/servers", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("/api/v1/runtime/servers status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+	if err := openapi.ValidateResponse(doc, http.MethodGet, "/api/v1/runtime/servers", rec.Code, rec.Body.Bytes(), "application/json"); err != nil {
+		t.Fatalf("ValidateResponse(/api/v1/runtime/servers) error = %v", err)
 	}
 }
 

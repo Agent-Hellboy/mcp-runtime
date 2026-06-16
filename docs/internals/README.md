@@ -44,7 +44,7 @@ flowchart LR
 | CLI implementation | [`internal-cli.md`](internal-cli.md) | Covers the `internal/cli/root` routing layer plus setup, bootstrap, registry, server, access, adapter, auth, team, status, and sentinel behavior. |
 | Kubernetes API types | [`api-types.md`](api-types.md) | Defines the public CRD shapes consumed by users, tests, and the operator. |
 | Request flows | [`request-flows.md`](request-flows.md) | Maps CLI, UI/API, registry, adapter, MCP runtime, policy, analytics, tenancy, and pre-release paths to components and E2E scenarios. |
-| API service split | [`api-service-split.md`](api-service-split.md) | Spec for splitting `services/api` into platform-api, runtime-control, and analytics-api (routing, RBAC, internal contracts, cutover). |
+| Sentinel API services | [`../sentinel.md`](../sentinel.md) | Three-service split (platform-api, runtime-control, analytics-api): Traefik `/api/v1` routing, RBAC, `/internal/*` contracts, OpenAPI per service. |
 | Generated Go reference | [`go-package-reference.md`](go-package-reference.md) | Captures `go doc` output for the main contributor-facing packages. |
 | Agent adapters | `internal/agentadapter/`, `internal/cli/adapter/` | HTTP proxy and stdio shim behavior for forwarding agent MCP traffic with issued governance headers; exposed via `mcp-runtime adapter proxy/stdio`. |
 | Operator | [`cmd-operator.md`](cmd-operator.md) | Explains manager startup and reconciliation from desired state to Kubernetes resources. |

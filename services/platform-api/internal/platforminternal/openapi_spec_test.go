@@ -25,91 +25,94 @@ func loadOpenAPISpec(t *testing.T) []byte {
 	return data
 }
 
-func TestInternalUnauthorizedMatchesOpenAPISpec(t *testing.T) {
-	doc, err := openapi.Load(loadOpenAPISpec(t))
-	if err != nil {
-		t.Fatalf("Load(openAPISpec) error = %v", err)
-	}
-
-	req := httptest.NewRequest(http.MethodPost, "/internal/auth/resolve", bytes.NewBufferString(`{"api_key":"key"}`))
-	rec := httptest.NewRecorder()
-	newTestServer(&fakeStore{}).ServeHTTP(rec, req)
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
-	}
-	if err := openapi.ValidateResponse(doc, http.MethodPost, "/internal/auth/resolve", rec.Code, rec.Body.Bytes(), "application/json"); err != nil {
-		t.Fatalf("ValidateResponse(unauthorized) error = %v", err)
-	}
+func authorizedRequest(method, path, body string) *http.Request {
+	req := httptest.NewRequest(method, path, bytes.NewBufferString(body))
+	req.Header.Set("Authorization", "Bearer internal-token")
+	return req
 }
 
-func TestInternalAuthResolveMatchesOpenAPISpec(t *testing.T) {
+func TestInternalEndpointsMatchOpenAPISpec(t *testing.T) {
 	doc, err := openapi.Load(loadOpenAPISpec(t))
 	if err != nil {
 		t.Fatalf("Load(openAPISpec) error = %v", err)
 	}
+	handler := newTestServer(&fakeStore{})
 
-	req := httptest.NewRequest(http.MethodPost, "/internal/auth/resolve", bytes.NewBufferString(`{"api_key":"key"}`))
-	req.Header.Set("Authorization", "Bearer internal-token")
-	rec := httptest.NewRecorder()
-	newTestServer(&fakeStore{}).ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	tests := []struct {
+		name   string
+		req    *http.Request
+		path   string
+		method string
+	}{
+		{
+			name:   "unauthorized resolve",
+			req:    httptest.NewRequest(http.MethodPost, "/internal/auth/resolve", bytes.NewBufferString(`{"api_key":"key"}`)),
+			path:   "/internal/auth/resolve",
+			method: http.MethodPost,
+		},
+		{
+			name:   "resolve",
+			req:    authorizedRequest(http.MethodPost, "/internal/auth/resolve", `{"api_key":"key"}`),
+			path:   "/internal/auth/resolve",
+			method: http.MethodPost,
+		},
+		{
+			name:   "principal",
+			req:    authorizedRequest(http.MethodPost, "/internal/identity/principal", `{"user_id":"user-1"}`),
+			path:   "/internal/identity/principal",
+			method: http.MethodPost,
+		},
+		{
+			name:   "resolve-ids",
+			req:    authorizedRequest(http.MethodPost, "/internal/identity/resolve-ids", `{"user_ids":["user-1"],"team_ids":["team-1"]}`),
+			path:   "/internal/identity/resolve-ids",
+			method: http.MethodPost,
+		},
+		{
+			name:   "audit",
+			req:    authorizedRequest(http.MethodPost, "/internal/audit", `{"action":"deploy","resource":"server","status":"success"}`),
+			path:   "/internal/audit",
+			method: http.MethodPost,
+		},
+		{
+			name:   "teams list",
+			req:    authorizedRequest(http.MethodGet, "/internal/identity/teams", ""),
+			path:   "/internal/identity/teams",
+			method: http.MethodGet,
+		},
+		{
+			name:   "teams create",
+			req:    authorizedRequest(http.MethodPost, "/internal/identity/teams", `{"slug":"beta","name":"Beta"}`),
+			path:   "/internal/identity/teams",
+			method: http.MethodPost,
+		},
+		{
+			name:   "namespaces list",
+			req:    authorizedRequest(http.MethodGet, "/internal/identity/namespaces", ""),
+			path:   "/internal/identity/namespaces",
+			method: http.MethodGet,
+		},
+		{
+			name:   "create user",
+			req:    authorizedRequest(http.MethodPost, "/internal/identity/users", `{"email":"user@example.com","password":"secret"}`),
+			path:   "/internal/identity/users",
+			method: http.MethodPost,
+		},
+		{
+			name:   "operations snapshot",
+			req:    authorizedRequest(http.MethodGet, "/internal/operations/snapshot", ""),
+			path:   "/internal/operations/snapshot",
+			method: http.MethodGet,
+		},
 	}
-	if err := openapi.ValidateResponse(doc, http.MethodPost, "/internal/auth/resolve", rec.Code, rec.Body.Bytes(), "application/json"); err != nil {
-		t.Fatalf("ValidateResponse(resolve) error = %v", err)
-	}
-}
 
-func TestInternalResolveIDsMatchesOpenAPISpec(t *testing.T) {
-	doc, err := openapi.Load(loadOpenAPISpec(t))
-	if err != nil {
-		t.Fatalf("Load(openAPISpec) error = %v", err)
-	}
-
-	req := httptest.NewRequest(http.MethodPost, "/internal/identity/resolve-ids", bytes.NewBufferString(`{"user_ids":["user-1"],"team_ids":["team-1"]}`))
-	req.Header.Set("Authorization", "Bearer internal-token")
-	rec := httptest.NewRecorder()
-	newTestServer(&fakeStore{}).ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
-	}
-	if err := openapi.ValidateResponse(doc, http.MethodPost, "/internal/identity/resolve-ids", rec.Code, rec.Body.Bytes(), "application/json"); err != nil {
-		t.Fatalf("ValidateResponse(resolve-ids) error = %v", err)
-	}
-}
-
-func TestInternalTeamsListMatchesOpenAPISpec(t *testing.T) {
-	doc, err := openapi.Load(loadOpenAPISpec(t))
-	if err != nil {
-		t.Fatalf("Load(openAPISpec) error = %v", err)
-	}
-
-	req := httptest.NewRequest(http.MethodGet, "/internal/identity/teams", nil)
-	req.Header.Set("Authorization", "Bearer internal-token")
-	rec := httptest.NewRecorder()
-	newTestServer(&fakeStore{}).ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
-	}
-	if err := openapi.ValidateResponse(doc, http.MethodGet, "/internal/identity/teams", rec.Code, rec.Body.Bytes(), "application/json"); err != nil {
-		t.Fatalf("ValidateResponse(teams) error = %v", err)
-	}
-}
-
-func TestInternalAuditMatchesOpenAPISpec(t *testing.T) {
-	doc, err := openapi.Load(loadOpenAPISpec(t))
-	if err != nil {
-		t.Fatalf("Load(openAPISpec) error = %v", err)
-	}
-
-	req := httptest.NewRequest(http.MethodPost, "/internal/audit", bytes.NewBufferString(`{"action":"deploy","resource":"server","status":"success"}`))
-	req.Header.Set("Authorization", "Bearer internal-token")
-	rec := httptest.NewRecorder()
-	newTestServer(&fakeStore{}).ServeHTTP(rec, req)
-	if rec.Code != http.StatusAccepted {
-		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
-	}
-	if err := openapi.ValidateResponse(doc, http.MethodPost, "/internal/audit", rec.Code, rec.Body.Bytes(), "application/json"); err != nil {
-		t.Fatalf("ValidateResponse(audit) error = %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, tt.req)
+			if err := openapi.ValidateResponse(doc, tt.method, tt.path, rec.Code, rec.Body.Bytes(), "application/json"); err != nil {
+				t.Fatalf("ValidateResponse(%s %s) status=%d error = %v body=%s", tt.method, tt.path, rec.Code, err, rec.Body.String())
+			}
+		})
 	}
 }

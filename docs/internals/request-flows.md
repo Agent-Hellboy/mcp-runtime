@@ -185,7 +185,7 @@ Primary request paths:
 - API auth: `/api/auth/login`, `/api/auth/signup`, `/api/auth/oidc`,
   `/api/auth/me`
 - Dashboard and analytics: `/api/dashboard/summary`, `/api/events`,
-  `/api/events/filter`, `/api/stats`, `/api/sources`, `/api/event-types`,
+  `/api/v1/events`, `/api/v1/stats`, `/api/v1/sources`, `/api/v1/event-types`,
   `/api/analytics/usage`, `/api/user/analytics/usage`
 
 ## Policy And Access Resources

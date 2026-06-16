@@ -164,6 +164,9 @@ stable error envelopes.
 Route tables and request bodies live in [API reference](api.md). Per-service
 OpenAPI specs: `services/platform-api/openapi.yaml`,
 `services/runtime-control/openapi.yaml`, `services/analytics-api/openapi.yaml`.
+Per-service CI runs OpenAPI response validation tests against those specs.
+Adopt consumer-driven contracts (Pact) only when external clients or independently
+released teams start consuming these APIs.
 
 Restart request body examples (runtime-control admin operations):
 
@@ -338,7 +341,7 @@ outcomes distinguish the two deny modes:
 The 401-vs-403 split is the isolation signal: cross-server traffic is rejected
 at session lookup before tool evaluation; same-server unallowed tools are
 rejected by allow-list policy. Audit confirms it:
-`/api/events/filter?server=<name>` returns events scoped to that server only,
+`/api/v1/events?server=<name>` returns events scoped to that server only,
 and cross-server attempts appear as denies on the targeted server with the
 source subject preserved, never on the other server.
 
@@ -376,7 +379,7 @@ mcp-runtime sentinel restart --all
 ```
 
 `sentinel events` is a Kubernetes event view for the `mcp-sentinel` namespace.
-Use `/api/events` or `/api/events/filter` when you need the request/audit
+Use `/api/v1/events` with query filters when you need the request/audit
 events emitted by `mcp-gateway`.
 
 See [CLI → sentinel](cli.md#sentinel) for component keys and flag details.

@@ -98,9 +98,12 @@ func TestEventQueriesUseMaterializedTeamIDColumn(t *testing.T) {
 		t.Fatalf("args = %#v, want trace-123 and team-acme", args)
 	}
 
-	query := buildEventFilterQuery("mcp", whereClause, 25)
+	query := buildEventFilterQuery("mcp", whereClause, 25, 0)
 	if !strings.Contains(query, "FROM mcp.events WHERE") {
 		t.Fatalf("query = %q, want filtered events query", query)
+	}
+	if !strings.Contains(query, "OFFSET 0") {
+		t.Fatalf("query = %q, want OFFSET clause", query)
 	}
 }
 

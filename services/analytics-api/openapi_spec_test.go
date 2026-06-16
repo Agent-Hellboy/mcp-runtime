@@ -12,10 +12,13 @@ import (
 	"mcp-runtime/pkg/platformauth"
 )
 
-type eventReaderStub struct{}
+type eventReaderStub struct {
+	rowCount int
+}
 
-func (eventReaderStub) QueryEvents(context.Context, int) ([]clickhousepkg.EventRow, error) {
-	return nil, nil
+func (eventReaderStub) QueryEvents(_ context.Context, limit, _ int) ([]clickhousepkg.EventRow, error) {
+	rows := make([]clickhousepkg.EventRow, limit)
+	return rows, nil
 }
 func (eventReaderStub) QueryStats(context.Context) (uint64, error) { return 0, nil }
 func (eventReaderStub) QuerySources(context.Context) ([]clickhousepkg.SourceStat, error) {
@@ -76,6 +79,36 @@ func TestStatsUnauthorizedMatchesOpenAPISpec(t *testing.T) {
 	}
 	if err := openapi.ValidateResponse(doc, http.MethodGet, "/api/v1/stats", rec.Code, rec.Body.Bytes(), "application/json"); err != nil {
 		t.Fatalf("ValidateResponse(/api/v1/stats) error = %v", err)
+	}
+}
+
+func TestEventsInvalidCursorMatchesOpenAPISpec(t *testing.T) {
+	doc, err := openapi.Load(openAPISpec)
+	if err != nil {
+		t.Fatalf("Load(openAPISpec) error = %v", err)
+	}
+
+	srv := &server{
+		authentic: platformauth.Authenticator{
+			Secret:         []byte("test-secret"),
+			Audience:       platformauth.AudienceAnalytics,
+			ServiceAPIKeys: map[string]struct{}{"admin": {}},
+			AdminAPIKeys:   map[string]struct{}{"admin": {}},
+		},
+		events: analytics.NewHandler(eventReaderStub{}),
+	}
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/events?cursor=bad", nil)
+	req.Header.Set("x-api-key", "admin")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("/api/v1/events status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+	if err := openapi.ValidateResponse(doc, http.MethodGet, "/api/v1/events", rec.Code, rec.Body.Bytes(), "application/json"); err != nil {
+		t.Fatalf("ValidateResponse(/api/v1/events) error = %v", err)
 	}
 }
 

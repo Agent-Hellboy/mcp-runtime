@@ -90,7 +90,6 @@ nav:
       - Overview: internals/README.md
       - API Types: internals/api-types.md
       - Request Flows: internals/request-flows.md
-      - API Service Split: internals/api-service-split.md
       - Go Package Reference: internals/go-package-reference.md
       - CLI Internals: internals/internal-cli.md
       - Operator Internals: internals/cmd-operator.md

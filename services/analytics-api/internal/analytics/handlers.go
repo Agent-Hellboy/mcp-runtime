@@ -10,7 +10,7 @@ import (
 )
 
 type EventReader interface {
-	QueryEvents(context.Context, int) ([]clickhousepkg.EventRow, error)
+	QueryEvents(context.Context, int, int) ([]clickhousepkg.EventRow, error)
 	QueryStats(context.Context) (uint64, error)
 	QuerySources(context.Context) ([]clickhousepkg.SourceStat, error)
 	QueryEventTypes(context.Context) ([]clickhousepkg.EventTypeStat, error)
@@ -31,12 +31,19 @@ func (h *Handler) Events(w http.ResponseWriter, r *http.Request) {
 		apihttp.WriteError(w, nil, err)
 		return
 	}
+	offset, err := apihttp.ParseCursor(r.URL.Query().Get("cursor"))
+	if err != nil {
+		apihttp.WriteError(w, nil, err)
+		return
+	}
 
 	var events []clickhousepkg.EventRow
 	if hasEventFilters(r) {
-		events, err = h.events.QueryEventsFiltered(r.Context(), eventFiltersFromRequest(r, limit))
+		filters := eventFiltersFromRequest(r, limit)
+		filters.Offset = offset
+		events, err = h.events.QueryEventsFiltered(r.Context(), filters)
 	} else {
-		events, err = h.events.QueryEvents(r.Context(), limit)
+		events, err = h.events.QueryEvents(r.Context(), limit, offset)
 	}
 	if err != nil {
 		apihttp.WriteError(w, nil, &apihttp.Error{
@@ -47,7 +54,15 @@ func (h *Handler) Events(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	serviceutil.WriteJSON(w, http.StatusOK, map[string]any{"events": events})
+	meta := apihttp.ListMeta(limit, offset, len(events))
+	body := map[string]any{
+		"events": events,
+		"meta":   meta,
+	}
+	if next := apihttp.NextLink(r, meta.NextCursor, limit); next != "" {
+		body["next"] = next
+	}
+	serviceutil.WriteJSON(w, http.StatusOK, body)
 }
 
 func (h *Handler) Stats(w http.ResponseWriter, r *http.Request) {

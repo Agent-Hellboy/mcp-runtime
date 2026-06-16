@@ -6,7 +6,7 @@ The MCP Runtime API surface comes in three layers:
 2. **Gateway headers** carried on live MCP requests when `gateway.enabled`.
 3. **Sentinel HTTP APIs** exposed by **platform-api**, **runtime-control**, and **analytics-api** (routed at `/api/v1/*` via Traefik): platform identity, runtime governance, governance actions, and analytics.
 
-> **Path prefix:** Public HTTP routes use `/api/v1/*` only. Legacy `/api/*` paths return `404`. Ingress maps prefixes to the three API Deployments; see [`docs/internals/api-service-split.md`](internals/api-service-split.md).
+> **Path prefix:** Public HTTP routes use `/api/v1/*` only. Legacy `/api/*` paths return `404`. Ingress maps prefixes to the three API Deployments; see [`docs/sentinel.md`](sentinel.md).
 
 ```mermaid
 flowchart LR
@@ -504,7 +504,7 @@ GET /api/stats
 GET /api/sources
 GET /api/event-types
 GET /api/analytics/usage?limit=10
-GET /api/events/filter?trace_id=<trace>&server=payments&decision=deny&agent_id=ops-agent&limit=50
+GET /api/v1/events?trace_id=<trace>&server=payments&decision=deny&agent_id=ops-agent&limit=50
 ```
 
 | Group | Fields |

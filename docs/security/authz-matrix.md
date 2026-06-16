@@ -19,7 +19,7 @@ internally; include both the prefix and the meaningful sub-paths in the table.
 
 > **Migration note:** Rows below still use legacy `/api/*` path prefixes from the
 > monolith era. When auditing live clusters, prefix each path with `/api/v1` and
-> route to the owning service per [`api-service-split.md`](../internals/api-service-split.md).
+> route to the owning service per [`sentinel.md`](../sentinel.md).
 
 ## Roles
 
