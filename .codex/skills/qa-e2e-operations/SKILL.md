@@ -44,7 +44,7 @@ Mode dispatch by changed paths:
 | `internal/operator/**`, `api/v1alpha1/**`, `config/crd/**` | Operator, CRD reconciliation, ingress, generated-file drift |
 | `cmd/operator/**`, `cmd/mcp-runtime/**`, `internal/cli/**` | CLI smoke, generated-file drift |
 | `internal/cli/setup/**`, `pkg/k8sclient/**`, `pkg/manifest/**`, `pkg/metadata/**` | Setup re-run, registry pulls, ingress, rollout |
-| `services/api/**`, `services/ui/**`, `services/ingest/**`, `services/processor/**`, `services/mcp-gateway/**` | Service rollout matrix, gateway sidecar refresh |
+| `services/platform-api/**`, `services/runtime-control/**`, `services/analytics-api/**`, `services/ui/**`, `services/ingest/**`, `services/processor/**`, `services/mcp-gateway/**` | Service rollout matrix, gateway sidecar refresh |
 | `k8s/**`, `config/**` | Manifest re-apply + rollout |
 | `docs/**` only | Skip — not an operations regression surface |
 
@@ -66,7 +66,7 @@ go vet ./...
 staticcheck ./...
 go test -race -count=1 $(go list ./... | grep -v '/test/integration$')
 
-for d in services/api services/ingest services/processor services/mcp-gateway services/ui; do
+for d in services/platform-api services/runtime-control services/analytics-api services/ingest services/processor services/mcp-gateway services/ui; do
   (cd "$d" && go test -race -count=1 ./...)
 done
 
@@ -231,11 +231,11 @@ kubectl -n mcp-runtime delete pod -l control-plane=controller-manager
 kubectl -n mcp-runtime rollout status \
   deploy/mcp-runtime-operator-controller-manager --timeout=120s
 
-# Bounce API mid grant-apply.
-kubectl -n mcp-sentinel scale deploy/mcp-sentinel-api --replicas=0
+# Bounce runtime-control mid grant-apply.
+kubectl -n mcp-sentinel scale deploy/mcp-runtime-control --replicas=0
 kubectl apply -f /tmp/go-example-access.yaml
-kubectl -n mcp-sentinel scale deploy/mcp-sentinel-api --replicas=1
-kubectl -n mcp-sentinel rollout status deploy/mcp-sentinel-api --timeout=90s
+kubectl -n mcp-sentinel scale deploy/mcp-runtime-control --replicas=1
+kubectl -n mcp-sentinel rollout status deploy/mcp-runtime-control --timeout=90s
 ./bin/mcp-runtime server policy inspect go-example-mcp --namespace mcp-servers \
   | grep -q local-session
 ```

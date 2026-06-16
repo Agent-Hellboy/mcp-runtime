@@ -199,19 +199,19 @@ and `team user` call the platform API through `internal/cli/platformapi`.
 `team init` is deprecated and rejects at runtime; use `team create`.
 
 Team behavior spans CLI and API code: platform-backed team creation and
-membership routes live in `services/api/internal/runtimeapi`, durable identity
-state lives in `services/api/internal/platformstore`, and user-facing guidance
+membership routes live in `services/runtime-control/internal/runtimeapi`, durable identity
+state lives in `services/platform-api/internal/platformstore`, and user-facing guidance
 lives in `docs/multi-team.md`.
 
 Tests: `team/manager_test.go`; for platform team API changes, run focused tests
-inside `services/api`.
+inside `services/platform-api` and `services/runtime-control`.
 
 ## Auth, Sentinel, and Platform API
 
 `internal/cli/auth/` handles platform API login, logout, and credential profiles.
 `internal/cli/sentinel/` and `internal/cli/platformapi/` provide CLI access to
 Sentinel APIs and platform API URL normalization. These commands should stay
-aligned with `services/api` routes and the public docs.
+aligned with split API service routes (`/api/v1/*`) and the public docs.
 
 Tests: `sentinel/*_test.go`, `auth/*_test.go`, and `platformapi/*_test.go`.
 

@@ -362,7 +362,7 @@ Before assuming a database or auth bug, inspect the deployment and the managed
 secret:
 
 ```bash
-kubectl get deploy mcp-sentinel-api -n mcp-sentinel -o yaml
+kubectl get deploy mcp-platform-api mcp-runtime-control mcp-analytics-api -n mcp-sentinel -o yaml
 kubectl get secret mcp-sentinel-secrets -n mcp-sentinel -o yaml
 ```
 
@@ -511,9 +511,9 @@ again.
 
 kind's nodes are containers, so the registry NodePort needs an `extraPortMappings` entry to be reachable, and containerd inside the node container needs the same mirror.
 For `setup --test-mode`, MCP Runtime emits image refs such as
-`registry.registry.svc.cluster.local:5000/mcp-sentinel-api:latest` so Kind
-nodes use one stable service-DNS host instead of a mutable registry
-`ClusterIP:port`.
+`registry.registry.svc.cluster.local:5000/mcp-platform-api:latest` (and sibling
+split API images) so Kind nodes use one stable service-DNS host instead of a
+mutable registry `ClusterIP:port`.
 
 1. **Cluster config.** Pass this to `kind create cluster --config`:
 
