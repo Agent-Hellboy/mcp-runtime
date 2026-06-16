@@ -59,6 +59,22 @@ session endpoint.
 See the complete endpoint matrix in
 [Sentinel API authn/authz matrix](security/authz-matrix.md).
 
+### Trusted ingress and client IP
+
+The API derives the caller's client IP from the left-most `X-Forwarded-For`
+hop, falling back to `RemoteAddr`. This IP is used both for audit `ActorIP`
+labelling and for **login-lockout bucketing** (brute-force throttling on
+`/api/v1/auth/login`). Because clients can set `X-Forwarded-For` freely, the
+ingress in front of platform-api **must** set/overwrite this header
+authoritatively and strip any client-supplied value — otherwise a caller can
+rotate the header to evade lockout or poison another address's bucket.
+
+Operators are responsible for this at the ingress layer: configure Traefik (and
+any upstream load balancer) so the real client address is the value
+platform-api sees, and so inbound `X-Forwarded-For` from untrusted clients is
+discarded rather than appended. This is the single trusted boundary for client
+IP; platform-api does not attempt to second-guess the proxy chain.
+
 ## Agent identity: who is using an MCP tool
 
 An agent call carries a delegated governance identity:
