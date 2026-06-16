@@ -1,6 +1,7 @@
 package platformauth
 
 import (
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -92,5 +93,45 @@ func TestClaimsPrincipalRoundTrip(t *testing.T) {
 	got := ToPrincipal(ClaimsFromPrincipal(want))
 	if got.Subject != want.Subject || got.APIKeyID != want.APIKeyID || got.Teams[0] != want.Teams[0] || !got.IsService {
 		t.Fatalf("round trip mismatch: %#v", got)
+	}
+}
+
+func TestServiceAPIKeyDoesNotBecomeAdminWhenAdminKeysEmpty(t *testing.T) {
+	auth := Authenticator{
+		ServiceAPIKeys: map[string]struct{}{"service-key": {}},
+		AdminAPIKeys:   map[string]struct{}{},
+	}
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("x-api-key", "service-key")
+
+	p, ok, err := auth.AuthenticateRequest(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected service key to authenticate")
+	}
+	if p.Role != RoleUser {
+		t.Fatalf("role = %q, want %q", p.Role, RoleUser)
+	}
+}
+
+func TestAdminAPIKeyRequiresExplicitAdminKeyEntry(t *testing.T) {
+	auth := Authenticator{
+		ServiceAPIKeys: map[string]struct{}{"admin-key": {}},
+		AdminAPIKeys:   map[string]struct{}{"admin-key": {}},
+	}
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("x-api-key", "admin-key")
+
+	p, ok, err := auth.AuthenticateRequest(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected admin key to authenticate")
+	}
+	if p.Role != RoleAdmin {
+		t.Fatalf("role = %q, want %q", p.Role, RoleAdmin)
 	}
 }

@@ -1,6 +1,10 @@
 package runtimeapi
 
-import "testing"
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
 
 func TestDefaultCatalogNamespaceForModeIgnoresCatalogOverrideInTenantMode(t *testing.T) {
 	t.Setenv("PLATFORM_MODE", "tenant")
@@ -76,5 +80,43 @@ func TestPublicModePrincipalCanReadCatalogAndOwnedNamespaces(t *testing.T) {
 	}
 	if principalCanReadNamespace(p, "other-user") {
 		t.Fatal("did not expect user to read unrelated namespace")
+	}
+}
+
+func TestPublicCatalogFallbackAllowsCatalogGETAndInjectsNamespace(t *testing.T) {
+	t.Setenv("PLATFORM_MODE", "public")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/runtime/servers", nil)
+	p, ok := PublicCatalogFallback(req)
+	if !ok {
+		t.Fatal("expected public catalog fallback")
+	}
+	if p.AuthType != "public_catalog" {
+		t.Fatalf("auth type = %q, want public_catalog", p.AuthType)
+	}
+	if got := req.URL.Query().Get("namespace"); got != defaultPublicCatalogNamespace {
+		t.Fatalf("namespace query = %q, want %q", got, defaultPublicCatalogNamespace)
+	}
+}
+
+func TestPublicCatalogFallbackRejectsNonCatalogOrMutatingRequests(t *testing.T) {
+	t.Setenv("PLATFORM_MODE", "public")
+
+	for _, req := range []*http.Request{
+		httptest.NewRequest(http.MethodPost, "/api/v1/runtime/servers", nil),
+		httptest.NewRequest(http.MethodGet, "/api/v1/runtime/server-events", nil),
+	} {
+		if _, ok := PublicCatalogFallback(req); ok {
+			t.Fatalf("unexpected public catalog fallback for %s %s", req.Method, req.URL.Path)
+		}
+	}
+}
+
+func TestPublicCatalogFallbackDisabledOutsidePublicMode(t *testing.T) {
+	t.Setenv("PLATFORM_MODE", "tenant")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/runtime/servers", nil)
+	if _, ok := PublicCatalogFallback(req); ok {
+		t.Fatal("unexpected public catalog fallback in tenant mode")
 	}
 }

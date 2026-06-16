@@ -65,9 +65,46 @@ func TestAuthzMatrixRows(t *testing.T) {
 			authzmatrix.ApplyRole(req, row.Role, keys)
 			rec := httptest.NewRecorder()
 			mux.ServeHTTP(rec, req)
+			if row.ExpectAuthenticated {
+				if rec.Code == http.StatusUnauthorized || rec.Code == http.StatusForbidden || rec.Code == http.StatusNotFound {
+					t.Fatalf("%s %s role=%s status = %d, want authenticated handler reach body=%s", row.Method, row.Path, row.Role, rec.Code, rec.Body.String())
+				}
+				return
+			}
 			if rec.Code != row.Expect {
 				t.Fatalf("%s %s role=%s status = %d, want %d body=%s", row.Method, row.Path, row.Role, rec.Code, row.Expect, rec.Body.String())
 			}
 		})
+	}
+}
+
+func TestAuthzMatrixCoversRegisteredRoutes(t *testing.T) {
+	path := filepath.Join("..", "..", "docs", "security", "authz-matrix.json")
+	rows, err := authzmatrix.Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	rows = authzmatrix.Filter(rows, "analytics-api")
+
+	required := []string{
+		"/health",
+		"/api/v1/events",
+		"/api/v1/stats",
+		"/api/v1/sources",
+		"/api/v1/event-types",
+		"/api/v1/analytics/usage",
+		"/api/v1/user/analytics/usage",
+	}
+	for _, pattern := range required {
+		found := false
+		for _, row := range rows {
+			if row.Path == pattern {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("missing authz-matrix coverage for analytics-api route %q", pattern)
+		}
 	}
 }

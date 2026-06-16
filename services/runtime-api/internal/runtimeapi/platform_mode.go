@@ -1,6 +1,7 @@
 package runtimeapi
 
 import (
+	"net/http"
 	"os"
 	"strings"
 
@@ -192,4 +193,22 @@ func PublicCatalogPrincipal() Principal {
 		AllowedNamespaces: namespaces,
 		AuthType:          "public_catalog",
 	}
+}
+
+// PublicCatalogFallback authenticates anonymous public-mode reads of the catalog collections.
+func PublicCatalogFallback(r *http.Request) (Principal, bool) {
+	if !PublicCatalogEnabled() || r == nil || r.Method != http.MethodGet {
+		return Principal{}, false
+	}
+	switch strings.TrimRight(r.URL.Path, "/") {
+	case "/api/v1/runtime/servers", "/api/v1/runtime/tools":
+	default:
+		return Principal{}, false
+	}
+	query := r.URL.Query()
+	if strings.TrimSpace(query.Get("namespace")) == "" {
+		query.Set("namespace", defaultCatalogNamespaceForMode())
+		r.URL.RawQuery = query.Encode()
+	}
+	return PublicCatalogPrincipal(), true
 }

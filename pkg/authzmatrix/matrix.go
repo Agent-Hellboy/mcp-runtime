@@ -18,11 +18,12 @@ const (
 
 // Row is one authn/authz expectation from docs/security/authz-matrix.json.
 type Row struct {
-	Service string `json:"service"`
-	Path    string `json:"path"`
-	Method  string `json:"method"`
-	Role    string `json:"role"`
-	Expect  int    `json:"expect"`
+	Service             string `json:"service"`
+	Path                string `json:"path"`
+	Method              string `json:"method"`
+	Role                string `json:"role"`
+	Expect              int    `json:"expect,omitempty"`
+	ExpectAuthenticated bool   `json:"expect_authenticated,omitempty"`
 }
 
 // Load reads the machine-readable authz matrix from path.
@@ -59,8 +60,8 @@ func Load(path string) ([]Row, error) {
 		if strings.TrimSpace(row.Role) == "" {
 			return nil, fmt.Errorf("row %d: role is required", i)
 		}
-		if row.Expect <= 0 {
-			return nil, fmt.Errorf("row %d: expect must be a positive HTTP status", i)
+		if row.Expect <= 0 && !row.ExpectAuthenticated {
+			return nil, fmt.Errorf("row %d: expect must be a positive HTTP status or expect_authenticated", i)
 		}
 	}
 	return rows, nil

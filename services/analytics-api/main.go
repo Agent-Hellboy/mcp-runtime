@@ -67,11 +67,10 @@ func main() {
 		},
 		events: analytics.NewHandler(&clickhousepkg.Client{Conn: conn, DBName: dbName}),
 		authentic: platformauth.Authenticator{
-			Secret:          jwtSecret,
-			Audience:        platformauth.AudienceAnalytics,
-			ServiceAPIKeys:  serviceAPIKeysFromEnv(),
-			AdminAPIKeys:    adminAPIKeysFromEnv(),
-			LegacyAdminKeys: legacyAdminAPIKeyFallbackEnabled(),
+			Secret:         jwtSecret,
+			Audience:       platformauth.AudienceAnalytics,
+			ServiceAPIKeys: serviceAPIKeysFromEnv(),
+			AdminAPIKeys:   adminAPIKeysFromEnv(),
 			UserKeyResolver: &platformauth.HTTPUserKeyResolver{
 				BaseURL: platformAPIURL,
 				Token:   internalToken,
@@ -123,9 +122,4 @@ func adminAPIKeysFromEnv() map[string]struct{} {
 		}
 	}
 	return out
-}
-
-func legacyAdminAPIKeyFallbackEnabled() bool {
-	v := strings.TrimSpace(os.Getenv("LEGACY_ADMIN_API_KEYS"))
-	return v == "1" || strings.EqualFold(v, "true")
 }

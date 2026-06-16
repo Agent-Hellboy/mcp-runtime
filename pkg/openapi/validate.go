@@ -25,7 +25,9 @@ func Load(data []byte) (*openapi3.T, error) {
 	return doc, nil
 }
 
-// ValidateResponse checks an HTTP response body against the committed OpenAPI spec.
+// ValidateResponse is a test/CI helper that checks an HTTP response body against
+// the committed OpenAPI spec. It rebuilds routing state per call and is not
+// intended for live request-path enforcement.
 func ValidateResponse(doc *openapi3.T, method, path string, status int, body []byte, contentType string) error {
 	if doc == nil {
 		return fmt.Errorf("openapi document is nil")

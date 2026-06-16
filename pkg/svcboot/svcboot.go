@@ -88,6 +88,7 @@ func Run(cfg Config) error {
 		log.Printf("shutdown signal received")
 	case err := <-serverErrs:
 		log.Printf("%v", err)
+		return err
 	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

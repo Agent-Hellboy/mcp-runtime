@@ -62,7 +62,6 @@ func testAuthenticator(s *apiServer) {
 		Audience:        platformauth.AudiencePlatform,
 		ServiceAPIKeys:  s.apiKeys,
 		AdminAPIKeys:    s.adminAPIKeys,
-		LegacyAdminKeys: s.legacyAdminKeys,
 		UserKeyResolver: resolver,
 	}
 }

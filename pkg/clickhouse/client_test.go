@@ -77,6 +77,35 @@ func TestNormalizeEventLimit(t *testing.T) {
 	}
 }
 
+func TestNormalizeEventOffset(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		input int
+		want  int
+	}{
+		{input: -5, want: 0},
+		{input: 0, want: 0},
+		{input: 25, want: 25},
+		{input: maxEventOffset + 1, want: maxEventOffset},
+	}
+
+	for _, tc := range tests {
+		if got := normalizeEventOffset(tc.input); got != tc.want {
+			t.Fatalf("normalizeEventOffset(%d) = %d, want %d", tc.input, got, tc.want)
+		}
+	}
+}
+
+func TestEventFilterQueryCapsOffset(t *testing.T) {
+	t.Parallel()
+
+	query := buildEventFilterQuery("mcp", "", 25, maxEventOffset+1)
+	if !strings.Contains(query, "OFFSET 100000") {
+		t.Fatalf("query = %q, want capped OFFSET", query)
+	}
+}
+
 func TestEventQueriesUseMaterializedTeamIDColumn(t *testing.T) {
 	t.Parallel()
 

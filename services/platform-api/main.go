@@ -22,7 +22,6 @@ import (
 type apiServer struct {
 	apiKeys           map[string]struct{}
 	adminAPIKeys      map[string]struct{}
-	legacyAdminKeys   bool
 	adminUsers        map[string]struct{}
 	jwks              *keyfunc.JWKS
 	oidcIssuer        string
@@ -61,7 +60,6 @@ func main() {
 
 	apiKeys := svcboot.APIKeySet(envOr("API_KEYS", ""))
 	adminAPIKeys := splitCSVSet(envOr("ADMIN_API_KEYS", ""))
-	legacyAdminKeys := legacyAdminAPIKeyFallbackEnabled()
 	adminUsers := splitCSVSet(envOr("ADMIN_USERS", ""))
 	for entry := range adminUsers {
 		normalized := strings.ToLower(strings.TrimSpace(entry))
@@ -91,7 +89,6 @@ func main() {
 	server := &apiServer{
 		apiKeys:           apiKeys,
 		adminAPIKeys:      adminAPIKeys,
-		legacyAdminKeys:   legacyAdminKeys,
 		adminUsers:        adminUsers,
 		jwks:              jwks,
 		oidcIssuer:        oidcIssuer,
@@ -144,7 +141,6 @@ func main() {
 		Audience:        platformauth.AudiencePlatform,
 		ServiceAPIKeys:  apiKeys,
 		AdminAPIKeys:    adminAPIKeys,
-		LegacyAdminKeys: legacyAdminKeys,
 		UserKeyResolver: userResolver,
 		OIDC:            server.oidcVerifier(),
 	}
@@ -313,15 +309,6 @@ func splitCSVSet(raw string) map[string]struct{} {
 		}
 	}
 	return out
-}
-
-func legacyAdminAPIKeyFallbackEnabled() bool {
-	for _, key := range []string{"MCP_LEGACY_ADMIN_API_KEY_FALLBACK", "LEGACY_ADMIN_API_KEY_FALLBACK"} {
-		if enabled, ok := boolEnv(key); ok {
-			return enabled
-		}
-	}
-	return strings.TrimSpace(os.Getenv("MCP_RUNTIME_TEST_MODE")) == "1"
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {

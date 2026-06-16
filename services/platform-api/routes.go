@@ -53,9 +53,6 @@ func (s *apiServer) registerRoutes(mux *http.ServeMux) {
 	register("/admin/audit", adminOnly(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		admin.HandleAudit(w, r, admin.Dependencies{Platform: s.platform, WriteJSON: writeJSON})
 	})))
-	register("/admin/operations", adminOnly(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		admin.HandleOperations(w, r, admin.Dependencies{Platform: s.platform, WriteJSON: writeJSON})
-	})))
 }
 
 func (s *apiServer) handleHealth(w http.ResponseWriter, _ *http.Request) {

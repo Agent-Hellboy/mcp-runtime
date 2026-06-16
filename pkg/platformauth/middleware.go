@@ -2,6 +2,7 @@ package platformauth
 
 import (
 	"context"
+	"crypto/hmac"
 	"log"
 	"net/http"
 	"strings"
@@ -23,7 +24,6 @@ type Authenticator struct {
 	Audience        string
 	ServiceAPIKeys  map[string]struct{}
 	AdminAPIKeys    map[string]struct{}
-	LegacyAdminKeys bool
 	UserKeyResolver UserKeyResolver
 	OIDC            OIDCVerifier
 	PublicFallback  func(*http.Request) (Principal, bool)
@@ -61,9 +61,9 @@ func (a Authenticator) RequireRole(role string, next http.Handler) http.Handler 
 
 func (a Authenticator) AuthenticateRequest(r *http.Request) (Principal, bool, error) {
 	if apiKey := strings.TrimSpace(r.Header.Get("x-api-key")); apiKey != "" {
-		if _, ok := a.ServiceAPIKeys[apiKey]; ok {
+		if containsAPIKey(a.ServiceAPIKeys, apiKey) {
 			role := RoleUser
-			if _, admin := a.AdminAPIKeys[apiKey]; admin || len(a.AdminAPIKeys) == 0 && a.LegacyAdminKeys {
+			if containsAPIKey(a.AdminAPIKeys, apiKey) {
 				role = RoleAdmin
 			}
 			return Principal{Role: role, AuthType: "service_api_key", IsService: true}, true, nil
@@ -87,4 +87,17 @@ func (a Authenticator) AuthenticateRequest(r *http.Request) (Principal, bool, er
 		return a.OIDC.Verify(r.Context(), token)
 	}
 	return Principal{}, false, nil
+}
+
+func containsAPIKey(keys map[string]struct{}, apiKey string) bool {
+	if len(keys) == 0 || apiKey == "" {
+		return false
+	}
+	found := false
+	for key := range keys {
+		if hmac.Equal([]byte(key), []byte(apiKey)) {
+			found = true
+		}
+	}
+	return found
 }

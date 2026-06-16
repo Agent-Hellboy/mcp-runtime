@@ -71,15 +71,15 @@ func main() {
 		runtime:  runtimeServer,
 		platform: platformClient,
 		authentic: platformauth.Authenticator{
-			Secret:          jwtSecret,
-			Audience:        platformauth.AudienceRuntime,
-			ServiceAPIKeys:  apiKeys,
-			AdminAPIKeys:    adminAPIKeysFromEnv(),
-			LegacyAdminKeys: legacyAdminAPIKeyFallbackEnabled(),
+			Secret:         jwtSecret,
+			Audience:       platformauth.AudienceRuntime,
+			ServiceAPIKeys: apiKeys,
+			AdminAPIKeys:   adminAPIKeysFromEnv(),
 			UserKeyResolver: &platformauth.HTTPUserKeyResolver{
 				BaseURL: platformAPIURL,
 				Token:   internalToken,
 			},
+			PublicFallback: runtimeapi.PublicCatalogFallback,
 		},
 	}
 	if !runtimeServer.KubernetesAvailable() {
@@ -130,9 +130,4 @@ func adminAPIKeysFromEnv() map[string]struct{} {
 		}
 	}
 	return out
-}
-
-func legacyAdminAPIKeyFallbackEnabled() bool {
-	v := strings.TrimSpace(os.Getenv("LEGACY_ADMIN_API_KEYS"))
-	return v == "1" || strings.EqualFold(v, "true")
 }
