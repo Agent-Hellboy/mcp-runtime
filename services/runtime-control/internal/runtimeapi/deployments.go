@@ -42,7 +42,6 @@ const (
 	defaultDeployPort              = int32(8088)
 	restrictedRunAsUser            = kubeworkload.RestrictedRunAsUser
 	traefikWatchRoleName           = "traefik-watch"
-	traefikWatchClusterRoleName    = "mcp-runtime-traefik-watch"
 	platformNamespaceOwnerRoleName = "platform-namespace-owner"
 	sentinelIngestPort             = 8081
 	sentinelOTLPPort               = 4318
@@ -875,8 +874,74 @@ func (s *RuntimeServer) ensureTeamTraefikWatch(ctx context.Context, namespace st
 }
 
 func ensureTraefikWatchRBAC(ctx context.Context, client kubernetes.Interface, namespace string, cfg teamTraefikWatchConfig) error {
+	role := desiredTraefikWatchRole(namespace)
+	if err := ensureTraefikWatchRole(ctx, client, role); err != nil {
+		return err
+	}
 	binding := desiredTraefikWatchRoleBinding(namespace, cfg)
 	return ensureTraefikWatchRoleBinding(ctx, client, binding)
+}
+
+func desiredTraefikWatchRole(namespace string) *rbacv1.Role {
+	return &rbacv1.Role{
+		ObjectMeta: metav1.ObjectMeta{Name: traefikWatchRoleName, Namespace: namespace},
+		Rules: []rbacv1.PolicyRule{
+			{APIGroups: []string{""}, Resources: []string{"services", "endpoints", "secrets"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{"networking.k8s.io"}, Resources: []string{"ingresses"}, Verbs: []string{"get", "list", "watch"}},
+		},
+	}
+}
+
+func ensureTraefikWatchRole(ctx context.Context, client kubernetes.Interface, role *rbacv1.Role) error {
+	current, err := client.RbacV1().Roles(role.Namespace).Get(ctx, role.Name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		_, err = client.RbacV1().Roles(role.Namespace).Create(ctx, role, metav1.CreateOptions{})
+		return err
+	}
+	if err != nil {
+		return err
+	}
+	if roleRulesMatch(current, role) {
+		return nil
+	}
+	role.ResourceVersion = current.ResourceVersion
+	role.Labels = current.Labels
+	role.Annotations = current.Annotations
+	_, err = client.RbacV1().Roles(role.Namespace).Update(ctx, role, metav1.UpdateOptions{})
+	return err
+}
+
+func roleRulesMatch(current, desired *rbacv1.Role) bool {
+	if current == nil || desired == nil {
+		return false
+	}
+	if len(current.Rules) != len(desired.Rules) {
+		return false
+	}
+	for i := range desired.Rules {
+		if !policyRuleMatches(current.Rules[i], desired.Rules[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func policyRuleMatches(current, desired rbacv1.PolicyRule) bool {
+	return slicesEqual(current.APIGroups, desired.APIGroups) &&
+		slicesEqual(current.Resources, desired.Resources) &&
+		slicesEqual(current.Verbs, desired.Verbs)
+}
+
+func slicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func desiredTraefikWatchRoleBinding(namespace string, cfg teamTraefikWatchConfig) *rbacv1.RoleBinding {
@@ -884,8 +949,8 @@ func desiredTraefikWatchRoleBinding(namespace string, cfg teamTraefikWatchConfig
 		ObjectMeta: metav1.ObjectMeta{Name: traefikWatchRoleName, Namespace: namespace},
 		RoleRef: rbacv1.RoleRef{
 			APIGroup: "rbac.authorization.k8s.io",
-			Kind:     "ClusterRole",
-			Name:     traefikWatchClusterRoleName,
+			Kind:     "Role",
+			Name:     traefikWatchRoleName,
 		},
 		Subjects: []rbacv1.Subject{
 			{Kind: "ServiceAccount", Name: cfg.serviceAccount, Namespace: cfg.namespace},

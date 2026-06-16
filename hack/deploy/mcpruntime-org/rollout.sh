@@ -31,7 +31,6 @@ echo "registry host: $REGISTRY_HOST"
 echo "building ./bin/mcp-runtime ..."
 go build -o bin/mcp-runtime ./cmd/mcp-runtime
 
-mcpruntime_org_kubectl apply -f k8s/08-traefik-watch-rbac.yaml
 mcpruntime_org_ensure_platform_pull_secret
 
 mcpruntime_org_kubectl patch configmap mcp-sentinel-config -n mcp-sentinel --type merge -p "$(cat <<PATCH

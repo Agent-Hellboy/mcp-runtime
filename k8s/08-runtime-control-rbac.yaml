@@ -57,7 +57,7 @@ rules:
     verbs: ["get", "list", "watch", "create", "update", "patch"]
   - apiGroups: ["rbac.authorization.k8s.io"]
     resources: ["clusterroles"]
-    resourceNames: ["mcp-runtime-traefik-watch", "mcp-runtime-control-team-secrets"]
+    resourceNames: ["mcp-runtime-control-team-secrets"]
     verbs: ["bind"]
   - apiGroups: [""]
     resources: ["users", "groups"]

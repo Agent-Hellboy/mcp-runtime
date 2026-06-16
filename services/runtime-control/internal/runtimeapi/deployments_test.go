@@ -619,14 +619,14 @@ func TestEnsureTeamNamespaceConfiguresTraefikIngressWatch(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("ensureTeamNamespace() error = %v", err)
 	}
-	if _, err := client.RbacV1().Roles("mcp-team-acme").Get(context.Background(), traefikWatchRoleName, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
-		t.Fatalf("API-created traefik watch role error = %v, want not found", err)
+	if _, err := client.RbacV1().Roles("mcp-team-acme").Get(context.Background(), traefikWatchRoleName, metav1.GetOptions{}); err != nil {
+		t.Fatalf("traefik watch role missing: %v", err)
 	}
 	binding, err := client.RbacV1().RoleBindings("mcp-team-acme").Get(context.Background(), traefikWatchRoleName, metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("traefik watch rolebinding missing: %v", err)
 	}
-	if binding.RoleRef.Kind != "ClusterRole" || binding.RoleRef.Name != traefikWatchClusterRoleName {
+	if binding.RoleRef.Kind != "Role" || binding.RoleRef.Name != traefikWatchRoleName {
 		t.Fatalf("traefik watch binding role ref = %#v", binding.RoleRef)
 	}
 	if len(binding.Subjects) != 1 || binding.Subjects[0].Kind != rbacv1.ServiceAccountKind || binding.Subjects[0].Namespace != "traefik" || binding.Subjects[0].Name != "traefik" {
@@ -675,7 +675,7 @@ func TestEnsureCatalogNamespaceAutoTraefikWatchSkipsExternalIngress(t *testing.T
 	}
 }
 
-func TestEnsureTraefikWatchRBACBindsClusterRole(t *testing.T) {
+func TestEnsureTraefikWatchRBACUsesNamespaceRole(t *testing.T) {
 	cfg := teamTraefikWatchConfig{
 		namespace:      "traefik",
 		serviceAccount: "traefik",
@@ -707,8 +707,25 @@ func TestEnsureTraefikWatchRBACBindsClusterRole(t *testing.T) {
 	if err != nil {
 		t.Fatalf("traefik watch rolebinding missing: %v", err)
 	}
-	if binding.RoleRef.Kind != "ClusterRole" || binding.RoleRef.Name != traefikWatchClusterRoleName {
-		t.Fatalf("traefik watch binding role ref = %#v, want ClusterRole/%s", binding.RoleRef, traefikWatchClusterRoleName)
+	if binding.RoleRef.Kind != "Role" || binding.RoleRef.Name != traefikWatchRoleName {
+		t.Fatalf("traefik watch binding role ref = %#v, want Role/%s", binding.RoleRef, traefikWatchRoleName)
+	}
+	role, err := client.RbacV1().Roles("mcp-servers-public").Get(context.Background(), traefikWatchRoleName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("traefik watch role missing: %v", err)
+	}
+	if len(role.Rules) != 2 {
+		t.Fatalf("traefik watch role rules = %#v, want 2 rules", role.Rules)
+	}
+	hasSecrets := false
+	for _, resource := range role.Rules[0].Resources {
+		if resource == "secrets" {
+			hasSecrets = true
+			break
+		}
+	}
+	if !hasSecrets {
+		t.Fatalf("traefik watch role rules = %#v, want secrets watch in namespace role", role.Rules)
 	}
 }
 
