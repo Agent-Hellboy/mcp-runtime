@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	policypkg "mcp-runtime/pkg/policy"
 )
@@ -102,6 +103,12 @@ func authenticateMTLS(r *http.Request, policy *policypkg.Document) (identityCont
 		if string(binding.Namespace) != namespace || string(binding.Name) != sessionID {
 			continue
 		}
+		if binding.Revoked {
+			return identityContext{}, "session_revoked"
+		}
+		if mtlsBindingExpired(binding.ExpiresAt) {
+			return identityContext{}, "session_expired"
+		}
 		return identityContext{
 			HumanID:   string(binding.HumanID),
 			AgentID:   string(binding.AgentID),
@@ -110,4 +117,13 @@ func authenticateMTLS(r *http.Request, policy *policypkg.Document) (identityCont
 		}, ""
 	}
 	return identityContext{}, "session_not_found"
+}
+
+func mtlsBindingExpired(expiresAt string) bool {
+	trimmed := strings.TrimSpace(expiresAt)
+	if trimmed == "" {
+		return false
+	}
+	parsed, err := time.Parse(time.RFC3339, trimmed)
+	return err == nil && !parsed.After(time.Now())
 }

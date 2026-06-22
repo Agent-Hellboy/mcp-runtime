@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 func TestValidateAdapterCSR(t *testing.T) {
@@ -59,5 +61,27 @@ func TestValidateAdapterCSRRejectsAdditionalSANs(t *testing.T) {
 	csrPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrDER})
 	if _, err := validateAdapterCSR(string(csrPEM), expected); err == nil {
 		t.Fatal("validateAdapterCSR() accepted an additional DNS SAN")
+	}
+}
+
+func TestAdapterCertificateRequestFailure(t *testing.T) {
+	t.Parallel()
+	request := &unstructured.Unstructured{Object: map[string]any{
+		"status": map[string]any{
+			"conditions": []any{map[string]any{
+				"type":    "Ready",
+				"status":  "False",
+				"reason":  "Denied",
+				"message": "issuer rejected the request",
+			}},
+		},
+	}}
+
+	err := adapterCertificateRequestFailure(request)
+	if err == nil {
+		t.Fatal("expected failed CertificateRequest condition to return an error")
+	}
+	if !strings.Contains(err.Error(), "Denied") || !strings.Contains(err.Error(), "issuer rejected the request") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

@@ -200,6 +200,9 @@ func waitForIssuedAdapterCertificate(ctx context.Context, s *RuntimeServer, name
 		if err != nil {
 			return "", "", err
 		}
+		if err := adapterCertificateRequestFailure(request); err != nil {
+			return "", "", err
+		}
 		certificate, _, _ := unstructured.NestedString(request.Object, "status", "certificate")
 		ca, _, _ := unstructured.NestedString(request.Object, "status", "ca")
 		if certificate != "" {
@@ -219,4 +222,32 @@ func waitForIssuedAdapterCertificate(ctx context.Context, s *RuntimeServer, name
 		case <-ticker.C:
 		}
 	}
+}
+
+func adapterCertificateRequestFailure(request *unstructured.Unstructured) error {
+	conditions, found, _ := unstructured.NestedSlice(request.Object, "status", "conditions")
+	if !found {
+		return nil
+	}
+	for _, condition := range conditions {
+		conditionMap, ok := condition.(map[string]any)
+		if !ok {
+			continue
+		}
+		conditionType, _, _ := unstructured.NestedString(conditionMap, "type")
+		conditionStatus, _, _ := unstructured.NestedString(conditionMap, "status")
+		if conditionType != "Ready" || conditionStatus != "False" {
+			continue
+		}
+		reason, _, _ := unstructured.NestedString(conditionMap, "reason")
+		if reason != "Failed" && reason != "Denied" {
+			continue
+		}
+		message, _, _ := unstructured.NestedString(conditionMap, "message")
+		if strings.TrimSpace(message) == "" {
+			return fmt.Errorf("certificate request failed: %s", reason)
+		}
+		return fmt.Errorf("certificate request failed: %s (%s)", reason, message)
+	}
+	return nil
 }

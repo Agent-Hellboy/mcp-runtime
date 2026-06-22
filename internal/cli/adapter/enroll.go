@@ -107,7 +107,7 @@ func enrollAdapterCertificate(ctx context.Context, client *platformapi.PlatformC
 		{"ca.crt", []byte(issued.CABundle), 0o644},
 	}
 	for _, file := range files {
-		if err := writeCredentialFile(filepath.Join(dir, file.name), file.data, file.mode); err != nil {
+		if err := writeCredentialFile(dir, file.name, file.data, file.mode); err != nil {
 			return fmt.Errorf("write %s: %w", file.name, err)
 		}
 	}
@@ -117,8 +117,13 @@ func enrollAdapterCertificate(ctx context.Context, client *platformapi.PlatformC
 	return nil
 }
 
-func writeCredentialFile(path string, data []byte, mode os.FileMode) error {
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
+func writeCredentialFile(dir, name string, data []byte, mode os.FileMode) error {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	file, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
 	if err != nil {
 		return err
 	}

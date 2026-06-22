@@ -29,6 +29,9 @@ func (r *MCPServerReconciler) reconcileIngress(ctx context.Context, mcpServer *m
 		}
 		return r.reconcileMTLSIngress(ctx, mcpServer)
 	}
+	if err := r.deleteMTLSIngress(ctx, mcpServer); err != nil {
+		return err
+	}
 
 	op, err := ctrl.CreateOrUpdate(ctx, r.Client, ingress, func() error {
 		pathType := networkingv1.PathTypePrefix

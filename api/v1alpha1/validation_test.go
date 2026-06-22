@@ -201,6 +201,28 @@ func TestMCPServerDefault(t *testing.T) {
 	}
 }
 
+func TestMCPServerDefaultSkipsPublicPathPrefixForMTLS(t *testing.T) {
+	server := &MCPServer{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-server"},
+		Spec: MCPServerSpec{
+			Image: "example.com/mcp-server",
+			Auth:  &AuthConfig{Mode: AuthModeMTLS, TrustDomain: "example.org"},
+			Gateway: &GatewayConfig{
+				Enabled: true,
+			},
+		},
+	}
+
+	server.DefaultWithOptions(MCPServerDefaultOptions{DefaultIngressHost: "mcp.example.com"})
+
+	if server.Spec.PublicPathPrefix != "" {
+		t.Fatalf("expected no publicPathPrefix default for mTLS, got %q", server.Spec.PublicPathPrefix)
+	}
+	if err := server.validate(); err != nil {
+		t.Fatalf("defaulted mTLS server should validate: %v", err)
+	}
+}
+
 func TestMCPServerDefaultWithOptions(t *testing.T) {
 	server := &MCPServer{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-server"},

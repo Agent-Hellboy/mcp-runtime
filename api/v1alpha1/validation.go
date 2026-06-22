@@ -112,7 +112,11 @@ func (r *MCPServer) DefaultWithOptions(options MCPServerDefaultOptions) {
 	if strings.TrimSpace(r.Spec.IngressPath) == "" {
 		r.Spec.IngressPath = defaultIngressPathFromName(r.Name)
 	}
-	if strings.TrimSpace(r.Spec.PublicPathPrefix) == "" {
+	authMode := AuthMode("")
+	if r.Spec.Auth != nil {
+		authMode = r.Spec.Auth.Mode
+	}
+	if strings.TrimSpace(r.Spec.PublicPathPrefix) == "" && authMode != AuthModeMTLS {
 		r.Spec.PublicPathPrefix = defaultPublicPathPrefixFromName(r.Name)
 	}
 	if strings.TrimSpace(r.Spec.IngressClass) == "" {

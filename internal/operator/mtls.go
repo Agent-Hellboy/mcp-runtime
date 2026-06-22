@@ -3,6 +3,7 @@ package operator
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -86,12 +87,30 @@ func (r *MCPServerReconciler) reconcileGatewayCertificate(ctx context.Context, m
 	current.SetGroupVersionKind(certificateGVK)
 	key := types.NamespacedName{Name: certificate.GetName(), Namespace: certificate.GetNamespace()}
 	if err := r.Get(ctx, key, current); err == nil {
-		certificate.SetResourceVersion(current.GetResourceVersion())
-		return r.Update(ctx, certificate)
+		currentSpec, _, _ := unstructured.NestedMap(current.Object, "spec")
+		desiredSpec, _, _ := unstructured.NestedMap(certificate.Object, "spec")
+		if !reflect.DeepEqual(currentSpec, desiredSpec) ||
+			!reflect.DeepEqual(current.GetLabels(), certificate.GetLabels()) ||
+			!reflect.DeepEqual(current.GetOwnerReferences(), certificate.GetOwnerReferences()) {
+			certificate.SetResourceVersion(current.GetResourceVersion())
+			return r.Update(ctx, certificate)
+		}
+		return nil
 	} else if !apierrors.IsNotFound(err) {
 		return err
 	}
 	return r.Create(ctx, certificate)
+}
+
+func (r *MCPServerReconciler) deleteMTLSIngress(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer) error {
+	route := &unstructured.Unstructured{}
+	route.SetGroupVersionKind(ingressRouteTCPGVK)
+	route.SetName(mcpServer.Name)
+	route.SetNamespace(mcpServer.Namespace)
+	if err := r.Delete(ctx, route); err != nil && !apierrors.IsNotFound(err) && !meta.IsNoMatchError(err) {
+		return err
+	}
+	return nil
 }
 
 func (r *MCPServerReconciler) reconcileMTLSIngress(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer) error {
@@ -116,8 +135,14 @@ func (r *MCPServerReconciler) reconcileMTLSIngress(ctx context.Context, mcpServe
 	current.SetGroupVersionKind(ingressRouteTCPGVK)
 	key := types.NamespacedName{Name: route.GetName(), Namespace: route.GetNamespace()}
 	if err := r.Get(ctx, key, current); err == nil {
-		route.SetResourceVersion(current.GetResourceVersion())
-		return r.Update(ctx, route)
+		currentSpec, _, _ := unstructured.NestedMap(current.Object, "spec")
+		desiredSpec, _, _ := unstructured.NestedMap(route.Object, "spec")
+		if !reflect.DeepEqual(currentSpec, desiredSpec) ||
+			!reflect.DeepEqual(current.GetOwnerReferences(), route.GetOwnerReferences()) {
+			route.SetResourceVersion(current.GetResourceVersion())
+			return r.Update(ctx, route)
+		}
+		return nil
 	} else if !apierrors.IsNotFound(err) {
 		return err
 	}
