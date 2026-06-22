@@ -130,6 +130,10 @@ func (m *Middleware) redactRequestBody(req *http.Request) int {
 	redacted := m.redactBody(raw)
 	req.Body = io.NopCloser(bytes.NewReader(redacted))
 	req.ContentLength = int64(len(redacted))
+	req.Header.Del("Transfer-Encoding")
+	if req.Header.Get("Content-Length") != "" {
+		req.Header.Set("Content-Length", intToString(len(redacted)))
+	}
 	return 0
 }
 
