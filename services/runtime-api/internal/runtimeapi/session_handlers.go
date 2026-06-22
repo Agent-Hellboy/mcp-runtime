@@ -51,7 +51,7 @@ func validateSessionRequest(req *accessSessionRequest) error {
 }
 
 func (s *AccessService) handleRuntimeSessionList(w http.ResponseWriter, r *http.Request) {
-	if s.accessMgr == nil {
+	if s == nil || s.accessMgr == nil {
 		writeAPIError(w, http.StatusServiceUnavailable, "kubernetes not available")
 		return
 	}

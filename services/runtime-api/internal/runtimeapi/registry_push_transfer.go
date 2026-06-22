@@ -187,7 +187,7 @@ func (s *RegistryPushService) revokeRegistryPushTransfer(ctx context.Context, to
 }
 
 func (s *RegistryPushService) purgeExpiredRegistryPushTransfers(ctx context.Context) {
-	if s.k8sClients == nil || s.k8sClients.Clientset == nil {
+	if s == nil || s.k8sClients == nil || s.k8sClients.Clientset == nil {
 		return
 	}
 	ns := registryPushTransferNamespace()

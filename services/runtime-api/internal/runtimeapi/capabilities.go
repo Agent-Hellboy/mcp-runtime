@@ -39,6 +39,9 @@ func (s *AccessService) identityConfigured() bool {
 }
 
 func (s *InventoryService) controlPlane() *controlplane.Manager {
+	if s == nil {
+		return nil
+	}
 	if s.control != nil {
 		return s.control
 	}

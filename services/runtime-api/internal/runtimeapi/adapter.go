@@ -244,6 +244,9 @@ func defaultAdapterSessionTeamID(p principal, namespace string, teamIDs []string
 // MaxTrust wins; ties are broken by oldest creationTimestamp so the result is
 // deterministic across replicas.
 func (s *AccessService) selectAdapterGrant(ctx context.Context, namespace, serverName, humanID, agentID string, teamIDs []string, defaultTeamID string, allowAnyTeam bool) (*sentinelaccess.MCPAccessGrant, string, error) {
+	if s == nil || s.accessMgr == nil {
+		return nil, "", fmt.Errorf("kubernetes not available")
+	}
 	grants, err := s.accessMgr.ListGrants(ctx, namespace)
 	if err != nil {
 		return nil, "", fmt.Errorf("list grants in %s: %w", namespace, err)

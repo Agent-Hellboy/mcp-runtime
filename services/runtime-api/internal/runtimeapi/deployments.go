@@ -209,7 +209,7 @@ func (s *DeploymentService) HandleAdminDeployments(w http.ResponseWriter, r *htt
 
 // ListAdminDeploymentSummaries returns deployment summaries from all namespaces or one requested namespace.
 func (s *DeploymentService) ListAdminDeploymentSummaries(ctx context.Context, namespace string) ([]map[string]any, error) {
-	if s.k8sClients == nil {
+	if s == nil || s.k8sClients == nil {
 		return nil, errors.New("kubernetes not available")
 	}
 	listNamespace := metav1.NamespaceAll
@@ -359,7 +359,7 @@ func (s *DeploymentService) handleDeploymentApply(w http.ResponseWriter, r *http
 }
 
 func (s *DeploymentService) clientForPrincipal(p principal) (kubernetes.Interface, error) {
-	if s.k8sClients == nil {
+	if s == nil || s.k8sClients == nil {
 		return nil, fmt.Errorf("kubernetes not available")
 	}
 	if p.UserID() == "" {
@@ -379,7 +379,7 @@ func (s *DeploymentService) clientForPrincipal(p principal) (kubernetes.Interfac
 // EnsureCatalogNamespace creates or updates a catalog namespace with platform labels, security defaults, and ingress watch access.
 func (s *DeploymentService) EnsureCatalogNamespace(ctx context.Context, namespace string) error {
 	namespace = strings.TrimSpace(namespace)
-	if s.k8sClients == nil || namespace == "" {
+	if s == nil || s.k8sClients == nil || namespace == "" {
 		return nil
 	}
 	labels := map[string]string{
@@ -432,7 +432,7 @@ func (s *DeploymentService) ensureTeamNamespace(ctx context.Context, team teamRe
 
 func (s *DeploymentService) ensureAdminPublishNamespace(ctx context.Context, namespace string) error {
 	namespace = strings.TrimSpace(namespace)
-	if s.k8sClients == nil || namespace == "" {
+	if s == nil || s.k8sClients == nil || namespace == "" {
 		return nil
 	}
 	if isModeCatalogNamespace(namespace) {
@@ -461,7 +461,7 @@ func (s *DeploymentService) ensureAdminPublishNamespace(ctx context.Context, nam
 }
 
 func (s *DeploymentService) ensureManagedNamespace(ctx context.Context, namespace string, labels map[string]string, opts managedNamespaceOptions) error {
-	if s.k8sClients == nil || strings.TrimSpace(namespace) == "" {
+	if s == nil || s.k8sClients == nil || strings.TrimSpace(namespace) == "" {
 		return nil
 	}
 	base := s.k8sClients.Clientset
@@ -632,7 +632,7 @@ func ensureNamespacePlatformAPISecretAccess(ctx context.Context, client kubernet
 }
 
 func (s *DeploymentService) ensureNamespaceUserWorkloadRBAC(ctx context.Context, namespace, userID string) error {
-	if s.k8sClients == nil || strings.TrimSpace(namespace) == "" || strings.TrimSpace(userID) == "" {
+	if s == nil || s.k8sClients == nil || strings.TrimSpace(namespace) == "" || strings.TrimSpace(userID) == "" {
 		return nil
 	}
 	client := s.k8sClients.Clientset
@@ -842,7 +842,7 @@ func platformTeamTraefikWatchConfig() teamTraefikWatchConfig {
 }
 
 func (s *DeploymentService) ensureTeamTraefikWatch(ctx context.Context, namespace string, cfg teamTraefikWatchConfig) error {
-	if s.k8sClients == nil || strings.TrimSpace(namespace) == "" {
+	if s == nil || s.k8sClients == nil || strings.TrimSpace(namespace) == "" {
 		return nil
 	}
 	if cfg.mode == "disabled" {
@@ -1485,7 +1485,7 @@ func intstrFromInt32(v int32) intstr.IntOrString {
 // existing team namespaces so ingress controller namespace changes take effect
 // without recreating teams.
 func (s *DeploymentService) ReconcileTeamNamespaceNetworkPolicies(ctx context.Context) {
-	if s.k8sClients == nil || s.k8sClients.Clientset == nil {
+	if s == nil || s.k8sClients == nil || s.k8sClients.Clientset == nil {
 		return
 	}
 	cfg := platformTeamTraefikWatchConfig()

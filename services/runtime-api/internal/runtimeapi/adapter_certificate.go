@@ -193,6 +193,9 @@ func validateAdapterCSR(raw, expectedSPIFFEID string) ([]byte, error) {
 }
 
 func waitForIssuedAdapterCertificate(ctx context.Context, s *AccessService, namespace, name string) (string, string, error) {
+	if s == nil || s.accessMgr == nil || s.k8sClients == nil {
+		return "", "", fmt.Errorf("kubernetes not available")
+	}
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
 	for {
