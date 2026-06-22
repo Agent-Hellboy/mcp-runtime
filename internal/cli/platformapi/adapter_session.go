@@ -11,7 +11,7 @@ import (
 )
 
 // AdapterSessionRequest is the input contract for the platform API endpoint
-// POST /api/runtime/adapter/sessions. RequestedTTL/Trust are optional; empty
+// POST /api/v1/runtime/adapter/sessions. RequestedTTL/Trust are optional; empty
 // values fall back to platform-side defaults.
 type AdapterSessionRequest struct {
 	ServerName     string `json:"serverName"`

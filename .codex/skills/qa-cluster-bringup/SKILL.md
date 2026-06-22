@@ -109,8 +109,9 @@ The skill must not exit Step 5 successfully until every check passes.
 kubectl get pods -A | grep -Ev 'Running|Completed' || echo OK
 ```
 
-If `cluster doctor` reports admin/UI/ingest key mismatches, roll the API,
-UI, ingest, and gateway deployments after patching `mcp-sentinel-secrets`
+If `cluster doctor` reports admin/UI/ingest key mismatches, roll
+`mcp-platform-api`, `mcp-runtime-api`, `mcp-analytics-api`, UI, ingest,
+and gateway deployments after patching `mcp-sentinel-secrets`
 (see `CLAUDE.md` → API keys). Do not paper over a `Degraded` reading.
 
 ### Kind image architecture gotcha
@@ -131,7 +132,7 @@ kubectl rollout status -n "$NAMESPACE" deploy/"$DEPLOYMENT" --timeout=180s
 Do not trust a successful `kind load docker-image` by itself. Containerd can
 load a `linux/amd64` image into a `linux/arm64` Kind node, but the pod will not
 run correctly. If a service image was built for the wrong architecture, rebuild
-API and UI with the node architecture, load those exact image references, set
+the touched split API services and UI with the node architecture, load those exact image references, set
 the deployment image to the same ref, and wait for rollout.
 
 ## Step 6 — Expose the gateway

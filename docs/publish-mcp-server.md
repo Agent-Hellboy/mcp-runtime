@@ -73,7 +73,7 @@ spec:
   `spec.analytics.apiKeySecretRef` automatically when gateway analytics are
   enabled.
 
-`mcp-runtime server deploy` and the platform API (`POST /api/runtime/servers`)
+`mcp-runtime server deploy` and the platform API (`POST /api/v1/runtime/servers`)
 publish governed servers by default: when the request does not provide
 `spec.gateway`, the platform writes `spec.gateway.enabled: true`. Hand-written
 YAML must set that field explicitly if you want request analytics and governed

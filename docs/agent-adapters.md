@@ -13,7 +13,7 @@ Both adapters only **present** issued identity values. They do not create
 grants, evaluate policy, or bypass the gateway. Platform admins author
 `MCPAccessGrant` resources first — scaffold with `mcp-runtime access grant init`
 when helpful — and the platform API issues `MCPAgentSession` values through
-`POST /api/runtime/adapter/sessions` when the adapter starts with `--server`
+`POST /api/v1/runtime/adapter/sessions` when the adapter starts with `--server`
 and `--agent`. The gateway is the enforcement point.
 
 The adapter surface is intentionally limited to stdio and Streamable HTTP, the
@@ -25,7 +25,7 @@ There are three supported ways to give an adapter its `humanID`, `agentID`,
 `teamID`, and `sessionID`:
 
 1. **Platform-issued session (recommended).** The adapter calls
-   `POST /api/runtime/adapter/sessions`. The platform derives the principal
+   `POST /api/v1/runtime/adapter/sessions`. The platform derives the principal
    from your `mcp-runtime auth login` token, picks a matching enabled
    `MCPAccessGrant`, writes (or reuses) an `MCPAgentSession`, and returns the
    identity values. Optional `--auto-refresh` renews the session before
@@ -56,7 +56,7 @@ mcp-runtime adapter stdio \
 
 What this does on each invocation:
 
-1. The CLI calls `POST /api/runtime/adapter/sessions` with `{serverName,
+1. The CLI calls `POST /api/v1/runtime/adapter/sessions` with `{serverName,
    namespace?, agentID}`. `namespace` defaults to the principal's primary
    namespace.
 2. The platform derives `humanID` from `Principal.Subject` (fallback to
@@ -210,7 +210,7 @@ async def main() -> None:
     async with httpx.AsyncClient() as http:
         resp = await http.post(
             os.environ["MCP_PLATFORM_API_URL"].rstrip("/")
-            + "/api/runtime/adapter/sessions",
+            + "/api/v1/runtime/adapter/sessions",
             json={
                 "serverName": "workspace-assistant-mcp",
                 "agentID": "ticket-triage-agent",

@@ -1,6 +1,6 @@
 ---
 name: qa-e2e-perf
-description: Real-cluster performance regression QA — MCP tools/call latency (p50/p95/p99), concurrent throughput against the gateway, /api/analytics/usage latency under load, and operator burst-reconcile latency. Compares against a stored per-branch baseline and flags regressions above a configurable threshold (default +25 percent on p95). Use when Codex is asked to perf-check a change to gateway/proxy/operator/api hot paths, before a release, or when investigating a "feels slower" report. Assumes qa-cluster-bringup has run.
+description: Real-cluster performance regression QA — MCP tools/call latency (p50/p95/p99), concurrent throughput against the gateway, /api/v1/analytics/usage latency under load, and operator burst-reconcile latency. Compares against a stored per-branch baseline and flags regressions above a configurable threshold (default +25 percent on p95). Use when Codex is asked to perf-check a change to gateway/proxy/operator/api hot paths, before a release, or when investigating a "feels slower" report. Assumes qa-cluster-bringup has run.
 ---
 
 # QA — E2E Performance (live cluster)
@@ -51,7 +51,7 @@ kubectl -n mcp-sentinel get deploy -o jsonpath='{range .items[*]}{.metadata.name
 |---|---|
 | `services/mcp-gateway/**`, `pkg/access/**` | S1, S2 (gateway hot path) |
 | `internal/operator/**` | S4 (reconcile burst) |
-| `services/api/**`, `services/processor/**`, `services/ingest/**` | S3 (analytics) |
+| `services/platform-api/**`, `services/runtime-api/**`, `services/analytics-api/**`, `services/processor/**`, `services/ingest/**` | S3 (analytics) |
 | `services/ui/**` static only | Skip — UI is not the hot path |
 | `config/ingress/**` | S1, S2 (Traefik path-routing) |
 
@@ -153,7 +153,7 @@ PY
 Any non-zero `errors` against the bundled `add` tool is itself a finding
 (typically a session-state regression under contention).
 
-## Step 6 — Scenario S3: /api/analytics/usage latency under load
+## Step 6 — Scenario S3: /api/v1/analytics/usage latency under load
 
 ```bash
 UI_KEY="$(kubectl get secret mcp-sentinel-secrets -n mcp-sentinel \
@@ -161,7 +161,7 @@ UI_KEY="$(kubectl get secret mcp-sentinel-secrets -n mcp-sentinel \
 python3 - <<'PY' "$PERF_OUT_DIR" "$PERF_SAMPLES" "$UI_KEY"
 import json, time, urllib.request, sys
 out_dir, n, key = sys.argv[1], int(sys.argv[2]), sys.argv[3]
-URL="http://localhost:18080/api/analytics/usage?limit=50"
+URL="http://localhost:18080/api/v1/analytics/usage?limit=50"
 lats=[]
 for i in range(n):
     t=time.perf_counter()
@@ -238,7 +238,7 @@ kubectl logs -n mcp-sentinel deploy/mcp-sentinel-processor --since=2m | tail -40
 ```
 
 Record the suspected hot path with file:line references in
-`services/mcp-gateway/**`, `pkg/access/**`, `services/api/**`, or
+`services/mcp-gateway/**`, `pkg/access/**`, `services/platform-api/**`, `services/runtime-api/**`, `services/analytics-api/**`, or
 `internal/operator/**` based on which scenario regressed.
 
 ## Step 10 — Report

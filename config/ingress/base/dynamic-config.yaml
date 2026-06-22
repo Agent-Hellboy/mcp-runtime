@@ -9,7 +9,8 @@ data:
       middlewares:
         registry-admin-auth:
           forwardAuth:
-            address: http://mcp-sentinel-api.mcp-sentinel.svc.cluster.local:8080/api/registry/authz
+            # Post api-service-split cutover: mcp-platform-api.mcp-sentinel.svc.cluster.local:8080
+            address: http://mcp-platform-api.mcp-sentinel.svc.cluster.local:8080/api/v1/registry/authz
             trustForwardHeader: false
         sentinel-admin-auth:
           forwardAuth:

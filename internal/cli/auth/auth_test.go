@@ -19,7 +19,7 @@ import (
 func TestVerifyPlatformAPIToken(t *testing.T) {
 	prevHook := httpDoHook
 	httpDoHook = func(r *http.Request) (*http.Response, error) {
-		if r.URL.Path != "/api/auth/me" {
+		if r.URL.Path != "/api/v1/auth/me" {
 			t.Errorf("path: %q", r.URL.Path)
 			return &http.Response{StatusCode: http.StatusInternalServerError, Body: io.NopCloser(bytes.NewReader(nil))}, nil
 		}
@@ -56,7 +56,7 @@ func TestAuthLoginSavesAndVerifies(t *testing.T) {
 
 	prevHTTPHook := httpDoHook
 	httpDoHook = func(r *http.Request) (*http.Response, error) {
-		if r.URL.Path != "/api/auth/me" {
+		if r.URL.Path != "/api/v1/auth/me" {
 			t.Errorf("path: %q", r.URL.Path)
 		}
 		if r.Header.Get("x-api-key") != "good" {

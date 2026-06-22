@@ -355,10 +355,12 @@ func prepareAnalyticsImages(logger *zap.Logger, extRegistry *config.ExternalRegi
 	core.Step("Step 5a: Publish analytics images")
 
 	images := AnalyticsImageSet{
-		Ingest:    analyticsImageFor(extRegistry, analyticsComponents[0].Repository),
-		API:       analyticsImageFor(extRegistry, analyticsComponents[1].Repository),
-		Processor: analyticsImageFor(extRegistry, analyticsComponents[2].Repository),
-		UI:        analyticsImageFor(extRegistry, analyticsComponents[3].Repository),
+		Ingest:       analyticsImageFor(extRegistry, analyticsComponents[0].Repository),
+		PlatformAPI:  analyticsImageFor(extRegistry, analyticsComponents[1].Repository),
+		RuntimeAPI:   analyticsImageFor(extRegistry, analyticsComponents[2].Repository),
+		AnalyticsAPI: analyticsImageFor(extRegistry, analyticsComponents[3].Repository),
+		Processor:    analyticsImageFor(extRegistry, analyticsComponents[4].Repository),
+		UI:           analyticsImageFor(extRegistry, analyticsComponents[5].Repository),
 	}
 
 	if parallelBuilds {
@@ -497,8 +499,12 @@ func assignAnalyticsImage(images *AnalyticsImageSet, repository, image string) {
 	switch repository {
 	case "mcp-sentinel-ingest":
 		images.Ingest = image
-	case "mcp-sentinel-api":
-		images.API = image
+	case "mcp-platform-api":
+		images.PlatformAPI = image
+	case "mcp-runtime-api":
+		images.RuntimeAPI = image
+	case "mcp-analytics-api":
+		images.AnalyticsAPI = image
 	case "mcp-sentinel-processor":
 		images.Processor = image
 	case "mcp-sentinel-ui":

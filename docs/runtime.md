@@ -152,7 +152,7 @@ identity/session headers.
 
 The recommended path is **platform-issued sessions**: passing `--server
 <MCPServer name> --agent <id>` makes the adapter call `POST
-/api/runtime/adapter/sessions` at startup. The platform derives `humanID` and
+/api/v1/runtime/adapter/sessions` at startup. The platform derives `humanID` and
 `teamID` from the logged-in principal, picks a matching enabled
 `MCPAccessGrant` (highest `MaxTrust`, oldest creation as the tiebreak), and
 writes (or reuses) an `MCPAgentSession` with a deterministic name —

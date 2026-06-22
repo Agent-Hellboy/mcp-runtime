@@ -182,7 +182,7 @@ servers:
 		defer core.SwapExecExecutor(mock)()
 
 		api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path != "/api/auth/me" {
+			if r.URL.Path != "/api/v1/auth/me" {
 				t.Fatalf("unexpected platform path %q", r.URL.Path)
 			}
 			if r.Header.Get("x-api-key") != "token-1" {

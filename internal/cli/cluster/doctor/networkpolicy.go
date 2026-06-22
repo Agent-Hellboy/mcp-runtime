@@ -148,10 +148,19 @@ func networkPolicyAllowsPlatformAPI(raw string) bool {
 				return true
 			}
 			labels := peer.PodSelector.MatchLabels
-			if len(labels) == 0 || labels["app"] == doctorSentinelAPIService {
+			if len(labels) == 0 || sentinelAPIPodAppAllowed(labels["app"]) {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+func sentinelAPIPodAppAllowed(app string) bool {
+	switch app {
+	case doctorPlatformAPIService, doctorRuntimeAPIService, doctorAnalyticsAPIService:
+		return true
+	default:
+		return false
+	}
 }

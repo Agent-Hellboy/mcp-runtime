@@ -34,7 +34,7 @@
 ## Reference
 
 - CLI reference: https://docs.mcpruntime.org/cli/ — Every command: auth, server, registry, access, adapter, team, sentinel, setup, cluster, bootstrap. Flags, defaults, examples.
-- API and CRDs: https://docs.mcpruntime.org/api/ — MCPServer, MCPAccessGrant, MCPAgentSession field reference, gateway headers, HTTP endpoints.
+- API and CRDs: https://docs.mcpruntime.org/api/ — MCPServer, MCPAccessGrant, MCPAgentSession field reference, gateway headers, HTTP endpoints (`/api/v1/*`).
 - Architecture: https://docs.mcpruntime.org/architecture/ — System design: control plane, registry, broker, operator, Sentinel services, request flow.
 
 ## Contributor guide

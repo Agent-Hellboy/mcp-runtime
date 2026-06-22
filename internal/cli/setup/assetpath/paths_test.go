@@ -17,7 +17,7 @@ func TestResolveRepoAssetPath(t *testing.T) {
 	if err := os.MkdirAll(pkgDir, 0o755); err != nil {
 		t.Fatalf("mkdir package dir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(repoRoot, "k8s", "08-api.yaml"), []byte("kind: Service\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repoRoot, "k8s", "08-platform-api.yaml"), []byte("kind: Service\n"), 0o644); err != nil {
 		t.Fatalf("write test manifest: %v", err)
 	}
 	if err := os.MkdirAll(filepath.Join(repoRoot, "services"), 0o755); err != nil {
@@ -39,12 +39,12 @@ func TestResolveRepoAssetPath(t *testing.T) {
 	})
 
 	t.Run("walks upward to repo root", func(t *testing.T) {
-		got, err := ResolveRepoAssetPath(filepath.Join("k8s", "08-api.yaml"))
+		got, err := ResolveRepoAssetPath(filepath.Join("k8s", "08-platform-api.yaml"))
 		if err != nil {
 			t.Fatalf("ResolveRepoAssetPath() error = %v", err)
 		}
 
-		want := filepath.Join(repoRoot, "k8s", "08-api.yaml")
+		want := filepath.Join(repoRoot, "k8s", "08-platform-api.yaml")
 		gotEval, err := filepath.EvalSymlinks(got)
 		if err != nil {
 			t.Fatalf("EvalSymlinks(got) error = %v", err)
@@ -59,7 +59,7 @@ func TestResolveRepoAssetPath(t *testing.T) {
 	})
 
 	t.Run("accepts absolute paths", func(t *testing.T) {
-		want := filepath.Join(repoRoot, "k8s", "08-api.yaml")
+		want := filepath.Join(repoRoot, "k8s", "08-platform-api.yaml")
 		got, err := ResolveRepoAssetPath(want)
 		if err != nil {
 			t.Fatalf("ResolveRepoAssetPath() error = %v", err)

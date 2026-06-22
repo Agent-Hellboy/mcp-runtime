@@ -344,7 +344,7 @@ func loginPlatformPassword(ctx context.Context, apiBaseURL, email, password stri
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	u := platformapi.NormalizeBaseURL(apiBaseURL) + "/api/auth/login"
+	u := platformapi.NormalizeBaseURL(apiBaseURL) + "/api/v1/auth/login"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
 	if err != nil {
 		return "", "", err
@@ -391,7 +391,7 @@ func fileCredentialsIfRelevant() (*authfile.Credentials, error) {
 }
 
 func verifyPlatformAPIToken(ctx context.Context, apiBaseURL, token string) error {
-	u := platformapi.NormalizeBaseURL(apiBaseURL) + "/api/auth/me"
+	u := platformapi.NormalizeBaseURL(apiBaseURL) + "/api/v1/auth/me"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return err

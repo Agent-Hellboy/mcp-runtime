@@ -1,9 +1,10 @@
-FROM golang:1.26.0 AS build
+FROM --platform=$BUILDPLATFORM golang:1.26.4 AS build
+ARG TARGETARCH
 WORKDIR /src
 COPY go.mod ./
 RUN go mod download
 COPY . ./
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/workspace-assistant-mcp ./main.go
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -o /out/workspace-assistant-mcp ./main.go
 
 FROM gcr.io/distroless/base-debian12
 WORKDIR /app

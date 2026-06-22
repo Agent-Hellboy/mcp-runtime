@@ -68,29 +68,59 @@ jobs:
           sarif_file: trivy-misconfig.sarif
           category: trivy-fs-misconfig
 
-  trivy-image:
-    name: Trivy Operator Image Scan
+  trivy-sentinel-images:
+    name: Trivy ${{ matrix.image }} Image
     runs-on: ubuntu-24.04
     permissions:
       contents: read
       security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: operator
+            dockerfile: Dockerfile.operator
+            tag: mcp-runtime-operator:ci
+          - image: platform-api
+            dockerfile: services/platform-api/Dockerfile
+            tag: mcp-platform-api:ci
+          - image: analytics-api
+            dockerfile: services/analytics-api/Dockerfile
+            tag: mcp-analytics-api:ci
+          - image: runtime-api
+            dockerfile: services/runtime-api/Dockerfile
+            tag: mcp-runtime-api:ci
+          - image: ui
+            dockerfile: services/ui/Dockerfile
+            tag: mcp-sentinel-ui:ci
+          - image: ingest
+            dockerfile: services/ingest/Dockerfile
+            tag: mcp-sentinel-ingest:ci
+          - image: processor
+            dockerfile: services/processor/Dockerfile
+            tag: mcp-sentinel-processor:ci
+          - image: mcp-gateway
+            dockerfile: services/mcp-gateway/Dockerfile
+            tag: mcp-sentinel-mcp-gateway:ci
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
-      - name: Build operator image
-        run: docker build --pull -f Dockerfile.operator -t mcp-runtime-operator:ci .
+      - name: Build image
+        run: docker build --pull -f "${{ matrix.dockerfile }}" -t "${{ matrix.tag }}" .
 
       - name: Generate operator image SBOM
+        if: matrix.image == 'operator'
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # 0.36.0
         with:
-          image-ref: mcp-runtime-operator:ci
+          image-ref: ${{ matrix.tag }}
           format: spdx-json
           output: operator-image.spdx.json
           exit-code: "0"
           hide-progress: true
 
       - name: Upload operator image SBOM
+        if: matrix.image == 'operator'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: operator-image-sbom
@@ -100,7 +130,7 @@ jobs:
       - name: Trivy image scan
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # 0.36.0
         with:
-          image-ref: mcp-runtime-operator:ci
+          image-ref: ${{ matrix.tag }}
           format: sarif
           output: trivy-image.sarif
           exit-code: "1"
@@ -116,4 +146,4 @@ jobs:
         uses: github/codeql-action/upload-sarif@ed410739ba306e4ebe5e123421a6bd694e494a2b # v4
         with:
           sarif_file: trivy-image.sarif
-          category: trivy-operator-image
+          category: trivy-${{ matrix.image }}-image

@@ -19,7 +19,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: bootstrap
-          image: mcp-sentinel-api:latest
+          image: mcp-platform-api:latest
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
@@ -39,11 +39,11 @@ spec:
                 secretKeyRef:
                   name: mcp-sentinel-secrets
                   key: POSTGRES_DSN
-            - name: PLATFORM_JWT_SECRET
+            - name: JWT_SECRET
               valueFrom:
                 secretKeyRef:
                   name: mcp-sentinel-secrets
-                  key: PLATFORM_JWT_SECRET
+                  key: JWT_SECRET
             - name: PLATFORM_ADMIN_EMAIL
               valueFrom:
                 secretKeyRef:

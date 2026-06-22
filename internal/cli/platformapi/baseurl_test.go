@@ -8,7 +8,8 @@ func TestNormalizeBaseURL(t *testing.T) {
 	}{
 		{"https://example.com/", "https://example.com"},
 		{"https://example.com/api", "https://example.com"},
-		{"https://example.com/api/", "https://example.com"},
+		{"https://example.com/api/v1", "https://example.com"},
+		{"https://example.com/api/v1/", "https://example.com"},
 		{"  https://x  ", "https://x"},
 	}
 	for _, tc := range cases {

@@ -1,4 +1,4 @@
-FROM golang:1.26.0
+FROM golang:1.26.4
 
 ENV DEBIAN_FRONTEND=noninteractive
 ARG DOCKERCLI_VERSION=26.1.4
@@ -22,6 +22,13 @@ WORKDIR /workspace
 
 # Copy the repo so tests still run if bind mounts aren't available.
 COPY . /workspace
+
+# Non-root user; run-in-docker.sh adds --group-add with the host docker.sock GID.
+RUN groupadd --gid 1001 e2e \
+    && useradd --uid 1001 --gid e2e --create-home --shell /bin/bash e2e \
+    && chown -R e2e:e2e /workspace /home/e2e
+
+USER 1001:1001
 
 # Use bash as default entrypoint; optionally mount repo at /workspace when running.
 ENTRYPOINT ["/bin/bash"]

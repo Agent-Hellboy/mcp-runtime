@@ -17,12 +17,32 @@ updates:
           - "*"
 
   - package-ecosystem: gomod
-    directory: /services/api
+    directory: /services/platform-api
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
     groups:
-      services-api-go-modules:
+      services-platform-api-go-modules:
+        patterns:
+          - "*"
+
+  - package-ecosystem: gomod
+    directory: /services/runtime-api
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      services-runtime-api-go-modules:
+        patterns:
+          - "*"
+
+  - package-ecosystem: gomod
+    directory: /services/analytics-api
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      services-analytics-api-go-modules:
         patterns:
           - "*"
 

@@ -55,8 +55,8 @@ func TestRegistryForwardAuthDoesNotTrustClientForwardedHeaders(t *testing.T) {
 			if middleware.ForwardAuth == nil {
 				t.Fatalf("%s registry-admin-auth missing forwardAuth", rel)
 			}
-			if !strings.HasSuffix(middleware.ForwardAuth.Address, "/api/registry/authz") {
-				t.Fatalf("%s registry authz address = %q, want /api/registry/authz", rel, middleware.ForwardAuth.Address)
+			if !strings.HasSuffix(middleware.ForwardAuth.Address, "/api/v1/registry/authz") {
+				t.Fatalf("%s registry authz address = %q, want /api/v1/registry/authz", rel, middleware.ForwardAuth.Address)
 			}
 			if middleware.ForwardAuth.TrustForwardHeader != nil && *middleware.ForwardAuth.TrustForwardHeader {
 				t.Fatalf("%s registry-admin-auth must not trust client-supplied forwarded headers", rel)

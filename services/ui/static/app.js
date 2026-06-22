@@ -1,4 +1,4 @@
-const apiBase = window.MCP_API_BASE || "/api";
+const apiBase = window.MCP_API_BASE || "/api/v1";
 const defaults = Object.assign(
   { namespace: "", policyVersion: "v1" },
   window.MCP_DEFAULTS || {}

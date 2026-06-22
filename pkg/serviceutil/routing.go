@@ -36,7 +36,20 @@ func validResourceName(name string) bool {
 	return validName.MatchString(name) && len(name) <= 253
 }
 
-// ExtractGrantActionParams extracts parameters from grant toggle paths.
+// NormalizePublicAPIPath strips the public API version prefix so handlers can
+// match on /runtime/... paths whether the request arrived as /api/v1/runtime/*
+// or legacy /api/runtime/*.
+func NormalizePublicAPIPath(path string) string {
+	switch {
+	case strings.HasPrefix(path, "/api/v1/"):
+		return strings.TrimPrefix(path, "/api/v1")
+	case strings.HasPrefix(path, "/api/"):
+		return strings.TrimPrefix(path, "/api")
+	default:
+		return path
+	}
+}
+
 // Expected path format: /api/runtime/grants/{namespace}/{name}/{action}
 // where action is either "disable" or "enable".
 func ExtractGrantActionParams(r *http.Request, prefix string) (RouteParams, error) {
@@ -116,7 +129,7 @@ func ExtractNamespacedResourceDelete(r *http.Request, prefix string) (namespace,
 }
 
 func splitNamespacedPath(r *http.Request, prefix string, expectedParts int, expectedShape string) ([]string, error) {
-	path := strings.TrimPrefix(r.URL.Path, prefix)
+	path := strings.TrimPrefix(NormalizePublicAPIPath(r.URL.Path), NormalizePublicAPIPath(prefix))
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	if len(parts) != expectedParts {
 		return nil, fmt.Errorf("%w: %s, got %d path parts", ErrInvalidPath, expectedShape, len(parts))

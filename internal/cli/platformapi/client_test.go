@@ -27,7 +27,7 @@ func TestApplyAccessFromYAMLFile_MultiDocument(t *testing.T) {
 				t.Fatalf("x-mcp-source = %q, want cli", r.Header.Get("x-mcp-source"))
 			}
 			switch r.URL.Path {
-			case "/api/runtime/grants":
+			case "/api/v1/runtime/grants":
 				grantCalls++
 				body, _ := io.ReadAll(r.Body)
 				var payload grantAPIBody
@@ -37,7 +37,7 @@ func TestApplyAccessFromYAMLFile_MultiDocument(t *testing.T) {
 				if payload.Subject.TeamID != "team-acme" {
 					t.Fatalf("grant subject teamID = %q, want team-acme", payload.Subject.TeamID)
 				}
-			case "/api/runtime/sessions":
+			case "/api/v1/runtime/sessions":
 				sessionCalls++
 				body, _ := io.ReadAll(r.Body)
 				var payload sessionAPIBody
@@ -97,7 +97,7 @@ spec:
 		baseURL:   "https://platform.example.com",
 		token:     "token-1",
 		http:      httpClient,
-		apiPrefix: "/api",
+		apiPrefix: "/api/v1",
 	}
 	if err := client.ApplyAccessFromYAMLFile(context.Background(), manifest); err != nil {
 		t.Fatalf("ApplyAccessFromYAMLFile() error = %v", err)
@@ -112,9 +112,9 @@ func TestRecordImagePublish(t *testing.T) {
 	client := &PlatformClient{
 		baseURL:   "https://platform.example.com",
 		token:     "token-1",
-		apiPrefix: "/api",
+		apiPrefix: "/api/v1",
 		http: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-			if r.URL.Path != "/api/user/activity/image-publish" {
+			if r.URL.Path != "/api/v1/user/activity/image-publish" {
 				t.Fatalf("path = %q, want image publish endpoint", r.URL.Path)
 			}
 			if r.Header.Get("x-mcp-source") != "cli" {
@@ -151,9 +151,9 @@ func TestPushRegistryImageStreamsMultipartUpload(t *testing.T) {
 	client := &PlatformClient{
 		baseURL:   "https://platform.example.com",
 		token:     "token-1",
-		apiPrefix: "/api",
+		apiPrefix: "/api/v1",
 		http: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-			if r.URL.Path != "/api/runtime/registry/push" {
+			if r.URL.Path != "/api/v1/runtime/registry/push" {
 				t.Fatalf("path = %q, want registry push endpoint", r.URL.Path)
 			}
 			if got := r.Header.Get("authorization"); got != "Bearer token-1" {
@@ -196,9 +196,9 @@ func TestValidateCredentials(t *testing.T) {
 	client := &PlatformClient{
 		baseURL:   "https://platform.example.com",
 		token:     "token-1",
-		apiPrefix: "/api",
+		apiPrefix: "/api/v1",
 		http: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-			if r.URL.Path != "/api/auth/me" {
+			if r.URL.Path != "/api/v1/auth/me" {
 				t.Fatalf("path = %q, want auth/me endpoint", r.URL.Path)
 			}
 			if r.Header.Get("x-api-key") != "token-1" {
@@ -291,22 +291,22 @@ func TestPlatformClientTeamAndServerRoutes(t *testing.T) {
 				t.Fatalf("x-api-key = %q, want token-1", r.Header.Get("x-api-key"))
 			}
 			switch {
-			case r.Method == http.MethodGet && r.URL.Path == "/api/runtime/teams":
+			case r.Method == http.MethodGet && r.URL.Path == "/api/v1/runtime/teams":
 				return &http.Response{
 					StatusCode: http.StatusOK,
 					Body:       io.NopCloser(strings.NewReader(`{"teams":[{"slug":"core","name":"Core","namespace":"mcp-team-core"}]}`)),
 				}, nil
-			case r.Method == http.MethodGet && r.URL.Path == "/api/runtime/teams/core":
+			case r.Method == http.MethodGet && r.URL.Path == "/api/v1/runtime/teams/core":
 				return &http.Response{
 					StatusCode: http.StatusOK,
 					Body:       io.NopCloser(strings.NewReader(`{"team":{"slug":"core","name":"Core","namespace":"mcp-team-core"}}`)),
 				}, nil
-			case r.Method == http.MethodGet && r.URL.Path == "/api/runtime/teams/core/members":
+			case r.Method == http.MethodGet && r.URL.Path == "/api/v1/runtime/teams/core/members":
 				return &http.Response{
 					StatusCode: http.StatusOK,
 					Body:       io.NopCloser(strings.NewReader(`{"members":[{"team_slug":"core","team_namespace":"mcp-team-core","user_id":"user-1","email":"member@example.com","role":"member"}]}`)),
 				}, nil
-			case r.Method == http.MethodPost && r.URL.Path == "/api/runtime/teams":
+			case r.Method == http.MethodPost && r.URL.Path == "/api/v1/runtime/teams":
 				body, _ := io.ReadAll(r.Body)
 				var payload map[string]string
 				_ = json.Unmarshal(body, &payload)
@@ -317,7 +317,7 @@ func TestPlatformClientTeamAndServerRoutes(t *testing.T) {
 					StatusCode: http.StatusOK,
 					Body:       io.NopCloser(strings.NewReader(`{"team":{"slug":"core","name":"Core Team","namespace":"mcp-team-core"}}`)),
 				}, nil
-			case r.Method == http.MethodPost && r.URL.Path == "/api/users":
+			case r.Method == http.MethodPost && r.URL.Path == "/api/v1/users":
 				body, _ := io.ReadAll(r.Body)
 				var payload map[string]string
 				_ = json.Unmarshal(body, &payload)
@@ -328,7 +328,7 @@ func TestPlatformClientTeamAndServerRoutes(t *testing.T) {
 					StatusCode: http.StatusOK,
 					Body:       io.NopCloser(strings.NewReader(`{"user":{"id":"user-1","email":"member@example.com","role":"user"}}`)),
 				}, nil
-			case r.Method == http.MethodPut && r.URL.Path == "/api/runtime/teams/core/members/user-1":
+			case r.Method == http.MethodPut && r.URL.Path == "/api/v1/runtime/teams/core/members/user-1":
 				body, _ := io.ReadAll(r.Body)
 				var payload map[string]string
 				_ = json.Unmarshal(body, &payload)
@@ -339,7 +339,7 @@ func TestPlatformClientTeamAndServerRoutes(t *testing.T) {
 					StatusCode: http.StatusOK,
 					Body:       io.NopCloser(strings.NewReader(`{"membership":{"team_slug":"core","team_namespace":"mcp-team-core","user_id":"user-1","email":"member@example.com","role":"member"}}`)),
 				}, nil
-			case r.Method == http.MethodGet && r.URL.Path == "/api/runtime/servers":
+			case r.Method == http.MethodGet && r.URL.Path == "/api/v1/runtime/servers":
 				if got := r.URL.Query().Get("namespace"); got != "" {
 					t.Fatalf("list runtime servers namespace query = %q, want empty", got)
 				}
@@ -347,12 +347,12 @@ func TestPlatformClientTeamAndServerRoutes(t *testing.T) {
 					StatusCode: http.StatusOK,
 					Body:       io.NopCloser(strings.NewReader(`{"servers":[]}`)),
 				}, nil
-			case r.Method == http.MethodGet && r.URL.Path == "/api/auth/me":
+			case r.Method == http.MethodGet && r.URL.Path == "/api/v1/auth/me":
 				return &http.Response{
 					StatusCode: http.StatusOK,
 					Body:       io.NopCloser(strings.NewReader(`{"authenticated":true,"principal":{"role":"user","namespace":"mcp-team-core","teams":[{"slug":"core","namespace":"mcp-team-core"}]}}`)),
 				}, nil
-			case r.Method == http.MethodPost && r.URL.Path == "/api/runtime/servers":
+			case r.Method == http.MethodPost && r.URL.Path == "/api/v1/runtime/servers":
 				body, _ := io.ReadAll(r.Body)
 				var payload map[string]any
 				_ = json.Unmarshal(body, &payload)
@@ -366,7 +366,7 @@ func TestPlatformClientTeamAndServerRoutes(t *testing.T) {
 					StatusCode: http.StatusOK,
 					Body:       io.NopCloser(strings.NewReader(`{"server":{"name":"demo","namespace":"mcp-team-core"}}`)),
 				}, nil
-			case r.Method == http.MethodDelete && r.URL.Path == "/api/runtime/servers/mcp-team-core/demo":
+			case r.Method == http.MethodDelete && r.URL.Path == "/api/v1/runtime/servers/mcp-team-core/demo":
 				return &http.Response{
 					StatusCode: http.StatusOK,
 					Body:       io.NopCloser(strings.NewReader(`{"success":true}`)),
@@ -381,7 +381,7 @@ func TestPlatformClientTeamAndServerRoutes(t *testing.T) {
 		baseURL:   "https://platform.example.com",
 		token:     "token-1",
 		http:      httpClient,
-		apiPrefix: "/api",
+		apiPrefix: "/api/v1",
 	}
 	if _, err := client.ListTeams(context.Background()); err != nil {
 		t.Fatalf("ListTeams() error = %v", err)
@@ -435,7 +435,7 @@ func TestPlatformClientAccessPatchRoutes(t *testing.T) {
 	httpClient := &http.Client{
 		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 			switch {
-			case r.Method == http.MethodPatch && r.URL.Path == "/api/runtime/grants/mcp-servers/grant-a":
+			case r.Method == http.MethodPatch && r.URL.Path == "/api/v1/runtime/grants/mcp-servers/grant-a":
 				body, _ := io.ReadAll(r.Body)
 				var payload map[string]any
 				_ = json.Unmarshal(body, &payload)
@@ -443,7 +443,7 @@ func TestPlatformClientAccessPatchRoutes(t *testing.T) {
 					t.Fatalf("grant patch payload = %#v", payload)
 				}
 				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"success":true}`))}, nil
-			case r.Method == http.MethodPatch && r.URL.Path == "/api/runtime/sessions/mcp-servers/session-a":
+			case r.Method == http.MethodPatch && r.URL.Path == "/api/v1/runtime/sessions/mcp-servers/session-a":
 				body, _ := io.ReadAll(r.Body)
 				var payload map[string]any
 				_ = json.Unmarshal(body, &payload)
@@ -461,7 +461,7 @@ func TestPlatformClientAccessPatchRoutes(t *testing.T) {
 		baseURL:   "https://platform.example.com",
 		token:     "token-1",
 		http:      httpClient,
-		apiPrefix: "/api",
+		apiPrefix: "/api/v1",
 	}
 	if err := client.PatchGrant(context.Background(), "mcp-servers", "grant-a", true); err != nil {
 		t.Fatalf("PatchGrant() error = %v", err)
@@ -484,7 +484,7 @@ func TestPlatformClientAccessPatchRoutesRejectNon2xx(t *testing.T) {
 		baseURL:   "https://platform.example.com",
 		token:     "token-1",
 		http:      httpClient,
-		apiPrefix: "/api",
+		apiPrefix: "/api/v1",
 	}
 	if err := client.PatchGrant(context.Background(), "mcp-servers", "grant-a", true); err == nil {
 		t.Fatal("PatchGrant() error = nil, want non-2xx failure")

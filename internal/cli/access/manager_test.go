@@ -256,7 +256,7 @@ func TestAccessManager_ModeSelection(t *testing.T) {
 		apiCalls := 0
 		api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			apiCalls++
-			if r.URL.Path != "/api/runtime/grants" {
+			if r.URL.Path != "/api/v1/runtime/grants" {
 				t.Fatalf("unexpected platform path %q", r.URL.Path)
 			}
 			if r.Header.Get("x-api-key") != "token-1" {
