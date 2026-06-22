@@ -36,7 +36,7 @@ is intentionally outside the core Agent Skills spec, which requires only
 
 The current repo-local skills follow the core Agent Skills structure:
 
-- 11 skills have a `SKILL.md`.
+- 12 skills have a `SKILL.md`.
 - Every skill `name` matches its directory name.
 - Every skill name uses lowercase letters, numbers, and hyphens only.
 - Every `description` is non-empty and below the 1024-character limit.
@@ -64,6 +64,7 @@ Current line counts:
 253  qa-e2e-perf/SKILL.md
 329  qa-e2e-security/SKILL.md
 283  qa-e2e-ui/SKILL.md
+138  release-readiness/SKILL.md
  59  repo-guidance-sync/SKILL.md
 265  security-audit-platform/SKILL.md
 100  security-audit/SKILL.md
@@ -116,9 +117,12 @@ checks that match the requested scope:
    protocol-specific regressions against the same live cluster.
 4. Audit skills use `../_shared/FINDINGS-TEMPLATE.md` so findings stay
    comparable across security, supply chain, Kubernetes, and protocol reviews.
-5. `repo-guidance-sync` checks whether code or behavior changes require docs,
+5. `release-readiness` composes CI parity, live cluster, browser, security,
+   protocol, performance, docs, canary, and deployment evidence for merge,
+   ship, canary, and release decisions.
+6. `repo-guidance-sync` checks whether code or behavior changes require docs,
    AGENTS.md, runbook, or contributor guidance updates.
-6. `.codex/skills/scripts/validate_skill_evals.py` checks that every skill's
+7. `.codex/skills/scripts/validate_skill_evals.py` checks that every skill's
    eval and trigger prompt manifests stay structurally usable.
 
 The live QA skills now carry an explicit regression evidence contract: a pass
@@ -142,6 +146,7 @@ CI/test surface has an owning skill:
 | `test/e2e/scenarios_test.sh` selector validation | `qa-e2e-operations` | CI parity gate covers scenario parsing edge cases |
 | Kind E2E `all` plus cached `smoke-auth,governance` | `qa-cluster-bringup`, `qa-e2e-operations`, `qa-e2e-security`, `mcp-spec-compliance` | Full merge gate and targeted live regression gates |
 | Browser UI workflows and responsive checks | `qa-e2e-ui` | Browser evidence required; curl-only pass is blocked |
+| Merge, ship, canary, and release readiness | `release-readiness` | Coordinates focused skills and gives one go/no-go/blocked decision |
 | Benchmarks under `test/benchmark` | `qa-e2e-operations`, `qa-e2e-perf` | CI benchmark plus live baseline comparison |
 | Generated CRD/manifests and Go package docs drift | `qa-e2e-operations`, `repo-guidance-sync` | Exact generator commands and `git diff --exit-code` |
 | Gitleaks, gosec, Trivy, dependency review | `security-audit`, `security-audit-platform`, `supply-chain-audit` | Security scan selection and supply-chain workflow audit |
