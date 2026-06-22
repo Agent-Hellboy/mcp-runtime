@@ -91,6 +91,10 @@ func main() {
 		oidcAudience: oidcAudience,
 	}
 
+	if len(apiKeys) == 0 && jwks == nil {
+		log.Printf("WARNING: ingest authentication is DISABLED — no INGEST_API_KEYS and no OIDC_JWKS_URL configured; /events will accept unauthenticated requests")
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/live", func(w http.ResponseWriter, _ *http.Request) {
 		serviceutil.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})

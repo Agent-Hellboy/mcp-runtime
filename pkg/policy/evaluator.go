@@ -56,6 +56,20 @@ func Deny(status int, reason, policyVersion string) Decision {
 	}
 }
 
+// Allow builds an allowed decision with an explicit reason. It is used for
+// requests that are intentionally not subject to grant/session evaluation
+// (non-tool-call passthrough, OAuth metadata) so that the gateway's default
+// decision can be deny — making any path that reaches upstream without an
+// explicit decision fail closed.
+func Allow(reason, policyVersion string) Decision {
+	return Decision{
+		Allowed:       true,
+		Status:        http.StatusOK,
+		Reason:        reason,
+		PolicyVersion: policyVersion,
+	}
+}
+
 // Authorize evaluates a rendered gateway policy document for a single MCP RPC request.
 func Authorize(policy *Document, request Request, now time.Time) Decision {
 	decision := Decision{

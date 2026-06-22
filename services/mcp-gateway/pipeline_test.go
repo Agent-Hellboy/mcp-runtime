@@ -348,6 +348,37 @@ func TestAuthzFilterContinuesForNonToolCall(t *testing.T) {
 	}
 }
 
+func TestNewExchangeDefaultsToDeny(t *testing.T) {
+	t.Parallel()
+	// The default decision must be deny so any request that reaches upstream or
+	// audit without an explicit decision (a filter-ordering bug or future
+	// unhandled stage) fails closed rather than being proxied as allowed.
+	ex := newExchange(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/mcp", nil), "test")
+	if ex.Decision.Allowed {
+		t.Fatal("newExchange default Decision.Allowed = true, want false (fail-closed)")
+	}
+	if ex.Decision.Status != http.StatusForbidden {
+		t.Fatalf("newExchange default status = %d, want 403", ex.Decision.Status)
+	}
+}
+
+func TestAuthzFilterSetsExplicitAllowForNonToolCall(t *testing.T) {
+	t.Parallel()
+	// The non-tool passthrough must set an explicit allow, not rely on the
+	// (now deny) default — otherwise the request would be denied.
+	s := minimalServer()
+	ex := newTestExchange(http.MethodPost, "/mcp", `{"method":"tools/list"}`, map[string]string{"Content-Type": "application/json"})
+	s.inspectFilter(ex)
+	ex.Policy = headerPolicy()
+
+	if got := s.authzFilter(ex); got != Continue {
+		t.Fatalf("authzFilter tools/list = %v, want Continue", got)
+	}
+	if !ex.Decision.Allowed {
+		t.Fatal("non-tool-call Decision.Allowed = false, want explicit allow")
+	}
+}
+
 func TestAuthzFilterRejectsDeniedToolCall(t *testing.T) {
 	t.Parallel()
 	s := minimalServer()

@@ -1,5 +1,7 @@
 package main
 
+import policypkg "mcp-runtime/pkg/policy"
+
 // policyFilter is stage 2 of the gateway pipeline. It acquires the current
 // atomic policy snapshot and sets Exchange.Policy and Exchange.PolicyErr.
 //
@@ -11,6 +13,13 @@ package main
 func (s *gatewayServer) policyFilter(ex *Exchange) Result {
 	ex.Policy, ex.PolicyErr = s.currentPolicy()
 	if s.handleOAuthProtectedResource(ex.W, ex.R, ex.Policy) {
+		// Public metadata response that bypasses auth/authz. Record an explicit
+		// allow so request metrics reflect this 200 (audit is skipped); the deny
+		// default would otherwise mislabel it.
+		ex.Decision = policypkg.Allow(
+			"oauth_metadata",
+			policypkg.ChoosePolicyVersion(policypkg.PolicyVersion(ex.Policy), s.defaultPolicyVersion),
+		)
 		ex.SkipAudit = true
 		return Respond
 	}
