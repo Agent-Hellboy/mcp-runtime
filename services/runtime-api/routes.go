@@ -13,6 +13,7 @@ import (
 	"mcp-runtime-api/deployments"
 	"mcp-runtime-api/internal/platformclient"
 	"mcp-runtime-api/internal/platforminternal"
+	"mcp-runtime-api/internal/runtimeapi"
 	runtimehandlers "mcp-runtime-api/runtime"
 	"mcp-runtime/pkg/apihttp"
 	"mcp-runtime/pkg/openapi"
@@ -49,89 +50,112 @@ func (s *server) registerRoutes(mux *http.ServeMux) {
 	if s.runtime == nil {
 		return
 	}
-	runtimeServer := s.runtime
-	runtimeServer.SetAuditWriter(s.platform)
+	routes := runtimeRoutes{
+		runtime:   s.runtime,
+		platform:  s.platform,
+		auth:      auth,
+		adminOnly: adminOnly,
+		mount:     register,
+	}
+	routes.registerRoutes(mux)
+}
 
-	register("/dashboard/summary", adminOnly(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+type runtimeRoutes struct {
+	runtime   *runtimeapi.RuntimeServer
+	platform  *platformclient.Client
+	auth      func(http.Handler) http.Handler
+	adminOnly func(http.Handler) http.Handler
+	mount     func(string, http.Handler)
+}
+
+func (rr runtimeRoutes) registerRoutes(mux *http.ServeMux) {
+	runtimeServer := rr.runtime
+	runtimeServer.SetAuditWriter(rr.platform)
+	deploymentService := runtimeServer.Deployments()
+	accessService := runtimeServer.Access()
+	inventoryService := runtimeServer.Inventory()
+	registryPushService := runtimeServer.RegistryPush()
+
+	rr.mount("/dashboard/summary", rr.adminOnly(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		runtimehandlers.HandleDashboardSummary(runtimeServer, w, r)
 	})))
-	register("/runtime/servers", auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	rr.mount("/runtime/servers", rr.auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		runtimehandlers.HandleRuntimeServers(runtimeServer, w, r)
 	})))
-	register("/runtime/tools", auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		runtimehandlers.HandleRuntimeTools(runtimeServer, w, r)
+	rr.mount("/runtime/tools", rr.auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		runtimehandlers.HandleRuntimeTools(inventoryService, w, r)
 	})))
-	register("/runtime/servers/", auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	rr.mount("/runtime/servers/", rr.auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		runtimehandlers.HandleRuntimeServerItem(runtimeServer, w, r)
 	})))
-	register("/runtime/server-events", auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	rr.mount("/runtime/server-events", rr.auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		runtimehandlers.HandleRuntimeServerEvents(runtimeServer, w, r)
 	})))
-	register("/runtime/observability/links", auth(http.HandlerFunc(runtimeServer.HandleRuntimeObservabilityLinks)))
-	register("/runtime/observability/grafana/dashboard", auth(http.HandlerFunc(runtimeServer.HandleRuntimeObservabilityGrafanaDashboard)))
-	register("/runtime/observability/prometheus/query", auth(http.HandlerFunc(runtimeServer.HandleRuntimeObservabilityPrometheusQuery)))
-	register("/runtime/teams", auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	rr.mount("/runtime/observability/links", rr.auth(http.HandlerFunc(runtimeServer.HandleRuntimeObservabilityLinks)))
+	rr.mount("/runtime/observability/grafana/dashboard", rr.auth(http.HandlerFunc(runtimeServer.HandleRuntimeObservabilityGrafanaDashboard)))
+	rr.mount("/runtime/observability/prometheus/query", rr.auth(http.HandlerFunc(runtimeServer.HandleRuntimeObservabilityPrometheusQuery)))
+	rr.mount("/runtime/teams", rr.auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		runtimehandlers.HandleRuntimeTeams(runtimeServer, w, r)
 	})))
-	register("/runtime/teams/", auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	rr.mount("/runtime/teams/", rr.auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		runtimehandlers.HandleRuntimeTeamItemPath(runtimeServer, w, r)
 	})))
-	register("/runtime/namespaces", auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	rr.mount("/runtime/namespaces", rr.auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		runtimehandlers.HandleRuntimeNamespaces(runtimeServer, w, r)
 	})))
-	register("/runtime/namespaces/", auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	rr.mount("/runtime/namespaces/", rr.auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		runtimehandlers.HandleRuntimeNamespaceItem(runtimeServer, w, r)
 	})))
-	register("/deployments", auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		deployments.HandleDeployments(runtimeServer, w, r)
+	rr.mount("/deployments", rr.auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		deployments.HandleDeployments(deploymentService, w, r)
 	})))
-	register("/deployments/", auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		deployments.HandleDeploymentItem(runtimeServer, w, r)
+	rr.mount("/deployments/", rr.auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		deployments.HandleDeploymentItem(deploymentService, w, r)
 	})))
-	register("/admin/operations", adminOnly(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	rr.mount("/admin/operations", rr.adminOnly(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		admin.HandleOperations(w, r, admin.Dependencies{
-			Platform:  s.platform,
+			Platform:  rr.platform,
 			Runtime:   runtimeServer,
 			WriteJSON: apihttp.WriteJSON,
 		})
 	})))
-	register("/admin/deployments", adminOnly(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		deployments.HandleAdminDeployments(runtimeServer, w, r)
+	rr.mount("/admin/deployments", rr.adminOnly(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		deployments.HandleAdminDeployments(deploymentService, w, r)
 	})))
-	register("/runtime/grants", auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		runtimehandlers.HandleRuntimeGrants(runtimeServer, w, r)
+	rr.mount("/runtime/grants", rr.auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		runtimehandlers.HandleRuntimeGrants(accessService, w, r)
 	})))
-	register("/runtime/sessions", auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		runtimehandlers.HandleRuntimeSessions(runtimeServer, w, r)
+	rr.mount("/runtime/sessions", rr.auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		runtimehandlers.HandleRuntimeSessions(accessService, w, r)
 	})))
-	register("/runtime/adapter/sessions", auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		runtimehandlers.HandleAdapterSession(runtimeServer, w, r)
+	rr.mount("/runtime/adapter/sessions", rr.auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		runtimehandlers.HandleAdapterSession(accessService, w, r)
 	})))
-	register("/runtime/adapter/certificates", auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		runtimehandlers.HandleAdapterCertificate(runtimeServer, w, r)
+	rr.mount("/runtime/adapter/certificates", rr.auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		runtimehandlers.HandleAdapterCertificate(accessService, w, r)
 	})))
-	register("/runtime/registry/push", auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		runtimehandlers.HandleRuntimeRegistryPush(runtimeServer, w, r)
+	rr.mount("/runtime/registry/push", rr.auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		runtimehandlers.HandleRuntimeRegistryPush(registryPushService, w, r)
 	})))
-	mux.HandleFunc("/internal/registry-push/tar", runtimeServer.HandleRegistryPushTransfer)
-	go runtimeServer.ReconcileTeamNamespaceNetworkPolicies(context.Background())
-	register("/runtime/components", adminOnly(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/internal/registry-push/tar", registryPushService.HandleRegistryPushTransfer)
+	go deploymentService.ReconcileTeamNamespaceNetworkPolicies(context.Background())
+	rr.mount("/runtime/components", rr.adminOnly(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		runtimehandlers.HandleRuntimeComponents(runtimeServer, w, r)
 	})))
-	register("/runtime/policy", auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		runtimehandlers.HandleRuntimePolicy(runtimeServer, w, r)
+	rr.mount("/runtime/policy", rr.auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		runtimehandlers.HandleRuntimePolicy(accessService, w, r)
 	})))
-	register("/runtime/actions/restart", adminOnly(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	rr.mount("/runtime/actions/restart", rr.adminOnly(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		runtimehandlers.HandleActionRestart(runtimeServer, w, r)
 	})))
-	register("/runtime/grants/", auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		runtimehandlers.HandleGrantItemPath(runtimeServer, w, r)
+	rr.mount("/runtime/grants/", rr.auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		runtimehandlers.HandleGrantItemPath(accessService, w, r)
 	})))
-	register("/runtime/sessions/", auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		runtimehandlers.HandleSessionItemPath(runtimeServer, w, r)
+	rr.mount("/runtime/sessions/", rr.auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		runtimehandlers.HandleSessionItemPath(accessService, w, r)
 	})))
-	register("/user/api-keys", auth(http.HandlerFunc(s.handleUserAPIKeys)))
-	register("/user/api-keys/", auth(http.HandlerFunc(s.handleUserAPIKeyItem)))
+	rr.mount("/user/api-keys", rr.auth(http.HandlerFunc(rr.handleUserAPIKeys)))
+	rr.mount("/user/api-keys/", rr.auth(http.HandlerFunc(rr.handleUserAPIKeyItem)))
 }
 
 func (s *server) handleHealth(w http.ResponseWriter, _ *http.Request) {
@@ -161,7 +185,7 @@ func (s *server) handleReady(w http.ResponseWriter, _ *http.Request) {
 	apihttp.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-func (s *server) handleUserAPIKeys(w http.ResponseWriter, r *http.Request) {
+func (rr runtimeRoutes) handleUserAPIKeys(w http.ResponseWriter, r *http.Request) {
 	p, ok := platformauth.FromContext(r.Context())
 	if !ok || p.UserID() == "" {
 		apihttp.WriteEnvelope(w, http.StatusUnauthorized, apihttp.CodeUnauthorized, "unauthorized")
@@ -169,7 +193,7 @@ func (s *server) handleUserAPIKeys(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodGet:
-		keys, err := s.runtime.ListUserAPIKeys(r.Context(), p.UserID())
+		keys, err := rr.runtime.ListUserAPIKeys(r.Context(), p.UserID())
 		if err != nil {
 			apihttp.WriteEnvelope(w, http.StatusInternalServerError, apihttp.CodeQueryFailed, "failed to list user api keys")
 			return
@@ -184,13 +208,13 @@ func (s *server) handleUserAPIKeys(w http.ResponseWriter, r *http.Request) {
 			apihttp.WriteEnvelope(w, http.StatusBadRequest, apihttp.CodeInvalidRequestBody, "invalid request body")
 			return
 		}
-		key, cleartext, err := s.runtime.CreateUserAPIKey(r.Context(), p.UserID(), req.Name)
+		key, cleartext, err := rr.runtime.CreateUserAPIKey(r.Context(), p.UserID(), req.Name)
 		if err != nil {
-			s.platform.WriteAudit(r.Context(), platformAuditEvent(p, "api_key_create", strings.TrimSpace(req.Name), "error", err.Error(), r))
+			rr.platform.WriteAudit(r.Context(), platformAuditEvent(p, "api_key_create", strings.TrimSpace(req.Name), "error", err.Error(), r))
 			apihttp.WriteEnvelope(w, http.StatusBadRequest, apihttp.CodeInvalidRequestBody, err.Error())
 			return
 		}
-		s.platform.WriteAudit(r.Context(), platformAuditEvent(p, "api_key_create", key.ID, "success", "", r))
+		rr.platform.WriteAudit(r.Context(), platformAuditEvent(p, "api_key_create", key.ID, "success", "", r))
 		apihttp.WriteJSON(w, http.StatusOK, map[string]any{"key": key, "api_key": cleartext, "one_time_key": cleartext})
 	default:
 		w.Header().Set("allow", "GET, POST")
@@ -198,7 +222,7 @@ func (s *server) handleUserAPIKeys(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *server) handleUserAPIKeyItem(w http.ResponseWriter, r *http.Request) {
+func (rr runtimeRoutes) handleUserAPIKeyItem(w http.ResponseWriter, r *http.Request) {
 	p, ok := platformauth.FromContext(r.Context())
 	if !ok || p.UserID() == "" {
 		apihttp.WriteEnvelope(w, http.StatusUnauthorized, apihttp.CodeUnauthorized, "unauthorized")
@@ -214,9 +238,9 @@ func (s *server) handleUserAPIKeyItem(w http.ResponseWriter, r *http.Request) {
 		apihttp.WriteEnvelope(w, http.StatusBadRequest, apihttp.CodeInvalidRequestBody, "invalid key path")
 		return
 	}
-	key, err := s.runtime.RevokeUserAPIKey(r.Context(), p.UserID(), keyID)
+	key, err := rr.runtime.RevokeUserAPIKey(r.Context(), p.UserID(), keyID)
 	if err != nil {
-		s.platform.WriteAudit(r.Context(), platformAuditEvent(p, "api_key_revoke", keyID, "error", err.Error(), r))
+		rr.platform.WriteAudit(r.Context(), platformAuditEvent(p, "api_key_revoke", keyID, "error", err.Error(), r))
 		if apierrors.IsNotFound(err) {
 			apihttp.WriteEnvelope(w, http.StatusNotFound, apihttp.CodeNotFound, "key not found")
 			return
@@ -224,7 +248,7 @@ func (s *server) handleUserAPIKeyItem(w http.ResponseWriter, r *http.Request) {
 		apihttp.WriteEnvelope(w, http.StatusInternalServerError, apihttp.CodeQueryFailed, "failed to revoke key")
 		return
 	}
-	s.platform.WriteAudit(r.Context(), platformAuditEvent(p, "api_key_revoke", key.ID, "success", "", r))
+	rr.platform.WriteAudit(r.Context(), platformAuditEvent(p, "api_key_revoke", key.ID, "success", "", r))
 	apihttp.WriteJSON(w, http.StatusOK, map[string]any{"key": key})
 }
 

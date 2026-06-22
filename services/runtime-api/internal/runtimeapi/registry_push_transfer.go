@@ -65,7 +65,7 @@ func registryPushTransferSecretName(token string) string {
 	return registryPushTransferSecretPrefix + token
 }
 
-func (s *RuntimeServer) registerRegistryPushTransfer(ctx context.Context, path string, ttl time.Duration) (token, fetchURL string, err error) {
+func (s *RegistryPushService) registerRegistryPushTransfer(ctx context.Context, path string, ttl time.Duration) (token, fetchURL string, err error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return "", "", fmt.Errorf("transfer path is required")
@@ -143,7 +143,7 @@ func secretField(secret *corev1.Secret, key string) string {
 	return ""
 }
 
-func (s *RuntimeServer) lookupRegistryPushTransfer(ctx context.Context, token string) (registryPushTransferRecord, bool) {
+func (s *RegistryPushService) lookupRegistryPushTransfer(ctx context.Context, token string) (registryPushTransferRecord, bool) {
 	token = strings.TrimSpace(token)
 	if token == "" || s.k8sClients == nil || s.k8sClients.Clientset == nil {
 		return registryPushTransferRecord{}, false
@@ -167,7 +167,7 @@ func (s *RuntimeServer) lookupRegistryPushTransfer(ctx context.Context, token st
 	return record, true
 }
 
-func (s *RuntimeServer) deleteRegistryPushTransfer(ctx context.Context, token, path string) {
+func (s *RegistryPushService) deleteRegistryPushTransfer(ctx context.Context, token, path string) {
 	if s.k8sClients == nil || s.k8sClients.Clientset == nil {
 		return
 	}
@@ -178,7 +178,7 @@ func (s *RuntimeServer) deleteRegistryPushTransfer(ctx context.Context, token, p
 	}
 }
 
-func (s *RuntimeServer) revokeRegistryPushTransfer(ctx context.Context, token string) {
+func (s *RegistryPushService) revokeRegistryPushTransfer(ctx context.Context, token string) {
 	record, ok := s.lookupRegistryPushTransfer(ctx, token)
 	if !ok {
 		return
@@ -186,8 +186,8 @@ func (s *RuntimeServer) revokeRegistryPushTransfer(ctx context.Context, token st
 	s.deleteRegistryPushTransfer(ctx, token, record.path)
 }
 
-func (s *RuntimeServer) purgeExpiredRegistryPushTransfers(ctx context.Context) {
-	if s.k8sClients == nil || s.k8sClients.Clientset == nil {
+func (s *RegistryPushService) purgeExpiredRegistryPushTransfers(ctx context.Context) {
+	if s == nil || s.k8sClients == nil || s.k8sClients.Clientset == nil {
 		return
 	}
 	ns := registryPushTransferNamespace()
@@ -211,7 +211,7 @@ func (s *RuntimeServer) purgeExpiredRegistryPushTransfers(ctx context.Context) {
 }
 
 // HandleRegistryPushTransfer serves a one-time docker save tar to in-cluster helper pods.
-func (s *RuntimeServer) HandleRegistryPushTransfer(w http.ResponseWriter, r *http.Request) {
+func (s *RegistryPushService) HandleRegistryPushTransfer(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.Header().Set("allow", "GET")
 		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed")

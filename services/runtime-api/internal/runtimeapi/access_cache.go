@@ -12,7 +12,7 @@ import (
 
 type accessServerCache map[string]mcpv1alpha1.MCPServer
 
-func (s *RuntimeServer) grantVisibleToPrincipal(ctx context.Context, grant sentinelaccess.MCPAccessGrant) bool {
+func (s *AccessService) grantVisibleToPrincipal(ctx context.Context, grant sentinelaccess.MCPAccessGrant) bool {
 	if p, ok := principalFromContext(ctx); !ok || p.Role == roleAdmin {
 		return true
 	}
@@ -20,7 +20,7 @@ func (s *RuntimeServer) grantVisibleToPrincipal(ctx context.Context, grant senti
 	return err == nil && allowed
 }
 
-func (s *RuntimeServer) sessionVisibleToPrincipal(ctx context.Context, session sentinelaccess.MCPAgentSession) bool {
+func (s *AccessService) sessionVisibleToPrincipal(ctx context.Context, session sentinelaccess.MCPAgentSession) bool {
 	if p, ok := principalFromContext(ctx); !ok || p.Role == roleAdmin {
 		return true
 	}
@@ -28,7 +28,7 @@ func (s *RuntimeServer) sessionVisibleToPrincipal(ctx context.Context, session s
 	return err == nil && allowed
 }
 
-func (s *RuntimeServer) accessServerCacheForGrantRefs(ctx context.Context, namespace string, grants []sentinelaccess.MCPAccessGrant) (accessServerCache, error) {
+func (s *AccessService) accessServerCacheForGrantRefs(ctx context.Context, namespace string, grants []sentinelaccess.MCPAccessGrant) (accessServerCache, error) {
 	refs := make([]sentinelaccess.ServerReference, 0, len(grants))
 	for _, grant := range grants {
 		refs = append(refs, grant.Spec.ServerRef)
@@ -36,7 +36,7 @@ func (s *RuntimeServer) accessServerCacheForGrantRefs(ctx context.Context, names
 	return s.accessServerCacheForRefs(ctx, namespace, refs)
 }
 
-func (s *RuntimeServer) accessServerCacheForSessionRefs(ctx context.Context, namespace string, sessions []sentinelaccess.MCPAgentSession) (accessServerCache, error) {
+func (s *AccessService) accessServerCacheForSessionRefs(ctx context.Context, namespace string, sessions []sentinelaccess.MCPAgentSession) (accessServerCache, error) {
 	refs := make([]sentinelaccess.ServerReference, 0, len(sessions))
 	for _, session := range sessions {
 		refs = append(refs, session.Spec.ServerRef)
@@ -44,7 +44,7 @@ func (s *RuntimeServer) accessServerCacheForSessionRefs(ctx context.Context, nam
 	return s.accessServerCacheForRefs(ctx, namespace, refs)
 }
 
-func (s *RuntimeServer) accessServerCacheForRefs(ctx context.Context, namespace string, refs []sentinelaccess.ServerReference) (accessServerCache, error) {
+func (s *AccessService) accessServerCacheForRefs(ctx context.Context, namespace string, refs []sentinelaccess.ServerReference) (accessServerCache, error) {
 	namespaces := map[string]struct{}{}
 	for _, ref := range refs {
 		if strings.TrimSpace(string(ref.Name)) == "" {
@@ -66,7 +66,7 @@ func (s *RuntimeServer) accessServerCacheForRefs(ctx context.Context, namespace 
 	return cache, nil
 }
 
-func (s *RuntimeServer) grantDisabledForApply(ctx context.Context, req accessGrantRequest) (bool, error) {
+func (s *AccessService) grantDisabledForApply(ctx context.Context, req accessGrantRequest) (bool, error) {
 	if req.Disabled != nil {
 		return *req.Disabled, nil
 	}

@@ -46,7 +46,7 @@ func principalCanAdministerMCPServer(p principal, server mcpv1alpha1.MCPServer) 
 	return principalCanAdministerServerLabels(p, server.Namespace, server.Labels)
 }
 
-func (s *RuntimeServer) principalCanAdministerAccessServer(ctx context.Context, server mcpv1alpha1.MCPServer) bool {
+func (s *AccessService) principalCanAdministerAccessServer(ctx context.Context, server mcpv1alpha1.MCPServer) bool {
 	p, ok := principalFromContext(ctx)
 	if !ok {
 		return true
@@ -54,7 +54,7 @@ func (s *RuntimeServer) principalCanAdministerAccessServer(ctx context.Context, 
 	return principalCanAdministerMCPServer(p, server)
 }
 
-func (s *RuntimeServer) canAdministerAccessServerRef(ctx context.Context, namespace string, ref sentinelaccess.ServerReference) (bool, error) {
+func (s *AccessService) canAdministerAccessServerRef(ctx context.Context, namespace string, ref sentinelaccess.ServerReference) (bool, error) {
 	ref.Namespace = sentinelaccess.Namespace(strings.TrimSpace(string(ref.Namespace)))
 	if ref.Namespace == "" {
 		ref.Namespace = sentinelaccess.Namespace(runtimeaccess.DefaultAccessNamespace(namespace))
@@ -72,7 +72,7 @@ func (s *RuntimeServer) canAdministerAccessServerRef(ctx context.Context, namesp
 	return s.principalCanAdministerAccessServer(ctx, *targetServer), nil
 }
 
-func (s *RuntimeServer) canAdministerNamedServer(ctx context.Context, namespace, name string) (bool, error) {
+func (s *AccessService) canAdministerNamedServer(ctx context.Context, namespace, name string) (bool, error) {
 	p, ok := principalFromContext(ctx)
 	if !ok || p.Role == roleAdmin {
 		return true, nil

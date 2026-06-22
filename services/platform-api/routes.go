@@ -41,17 +41,36 @@ func (s *apiServer) registerRoutes(mux *http.ServeMux) {
 	register("/registry/authz", http.HandlerFunc(s.handleRegistryAuthz))
 	register("/auth/login", http.HandlerFunc(s.handleLogin))
 	register("/auth/oidc", http.HandlerFunc(s.handleOIDCLogin))
-	register("/auth/signup", http.HandlerFunc(s.handleSignup))
-	register("/users", adminOnly(http.HandlerFunc(s.handleUsers)))
-	register("/auth/me", auth(http.HandlerFunc(s.handleAuthMe)))
-	register("/user/registry-credentials", auth(http.HandlerFunc(s.handleRegistryCredentials)))
-	register("/user/registry-credentials/", auth(http.HandlerFunc(s.handleRegistryCredentialItem)))
-	register("/user/activity/image-publish", auth(http.HandlerFunc(s.handleUserImagePublishActivity)))
-	register("/admin/namespaces", adminOnly(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		admin.HandleNamespaces(w, r, admin.Dependencies{Platform: s.platform, WriteJSON: writeJSON})
+	routes := platformRoutes{
+		platform:            s.platform,
+		authenticateRequest: s.authenticateRequest,
+		auth:                auth,
+		adminOnly:           adminOnly,
+		mount:               register,
+	}
+	routes.register()
+}
+
+type platformRoutes struct {
+	platform            *platformStore
+	authenticateRequest func(*http.Request) (principal, bool, error)
+	auth                func(http.Handler) http.Handler
+	adminOnly           func(http.Handler) http.Handler
+	mount               func(string, http.Handler)
+}
+
+func (pr platformRoutes) register() {
+	pr.mount("/auth/signup", http.HandlerFunc(pr.handleSignup))
+	pr.mount("/users", pr.adminOnly(http.HandlerFunc(pr.handleUsers)))
+	pr.mount("/auth/me", pr.auth(http.HandlerFunc(pr.handleAuthMe)))
+	pr.mount("/user/registry-credentials", pr.auth(http.HandlerFunc(pr.handleRegistryCredentials)))
+	pr.mount("/user/registry-credentials/", pr.auth(http.HandlerFunc(pr.handleRegistryCredentialItem)))
+	pr.mount("/user/activity/image-publish", pr.auth(http.HandlerFunc(pr.handleUserImagePublishActivity)))
+	pr.mount("/admin/namespaces", pr.adminOnly(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		admin.HandleNamespaces(w, r, admin.Dependencies{Platform: pr.platform, WriteJSON: writeJSON})
 	})))
-	register("/admin/audit", adminOnly(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		admin.HandleAudit(w, r, admin.Dependencies{Platform: s.platform, WriteJSON: writeJSON})
+	pr.mount("/admin/audit", pr.adminOnly(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		admin.HandleAudit(w, r, admin.Dependencies{Platform: pr.platform, WriteJSON: writeJSON})
 	})))
 }
 
@@ -71,9 +90,9 @@ func (s *apiServer) handleReady(w http.ResponseWriter, r *http.Request) {
 	apihttp.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-func (s *apiServer) handleRegistryCredentials(w http.ResponseWriter, r *http.Request) {
+func (pr platformRoutes) handleRegistryCredentials(w http.ResponseWriter, r *http.Request) {
 	registry.HandleRegistryCredentials(w, r, registry.CredentialDependencies{
-		Platform:             s.platform,
+		Platform:             pr.platform,
 		PrincipalFromContext: principalFromContext,
 		WriteJSON:            writeJSON,
 		WriteBodyDecodeError: writeBodyDecodeError,
@@ -83,9 +102,9 @@ func (s *apiServer) handleRegistryCredentials(w http.ResponseWriter, r *http.Req
 	})
 }
 
-func (s *apiServer) handleRegistryCredentialItem(w http.ResponseWriter, r *http.Request) {
+func (pr platformRoutes) handleRegistryCredentialItem(w http.ResponseWriter, r *http.Request) {
 	registry.HandleRegistryCredentialItem(w, r, registry.CredentialDependencies{
-		Platform:             s.platform,
+		Platform:             pr.platform,
 		PrincipalFromContext: principalFromContext,
 		WriteJSON:            writeJSON,
 		RequestIP:            requestIP,
@@ -94,17 +113,17 @@ func (s *apiServer) handleRegistryCredentialItem(w http.ResponseWriter, r *http.
 	})
 }
 
-func (s *apiServer) handleAuthMe(w http.ResponseWriter, r *http.Request) {
+func (pr platformRoutes) handleAuthMe(w http.ResponseWriter, r *http.Request) {
 	identity.HandleAuthMe(w, r, identity.Dependencies{
 		PrincipalFromContext: principalFromContext,
 		WriteJSON:            writeJSON,
 	})
 }
 
-func (s *apiServer) handleSignup(w http.ResponseWriter, r *http.Request) {
+func (pr platformRoutes) handleSignup(w http.ResponseWriter, r *http.Request) {
 	identity.HandleSignup(w, r, identity.Dependencies{
-		Platform:             s.platform,
-		AuthenticateRequest:  s.authenticateRequest,
+		Platform:             pr.platform,
+		AuthenticateRequest:  pr.authenticateRequest,
 		WriteJSON:            writeJSON,
 		WriteBodyDecodeError: writeBodyDecodeError,
 		RequestIP:            requestIP,
@@ -112,10 +131,10 @@ func (s *apiServer) handleSignup(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *apiServer) handleUsers(w http.ResponseWriter, r *http.Request) {
+func (pr platformRoutes) handleUsers(w http.ResponseWriter, r *http.Request) {
 	identity.HandleUsers(w, r, identity.Dependencies{
-		Platform:             s.platform,
-		AuthenticateRequest:  s.authenticateRequest,
+		Platform:             pr.platform,
+		AuthenticateRequest:  pr.authenticateRequest,
 		WriteJSON:            writeJSON,
 		WriteBodyDecodeError: writeBodyDecodeError,
 		RequestIP:            requestIP,

@@ -32,7 +32,7 @@ type accessGrantPatchRequest struct {
 }
 
 // HandleRuntimeGrants lists and applies MCPAccessGrant resources within the caller's allowed namespace scope.
-func (s *RuntimeServer) HandleRuntimeGrants(w http.ResponseWriter, r *http.Request) {
+func (s *AccessService) HandleRuntimeGrants(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		s.handleRuntimeGrantList(w, r)
@@ -45,7 +45,7 @@ func (s *RuntimeServer) HandleRuntimeGrants(w http.ResponseWriter, r *http.Reque
 }
 
 // HandleGrantItemPath handles GET, DELETE, PATCH, and legacy enable or disable actions for one MCPAccessGrant.
-func (s *RuntimeServer) HandleGrantItemPath(w http.ResponseWriter, r *http.Request) {
+func (s *AccessService) HandleGrantItemPath(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		ns, name, err := runtimeaccess.ExtractNamespacedPath(r.URL.Path, "/api/runtime/grants/", 2)
@@ -80,7 +80,7 @@ func (s *RuntimeServer) HandleGrantItemPath(w http.ResponseWriter, r *http.Reque
 	}
 }
 
-func (s *RuntimeServer) handleGrantGet(w http.ResponseWriter, r *http.Request, namespace, name string) {
+func (s *AccessService) handleGrantGet(w http.ResponseWriter, r *http.Request, namespace, name string) {
 	if s.accessMgr == nil {
 		writeAPIError(w, http.StatusServiceUnavailable, "kubernetes not available")
 		return
@@ -105,7 +105,7 @@ func (s *RuntimeServer) handleGrantGet(w http.ResponseWriter, r *http.Request, n
 	writeJSON(w, http.StatusOK, map[string]any{"grant": sentinelaccess.ToGrantSummary(*grant)})
 }
 
-func (s *RuntimeServer) handleGrantDelete(w http.ResponseWriter, r *http.Request, namespace, name string) {
+func (s *AccessService) handleGrantDelete(w http.ResponseWriter, r *http.Request, namespace, name string) {
 	if s.accessMgr == nil {
 		writeAPIError(w, http.StatusServiceUnavailable, "kubernetes not available")
 		return
@@ -147,7 +147,7 @@ func (s *RuntimeServer) handleGrantDelete(w http.ResponseWriter, r *http.Request
 	})
 }
 
-func (s *RuntimeServer) handleGrantPatch(w http.ResponseWriter, r *http.Request, namespace, name string) {
+func (s *AccessService) handleGrantPatch(w http.ResponseWriter, r *http.Request, namespace, name string) {
 	if s.accessMgr == nil {
 		writeAPIError(w, http.StatusServiceUnavailable, "kubernetes not available")
 		return
@@ -192,7 +192,7 @@ func (s *RuntimeServer) handleGrantPatch(w http.ResponseWriter, r *http.Request,
 }
 
 // handleGrantPostTogglePath handles legacy POST /api/runtime/grants/{namespace}/{name}/disable|enable.
-func (s *RuntimeServer) handleGrantPostTogglePath(w http.ResponseWriter, r *http.Request) {
+func (s *AccessService) handleGrantPostTogglePath(w http.ResponseWriter, r *http.Request) {
 	params, err := serviceutil.ExtractGrantActionParams(r, "/api/runtime/grants/")
 	if err != nil {
 		if errors.Is(err, serviceutil.ErrMethodNotAllowed) {
@@ -207,7 +207,7 @@ func (s *RuntimeServer) handleGrantPostTogglePath(w http.ResponseWriter, r *http
 	s.handleGrantToggle(w, r, params.Namespace, params.Name, disable)
 }
 
-func (s *RuntimeServer) handleGrantToggle(w http.ResponseWriter, r *http.Request, namespace, name string, disable bool) {
+func (s *AccessService) handleGrantToggle(w http.ResponseWriter, r *http.Request, namespace, name string, disable bool) {
 	if s.accessMgr == nil {
 		writeAPIError(w, http.StatusServiceUnavailable, "kubernetes not available")
 		return
@@ -241,7 +241,7 @@ func (s *RuntimeServer) handleGrantToggle(w http.ResponseWriter, r *http.Request
 	s.handleGrantStateChange(w, ctx, namespace, name, disable)
 }
 
-func (s *RuntimeServer) handleGrantStateChange(w http.ResponseWriter, ctx context.Context, namespace, name string, disable bool) {
+func (s *AccessService) handleGrantStateChange(w http.ResponseWriter, ctx context.Context, namespace, name string, disable bool) {
 	var updateErr error
 	if disable {
 		updateErr = s.accessMgr.DisableGrant(ctx, name, namespace)

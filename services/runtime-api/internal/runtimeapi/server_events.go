@@ -35,7 +35,7 @@ func (s *RuntimeServer) HandleRuntimeServerEvents(w http.ResponseWriter, r *http
 		writeAPIError(w, http.StatusForbidden, "forbidden namespace")
 		return
 	}
-	if allowed, err := s.canAdministerNamedServer(r.Context(), namespace, server); err != nil {
+	if allowed, err := s.Access().canAdministerNamedServer(r.Context(), namespace, server); err != nil {
 		code, msg := sensitiveServerReadStatus(err)
 		if code == http.StatusInternalServerError {
 			log.Printf("runtime server events: inspect server %s/%s failed: %v", namespace, server, err)

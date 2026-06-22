@@ -90,7 +90,7 @@ func durationFromEnv(key string, fallback time.Duration) time.Duration {
 	return value
 }
 
-func (s *RuntimeServer) publishPolicyStatusForPrincipal(ctx context.Context, p principal) serverPublishPolicyStatus {
+func (s *DeploymentService) publishPolicyStatusForPrincipal(ctx context.Context, p principal) serverPublishPolicyStatus {
 	policy := currentServerPublishPolicy()
 	status := serverPublishPolicyStatus{
 		ActiveServerLimit:        policy.activeServerLimit,
@@ -113,7 +113,7 @@ func (s *RuntimeServer) publishPolicyStatusForPrincipal(ctx context.Context, p p
 	return status
 }
 
-func (s *RuntimeServer) evaluateServerPublishPolicy(ctx context.Context, p principal, namespace, name string, current *mcpv1alpha1.MCPServer, now time.Time) (*serverPublishPolicyRejection, error) {
+func (s *DeploymentService) evaluateServerPublishPolicy(ctx context.Context, p principal, namespace, name string, current *mcpv1alpha1.MCPServer, now time.Time) (*serverPublishPolicyRejection, error) {
 	policy := currentServerPublishPolicy()
 	if policy.pushCooldown > 0 && current != nil {
 		if lastPushedAt, ok := lastServerPushAt(current); ok {
@@ -163,7 +163,7 @@ func lastServerPushAt(server *mcpv1alpha1.MCPServer) (time.Time, bool) {
 	return parsed, true
 }
 
-func (s *RuntimeServer) countPrincipalActiveServers(ctx context.Context, p principal) (int, error) {
+func (s *DeploymentService) countPrincipalActiveServers(ctx context.Context, p principal) (int, error) {
 	control := s.controlPlane()
 	if control == nil {
 		return 0, fmt.Errorf("kubernetes not available")

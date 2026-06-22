@@ -70,7 +70,7 @@ func (s *RuntimeServer) handleRuntimeServerList(w http.ResponseWriter, r *http.R
 	defer cancel()
 
 	namespace := strings.TrimSpace(r.URL.Query().Get("namespace"))
-	servers, err := s.visibleServers(ctx, control, p, namespace)
+	servers, err := s.Inventory().visibleServers(ctx, control, p, namespace)
 	if errors.Is(err, errForbiddenNamespace) {
 		writeAPIError(w, http.StatusForbidden, "forbidden namespace")
 		return
@@ -82,7 +82,7 @@ func (s *RuntimeServer) handleRuntimeServerList(w http.ResponseWriter, r *http.R
 	if len(servers) == 0 {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"servers":        []serverInfo{},
-			"publish_policy": s.publishPolicyStatusForPrincipal(ctx, p),
+			"publish_policy": s.Deployments().publishPolicyStatusForPrincipal(ctx, p),
 		})
 		return
 	}
@@ -95,7 +95,7 @@ func (s *RuntimeServer) handleRuntimeServerList(w http.ResponseWriter, r *http.R
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"servers":        s.serverInfosWithRuntimeData(ctx, servers, r),
-		"publish_policy": s.publishPolicyStatusForPrincipal(ctx, p),
+		"publish_policy": s.Deployments().publishPolicyStatusForPrincipal(ctx, p),
 	})
 }
 
@@ -164,7 +164,7 @@ func (s *RuntimeServer) handleRuntimeServerApply(w http.ResponseWriter, r *http.
 		writeAPIError(w, http.StatusForbidden, "forbidden namespace")
 		return
 	}
-	namespaceTeamID := strings.TrimSpace(s.teamIDForPrincipalNamespace(r.Context(), namespace))
+	namespaceTeamID := strings.TrimSpace(s.Access().teamIDForPrincipalNamespace(r.Context(), namespace))
 	req.Spec.TeamID = strings.TrimSpace(req.Spec.TeamID)
 	if req.Spec.TeamID == "" {
 		req.Spec.TeamID = namespaceTeamID
@@ -234,7 +234,7 @@ func (s *RuntimeServer) handleRuntimeServerApply(w http.ResponseWriter, r *http.
 	}
 	// This is an API-layer guard. Strict global quota enforcement under highly
 	// concurrent publishes would need a shared reservation/locking mechanism.
-	rejection, err := s.evaluateServerPublishPolicy(ctx, p, namespace, req.Name, current, time.Now().UTC())
+	rejection, err := s.Deployments().evaluateServerPublishPolicy(ctx, p, namespace, req.Name, current, time.Now().UTC())
 	if err != nil {
 		log.Printf("runtime servers: evaluate publish policy for %s/%s failed: %v", namespace, req.Name, err)
 		s.writeAudit(r.Context(), serverPublishAuditEvent(r, p, "server_publish", "error", req.Name, namespace, req.Spec.Image, err.Error()))
@@ -311,13 +311,13 @@ func (s *RuntimeServer) ensureServerApplyNamespace(ctx context.Context, p princi
 		return nil
 	}
 	if sharedCatalogWritableForUsers() && isModeCatalogNamespace(namespace) {
-		if err := s.EnsureCatalogNamespace(ctx, namespace); err != nil {
+		if err := s.Deployments().EnsureCatalogNamespace(ctx, namespace); err != nil {
 			return fmt.Errorf("catalog namespace %q: %w", namespace, err)
 		}
 		return nil
 	}
 	if isTeamNamespace {
-		if err := s.ensureTeamNamespace(ctx, teamRecord{
+		if err := s.Deployments().ensureTeamNamespace(ctx, teamRecord{
 			ID:        team.ID,
 			Slug:      team.Slug,
 			Name:      team.Name,
@@ -325,7 +325,7 @@ func (s *RuntimeServer) ensureServerApplyNamespace(ctx context.Context, p princi
 		}); err != nil {
 			return fmt.Errorf("team namespace %q: %w", namespace, err)
 		}
-		if err := s.ensureNamespaceUserWorkloadRBAC(ctx, namespace, p.UserID()); err != nil {
+		if err := s.Deployments().ensureNamespaceUserWorkloadRBAC(ctx, namespace, p.UserID()); err != nil {
 			return fmt.Errorf("team namespace access %q: %w", namespace, err)
 		}
 	}
@@ -526,7 +526,7 @@ func (s *RuntimeServer) defaultAnalyticsAPIKey(ctx context.Context) (string, err
 func (s *RuntimeServer) scopedNamespaceForServerApply(ctx context.Context, requested string, scope publishscope.Scope) (string, error) {
 	requested = strings.TrimSpace(requested)
 	if scope == "" {
-		return s.scopedNamespaceForPrincipal(ctx, requested)
+		return s.Access().scopedNamespaceForPrincipal(ctx, requested)
 	}
 
 	p, ok := principalFromContext(ctx)
@@ -766,7 +766,7 @@ func (s *RuntimeServer) serverInfosWithRuntimeData(ctx context.Context, items []
 
 func (s *RuntimeServer) serverInfoWithRuntimeData(ctx context.Context, info controlplane.ServerInfo, r *http.Request) serverInfo {
 	out := serverInfoWithAccessJSON(info, r)
-	cache := s.liveInventory()
+	cache := s.Inventory().liveInventory()
 	if cache == nil {
 		out.LiveInventoryError = "live inventory unavailable"
 		return out

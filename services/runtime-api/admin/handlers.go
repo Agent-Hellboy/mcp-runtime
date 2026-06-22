@@ -42,7 +42,7 @@ func HandleOperations(w http.ResponseWriter, r *http.Request, deps Dependencies)
 
 	deployments := []map[string]any{}
 	if deps.Runtime != nil && deps.Runtime.KubernetesAvailable() {
-		deployments, err = deps.Runtime.ListAdminDeploymentSummaries(r.Context(), "")
+		deployments, err = deps.Runtime.Deployments().ListAdminDeploymentSummaries(r.Context(), "")
 		if err != nil {
 			deps.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list deployments"})
 			return

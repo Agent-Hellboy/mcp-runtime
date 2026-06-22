@@ -19,7 +19,7 @@ func writeK8sApplyError(w http.ResponseWriter, kind, namespace, name string, err
 	writeAPIError(w, code, fmt.Sprintf("failed to apply %s: %s", kind, msg))
 }
 
-func (s *RuntimeServer) bindAccessSubjectTeamID(ctx context.Context, namespace, serverTeamID string, subject *sentinelaccess.SubjectRef) error {
+func (s *AccessService) bindAccessSubjectTeamID(ctx context.Context, namespace, serverTeamID string, subject *sentinelaccess.SubjectRef) error {
 	subject.TeamID = sentinelaccess.TeamID(strings.TrimSpace(string(subject.TeamID)))
 	serverTeamID = strings.TrimSpace(serverTeamID)
 	namespaceTeamID := strings.TrimSpace(s.teamIDForPrincipalNamespace(ctx, namespace))
@@ -36,7 +36,7 @@ func (s *RuntimeServer) bindAccessSubjectTeamID(ctx context.Context, namespace, 
 	return nil
 }
 
-func (s *RuntimeServer) teamIDForPrincipalNamespace(ctx context.Context, namespace string) string {
+func (s *AccessService) teamIDForPrincipalNamespace(ctx context.Context, namespace string) string {
 	namespace = strings.TrimSpace(namespace)
 	if p, ok := principalFromContext(ctx); ok {
 		if team, found := p.TeamForNamespace(namespace); found {
@@ -51,7 +51,7 @@ func (s *RuntimeServer) teamIDForPrincipalNamespace(ctx context.Context, namespa
 	return ""
 }
 
-func (s *RuntimeServer) scopedNamespaceForPrincipal(ctx context.Context, requested string) (string, error) {
+func (s *AccessService) scopedNamespaceForPrincipal(ctx context.Context, requested string) (string, error) {
 	requested = strings.TrimSpace(requested)
 	p, ok := principalFromContext(ctx)
 	if !ok || p.Role == roleAdmin {
@@ -72,7 +72,7 @@ func (s *RuntimeServer) scopedNamespaceForPrincipal(ctx context.Context, request
 	return requested, nil
 }
 
-func (s *RuntimeServer) scopedAccessWriteNamespaceForPrincipal(ctx context.Context, requested string) (string, error) {
+func (s *AccessService) scopedAccessWriteNamespaceForPrincipal(ctx context.Context, requested string) (string, error) {
 	namespace, err := s.scopedNamespaceForPrincipal(ctx, requested)
 	if err != nil {
 		return "", err

@@ -50,8 +50,8 @@ func validateSessionRequest(req *accessSessionRequest) error {
 	return nil
 }
 
-func (s *RuntimeServer) handleRuntimeSessionList(w http.ResponseWriter, r *http.Request) {
-	if s.accessMgr == nil {
+func (s *AccessService) handleRuntimeSessionList(w http.ResponseWriter, r *http.Request) {
+	if s == nil || s.accessMgr == nil {
 		writeAPIError(w, http.StatusServiceUnavailable, "kubernetes not available")
 		return
 	}
@@ -98,7 +98,7 @@ func (s *RuntimeServer) handleRuntimeSessionList(w http.ResponseWriter, r *http.
 	writeJSON(w, http.StatusOK, map[string]interface{}{"sessions": summaries})
 }
 
-func (s *RuntimeServer) handleRuntimeSessionApply(w http.ResponseWriter, r *http.Request) {
+func (s *AccessService) handleRuntimeSessionApply(w http.ResponseWriter, r *http.Request) {
 	if s.accessMgr == nil {
 		writeAPIError(w, http.StatusServiceUnavailable, "kubernetes not available")
 		return
@@ -183,7 +183,7 @@ func (s *RuntimeServer) handleRuntimeSessionApply(w http.ResponseWriter, r *http
 	writeJSON(w, http.StatusOK, map[string]interface{}{"session": sentinelaccess.ToSessionSummary(*applied)})
 }
 
-func (s *RuntimeServer) sessionRevokedForApply(ctx context.Context, req accessSessionRequest) (bool, error) {
+func (s *AccessService) sessionRevokedForApply(ctx context.Context, req accessSessionRequest) (bool, error) {
 	if req.Revoked != nil {
 		return *req.Revoked, nil
 	}

@@ -78,7 +78,7 @@ type deployRequest struct {
 }
 
 // HandleDeployments lists and applies user-managed Kubernetes deployments for the caller's namespace scope.
-func (s *RuntimeServer) HandleDeployments(w http.ResponseWriter, r *http.Request) {
+func (s *DeploymentService) HandleDeployments(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		s.handleDeploymentList(w, r)
@@ -91,7 +91,7 @@ func (s *RuntimeServer) HandleDeployments(w http.ResponseWriter, r *http.Request
 }
 
 // HandleDeploymentItem deletes a user-managed Kubernetes deployment and service after namespace authorization.
-func (s *RuntimeServer) HandleDeploymentItem(w http.ResponseWriter, r *http.Request) {
+func (s *DeploymentService) HandleDeploymentItem(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
 		w.Header().Set("allow", "DELETE")
 		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed")
@@ -138,7 +138,7 @@ func (s *RuntimeServer) HandleDeploymentItem(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "namespace": ns, "name": name})
 }
 
-func (s *RuntimeServer) handleDeploymentList(w http.ResponseWriter, r *http.Request) {
+func (s *DeploymentService) handleDeploymentList(w http.ResponseWriter, r *http.Request) {
 	p, ok := principalFromContext(r.Context())
 	if !ok {
 		writeAPIError(w, http.StatusUnauthorized, "unauthorized")
@@ -182,7 +182,7 @@ func (s *RuntimeServer) handleDeploymentList(w http.ResponseWriter, r *http.Requ
 }
 
 // HandleAdminDeployments lists platform-visible deployments across namespaces for admins.
-func (s *RuntimeServer) HandleAdminDeployments(w http.ResponseWriter, r *http.Request) {
+func (s *DeploymentService) HandleAdminDeployments(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.Header().Set("allow", http.MethodGet)
 		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed")
@@ -208,8 +208,8 @@ func (s *RuntimeServer) HandleAdminDeployments(w http.ResponseWriter, r *http.Re
 }
 
 // ListAdminDeploymentSummaries returns deployment summaries from all namespaces or one requested namespace.
-func (s *RuntimeServer) ListAdminDeploymentSummaries(ctx context.Context, namespace string) ([]map[string]any, error) {
-	if s.k8sClients == nil {
+func (s *DeploymentService) ListAdminDeploymentSummaries(ctx context.Context, namespace string) ([]map[string]any, error) {
+	if s == nil || s.k8sClients == nil {
 		return nil, errors.New("kubernetes not available")
 	}
 	listNamespace := metav1.NamespaceAll
@@ -226,7 +226,7 @@ func (s *RuntimeServer) ListAdminDeploymentSummaries(ctx context.Context, namesp
 	return deploymentSummaries(list.Items), nil
 }
 
-func (s *RuntimeServer) handleDeploymentApply(w http.ResponseWriter, r *http.Request) {
+func (s *DeploymentService) handleDeploymentApply(w http.ResponseWriter, r *http.Request) {
 	p, ok := principalFromContext(r.Context())
 	if !ok {
 		writeAPIError(w, http.StatusUnauthorized, "unauthorized")
@@ -358,8 +358,8 @@ func (s *RuntimeServer) handleDeploymentApply(w http.ResponseWriter, r *http.Req
 	writeJSON(w, http.StatusOK, map[string]any{"deployment": deploymentSummary(*applied)})
 }
 
-func (s *RuntimeServer) clientForPrincipal(p principal) (kubernetes.Interface, error) {
-	if s.k8sClients == nil {
+func (s *DeploymentService) clientForPrincipal(p principal) (kubernetes.Interface, error) {
+	if s == nil || s.k8sClients == nil {
 		return nil, fmt.Errorf("kubernetes not available")
 	}
 	if p.UserID() == "" {
@@ -377,9 +377,9 @@ func (s *RuntimeServer) clientForPrincipal(p principal) (kubernetes.Interface, e
 }
 
 // EnsureCatalogNamespace creates or updates a catalog namespace with platform labels, security defaults, and ingress watch access.
-func (s *RuntimeServer) EnsureCatalogNamespace(ctx context.Context, namespace string) error {
+func (s *DeploymentService) EnsureCatalogNamespace(ctx context.Context, namespace string) error {
 	namespace = strings.TrimSpace(namespace)
-	if s.k8sClients == nil || namespace == "" {
+	if s == nil || s.k8sClients == nil || namespace == "" {
 		return nil
 	}
 	labels := map[string]string{
@@ -404,7 +404,7 @@ func (s *RuntimeServer) EnsureCatalogNamespace(ctx context.Context, namespace st
 	return nil
 }
 
-func (s *RuntimeServer) ensureTeamNamespace(ctx context.Context, team teamRecord) error {
+func (s *DeploymentService) ensureTeamNamespace(ctx context.Context, team teamRecord) error {
 	if strings.TrimSpace(team.Namespace) == "" {
 		return errors.New("team namespace required")
 	}
@@ -430,9 +430,9 @@ func (s *RuntimeServer) ensureTeamNamespace(ctx context.Context, team teamRecord
 	return s.ensureTeamTraefikWatch(ctx, team.Namespace, cfg)
 }
 
-func (s *RuntimeServer) ensureAdminPublishNamespace(ctx context.Context, namespace string) error {
+func (s *DeploymentService) ensureAdminPublishNamespace(ctx context.Context, namespace string) error {
 	namespace = strings.TrimSpace(namespace)
-	if s.k8sClients == nil || namespace == "" {
+	if s == nil || s.k8sClients == nil || namespace == "" {
 		return nil
 	}
 	if isModeCatalogNamespace(namespace) {
@@ -460,8 +460,8 @@ func (s *RuntimeServer) ensureAdminPublishNamespace(ctx context.Context, namespa
 	return s.ensureTeamTraefikWatch(ctx, namespace, cfg)
 }
 
-func (s *RuntimeServer) ensureManagedNamespace(ctx context.Context, namespace string, labels map[string]string, opts managedNamespaceOptions) error {
-	if s.k8sClients == nil || strings.TrimSpace(namespace) == "" {
+func (s *DeploymentService) ensureManagedNamespace(ctx context.Context, namespace string, labels map[string]string, opts managedNamespaceOptions) error {
+	if s == nil || s.k8sClients == nil || strings.TrimSpace(namespace) == "" {
 		return nil
 	}
 	base := s.k8sClients.Clientset
@@ -506,7 +506,7 @@ const registryPullSecretName = "mcp-runtime-registry-pull" // #nosec G101 -- Kub
 const platformNamespaceAPISecretAccessName = "mcp-runtime-api-team-secrets"
 const platformNamespaceAPIServiceAccountName = "mcp-runtime-api"
 
-func (s *RuntimeServer) ensureNamespaceRegistryPullSecret(ctx context.Context, client kubernetes.Interface, namespace string) error {
+func (s *DeploymentService) ensureNamespaceRegistryPullSecret(ctx context.Context, client kubernetes.Interface, namespace string) error {
 	registryHost := registryPullSecretHost()
 	if registryHost == "" {
 		return nil
@@ -631,8 +631,8 @@ func ensureNamespacePlatformAPISecretAccess(ctx context.Context, client kubernet
 	return upsertRoleBinding(ctx, client, binding)
 }
 
-func (s *RuntimeServer) ensureNamespaceUserWorkloadRBAC(ctx context.Context, namespace, userID string) error {
-	if s.k8sClients == nil || strings.TrimSpace(namespace) == "" || strings.TrimSpace(userID) == "" {
+func (s *DeploymentService) ensureNamespaceUserWorkloadRBAC(ctx context.Context, namespace, userID string) error {
+	if s == nil || s.k8sClients == nil || strings.TrimSpace(namespace) == "" || strings.TrimSpace(userID) == "" {
 		return nil
 	}
 	client := s.k8sClients.Clientset
@@ -841,8 +841,8 @@ func platformTeamTraefikWatchConfig() teamTraefikWatchConfig {
 	}
 }
 
-func (s *RuntimeServer) ensureTeamTraefikWatch(ctx context.Context, namespace string, cfg teamTraefikWatchConfig) error {
-	if s.k8sClients == nil || strings.TrimSpace(namespace) == "" {
+func (s *DeploymentService) ensureTeamTraefikWatch(ctx context.Context, namespace string, cfg teamTraefikWatchConfig) error {
+	if s == nil || s.k8sClients == nil || strings.TrimSpace(namespace) == "" {
 		return nil
 	}
 	if cfg.mode == "disabled" {
@@ -1484,8 +1484,8 @@ func intstrFromInt32(v int32) intstr.IntOrString {
 // ReconcileTeamNamespaceNetworkPolicies refreshes default-deny NetworkPolicies for
 // existing team namespaces so ingress controller namespace changes take effect
 // without recreating teams.
-func (s *RuntimeServer) ReconcileTeamNamespaceNetworkPolicies(ctx context.Context) {
-	if s.k8sClients == nil || s.k8sClients.Clientset == nil {
+func (s *DeploymentService) ReconcileTeamNamespaceNetworkPolicies(ctx context.Context) {
+	if s == nil || s.k8sClients == nil || s.k8sClients.Clientset == nil {
 		return
 	}
 	cfg := platformTeamTraefikWatchConfig()

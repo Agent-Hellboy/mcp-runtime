@@ -32,7 +32,7 @@ type accessSessionPatchRequest struct {
 }
 
 // HandleRuntimeSessions lists and applies MCPAgentSession resources within the caller's allowed namespace scope.
-func (s *RuntimeServer) HandleRuntimeSessions(w http.ResponseWriter, r *http.Request) {
+func (s *AccessService) HandleRuntimeSessions(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		s.handleRuntimeSessionList(w, r)
@@ -45,7 +45,7 @@ func (s *RuntimeServer) HandleRuntimeSessions(w http.ResponseWriter, r *http.Req
 }
 
 // HandleSessionItemPath handles GET, DELETE, PATCH, and legacy revoke or unrevoke actions for one MCPAgentSession.
-func (s *RuntimeServer) HandleSessionItemPath(w http.ResponseWriter, r *http.Request) {
+func (s *AccessService) HandleSessionItemPath(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		ns, name, err := runtimeaccess.ExtractNamespacedPath(r.URL.Path, "/api/runtime/sessions/", 2)
@@ -80,7 +80,7 @@ func (s *RuntimeServer) HandleSessionItemPath(w http.ResponseWriter, r *http.Req
 	}
 }
 
-func (s *RuntimeServer) handleSessionGet(w http.ResponseWriter, r *http.Request, namespace, name string) {
+func (s *AccessService) handleSessionGet(w http.ResponseWriter, r *http.Request, namespace, name string) {
 	if s.accessMgr == nil {
 		writeAPIError(w, http.StatusServiceUnavailable, "kubernetes not available")
 		return
@@ -105,7 +105,7 @@ func (s *RuntimeServer) handleSessionGet(w http.ResponseWriter, r *http.Request,
 	writeJSON(w, http.StatusOK, map[string]any{"session": sentinelaccess.ToSessionSummary(*session)})
 }
 
-func (s *RuntimeServer) handleSessionDelete(w http.ResponseWriter, r *http.Request, namespace, name string) {
+func (s *AccessService) handleSessionDelete(w http.ResponseWriter, r *http.Request, namespace, name string) {
 	if s.accessMgr == nil {
 		writeAPIError(w, http.StatusServiceUnavailable, "kubernetes not available")
 		return
@@ -147,7 +147,7 @@ func (s *RuntimeServer) handleSessionDelete(w http.ResponseWriter, r *http.Reque
 	})
 }
 
-func (s *RuntimeServer) handleSessionPatch(w http.ResponseWriter, r *http.Request, namespace, name string) {
+func (s *AccessService) handleSessionPatch(w http.ResponseWriter, r *http.Request, namespace, name string) {
 	if s.accessMgr == nil {
 		writeAPIError(w, http.StatusServiceUnavailable, "kubernetes not available")
 		return
@@ -192,7 +192,7 @@ func (s *RuntimeServer) handleSessionPatch(w http.ResponseWriter, r *http.Reques
 }
 
 // handleSessionPostTogglePath handles legacy POST /api/runtime/sessions/{namespace}/{name}/revoke|unrevoke.
-func (s *RuntimeServer) handleSessionPostTogglePath(w http.ResponseWriter, r *http.Request) {
+func (s *AccessService) handleSessionPostTogglePath(w http.ResponseWriter, r *http.Request) {
 	params, err := serviceutil.ExtractSessionActionParams(r, "/api/runtime/sessions/")
 	if err != nil {
 		if errors.Is(err, serviceutil.ErrMethodNotAllowed) {
@@ -207,7 +207,7 @@ func (s *RuntimeServer) handleSessionPostTogglePath(w http.ResponseWriter, r *ht
 	s.handleSessionToggle(w, r, params.Namespace, params.Name, revoke)
 }
 
-func (s *RuntimeServer) handleSessionToggle(w http.ResponseWriter, r *http.Request, namespace, name string, revoke bool) {
+func (s *AccessService) handleSessionToggle(w http.ResponseWriter, r *http.Request, namespace, name string, revoke bool) {
 	if s.accessMgr == nil {
 		writeAPIError(w, http.StatusServiceUnavailable, "kubernetes not available")
 		return
@@ -241,7 +241,7 @@ func (s *RuntimeServer) handleSessionToggle(w http.ResponseWriter, r *http.Reque
 	s.handleSessionStateChange(w, ctx, namespace, name, revoke)
 }
 
-func (s *RuntimeServer) handleSessionStateChange(w http.ResponseWriter, ctx context.Context, namespace, name string, revoke bool) {
+func (s *AccessService) handleSessionStateChange(w http.ResponseWriter, ctx context.Context, namespace, name string, revoke bool) {
 	var updateErr error
 	if revoke {
 		updateErr = s.accessMgr.RevokeSession(ctx, name, namespace)

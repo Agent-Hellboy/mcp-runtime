@@ -33,7 +33,7 @@ type runtimeToolRow struct {
 }
 
 // HandleRuntimeTools returns a scoped, filterable catalog of tools across visible MCP servers.
-func (s *RuntimeServer) HandleRuntimeTools(w http.ResponseWriter, r *http.Request) {
+func (s *InventoryService) HandleRuntimeTools(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.Header().Set("allow", "GET")
 		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed")
@@ -76,7 +76,7 @@ func (s *RuntimeServer) HandleRuntimeTools(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, map[string]any{"tools": rows})
 }
 
-func (s *RuntimeServer) visibleServers(ctx context.Context, control *controlplane.Manager, p principal, namespace string) ([]controlplane.ServerInfo, error) {
+func (s *InventoryService) visibleServers(ctx context.Context, control *controlplane.Manager, p principal, namespace string) ([]controlplane.ServerInfo, error) {
 	namespaces := []string{namespace}
 	adminAllNamespaces := false
 	if p.Role != roleAdmin {
@@ -113,7 +113,7 @@ func (s *RuntimeServer) visibleServers(ctx context.Context, control *controlplan
 	return servers, nil
 }
 
-func (s *RuntimeServer) toolRowsFromServers(ctx context.Context, servers []controlplane.ServerInfo, r *http.Request) []runtimeToolRow {
+func (s *InventoryService) toolRowsFromServers(ctx context.Context, servers []controlplane.ServerInfo, r *http.Request) []runtimeToolRow {
 	rows := make([]runtimeToolRow, 0)
 	cache := s.liveInventory()
 	for _, server := range servers {
