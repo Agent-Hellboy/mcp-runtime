@@ -31,5 +31,6 @@ the returned identity values.`,
 	}
 	cmd.AddCommand(newProxyCmd(runtime))
 	cmd.AddCommand(newStdioCmd(runtime))
+	cmd.AddCommand(newEnrollCmd(runtime))
 	return cmd
 }

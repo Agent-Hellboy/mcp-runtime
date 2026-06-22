@@ -112,7 +112,11 @@ func (r *MCPServer) DefaultWithOptions(options MCPServerDefaultOptions) {
 	if strings.TrimSpace(r.Spec.IngressPath) == "" {
 		r.Spec.IngressPath = defaultIngressPathFromName(r.Name)
 	}
-	if strings.TrimSpace(r.Spec.PublicPathPrefix) == "" {
+	authMode := AuthMode("")
+	if r.Spec.Auth != nil {
+		authMode = r.Spec.Auth.Mode
+	}
+	if strings.TrimSpace(r.Spec.PublicPathPrefix) == "" && authMode != AuthModeMTLS {
 		r.Spec.PublicPathPrefix = defaultPublicPathPrefixFromName(r.Name)
 	}
 	if strings.TrimSpace(r.Spec.IngressClass) == "" {
@@ -303,6 +307,21 @@ func (r *MCPServer) validate() error {
 	}
 	if gatewayEnabled(r.Spec) && r.Spec.Auth != nil && r.Spec.Auth.Mode == AuthModeOAuth && strings.TrimSpace(r.Spec.Auth.IssuerURL) == "" {
 		allErrs = append(allErrs, field.Required(specPath.Child("auth", "issuerURL"), "auth.issuerURL is required when auth.mode is oauth"))
+	}
+	if r.Spec.Auth != nil && r.Spec.Auth.Mode == AuthModeMTLS {
+		if !gatewayEnabled(r.Spec) {
+			allErrs = append(allErrs, field.Required(specPath.Child("gateway", "enabled"), "gateway.enabled is required when auth.mode is mtls"))
+		}
+		if strings.TrimSpace(r.Spec.Auth.TrustDomain) == "" {
+			allErrs = append(allErrs, field.Required(specPath.Child("auth", "trustDomain"), "auth.trustDomain is required when auth.mode is mtls"))
+		}
+		if strings.TrimSpace(r.Spec.PublicPathPrefix) != "" {
+			allErrs = append(allErrs, field.Forbidden(specPath.Child("publicPathPrefix"), "auth.mode mtls requires host-based TLS passthrough and cannot use path-based routing"))
+		}
+		ingressClass := strings.TrimSpace(r.Spec.IngressClass)
+		if ingressClass != "" && ingressClass != "traefik" {
+			allErrs = append(allErrs, field.Invalid(specPath.Child("ingressClass"), r.Spec.IngressClass, "auth.mode mtls currently requires the traefik ingress class"))
+		}
 	}
 	if r.Spec.Gateway == nil || !r.Spec.Gateway.Enabled {
 		if r.Spec.Analytics != nil && !r.Spec.Analytics.Disabled &&

@@ -205,7 +205,8 @@ What `--strict-prod` is for:
 - forces you onto a stable production-style registry endpoint
 
 Do not use the contributor `--test-mode` flow as a production install guide.
-`--test-mode` is for local development and CI-like validation; it still builds
+`--test-mode` is for local development and CI-like validation; it provisions a
+local cert-manager workload CA for mTLS tests and still builds
 and pushes local images and assumes the contributor registry and ingress shape.
 
 ## 6. Install the platform stack

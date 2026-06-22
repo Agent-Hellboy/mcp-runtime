@@ -2,6 +2,8 @@ package adapter
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -21,6 +23,24 @@ func TestAdapterCommandRegistersProxyAndStdio(t *testing.T) {
 		if !subs[want] {
 			t.Fatalf("adapter command missing %q subcommand; got %v", want, subs)
 		}
+	}
+}
+
+func TestWriteCredentialFileUsesOutputRoot(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if err := writeCredentialFile(dir, "client.key", []byte("secret"), 0o600); err != nil {
+		t.Fatalf("writeCredentialFile() error = %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "client.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "secret" {
+		t.Fatalf("credential data = %q, want secret", string(data))
+	}
+	if err := writeCredentialFile(dir, "../escape", []byte("nope"), 0o600); err == nil {
+		t.Fatal("writeCredentialFile() allowed path traversal")
 	}
 }
 

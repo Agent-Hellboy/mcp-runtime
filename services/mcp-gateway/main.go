@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"net/url"
@@ -121,6 +124,19 @@ func main() {
 		WriteTimeout:      5 * time.Minute,
 		IdleTimeout:       60 * time.Second,
 	}
+	tlsCertFile := strings.TrimSpace(os.Getenv("TLS_CERT_FILE"))
+	tlsKeyFile := strings.TrimSpace(os.Getenv("TLS_KEY_FILE"))
+	tlsClientCAFile := strings.TrimSpace(os.Getenv("TLS_CLIENT_CA_FILE"))
+	if tlsCertFile != "" || tlsKeyFile != "" || tlsClientCAFile != "" {
+		tlsConfig, err := gatewayTLSConfig(tlsClientCAFile)
+		if err != nil {
+			log.Fatalf("configure gateway mTLS: %v", err)
+		}
+		if tlsCertFile == "" || tlsKeyFile == "" {
+			log.Fatal("configure gateway mTLS: TLS_CERT_FILE and TLS_KEY_FILE are required")
+		}
+		httpServer.TLSConfig = tlsConfig
+	}
 
 	serverErrs := make(chan error, 2)
 	go func() {
@@ -129,7 +145,13 @@ func main() {
 		}
 	}()
 	go func() {
-		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		var err error
+		if httpServer.TLSConfig != nil {
+			err = httpServer.ListenAndServeTLS(tlsCertFile, tlsKeyFile)
+		} else {
+			err = httpServer.ListenAndServe()
+		}
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			serverErrs <- err
 		}
 	}()
@@ -154,6 +176,25 @@ func main() {
 		}
 		srv.stopAnalyticsDispatcher()
 	}
+}
+
+func gatewayTLSConfig(clientCAFile string) (*tls.Config, error) {
+	if clientCAFile == "" {
+		return nil, errors.New("TLS_CLIENT_CA_FILE is required")
+	}
+	caPEM, err := os.ReadFile(clientCAFile)
+	if err != nil {
+		return nil, fmt.Errorf("read client CA bundle: %w", err)
+	}
+	clientCAs := x509.NewCertPool()
+	if !clientCAs.AppendCertsFromPEM(caPEM) {
+		return nil, errors.New("client CA bundle contains no certificates")
+	}
+	return &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		ClientAuth: tls.RequireAndVerifyClientCert,
+		ClientCAs:  clientCAs,
+	}, nil
 }
 
 // initTracer initializes OpenTelemetry tracing for the service.

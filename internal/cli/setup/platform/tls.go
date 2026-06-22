@@ -56,6 +56,36 @@ func setupTLSStep(logger *zap.Logger, plan setupplan.Plan, deps SetupDeps) error
 	return nil
 }
 
+func setupWorkloadPKI(logger *zap.Logger, plan setupplan.Plan) error {
+	issuer := strings.TrimSpace(plan.MTLSClusterIssuer)
+	if issuer == "" {
+		return nil
+	}
+
+	core.Step("Configure workload mTLS PKI")
+	if plan.InstallCertManager {
+		if err := ensureCertManagerInstalledClientGo(logger); err != nil {
+			return err
+		}
+	} else if err := checkCertManagerInstalledClientGo(); err != nil {
+		return core.WrapWithSentinel(core.ErrCertManagerNotInstalled, err, "workload mTLS requires cert-manager; install it or omit --skip-cert-manager-install")
+	}
+
+	if plan.TestMode && issuer == setupplan.DefaultTestMTLSClusterIssuer {
+		if _, err := ensureCASecretClientGo(); err != nil {
+			return core.WrapWithSentinel(core.ErrCASecretNotFound, err, "create test-mode workload CA")
+		}
+		if err := applyManifestFile("config/cert-manager/cluster-issuer.yaml", "", os.Stdout); err != nil {
+			return core.WrapWithSentinel(core.ErrClusterIssuerApplyFailed, err, "apply test-mode workload ClusterIssuer")
+		}
+	} else if err := checkNamedClusterIssuerClientGo(issuer); err != nil {
+		return err
+	}
+
+	core.Success("Workload mTLS issuer ready: " + issuer)
+	return nil
+}
+
 // setupTLSWithKubectlAndPlan provisions TLS: Let's Encrypt when plan.ACMEmail is set, an existing
 // ClusterIssuer when plan.TLSClusterIssuer is set, otherwise the bundled private CA (mcp-runtime-ca).
 //

@@ -459,6 +459,15 @@ automatically. `--agent` (session name) is required in that case. `--agent-id`
 sets the identity header forwarded to the server.
 
 ```bash
+# Enterprise mTLS enrollment. Generates client.key locally and writes the
+# issued client.crt and ca.crt into the output directory.
+mcp-runtime adapter enroll \
+  --platform-url https://platform.example.com/api \
+  --server workspace-demo \
+  --namespace mcp-servers \
+  --agent cursor \
+  --output-dir ~/.config/mcp-runtime/workspace-demo
+
 # HTTP proxy — MCP clients connect to http://127.0.0.1:8099
 mcp-runtime adapter proxy \
   --runtime-url https://mcp.example.com/workspace-demo/mcp \

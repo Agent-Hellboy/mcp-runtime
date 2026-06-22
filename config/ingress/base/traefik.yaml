@@ -7,6 +7,27 @@ metadata:
     pod-security.kubernetes.io/audit: restricted
     pod-security.kubernetes.io/warn: restricted
 ---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: ingressroutetcps.traefik.io
+spec:
+  group: traefik.io
+  names:
+    kind: IngressRouteTCP
+    listKind: IngressRouteTCPList
+    plural: ingressroutetcps
+    singular: ingressroutetcp
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          x-kubernetes-preserve-unknown-fields: true
+---
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -68,6 +89,9 @@ metadata:
 rules:
   - apiGroups: ["networking.k8s.io"]
     resources: ["ingressclasses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["traefik.io"]
+    resources: ["ingressroutetcps"]
     verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -270,6 +294,8 @@ spec:
         args:
           - --providers.kubernetesingress=true
           - --providers.kubernetesingress.namespaces=registry,mcp-sentinel,mcp-servers,mcp-servers-org,mcp-servers-public
+          - --providers.kubernetescrd=true
+          - --providers.kubernetescrd.namespaces=mcp-servers,mcp-servers-org,mcp-servers-public
           - --entrypoints.web.address=:8000
           - --entrypoints.web.forwardedHeaders.insecure=false
           - --entrypoints.web.http.redirections.entryPoint.to=websecure

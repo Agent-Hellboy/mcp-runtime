@@ -76,6 +76,7 @@ type Auth struct {
 	TokenHeader     string `json:"token_header,omitempty"`
 	IssuerURL       string `json:"issuer_url,omitempty"`
 	Audience        string `json:"audience,omitempty"`
+	TrustDomain     string `json:"trust_domain,omitempty"`
 }
 
 // Config contains policy enforcement configuration.

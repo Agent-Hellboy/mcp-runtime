@@ -10,6 +10,8 @@ kind: ClusterRole
 metadata:
   name: mcp-runtime-api
 rules:
+  # Authenticated external adapters submit CSRs; the API can create and read
+  # only cert-manager CertificateRequests, never private-key Secrets.
   - apiGroups: ["cert-manager.io"]
     resources: ["certificaterequests"]
     verbs: ["create", "get", "list", "watch"]

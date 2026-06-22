@@ -66,6 +66,7 @@ func main() {
 		GatewayOTLPEndpoint:       gatewayOTLPEndpointFromEnv(os.Getenv),
 		DefaultAnalyticsIngestURL: analyticsIngestURLFromEnv(os.Getenv),
 		ClusterName:               clusterNameFromEnv(os.Getenv),
+		MTLSClusterIssuer:         strings.TrimSpace(os.Getenv("MCP_MTLS_CLUSTER_ISSUER")),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "MCPServer")
 		os.Exit(1)

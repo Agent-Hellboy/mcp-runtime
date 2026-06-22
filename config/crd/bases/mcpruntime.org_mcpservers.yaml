@@ -113,12 +113,18 @@ spec:
                     - none
                     - header
                     - oauth
+                    - mtls
                     type: string
                   sessionIDHeader:
                     type: string
                   teamIDHeader:
                     type: string
                   tokenHeader:
+                    type: string
+                  trustDomain:
+                    description: |-
+                      TrustDomain is the SPIFFE trust domain accepted from verified client
+                      certificate URI SANs when mode is mtls.
                     type: string
                 type: object
               description:

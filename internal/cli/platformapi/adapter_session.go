@@ -37,6 +37,19 @@ type AdapterSession struct {
 	Reused         bool      `json:"reused"`
 }
 
+type AdapterCertificateRequest struct {
+	Namespace string `json:"namespace"`
+	Session   string `json:"session"`
+	CSR       string `json:"csr"`
+}
+
+type AdapterCertificate struct {
+	Certificate string    `json:"certificate"`
+	CABundle    string    `json:"caBundle"`
+	SPIFFEID    string    `json:"spiffeID"`
+	ExpiresAt   time.Time `json:"expiresAt"`
+}
+
 // CreateAdapterSession asks the platform to issue (or reuse) an MCPAgentSession
 // for the calling principal. The returned session.Name doubles as the
 // SessionID the adapter forwards on every runtime request.
@@ -62,4 +75,28 @@ func (c *PlatformClient) CreateAdapterSession(ctx context.Context, req AdapterSe
 		return AdapterSession{}, fmt.Errorf("decode response: %w", err)
 	}
 	return session, nil
+}
+
+func (c *PlatformClient) IssueAdapterCertificate(ctx context.Context, req AdapterCertificateRequest) (AdapterCertificate, error) {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return AdapterCertificate{}, fmt.Errorf("marshal request: %w", err)
+	}
+	resp, err := c.do(ctx, http.MethodPost, "/runtime/adapter/certificates", "", bytes.NewReader(body))
+	if err != nil {
+		return AdapterCertificate{}, err
+	}
+	defer resp.Body.Close()
+	respBody, err := readBody(io.LimitReader(resp.Body, maxAPIBodyRead))
+	if err != nil {
+		return AdapterCertificate{}, err
+	}
+	if resp.StatusCode >= http.StatusBadRequest {
+		return AdapterCertificate{}, httpAPIError(resp.StatusCode, respBody)
+	}
+	var certificate AdapterCertificate
+	if err := json.Unmarshal(respBody, &certificate); err != nil {
+		return AdapterCertificate{}, fmt.Errorf("decode response: %w", err)
+	}
+	return certificate, nil
 }

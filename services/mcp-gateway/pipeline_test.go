@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -186,6 +188,113 @@ func TestAuthFilterRejectsOAuthMissingBearer(t *testing.T) {
 	}
 	if ex.Decision.Allowed {
 		t.Fatal("Decision.Allowed = true after auth rejection, want false")
+	}
+}
+
+func TestAuthFilterMTLSUsesVerifiedSPIFFESessionAndIgnoresHeaders(t *testing.T) {
+	t.Parallel()
+	s := minimalServer()
+	ex := newTestExchange(http.MethodPost, "/mcp", `{}`, map[string]string{
+		defaultHumanHeader:   "spoofed-human",
+		defaultSessionHeader: "spoofed-session",
+	})
+	spiffeURI, err := url.Parse("spiffe://example.org/ns/team-a/session/session-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert := &x509.Certificate{URIs: []*url.URL{spiffeURI}}
+	ex.R.TLS = &tls.ConnectionState{
+		PeerCertificates: []*x509.Certificate{cert},
+		VerifiedChains:   [][]*x509.Certificate{{cert}},
+	}
+	ex.Policy = &policypkg.Document{
+		Auth: &policypkg.Auth{Mode: "mtls", TrustDomain: "example.org"},
+		Sessions: []policypkg.Binding{{
+			Name:      "session-1",
+			Namespace: "team-a",
+			HumanID:   "human-1",
+			AgentID:   "agent-1",
+			TeamID:    "team-1",
+		}},
+	}
+
+	if got := s.authFilter(ex); got != Continue {
+		t.Fatalf("authFilter mtls = %v, want Continue", got)
+	}
+	if ex.Identity.HumanID != "human-1" || ex.Identity.SessionID != "session-1" {
+		t.Fatalf("identity = %#v, want rendered session identity", ex.Identity)
+	}
+}
+
+func TestAuthFilterMTLSRejectsMissingCertificate(t *testing.T) {
+	t.Parallel()
+	s := minimalServer()
+	ex := newTestExchange(http.MethodPost, "/mcp", `{}`, map[string]string{
+		defaultHumanHeader: "spoofed-human",
+	})
+	ex.Policy = &policypkg.Document{
+		Auth: &policypkg.Auth{Mode: "mtls", TrustDomain: "example.org"},
+	}
+
+	if got := s.authFilter(ex); got != Reject {
+		t.Fatalf("authFilter mtls = %v, want Reject", got)
+	}
+	if ex.Decision.Reason != "missing_client_certificate" {
+		t.Fatalf("reason = %q, want missing_client_certificate", ex.Decision.Reason)
+	}
+}
+
+func TestAuthFilterMTLSRejectsRevokedOrExpiredSession(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		binding policypkg.Binding
+		reason  string
+	}{
+		{
+			name: "revoked",
+			binding: policypkg.Binding{
+				Name:      "session-1",
+				Namespace: "team-a",
+				Revoked:   true,
+			},
+			reason: "session_revoked",
+		},
+		{
+			name: "expired",
+			binding: policypkg.Binding{
+				Name:      "session-1",
+				Namespace: "team-a",
+				ExpiresAt: time.Now().Add(-time.Minute).Format(time.RFC3339),
+			},
+			reason: "session_expired",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := minimalServer()
+			ex := newTestExchange(http.MethodPost, "/mcp", `{}`, nil)
+			spiffeURI, err := url.Parse("spiffe://example.org/ns/team-a/session/session-1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			cert := &x509.Certificate{URIs: []*url.URL{spiffeURI}}
+			ex.R.TLS = &tls.ConnectionState{
+				PeerCertificates: []*x509.Certificate{cert},
+				VerifiedChains:   [][]*x509.Certificate{{cert}},
+			}
+			ex.Policy = &policypkg.Document{
+				Auth:     &policypkg.Auth{Mode: "mtls", TrustDomain: "example.org"},
+				Sessions: []policypkg.Binding{tc.binding},
+			}
+
+			if got := s.authFilter(ex); got != Reject {
+				t.Fatalf("authFilter mtls = %v, want Reject", got)
+			}
+			if ex.Decision.Reason != tc.reason {
+				t.Fatalf("reason = %q, want %q", ex.Decision.Reason, tc.reason)
+			}
+		})
 	}
 }
 

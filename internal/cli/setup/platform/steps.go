@@ -5,6 +5,7 @@ package platform
 
 import (
 	"fmt"
+	"strings"
 
 	"go.uber.org/zap"
 
@@ -68,6 +69,13 @@ type tlsStep struct{}
 func (s tlsStep) Name() string { return "tls" }
 func (s tlsStep) Run(logger *zap.Logger, deps SetupDeps, ctx *SetupContext) error {
 	return setupTLSStep(logger, ctx.Plan, deps)
+}
+
+type workloadPKIStep struct{}
+
+func (s workloadPKIStep) Name() string { return "workload-pki" }
+func (s workloadPKIStep) Run(logger *zap.Logger, _ SetupDeps, ctx *SetupContext) error {
+	return setupWorkloadPKI(logger, ctx.Plan)
 }
 
 type catalogNamespaceStep struct{}
@@ -193,6 +201,7 @@ func buildSetupSteps(ctx *SetupContext) []SetupStep {
 		With(clusterStep{}).
 		WithIf(catalogMode, catalogNamespaceStep{}).
 		WithIf(ctx.Plan.TLSEnabled, tlsStep{}).
+		WithIf(strings.TrimSpace(ctx.Plan.MTLSClusterIssuer) != "", workloadPKIStep{}).
 		With(registryStep{}).
 		With(registryAuthDisableStep{}).
 		With(operatorImageStep{}).

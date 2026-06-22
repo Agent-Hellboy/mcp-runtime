@@ -14,6 +14,9 @@ data:
   OIDC_JWKS_URL: ""
   GOOGLE_CLIENT_ID: ""
   PLATFORM_MODE: "tenant"
+  # Existing enterprise cert-manager ClusterIssuer used for workload mTLS.
+  # Setup fills this from --mtls-cluster-issuer.
+  MCP_MTLS_CLUSTER_ISSUER: ""
   PLATFORM_ORG_NAMESPACE: "mcp-servers-org"
   PLATFORM_PUBLIC_NAMESPACE: "mcp-servers-public"
   PLATFORM_MCP_ACTIVE_SERVER_LIMIT: "5"

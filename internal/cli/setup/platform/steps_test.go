@@ -85,6 +85,46 @@ func TestBuildSetupStepsOrderWithoutTLS(t *testing.T) {
 	}
 }
 
+func TestBuildSetupStepsOrderWithWorkloadPKI(t *testing.T) {
+	ctx := &SetupContext{
+		Plan: setupplan.Plan{
+			MTLSClusterIssuer: setupplan.DefaultTestMTLSClusterIssuer,
+		},
+	}
+	steps := buildSetupSteps(ctx)
+
+	got := make([]string, len(steps))
+	for i, s := range steps {
+		got[i] = s.Name()
+	}
+	want := []string{"preflight", "cluster", "workload-pki", "registry", "registry-auth-disable", "operator-image", "operator-deploy", "verify"}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d steps, got %d: %v", len(want), len(got), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("step %d: expected %q, got %q", i, want[i], got[i])
+		}
+	}
+}
+
+func TestTestModeDefaultsWorkloadIssuer(t *testing.T) {
+	got := setupplan.Build(setupplan.Input{TestMode: true})
+	if got.MTLSClusterIssuer != setupplan.DefaultTestMTLSClusterIssuer {
+		t.Fatalf("MTLSClusterIssuer = %q, want %q", got.MTLSClusterIssuer, setupplan.DefaultTestMTLSClusterIssuer)
+	}
+
+	explicit := setupplan.Build(setupplan.Input{TestMode: true, MTLSClusterIssuer: "company-ca"})
+	if explicit.MTLSClusterIssuer != "company-ca" {
+		t.Fatalf("explicit MTLSClusterIssuer = %q, want company-ca", explicit.MTLSClusterIssuer)
+	}
+
+	production := setupplan.Build(setupplan.Input{})
+	if production.MTLSClusterIssuer != "" {
+		t.Fatalf("production MTLSClusterIssuer = %q, want empty", production.MTLSClusterIssuer)
+	}
+}
+
 func TestBuildSetupStepsOrderWithAnalytics(t *testing.T) {
 	ctx := &SetupContext{
 		Plan: setupplan.Plan{
