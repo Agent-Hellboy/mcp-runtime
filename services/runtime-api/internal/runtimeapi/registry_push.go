@@ -31,7 +31,7 @@ type registryPushRequest struct {
 
 // HandleRuntimeRegistryPush accepts a docker save tar and pushes it to the
 // platform registry from inside the cluster.
-func (s *RuntimeServer) HandleRuntimeRegistryPush(w http.ResponseWriter, r *http.Request) {
+func (s *RegistryPushService) HandleRuntimeRegistryPush(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("allow", "POST")
 		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed")

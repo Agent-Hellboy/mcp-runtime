@@ -81,7 +81,7 @@ func validateGrantRequest(req *accessGrantRequest) error {
 	return nil
 }
 
-func (s *RuntimeServer) handleRuntimeGrantList(w http.ResponseWriter, r *http.Request) {
+func (s *AccessService) handleRuntimeGrantList(w http.ResponseWriter, r *http.Request) {
 	if s.accessMgr == nil {
 		writeAPIError(w, http.StatusServiceUnavailable, "kubernetes not available")
 		return
@@ -129,7 +129,7 @@ func (s *RuntimeServer) handleRuntimeGrantList(w http.ResponseWriter, r *http.Re
 	writeJSON(w, http.StatusOK, map[string]interface{}{"grants": summaries})
 }
 
-func (s *RuntimeServer) handleRuntimeGrantApply(w http.ResponseWriter, r *http.Request) {
+func (s *AccessService) handleRuntimeGrantApply(w http.ResponseWriter, r *http.Request) {
 	if s.accessMgr == nil {
 		writeAPIError(w, http.StatusServiceUnavailable, "kubernetes not available")
 		return

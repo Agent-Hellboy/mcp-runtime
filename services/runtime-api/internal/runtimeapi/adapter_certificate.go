@@ -42,7 +42,7 @@ type adapterCertificateResponse struct {
 
 // HandleAdapterCertificate signs a client-generated CSR after verifying that
 // its SPIFFE URI names a session owned by the authenticated principal.
-func (s *RuntimeServer) HandleAdapterCertificate(w http.ResponseWriter, r *http.Request) {
+func (s *AccessService) HandleAdapterCertificate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", http.MethodPost)
 		writeAPIError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -192,7 +192,7 @@ func validateAdapterCSR(raw, expectedSPIFFEID string) ([]byte, error) {
 	return block.Bytes, nil
 }
 
-func waitForIssuedAdapterCertificate(ctx context.Context, s *RuntimeServer, namespace, name string) (string, string, error) {
+func waitForIssuedAdapterCertificate(ctx context.Context, s *AccessService, namespace, name string) (string, string, error) {
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
 	for {

@@ -33,7 +33,7 @@ func TestRegisterAndServeRegistryPushTransfer(t *testing.T) {
 		k8sClients: &k8sclient.Clients{Clientset: client},
 	}
 
-	token, fetchURL, err := server.registerRegistryPushTransfer(context.Background(), tarPath, time.Minute)
+	token, fetchURL, err := server.RegistryPush().registerRegistryPushTransfer(context.Background(), tarPath, time.Minute)
 	if err != nil {
 		t.Fatalf("registerRegistryPushTransfer() error = %v", err)
 	}
@@ -44,7 +44,7 @@ func TestRegisterAndServeRegistryPushTransfer(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, registryPushTransferPath, nil)
 	req.Header.Set(registrypush.TransferTokenHeader, token)
 	rec := httptest.NewRecorder()
-	server.HandleRegistryPushTransfer(rec, req)
+	server.RegistryPush().HandleRegistryPushTransfer(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}
@@ -71,7 +71,7 @@ func TestHandleRegistryPushTransferRejectsMissingToken(t *testing.T) {
 	server := &RuntimeServer{}
 	req := httptest.NewRequest(http.MethodGet, registryPushTransferPath, nil)
 	rec := httptest.NewRecorder()
-	server.HandleRegistryPushTransfer(rec, req)
+	server.RegistryPush().HandleRegistryPushTransfer(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
 	}
@@ -107,7 +107,7 @@ func TestHandleRegistryPushTransferRejectsWrongPod(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, registryPushTransferPath, nil)
 	req.Header.Set(registrypush.TransferTokenHeader, token)
 	rec := httptest.NewRecorder()
-	server.HandleRegistryPushTransfer(rec, req)
+	server.RegistryPush().HandleRegistryPushTransfer(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
 	}
@@ -126,11 +126,11 @@ func TestRevokeRegistryPushTransfer(t *testing.T) {
 	server := &RuntimeServer{
 		k8sClients: &k8sclient.Clients{Clientset: client},
 	}
-	token, _, err := server.registerRegistryPushTransfer(context.Background(), tarPath, time.Minute)
+	token, _, err := server.RegistryPush().registerRegistryPushTransfer(context.Background(), tarPath, time.Minute)
 	if err != nil {
 		t.Fatalf("registerRegistryPushTransfer() error = %v", err)
 	}
-	server.revokeRegistryPushTransfer(context.Background(), token)
+	server.RegistryPush().revokeRegistryPushTransfer(context.Background(), token)
 	if _, err := os.Stat(tarPath); !os.IsNotExist(err) {
 		t.Fatalf("expected tar removed on revoke, stat err = %v", err)
 	}

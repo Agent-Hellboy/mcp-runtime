@@ -12,8 +12,11 @@ import (
 	"mcp-runtime/pkg/sentinel"
 )
 
-// RuntimeServer owns runtime API dependencies for analytics, Kubernetes control-plane access, and platform identity.
+// RuntimeServer composes runtime API dependencies for analytics, Kubernetes control-plane access, and platform identity.
 type RuntimeServer struct {
+	inventory     *InventoryService
+	inventoryOnce sync.Once
+
 	db          *chpkg.Client
 	clickhouse  clickhouse.Conn
 	dbName      string
@@ -28,6 +31,30 @@ type RuntimeServer struct {
 	liveInventoryOnce  sync.Once
 	liveInventoryCache *liveInventoryCache
 	liveInventoryProbe liveInventoryProber
+}
+
+type DeploymentService struct {
+	k8sClients *k8sclient.Clients
+	identity   identityStore
+	audit      auditWriter
+}
+
+type AccessService struct {
+	k8sClients *k8sclient.Clients
+	identity   identityStore
+	accessMgr  *sentinelaccess.Manager
+}
+
+type InventoryService struct {
+	k8sClients         *k8sclient.Clients
+	control            *controlplane.Manager
+	liveInventoryOnce  sync.Once
+	liveInventoryCache *liveInventoryCache
+	liveInventoryProbe liveInventoryProber
+}
+
+type RegistryPushService struct {
+	k8sClients *k8sclient.Clients
 }
 
 // NewRuntimeServer creates a runtime server with Kubernetes access.
@@ -67,6 +94,53 @@ func NewRuntimeServer(db clickhouse.Conn, dbName string, apiKeys map[string]stru
 		accessMgr:   accessMgr,
 		sentinelMgr: sentinelMgr,
 	}, nil
+}
+
+// Deployments returns the deployment capability owned by the runtime server.
+func (s *RuntimeServer) Deployments() *DeploymentService {
+	if s == nil {
+		return nil
+	}
+	return &DeploymentService{
+		k8sClients: s.k8sClients,
+		identity:   s.identity,
+		audit:      s.audit,
+	}
+}
+
+// Access returns the grant/session capability owned by the runtime server.
+func (s *RuntimeServer) Access() *AccessService {
+	if s == nil {
+		return nil
+	}
+	return &AccessService{
+		k8sClients: s.k8sClients,
+		identity:   s.identity,
+		accessMgr:  s.accessMgr,
+	}
+}
+
+// Inventory returns the tool inventory capability owned by the runtime server.
+func (s *RuntimeServer) Inventory() *InventoryService {
+	if s == nil {
+		return nil
+	}
+	s.inventoryOnce.Do(func() {
+		s.inventory = &InventoryService{
+			k8sClients:         s.k8sClients,
+			control:            s.control,
+			liveInventoryProbe: s.liveInventoryProbe,
+		}
+	})
+	return s.inventory
+}
+
+// RegistryPush returns the registry push transfer capability owned by the runtime server.
+func (s *RuntimeServer) RegistryPush() *RegistryPushService {
+	if s == nil {
+		return nil
+	}
+	return &RegistryPushService{k8sClients: s.k8sClients}
 }
 
 func (s *RuntimeServer) controlPlane() *controlplane.Manager {

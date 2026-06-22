@@ -41,7 +41,7 @@ func TestClientForPrincipalRequiresIdentityForUserRole(t *testing.T) {
 			Clientset: kubernetesfake.NewSimpleClientset(),
 		},
 	}
-	_, err := server.clientForPrincipal(principal{
+	_, err := server.Deployments().clientForPrincipal(principal{
 		Role:      roleUser,
 		IsService: true,
 	})
@@ -59,7 +59,7 @@ func TestClientForPrincipalRejectsServiceAdminWithoutIdentity(t *testing.T) {
 			Clientset: kubernetesfake.NewSimpleClientset(),
 		},
 	}
-	_, err := server.clientForPrincipal(principal{
+	_, err := server.Deployments().clientForPrincipal(principal{
 		Role:      roleAdmin,
 		IsService: true,
 	})
@@ -88,7 +88,7 @@ func TestClientForPrincipalUsesKubernetesImpersonation(t *testing.T) {
 			Config:    &rest.Config{Host: api.URL},
 		},
 	}
-	client, err := server.clientForPrincipal(principal{
+	client, err := server.Deployments().clientForPrincipal(principal{
 		Role:    roleUser,
 		Subject: "user-123",
 	})
@@ -294,7 +294,7 @@ func TestHandleDeploymentApplyAdminUsesRequestedNamespace(t *testing.T) {
 		Namespace: "admin-ns",
 	}))
 	recorder := httptest.NewRecorder()
-	server.handleDeploymentApply(recorder, request)
+	server.Deployments().handleDeploymentApply(recorder, request)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
@@ -420,7 +420,7 @@ func TestHandleDeploymentApplyRejectsInvalidVersionTag(t *testing.T) {
 	}))
 	recorder := httptest.NewRecorder()
 
-	server.handleDeploymentApply(recorder, request)
+	server.Deployments().handleDeploymentApply(recorder, request)
 
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
@@ -455,7 +455,7 @@ func TestHandleDeploymentApplyWritesAuditEvent(t *testing.T) {
 		AuthType:  "platform_jwt",
 	}))
 	recorder := httptest.NewRecorder()
-	server.handleDeploymentApply(recorder, request)
+	server.Deployments().handleDeploymentApply(recorder, request)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
@@ -483,7 +483,7 @@ func TestEnsureNamespaceRegistryPullSecret(t *testing.T) {
 		t.Fatalf("EnsureServiceAccount() error = %v", err)
 	}
 	server := &RuntimeServer{k8sClients: &k8sclient.Clients{Clientset: client}}
-	if err := server.ensureNamespaceRegistryPullSecret(context.Background(), client, "mcp-team-acme"); err != nil {
+	if err := server.Deployments().ensureNamespaceRegistryPullSecret(context.Background(), client, "mcp-team-acme"); err != nil {
 		t.Fatalf("ensureNamespaceRegistryPullSecret() error = %v", err)
 	}
 	secret, err := client.CoreV1().Secrets("mcp-team-acme").Get(context.Background(), registryPullSecretName, metav1.GetOptions{})
@@ -515,7 +515,7 @@ func TestEnsureNamespaceRegistryPullSecretAllowsOptionalModeWithoutAPIKey(t *tes
 		t.Fatalf("EnsureServiceAccount() error = %v", err)
 	}
 	server := &RuntimeServer{k8sClients: &k8sclient.Clients{Clientset: client}}
-	if err := server.ensureNamespaceRegistryPullSecret(context.Background(), client, "mcp-team-acme"); err != nil {
+	if err := server.Deployments().ensureNamespaceRegistryPullSecret(context.Background(), client, "mcp-team-acme"); err != nil {
 		t.Fatalf("ensureNamespaceRegistryPullSecret() optional mode error = %v", err)
 	}
 	secrets, err := client.CoreV1().Secrets("mcp-team-acme").List(context.Background(), metav1.ListOptions{})
@@ -552,7 +552,7 @@ func TestEnsureTeamNamespaceCreatesRegistryPullSecret(t *testing.T) {
 	t.Setenv("ADMIN_API_KEYS", "test-admin-key")
 	client := kubernetesfake.NewSimpleClientset()
 	server := &RuntimeServer{k8sClients: &k8sclient.Clients{Clientset: client}}
-	if err := server.ensureTeamNamespace(context.Background(), teamRecord{
+	if err := server.Deployments().ensureTeamNamespace(context.Background(), teamRecord{
 		ID:        "team-acme-id",
 		Slug:      "acme",
 		Name:      "Acme",
@@ -611,7 +611,7 @@ func TestEnsureTeamNamespaceConfiguresTraefikIngressWatch(t *testing.T) {
 	server := &RuntimeServer{
 		k8sClients: &k8sclient.Clients{Clientset: client},
 	}
-	if err := server.ensureTeamNamespace(context.Background(), teamRecord{
+	if err := server.Deployments().ensureTeamNamespace(context.Background(), teamRecord{
 		ID:        "team-acme-id",
 		Slug:      "acme",
 		Name:      "Acme",
@@ -657,7 +657,7 @@ func TestEnsureCatalogNamespaceAutoTraefikWatchSkipsExternalIngress(t *testing.T
 	server := &RuntimeServer{
 		k8sClients: &k8sclient.Clients{Clientset: client},
 	}
-	if err := server.EnsureCatalogNamespace(context.Background(), defaultPublicCatalogNamespace); err != nil {
+	if err := server.Deployments().EnsureCatalogNamespace(context.Background(), defaultPublicCatalogNamespace); err != nil {
 		t.Fatalf("EnsureCatalogNamespace() error = %v", err)
 	}
 	ns, err := client.CoreV1().Namespaces().Get(context.Background(), defaultPublicCatalogNamespace, metav1.GetOptions{})
@@ -832,7 +832,7 @@ func TestHandleDeploymentItemRejectsServiceUserWithoutIdentity(t *testing.T) {
 		Namespace: "team-a",
 	}))
 	recorder := httptest.NewRecorder()
-	server.HandleDeploymentItem(recorder, request)
+	server.Deployments().HandleDeploymentItem(recorder, request)
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}

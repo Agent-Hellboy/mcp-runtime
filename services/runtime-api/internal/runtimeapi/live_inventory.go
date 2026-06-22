@@ -90,7 +90,7 @@ type liveInventoryCache struct {
 	inFlight   map[liveInventoryKey]struct{}
 }
 
-func (s *RuntimeServer) liveInventory() *liveInventoryCache {
+func (s *InventoryService) liveInventory() *liveInventoryCache {
 	if s == nil {
 		return nil
 	}

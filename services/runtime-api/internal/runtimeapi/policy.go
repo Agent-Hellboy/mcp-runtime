@@ -9,7 +9,7 @@ import (
 )
 
 // HandleRuntimePolicy returns the rendered gateway policy for a server the caller can administer.
-func (s *RuntimeServer) HandleRuntimePolicy(w http.ResponseWriter, r *http.Request) {
+func (s *AccessService) HandleRuntimePolicy(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.Header().Set("allow", http.MethodGet)
 		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed")

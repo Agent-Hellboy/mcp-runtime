@@ -154,7 +154,7 @@ func TestRuntimeGrantApplyRejectsUnknownServer(t *testing.T) {
 		"allowedSideEffects": ["read"],
 		"maxTrust": "low"
 	}`)))
-	server.handleRuntimeGrantApply(recorder, request)
+	server.Access().handleRuntimeGrantApply(recorder, request)
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
@@ -174,7 +174,7 @@ func TestRuntimeSessionApplyRejectsUnknownServer(t *testing.T) {
 		"subject": {"humanID": "user-1"},
 		"consentedTrust": "low"
 	}`)))
-	server.handleRuntimeSessionApply(recorder, request)
+	server.Access().handleRuntimeSessionApply(recorder, request)
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
@@ -315,12 +315,12 @@ func TestRuntimeToolsCatalogScopesFiltersAndComputesRisk(t *testing.T) {
 			},
 		}},
 	}
-	waitForCachedInventory(t, server.liveInventory(), controlplane.ServerInfoFromMCPServer(*srv, controlplane.ServerDeploymentStatus{}))
+	waitForCachedInventory(t, server.Inventory().liveInventory(), controlplane.ServerInfoFromMCPServer(*srv, controlplane.ServerDeploymentStatus{}))
 
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/api/runtime/tools?namespace=mcp-team-acme&risk=high", nil)
 	request = request.WithContext(withPrincipal(request.Context(), principal{Role: roleAdmin, Subject: "admin-1"}))
-	server.HandleRuntimeTools(recorder, request)
+	server.Inventory().HandleRuntimeTools(recorder, request)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
@@ -344,7 +344,7 @@ func TestRuntimeToolsCatalogScopesFiltersAndComputesRisk(t *testing.T) {
 	recorder = httptest.NewRecorder()
 	request = httptest.NewRequest(http.MethodGet, "/api/runtime/tools?namespace=mcp-team-acme&drift=ungoverned", nil)
 	request = request.WithContext(withPrincipal(request.Context(), principal{Role: roleAdmin, Subject: "admin-1"}))
-	server.HandleRuntimeTools(recorder, request)
+	server.Inventory().HandleRuntimeTools(recorder, request)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
@@ -375,7 +375,7 @@ func TestHandleRuntimeToolsReturnsForbiddenForUnreadableNamespace(t *testing.T) 
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/api/runtime/tools?namespace=other-team", nil)
 	request = request.WithContext(withPrincipal(request.Context(), principal{Role: roleUser, Subject: "user-1"}))
-	server.HandleRuntimeTools(recorder, request)
+	server.Inventory().HandleRuntimeTools(recorder, request)
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
@@ -2011,15 +2011,15 @@ func TestScopedNamespaceForPrincipal(t *testing.T) {
 		Namespace: "user-1",
 	})
 
-	got, err := server.scopedNamespaceForPrincipal(userCtx, "")
+	got, err := server.Access().scopedNamespaceForPrincipal(userCtx, "")
 	if err != nil || got != "user-1" {
 		t.Fatalf("scoped namespace default = %q err=%v, want user-1 nil", got, err)
 	}
-	got, err = server.scopedNamespaceForPrincipal(userCtx, "user-1")
+	got, err = server.Access().scopedNamespaceForPrincipal(userCtx, "user-1")
 	if err != nil || got != "user-1" {
 		t.Fatalf("scoped namespace explicit = %q err=%v, want user-1 nil", got, err)
 	}
-	if _, err := server.scopedNamespaceForPrincipal(userCtx, "mcp-servers"); err == nil {
+	if _, err := server.Access().scopedNamespaceForPrincipal(userCtx, "mcp-servers"); err == nil {
 		t.Fatal("expected forbidden namespace error")
 	}
 }
@@ -2054,7 +2054,7 @@ func TestRuntimeGrantApplyNonAdminDefaultsToPrincipalNamespace(t *testing.T) {
 			sharedCatalogNamespace,
 		},
 	}))
-	server.handleRuntimeGrantApply(recorder, request)
+	server.Access().handleRuntimeGrantApply(recorder, request)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
 	}
@@ -2102,7 +2102,7 @@ func TestRuntimeGrantApplyDefaultsSubjectTeamID(t *testing.T) {
 			Role:      teamRoleOwner,
 		}},
 	}))
-	server.handleRuntimeGrantApply(recorder, request)
+	server.Access().handleRuntimeGrantApply(recorder, request)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
 	}
@@ -2154,7 +2154,7 @@ func TestRuntimeGrantApplyAllowsForeignSubjectTeamID(t *testing.T) {
 			Role:      teamRoleOwner,
 		}},
 	}))
-	server.handleRuntimeGrantApply(recorder, request)
+	server.Access().handleRuntimeGrantApply(recorder, request)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
 	}
@@ -2205,7 +2205,7 @@ func TestRuntimeGrantApplyRejectsTeamMemberForTeamServer(t *testing.T) {
 			Role:      teamRoleMember,
 		}},
 	}))
-	server.handleRuntimeGrantApply(recorder, request)
+	server.Access().handleRuntimeGrantApply(recorder, request)
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
 	}
@@ -2250,7 +2250,7 @@ func TestRuntimeGrantApplyAllowsServerOwnerInTeamNamespace(t *testing.T) {
 			Role:      teamRoleMember,
 		}},
 	}))
-	server.handleRuntimeGrantApply(recorder, request)
+	server.Access().handleRuntimeGrantApply(recorder, request)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
 	}
@@ -2278,7 +2278,7 @@ func TestRuntimeGrantApplyRejectsPublicCatalogReader(t *testing.T) {
 		"maxTrust": "low"
 	}`)))
 	request = request.WithContext(withPrincipal(request.Context(), PublicCatalogPrincipal()))
-	server.handleRuntimeGrantApply(recorder, request)
+	server.Access().handleRuntimeGrantApply(recorder, request)
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
 	}
@@ -2296,7 +2296,7 @@ func TestRuntimeGrantApplyRejectsCrossNamespaceServerRef(t *testing.T) {
 		"allowedSideEffects": ["read"],
 		"maxTrust": "low"
 	}`)))
-	server.handleRuntimeGrantApply(recorder, request)
+	server.Access().handleRuntimeGrantApply(recorder, request)
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
 	}
@@ -2316,7 +2316,7 @@ func TestRuntimeSessionApplyRejectsCrossNamespaceServerRef(t *testing.T) {
 		"subject": {"humanID": "user-1"},
 		"consentedTrust": "low"
 	}`)))
-	server.handleRuntimeSessionApply(recorder, request)
+	server.Access().handleRuntimeSessionApply(recorder, request)
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
 	}
@@ -2346,7 +2346,7 @@ func TestRuntimeSessionApplyRejectsNonAdminDirectApply(t *testing.T) {
 		Subject:   "user-1",
 		Namespace: "user-1",
 	}))
-	server.handleRuntimeSessionApply(recorder, request)
+	server.Access().handleRuntimeSessionApply(recorder, request)
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
 	}
@@ -2373,7 +2373,7 @@ func TestRuntimeGrantApplyNonAdminRejectsSharedCatalogNamespace(t *testing.T) {
 			sharedCatalogNamespace,
 		},
 	}))
-	server.handleRuntimeGrantApply(recorder, request)
+	server.Access().handleRuntimeGrantApply(recorder, request)
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
 	}
@@ -2417,7 +2417,7 @@ func TestRuntimeGrantListScopesTeamMemberAccessResources(t *testing.T) {
 		}},
 	}))
 	memberRec := httptest.NewRecorder()
-	server.handleRuntimeGrantList(memberRec, memberReq)
+	server.Access().handleRuntimeGrantList(memberRec, memberReq)
 	if memberRec.Code != http.StatusOK {
 		t.Fatalf("member status = %d body=%s", memberRec.Code, memberRec.Body.String())
 	}
@@ -2444,7 +2444,7 @@ func TestRuntimeGrantListScopesTeamMemberAccessResources(t *testing.T) {
 		}},
 	}))
 	ownerRec := httptest.NewRecorder()
-	server.handleRuntimeGrantList(ownerRec, ownerReq)
+	server.Access().handleRuntimeGrantList(ownerRec, ownerReq)
 	if ownerRec.Code != http.StatusOK {
 		t.Fatalf("owner status = %d body=%s", ownerRec.Code, ownerRec.Body.String())
 	}
@@ -2510,7 +2510,7 @@ func TestRuntimeGrantListPrefetchesServersForVisibility(t *testing.T) {
 		}},
 	}))
 	recorder := httptest.NewRecorder()
-	server.handleRuntimeGrantList(recorder, request)
+	server.Access().handleRuntimeGrantList(recorder, request)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
 	}
@@ -2568,7 +2568,7 @@ func TestRuntimeGrantGetRejectsTeamMemberForSensitiveGrant(t *testing.T) {
 			Role:      teamRoleMember,
 		}},
 	}))
-	server.handleGrantGet(recorder, request, "mcp-team-acme", "grant-team")
+	server.Access().handleGrantGet(recorder, request, "mcp-team-acme", "grant-team")
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
 	}
@@ -2618,7 +2618,7 @@ func TestRuntimePolicyRequiresServerAdministrator(t *testing.T) {
 		}},
 	}))
 	memberRec := httptest.NewRecorder()
-	server.HandleRuntimePolicy(memberRec, memberReq)
+	server.Access().HandleRuntimePolicy(memberRec, memberReq)
 	if memberRec.Code != http.StatusForbidden {
 		t.Fatalf("member status = %d body=%s", memberRec.Code, memberRec.Body.String())
 	}
@@ -2636,7 +2636,7 @@ func TestRuntimePolicyRequiresServerAdministrator(t *testing.T) {
 		}},
 	}))
 	ownerRec := httptest.NewRecorder()
-	server.HandleRuntimePolicy(ownerRec, ownerReq)
+	server.Access().HandleRuntimePolicy(ownerRec, ownerReq)
 	if ownerRec.Code != http.StatusOK {
 		t.Fatalf("owner status = %d body=%s", ownerRec.Code, ownerRec.Body.String())
 	}
@@ -2702,7 +2702,7 @@ func TestRuntimePolicyRejectsNonGet(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/api/runtime/policy?namespace=mcp-team-acme&server=demo", nil)
 
-	server.HandleRuntimePolicy(recorder, request)
+	server.Access().HandleRuntimePolicy(recorder, request)
 
 	if recorder.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
@@ -2765,7 +2765,7 @@ func TestRuntimeGrantDeleteMapsNotFound(t *testing.T) {
 	server := &RuntimeServer{accessMgr: newTestAccessManager(t)}
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodDelete, "/api/runtime/grants/mcp-servers/missing", nil)
-	server.handleGrantDelete(recorder, request, "mcp-servers", "missing")
+	server.Access().handleGrantDelete(recorder, request, "mcp-servers", "missing")
 	if recorder.Code != http.StatusNotFound {
 		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
 	}
@@ -2802,7 +2802,7 @@ func TestRuntimeGrantDeleteAllowsNamespaceOwnerWithStaleServerRef(t *testing.T) 
 		}},
 	}))
 	memberRec := httptest.NewRecorder()
-	server.handleGrantDelete(memberRec, memberReq, "mcp-team-acme", "stale-member")
+	server.Access().handleGrantDelete(memberRec, memberReq, "mcp-team-acme", "stale-member")
 	if memberRec.Code != http.StatusForbidden {
 		t.Fatalf("member status = %d body=%s", memberRec.Code, memberRec.Body.String())
 	}
@@ -2820,7 +2820,7 @@ func TestRuntimeGrantDeleteAllowsNamespaceOwnerWithStaleServerRef(t *testing.T) 
 		}},
 	}))
 	ownerRec := httptest.NewRecorder()
-	server.handleGrantDelete(ownerRec, ownerReq, "mcp-team-acme", "stale-owner")
+	server.Access().handleGrantDelete(ownerRec, ownerReq, "mcp-team-acme", "stale-owner")
 	if ownerRec.Code != http.StatusOK {
 		t.Fatalf("owner status = %d body=%s", ownerRec.Code, ownerRec.Body.String())
 	}
@@ -2836,7 +2836,7 @@ func TestRuntimeSessionDeleteMapsNotFound(t *testing.T) {
 	server := &RuntimeServer{accessMgr: newTestAccessManager(t)}
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodDelete, "/api/runtime/sessions/mcp-servers/missing", nil)
-	server.handleSessionDelete(recorder, request, "mcp-servers", "missing")
+	server.Access().handleSessionDelete(recorder, request, "mcp-servers", "missing")
 	if recorder.Code != http.StatusNotFound {
 		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
 	}
@@ -2869,7 +2869,7 @@ func TestRuntimeSessionDeleteAllowsNamespaceOwnerWithStaleServerRef(t *testing.T
 		}},
 	}))
 	recorder := httptest.NewRecorder()
-	server.handleSessionDelete(recorder, request, "mcp-team-acme", "stale-session")
+	server.Access().handleSessionDelete(recorder, request, "mcp-team-acme", "stale-session")
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
 	}
@@ -2914,7 +2914,7 @@ func TestRuntimeSessionListScopesTeamMemberAccessResources(t *testing.T) {
 		}},
 	}))
 	recorder := httptest.NewRecorder()
-	server.handleRuntimeSessionList(recorder, request)
+	server.Access().handleRuntimeSessionList(recorder, request)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
 	}
@@ -2979,7 +2979,7 @@ func TestRuntimeSessionListPrefetchesServersForVisibility(t *testing.T) {
 		}},
 	}))
 	recorder := httptest.NewRecorder()
-	server.handleRuntimeSessionList(recorder, request)
+	server.Access().handleRuntimeSessionList(recorder, request)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
 	}
@@ -3036,7 +3036,7 @@ func TestRuntimeSessionToggleRejectsTeamMemberForTeamServer(t *testing.T) {
 		}},
 	}))
 	recorder := httptest.NewRecorder()
-	server.handleSessionToggle(recorder, request, "mcp-team-acme", "session-team", true)
+	server.Access().handleSessionToggle(recorder, request, "mcp-team-acme", "session-team", true)
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
 	}
@@ -3056,7 +3056,7 @@ func TestRuntimeGrantApplyPreservesOmittedDisabled(t *testing.T) {
 		"allowedSideEffects": ["read"],
 		"maxTrust": "low"
 	}`)))
-	server.handleRuntimeGrantApply(recorder, request)
+	server.Access().handleRuntimeGrantApply(recorder, request)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("new grant status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
@@ -3082,7 +3082,7 @@ func TestRuntimeGrantApplyPreservesOmittedDisabled(t *testing.T) {
 		"allowedSideEffects": ["read"],
 		"maxTrust": "high"
 	}`)))
-	server.handleRuntimeGrantApply(recorder, request)
+	server.Access().handleRuntimeGrantApply(recorder, request)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
@@ -3104,7 +3104,7 @@ func TestRuntimeGrantApplyPreservesOmittedDisabled(t *testing.T) {
 		"maxTrust": "high",
 		"disabled": false
 	}`)))
-	server.handleRuntimeGrantApply(recorder, request)
+	server.Access().handleRuntimeGrantApply(recorder, request)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
@@ -3130,7 +3130,7 @@ func TestRuntimeSessionApplyPreservesOmittedRevoked(t *testing.T) {
 		"subject": {"humanID": "user-1"},
 		"consentedTrust": "low"
 	}`)))
-	server.handleRuntimeSessionApply(recorder, request)
+	server.Access().handleRuntimeSessionApply(recorder, request)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("new session status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
@@ -3155,7 +3155,7 @@ func TestRuntimeSessionApplyPreservesOmittedRevoked(t *testing.T) {
 		"subject": {"humanID": "user-1"},
 		"consentedTrust": "medium"
 	}`)))
-	server.handleRuntimeSessionApply(recorder, request)
+	server.Access().handleRuntimeSessionApply(recorder, request)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
@@ -3176,7 +3176,7 @@ func TestRuntimeSessionApplyPreservesOmittedRevoked(t *testing.T) {
 		"consentedTrust": "medium",
 		"revoked": false
 	}`)))
-	server.handleRuntimeSessionApply(recorder, request)
+	server.Access().handleRuntimeSessionApply(recorder, request)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
@@ -3251,7 +3251,7 @@ func TestRuntimeGrantApplyRejectsOversizedBody(t *testing.T) {
 	body := oversizedJSON(accessApplyMaxBytes + 1)
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/api/runtime/grants", bytes.NewReader(body))
-	server.handleRuntimeGrantApply(recorder, request)
+	server.Access().handleRuntimeGrantApply(recorder, request)
 	if recorder.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status = %d, want 413; body=%s", recorder.Code, recorder.Body.String())
 	}
@@ -3265,7 +3265,7 @@ func TestRuntimeSessionApplyRejectsOversizedBody(t *testing.T) {
 	body := oversizedJSON(accessApplyMaxBytes + 1)
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/api/runtime/sessions", bytes.NewReader(body))
-	server.handleRuntimeSessionApply(recorder, request)
+	server.Access().handleRuntimeSessionApply(recorder, request)
 	if recorder.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status = %d, want 413; body=%s", recorder.Code, recorder.Body.String())
 	}

@@ -98,7 +98,7 @@ func TestAdapterSessionIssuesNewSessionFromMatchingGrant(t *testing.T) {
 	})
 	req = req.WithContext(withPrincipal(req.Context(), fx.principal))
 	w := httptest.NewRecorder()
-	fx.server.HandleAdapterSession(w, req)
+	fx.server.Access().HandleAdapterSession(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
 	}
@@ -144,7 +144,7 @@ func TestAdapterSessionIssuesCrossTeamSessionFromGrantedTeam(t *testing.T) {
 	})
 	req = req.WithContext(withPrincipal(req.Context(), fx.principal))
 	w := httptest.NewRecorder()
-	fx.server.HandleAdapterSession(w, req)
+	fx.server.Access().HandleAdapterSession(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
 	}
@@ -171,7 +171,7 @@ func TestAdapterSessionRejectsGrantForUnheldTeam(t *testing.T) {
 	})
 	req = req.WithContext(withPrincipal(req.Context(), fx.principal))
 	w := httptest.NewRecorder()
-	fx.server.HandleAdapterSession(w, req)
+	fx.server.Access().HandleAdapterSession(w, req)
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, body = %s, want 403", w.Code, w.Body.String())
 	}
@@ -189,7 +189,7 @@ func TestAdapterSessionRejectsWhenNoGrantMatches(t *testing.T) {
 	})
 	req = req.WithContext(withPrincipal(req.Context(), fx.principal))
 	w := httptest.NewRecorder()
-	fx.server.HandleAdapterSession(w, req)
+	fx.server.Access().HandleAdapterSession(w, req)
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, body = %s, want 403", w.Code, w.Body.String())
 	}
@@ -216,7 +216,7 @@ func TestAdapterSessionTrustCappedAtGrantMaxTrust(t *testing.T) {
 	})
 	req = req.WithContext(withPrincipal(req.Context(), fx.principal))
 	w := httptest.NewRecorder()
-	fx.server.HandleAdapterSession(w, req)
+	fx.server.Access().HandleAdapterSession(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
 	}
@@ -260,7 +260,7 @@ func TestAdapterSessionPicksHighestTrustWithDeterministicTiebreak(t *testing.T) 
 		},
 	}
 	fx := newAdapterTestFixture(t, low, newer, older)
-	g, teamID, err := fx.server.selectAdapterGrant(
+	g, teamID, err := fx.server.Access().selectAdapterGrant(
 		t.Context(),
 		"mcp-team-acme", "demo",
 		"user-123", "ops-agent", []string{"team-acme"}, "team-acme", false,
@@ -281,7 +281,7 @@ func TestAdapterSessionRequiresServerName(t *testing.T) {
 	req := adapterRequest(t, adapterSessionRequest{Namespace: "mcp-team-acme", AgentID: "ops-agent"})
 	req = req.WithContext(withPrincipal(req.Context(), fx.principal))
 	w := httptest.NewRecorder()
-	fx.server.HandleAdapterSession(w, req)
+	fx.server.Access().HandleAdapterSession(w, req)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", w.Code)
 	}
@@ -293,7 +293,7 @@ func TestAdapterSessionRequiresResolvedNamespace(t *testing.T) {
 	req := adapterRequest(t, adapterSessionRequest{ServerName: "demo", AgentID: "ops-agent"})
 	req = req.WithContext(withPrincipal(req.Context(), fx.principal))
 	w := httptest.NewRecorder()
-	fx.server.HandleAdapterSession(w, req)
+	fx.server.Access().HandleAdapterSession(w, req)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, body = %s, want 400", w.Code, w.Body.String())
 	}

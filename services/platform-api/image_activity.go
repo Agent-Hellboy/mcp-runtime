@@ -6,9 +6,9 @@ import (
 	"mcp-platform-api/identity"
 )
 
-func (s *apiServer) handleUserImagePublishActivity(w http.ResponseWriter, r *http.Request) {
+func (pr platformRoutes) handleUserImagePublishActivity(w http.ResponseWriter, r *http.Request) {
 	identity.HandleUserImagePublishActivity(w, r, identity.Dependencies{
-		Platform:             s.platform,
+		Platform:             pr.platform,
 		PrincipalFromContext: principalFromContext,
 		WriteJSON:            writeJSON,
 		WriteBodyDecodeError: writeBodyDecodeError,

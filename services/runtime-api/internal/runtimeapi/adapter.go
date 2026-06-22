@@ -67,7 +67,7 @@ type adapterSessionResponse struct {
 //   - 401 when no Principal is on the request (auth middleware should reject first)
 //   - 403 when no matching enabled grant is found, or the principal lacks the team
 //   - 503 when Kubernetes is unavailable
-func (s *RuntimeServer) HandleAdapterSession(w http.ResponseWriter, r *http.Request) {
+func (s *AccessService) HandleAdapterSession(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", http.MethodPost)
 		writeAPIError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -243,7 +243,7 @@ func defaultAdapterSessionTeamID(p principal, namespace string, teamIDs []string
 // field empty (wildcard). When multiple grants match, the one with the highest
 // MaxTrust wins; ties are broken by oldest creationTimestamp so the result is
 // deterministic across replicas.
-func (s *RuntimeServer) selectAdapterGrant(ctx context.Context, namespace, serverName, humanID, agentID string, teamIDs []string, defaultTeamID string, allowAnyTeam bool) (*sentinelaccess.MCPAccessGrant, string, error) {
+func (s *AccessService) selectAdapterGrant(ctx context.Context, namespace, serverName, humanID, agentID string, teamIDs []string, defaultTeamID string, allowAnyTeam bool) (*sentinelaccess.MCPAccessGrant, string, error) {
 	grants, err := s.accessMgr.ListGrants(ctx, namespace)
 	if err != nil {
 		return nil, "", fmt.Errorf("list grants in %s: %w", namespace, err)
