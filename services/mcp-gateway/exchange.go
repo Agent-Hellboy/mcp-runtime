@@ -93,17 +93,19 @@ type Exchange struct {
 }
 
 // newExchange initialises an Exchange for a fresh inbound request.
+//
+// The default decision is deny: every terminal path in the pipeline sets an
+// explicit decision (authzFilter for tool calls and the non-tool passthrough,
+// authFilter on OAuth failure, policyFilter for OAuth metadata). A deny default
+// means any request that reaches upstream or audit without an explicit decision
+// — a filter-ordering bug or a future unhandled stage — fails closed instead of
+// being proxied as allowed.
 func newExchange(w http.ResponseWriter, r *http.Request, defaultPolicyVersion string) *Exchange {
 	return &Exchange{
 		W:            &statusRecorder{ResponseWriter: w, status: http.StatusOK},
 		R:            r,
 		OriginalPath: r.URL.Path,
 		StartTime:    time.Now(),
-		Decision: policypkg.Decision{
-			Allowed:       true,
-			Status:        http.StatusOK,
-			Reason:        "allowed",
-			PolicyVersion: defaultPolicyVersion,
-		},
+		Decision:     policypkg.Deny(http.StatusForbidden, "undecided", defaultPolicyVersion),
 	}
 }

@@ -73,8 +73,8 @@ type Middleware struct {
 
 func (m *Middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	m.redactRequestHeaders(req.Header)
-	if m.redactRequestBody(req) {
-		http.Error(rw, http.StatusText(http.StatusRequestEntityTooLarge), http.StatusRequestEntityTooLarge)
+	if status := m.redactRequestBody(req); status != 0 {
+		http.Error(rw, http.StatusText(status), status)
 		return
 	}
 
@@ -106,23 +106,31 @@ func (m *Middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	_, _ = rw.Write(body)
 }
 
-func (m *Middleware) redactRequestBody(req *http.Request) bool {
+// redactRequestBody redacts the request body in place. It returns 0 to continue,
+// or a non-zero HTTP status the caller must reject the request with. The body is
+// only forwarded when it was fully read and redacted: an over-limit body yields
+// 413 and an unreadable body yields 502, so the middleware fails closed rather
+// than forwarding a partially-read (and therefore unreliably redacted) body.
+func (m *Middleware) redactRequestBody(req *http.Request) int {
 	if req.Body == nil {
-		return false
+		return 0
 	}
 	if !shouldRedactRequest(req.Header) {
-		return false
+		return 0
 	}
 	limited := io.LimitReader(req.Body, m.maxBody+1)
-	raw, _ := io.ReadAll(limited)
+	raw, err := io.ReadAll(limited)
 	_ = req.Body.Close()
+	if err != nil {
+		return http.StatusBadGateway
+	}
 	if int64(len(raw)) > m.maxBody {
-		return true
+		return http.StatusRequestEntityTooLarge
 	}
 	redacted := m.redactBody(raw)
 	req.Body = io.NopCloser(bytes.NewReader(redacted))
 	req.ContentLength = int64(len(redacted))
-	return false
+	return 0
 }
 
 func (m *Middleware) redactRequestHeaders(h http.Header) {
