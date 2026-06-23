@@ -1,6 +1,7 @@
 package adapter
 
 import (
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
@@ -32,21 +33,21 @@ override the result.`,
 			if err != nil {
 				return err
 			}
+			if flags.mtlsEnabled() && (cfg.RuntimeURL == nil || cfg.RuntimeURL.Scheme != "https") {
+				return fmt.Errorf("--auth mtls requires an https --runtime-url (or $%s)", agentadapter.EnvRuntimeURL)
+			}
 
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 
-			effective, provider, refresher, err := applyPlatformSession(ctx, &sessionFlags, cfg.Identity, cmd.ErrOrStderr())
+			effective, provider, transport, stopAuth, err := resolveAuth(ctx, flags, &sessionFlags, cfg.Identity, cfg.Transport, cmd.ErrOrStderr())
 			if err != nil {
 				return err
 			}
-			if refresher != nil {
-				defer refresher.Stop()
-			}
+			defer stopAuth()
 			cfg.Identity = effective
-			if provider != nil {
-				cfg.IdentityProvider = provider
-			}
+			cfg.IdentityProvider = provider
+			cfg.Transport = transport
 			if err := cfg.Validate(); err != nil {
 				return err
 			}

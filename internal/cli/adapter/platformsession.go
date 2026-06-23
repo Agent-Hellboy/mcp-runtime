@@ -26,6 +26,13 @@ const (
 	EnvAdapterNamespace   = "MCP_RUNTIME_ADAPTER_NAMESPACE"
 	EnvAdapterAgent       = "MCP_RUNTIME_ADAPTER_AGENT"
 	EnvAdapterAutoRefresh = "MCP_RUNTIME_ADAPTER_AUTO_REFRESH"
+	// EnvAdapterAuthMode selects the adapter auth mode (header or mtls).
+	EnvAdapterAuthMode = "MCP_RUNTIME_AUTH_MODE"
+	// EnvMTLSTrustDomain is the SPIFFE trust domain used to build the CSR's
+	// URI SAN; it must match spec.auth.trustDomain on the target MCPServer.
+	EnvMTLSTrustDomain = "MCP_MTLS_TRUST_DOMAIN"
+	// DefaultMTLSTrustDomain matches the platform default trust domain.
+	DefaultMTLSTrustDomain = "mcpruntime.org"
 	// adapterRefreshLead is how far in advance of expiry the refresher fires.
 	// Keep this above the platform's adapterSessionRefreshBuffer so the
 	// refresh and reuse-window stay aligned.

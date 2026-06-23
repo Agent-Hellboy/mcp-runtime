@@ -416,6 +416,33 @@ mcp-runtime adapter proxy \
   --tls-ca-bundle ~/.config/mcp-runtime/workspace-assistant/ca.crt
 ```
 
+### One-command mode: `--auth mtls`
+
+`--auth mtls` collapses the enroll-then-run steps into a single command. The
+adapter enrolls a session-bound certificate in memory at startup (nothing is
+written to disk) and feeds it straight to the runtime transport:
+
+```bash
+mcp-runtime adapter proxy \
+  --auth mtls \
+  --runtime-url https://tools.example.com/mcp \
+  --platform-url https://platform.example.com/api \
+  --server workspace-assistant \
+  --namespace mcp-servers \
+  --agent cursor \
+  --trust-domain mcpruntime.org \
+  --auto-refresh
+```
+
+`--auth mtls` requires an `https` `--runtime-url` and the same
+`--server`/`--agent` inputs as `enroll` (the certificate's SPIFFE URI encodes
+the issued session). With `--auto-refresh`, the adapter re-enrolls a fresh
+certificate a few minutes before the session expires and drains idle
+connections so subsequent requests renegotiate with it — long-running adapters
+keep working without restarts. Governance identity headers are suppressed in
+this mode. To reuse `enroll` output instead of in-memory enrollment, pass
+`--auth mtls` together with the `--tls-client-cert`/`-key`/`-ca-bundle` files.
+
 The gateway ignores `X-MCP-*` identity headers in mTLS mode. It derives human,
 agent, team, and session identity from the verified SPIFFE URI and the
 operator-rendered session binding.
