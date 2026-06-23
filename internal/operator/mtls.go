@@ -50,6 +50,28 @@ func gatewayTLSSecretName(mcpServer *mcpv1alpha1.MCPServer) string {
 	return mcpServer.Name + "-gateway-mtls"
 }
 
+func traefikClientCertSecretName(mcpServer *mcpv1alpha1.MCPServer) string {
+	return mcpServer.Name + "-traefik-client-mtls"
+}
+
+func mtlsTrustBundleSecretName(mcpServer *mcpv1alpha1.MCPServer) string {
+	return mcpServer.Name + "-mtls-ca"
+}
+
+// traefikProxySPIFFEID is the identity the ingress presents to the gateway over
+// the re-encrypted hop. The gateway pins this via TRUSTED_PROXY_SPIFFE_ID so a
+// non-ingress holder of an identity-CA cert cannot impersonate the ingress.
+func traefikProxySPIFFEID(mcpServer *mcpv1alpha1.MCPServer) string {
+	trustDomain := ""
+	if mcpServer.Spec.Auth != nil {
+		trustDomain = strings.TrimSpace(mcpServer.Spec.Auth.TrustDomain)
+	}
+	if trustDomain == "" {
+		return ""
+	}
+	return fmt.Sprintf("spiffe://%s/ns/%s/sa/traefik", trustDomain, traefikNamespace)
+}
+
 func (r *MCPServerReconciler) reconcileGatewayCertificate(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer) error {
 	certificate := &unstructured.Unstructured{}
 	certificate.SetGroupVersionKind(certificateGVK)
@@ -111,6 +133,120 @@ func (r *MCPServerReconciler) reconcileGatewayCertificate(ctx context.Context, m
 		return err
 	}
 	return r.Create(ctx, certificate)
+}
+
+// upsertCertificate creates or updates a cert-manager Certificate, diffing the
+// spec, labels, and owner references so reconciles are idempotent.
+func (r *MCPServerReconciler) upsertCertificate(ctx context.Context, cert *unstructured.Unstructured) error {
+	current := &unstructured.Unstructured{}
+	current.SetGroupVersionKind(certificateGVK)
+	key := types.NamespacedName{Name: cert.GetName(), Namespace: cert.GetNamespace()}
+	if err := r.Get(ctx, key, current); err == nil {
+		currentSpec, _, _ := unstructured.NestedMap(current.Object, "spec")
+		desiredSpec, _, _ := unstructured.NestedMap(cert.Object, "spec")
+		if !reflect.DeepEqual(currentSpec, desiredSpec) ||
+			!reflect.DeepEqual(current.GetLabels(), cert.GetLabels()) ||
+			!reflect.DeepEqual(current.GetOwnerReferences(), cert.GetOwnerReferences()) {
+			cert.SetResourceVersion(current.GetResourceVersion())
+			return r.Update(ctx, cert)
+		}
+		return nil
+	} else if !apierrors.IsNotFound(err) {
+		return err
+	}
+	return r.Create(ctx, cert)
+}
+
+// reconcileTraefikClientCertificate issues the client certificate the ingress
+// presents to the gateway over the re-encrypted hop. It is signed by the same
+// identity CA as user and gateway certificates and carries the pinned ingress
+// SPIFFE identity (see traefikProxySPIFFEID).
+func (r *MCPServerReconciler) reconcileTraefikClientCertificate(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer) error {
+	cert := &unstructured.Unstructured{}
+	cert.SetGroupVersionKind(certificateGVK)
+	cert.SetName(traefikClientCertSecretName(mcpServer))
+	cert.SetNamespace(mcpServer.Namespace)
+	if !serverUsesMTLS(mcpServer) {
+		if err := r.Delete(ctx, cert); err != nil && !apierrors.IsNotFound(err) && !meta.IsNoMatchError(err) {
+			return err
+		}
+		return nil
+	}
+	issuer := strings.TrimSpace(r.MTLSClusterIssuer)
+	if issuer == "" {
+		return fmt.Errorf("auth.mode mtls requires MCP_MTLS_CLUSTER_ISSUER on the operator")
+	}
+	spiffeID := traefikProxySPIFFEID(mcpServer)
+	if spiffeID == "" {
+		return fmt.Errorf("auth.mode mtls requires auth.trustDomain to derive the ingress identity")
+	}
+	cert.Object["spec"] = map[string]any{
+		"secretName":  traefikClientCertSecretName(mcpServer),
+		"duration":    "24h",
+		"renewBefore": "8h",
+		"uris":        []any{spiffeID},
+		"usages":      []any{"digital signature", "key encipherment", "client auth"},
+		"issuerRef": map[string]any{
+			"group": "cert-manager.io",
+			"kind":  "ClusterIssuer",
+			"name":  issuer,
+		},
+	}
+	cert.SetLabels(map[string]string{
+		"app.kubernetes.io/managed-by": "mcp-runtime",
+		"mcpruntime.org/server":        mcpServer.Name,
+	})
+	cert.SetOwnerReferences([]metav1.OwnerReference{*metav1.NewControllerRef(mcpServer, mcpv1alpha1.GroupVersion.WithKind("MCPServer"))})
+	return r.upsertCertificate(ctx, cert)
+}
+
+// reconcileMTLSTrustBundle materializes the identity CA bundle as a Secret in
+// the server namespace, keyed for both Traefik (tls.ca) and cert-manager-style
+// (ca.crt) consumers, so the TLSOption (verify client certs) and the
+// ServersTransport (verify the gateway) can reference it.
+//
+// The CA is sourced from the gateway certificate's ca.crt, which is
+// issuer-agnostic: cert-manager populates ca.crt regardless of which
+// ClusterIssuer signed the certificate. When the gateway certificate has not
+// been issued yet, the bundle is skipped and a later reconcile (driven by the
+// existing gateway readiness check) materializes it.
+func (r *MCPServerReconciler) reconcileMTLSTrustBundle(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer) error {
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      mtlsTrustBundleSecretName(mcpServer),
+			Namespace: mcpServer.Namespace,
+		},
+	}
+	if !serverUsesMTLS(mcpServer) {
+		if err := r.Delete(ctx, secret); err != nil && !apierrors.IsNotFound(err) {
+			return err
+		}
+		return nil
+	}
+
+	var gwSecret corev1.Secret
+	if err := r.Get(ctx, types.NamespacedName{Name: gatewayTLSSecretName(mcpServer), Namespace: mcpServer.Namespace}, &gwSecret); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil // gateway certificate not issued yet; retry on a later reconcile
+		}
+		return err
+	}
+	ca := gwSecret.Data["ca.crt"]
+	if len(ca) == 0 {
+		return nil
+	}
+
+	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, secret, func() error {
+		secret.Type = corev1.SecretTypeOpaque
+		secret.Data = map[string][]byte{"tls.ca": ca, "ca.crt": ca}
+		if secret.Labels == nil {
+			secret.Labels = map[string]string{}
+		}
+		secret.Labels["app.kubernetes.io/managed-by"] = "mcp-runtime"
+		secret.Labels["mcpruntime.org/server"] = mcpServer.Name
+		return ctrl.SetControllerReference(mcpServer, secret, r.Scheme)
+	})
+	return err
 }
 
 func mtlsNetworkPolicyName(mcpServer *mcpv1alpha1.MCPServer) string {

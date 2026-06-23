@@ -249,6 +249,13 @@ func (r *MCPServerReconciler) reconcileResources(ctx context.Context, mcpServer 
 		r.updateStatus(ctx, mcpServer, "Error", fmt.Sprintf("Failed to reconcile gateway Certificate: %v", err), resourceReadiness{})
 		return wrappedErr
 	}
+	if err := r.reconcileTraefikClientCertificate(ctx, mcpServer); err != nil {
+		contextMap["resource"] = "traefik-client-certificate"
+		wrappedErr := wrapOperatorError(err, "Failed to reconcile Traefik client Certificate", contextMap)
+		logOperatorError(logger, wrappedErr, "Failed to reconcile Traefik client Certificate")
+		r.updateStatus(ctx, mcpServer, "Error", fmt.Sprintf("Failed to reconcile Traefik client Certificate: %v", err), resourceReadiness{})
+		return wrappedErr
+	}
 	if err := r.reconcileDeployment(ctx, mcpServer); err != nil {
 		contextMap["resource"] = "deployment"
 		wrappedErr := wrapOperatorError(err, "Failed to reconcile Deployment", contextMap)
@@ -282,6 +289,13 @@ func (r *MCPServerReconciler) reconcileResources(ctx context.Context, mcpServer 
 		wrappedErr := wrapOperatorError(err, "Failed to reconcile mTLS NetworkPolicy", contextMap)
 		logOperatorError(logger, wrappedErr, "Failed to reconcile mTLS NetworkPolicy")
 		r.updateStatus(ctx, mcpServer, "Error", fmt.Sprintf("Failed to reconcile mTLS NetworkPolicy: %v", err), resourceReadiness{})
+		return wrappedErr
+	}
+	if err := r.reconcileMTLSTrustBundle(ctx, mcpServer); err != nil {
+		contextMap["resource"] = "trust-bundle"
+		wrappedErr := wrapOperatorError(err, "Failed to reconcile mTLS trust bundle", contextMap)
+		logOperatorError(logger, wrappedErr, "Failed to reconcile mTLS trust bundle")
+		r.updateStatus(ctx, mcpServer, "Error", fmt.Sprintf("Failed to reconcile mTLS trust bundle: %v", err), resourceReadiness{})
 		return wrappedErr
 	}
 	return nil
