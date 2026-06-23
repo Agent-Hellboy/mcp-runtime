@@ -91,6 +91,8 @@ type gatewayServer struct {
 	defaultAgentHeader    string
 	defaultTeamHeader     string
 	defaultSessionHeader  string
+	verifiedSPIFFEHeader  string
+	trustedProxySPIFFE    string
 	defaultPolicyMode     string
 	defaultPolicyDecision string
 	defaultPolicyVersion  string
@@ -111,19 +113,24 @@ type statusRecorder struct {
 }
 
 const (
-	maxRPCBodyBytes       = 1 << 20
-	analyticsQueueSize    = 256
-	analyticsWorkerCount  = 4
-	analyticsEmitTimeout  = 5
-	defaultHumanHeader    = "X-MCP-Human-ID"
-	defaultAgentHeader    = "X-MCP-Agent-ID"
-	defaultTeamHeader     = "X-MCP-Team-ID"
-	defaultSessionHeader  = "X-MCP-Agent-Session"
-	defaultPolicyMode     = "allow-list"
-	defaultPolicyDecision = "deny"
-	defaultPolicyVersion  = "v1"
-	oauthProtectedPrefix  = "/.well-known/oauth-protected-resource"
-	defaultTokenHeader    = "Authorization"
+	maxRPCBodyBytes      = 1 << 20
+	analyticsQueueSize   = 256
+	analyticsWorkerCount = 4
+	analyticsEmitTimeout = 5
+	defaultHumanHeader   = "X-MCP-Human-ID"
+	defaultAgentHeader   = "X-MCP-Agent-ID"
+	defaultTeamHeader    = "X-MCP-Team-ID"
+	defaultSessionHeader = "X-MCP-Agent-Session"
+	// defaultVerifiedSPIFFEHeader carries the caller's SPIFFE identity as
+	// extracted and injected by the TLS-terminating ingress (Traefik) in
+	// auth.mode mtls. It is trusted only on an ingress-authenticated mTLS hop;
+	// see authenticateMTLS.
+	defaultVerifiedSPIFFEHeader = "X-MCP-Verified-SPIFFE-ID"
+	defaultPolicyMode           = "allow-list"
+	defaultPolicyDecision       = "deny"
+	defaultPolicyVersion        = "v1"
+	oauthProtectedPrefix        = "/.well-known/oauth-protected-resource"
+	defaultTokenHeader          = "Authorization"
 )
 
 // main initializes and starts the MCP gateway service.

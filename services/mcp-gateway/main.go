@@ -78,6 +78,8 @@ func main() {
 		defaultAgentHeader:    serviceutil.EnvOr("AGENT_ID_HEADER", defaultAgentHeader),
 		defaultTeamHeader:     serviceutil.EnvOr("TEAM_ID_HEADER", defaultTeamHeader),
 		defaultSessionHeader:  serviceutil.EnvOr("SESSION_ID_HEADER", defaultSessionHeader),
+		verifiedSPIFFEHeader:  serviceutil.EnvOr("VERIFIED_SPIFFE_HEADER", defaultVerifiedSPIFFEHeader),
+		trustedProxySPIFFE:    strings.TrimSpace(os.Getenv("TRUSTED_PROXY_SPIFFE_ID")),
 		defaultPolicyMode:     serviceutil.EnvOr("POLICY_MODE", defaultPolicyMode),
 		defaultPolicyDecision: serviceutil.EnvOr("POLICY_DEFAULT_DECISION", defaultPolicyDecision),
 		defaultPolicyVersion:  serviceutil.EnvOr("POLICY_VERSION", defaultPolicyVersion),

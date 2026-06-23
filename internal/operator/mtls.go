@@ -6,14 +6,25 @@ import (
 	"reflect"
 	"strings"
 
+	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
+)
+
+const (
+	// traefikNamespace is where the ingress controller runs; the gateway only
+	// honors the injected verified-identity header on connections from it.
+	traefikNamespace = "traefik"
 )
 
 const (
@@ -100,6 +111,66 @@ func (r *MCPServerReconciler) reconcileGatewayCertificate(ctx context.Context, m
 		return err
 	}
 	return r.Create(ctx, certificate)
+}
+
+func mtlsNetworkPolicyName(mcpServer *mcpv1alpha1.MCPServer) string {
+	return mcpServer.Name + "-mtls-gateway"
+}
+
+// reconcileMTLSNetworkPolicy restricts ingress to the gateway port so the
+// verified-identity header can only originate from the TLS-terminating ingress.
+// Without it, any pod could connect directly to the gateway and forge the
+// header. It is defense-in-depth on top of the gateway's own requirement that
+// the connection be a verified mTLS hop (see authenticateMTLS). The gateway
+// metrics port stays open so Prometheus scraping is unaffected.
+func (r *MCPServerReconciler) reconcileMTLSNetworkPolicy(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer) error {
+	policy := &networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      mtlsNetworkPolicyName(mcpServer),
+			Namespace: mcpServer.Namespace,
+		},
+	}
+	if !serverUsesMTLS(mcpServer) {
+		if err := r.Delete(ctx, policy); err != nil && !apierrors.IsNotFound(err) {
+			return err
+		}
+		return nil
+	}
+
+	gatewayPort := mcpServer.Spec.Gateway.Port
+	metricsPort := int32(DefaultGatewayMetricsPort)
+	tcp := corev1.ProtocolTCP
+
+	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, policy, func() error {
+		gatewayTarget := intstr.FromInt32(gatewayPort)
+		metricsTarget := intstr.FromInt32(metricsPort)
+		policy.Spec = networkingv1.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{
+				MatchLabels: map[string]string{"app": mcpServer.Name},
+			},
+			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress},
+			Ingress: []networkingv1.NetworkPolicyIngressRule{
+				{
+					// Only the ingress controller may reach the gateway port.
+					From: []networkingv1.NetworkPolicyPeer{{
+						NamespaceSelector: &metav1.LabelSelector{
+							MatchLabels: map[string]string{"kubernetes.io/metadata.name": traefikNamespace},
+						},
+						PodSelector: &metav1.LabelSelector{
+							MatchLabels: map[string]string{"app": "traefik"},
+						},
+					}},
+					Ports: []networkingv1.NetworkPolicyPort{{Protocol: &tcp, Port: &gatewayTarget}},
+				},
+				{
+					// Metrics scraping is allowed from any source.
+					Ports: []networkingv1.NetworkPolicyPort{{Protocol: &tcp, Port: &metricsTarget}},
+				},
+			},
+		}
+		return ctrl.SetControllerReference(mcpServer, policy, r.Scheme)
+	})
+	return err
 }
 
 func (r *MCPServerReconciler) deleteMTLSIngress(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer) error {

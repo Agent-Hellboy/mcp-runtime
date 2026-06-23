@@ -201,7 +201,9 @@ func TestMCPServerDefault(t *testing.T) {
 	}
 }
 
-func TestMCPServerDefaultSkipsPublicPathPrefixForMTLS(t *testing.T) {
+func TestMCPServerDefaultsPublicPathPrefixForMTLS(t *testing.T) {
+	// In the Traefik-terminates model, mtls uses path-based routing like every
+	// other auth mode, so publicPathPrefix is defaulted rather than skipped.
 	server := &MCPServer{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-server"},
 		Spec: MCPServerSpec{
@@ -215,8 +217,8 @@ func TestMCPServerDefaultSkipsPublicPathPrefixForMTLS(t *testing.T) {
 
 	server.DefaultWithOptions(MCPServerDefaultOptions{DefaultIngressHost: "mcp.example.com"})
 
-	if server.Spec.PublicPathPrefix != "" {
-		t.Fatalf("expected no publicPathPrefix default for mTLS, got %q", server.Spec.PublicPathPrefix)
+	if server.Spec.PublicPathPrefix == "" {
+		t.Fatal("expected a publicPathPrefix default for mTLS (path-based routing)")
 	}
 	if err := server.validate(); err != nil {
 		t.Fatalf("defaulted mTLS server should validate: %v", err)
