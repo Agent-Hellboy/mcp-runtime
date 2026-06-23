@@ -60,6 +60,7 @@ func main() {
 		DefaultIngressHost:        os.Getenv("MCP_DEFAULT_INGRESS_HOST"),
 		DefaultIngressEntryPoints: strings.TrimSpace(os.Getenv("MCP_DEFAULT_INGRESS_ENTRYPOINTS")),
 		DefaultIngressTLS:         boolFromEnv(os.Getenv("MCP_DEFAULT_INGRESS_TLS")),
+		DefaultIngressTLSSecret:   strings.TrimSpace(os.Getenv("MCP_DEFAULT_INGRESS_TLS_SECRET")),
 		IngressReadinessMode:      ingressReadinessMode,
 		ProvisionedRegistry:       registryConfig,
 		GatewayProxyImage:         gatewayProxyImageFromEnv(os.Getenv),

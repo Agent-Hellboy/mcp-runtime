@@ -111,6 +111,40 @@ func TestReconcileMTLSIngressGeneratesTraefikResources(t *testing.T) {
 	}
 }
 
+func TestReconcileMTLSIngressHostTLSSecret(t *testing.T) {
+	scheme := traefikScheme(t)
+	server := mtlsServer()
+	server.Spec.IngressHost = "mcp.example.com"
+	server.Spec.PublicPathPrefix = "secure-demo"
+
+	t.Run("references the platform host secret when configured", func(t *testing.T) {
+		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(server).Build()
+		r := MCPServerReconciler{Client: c, Scheme: scheme, DefaultIngressTLSSecret: "platform-host-tls"}
+		if err := r.reconcileMTLSIngress(context.Background(), server); err != nil {
+			t.Fatalf("reconcile: %v", err)
+		}
+		ir := getCR(t, c, ingressRouteGVK, server.Name, server.Namespace)
+		if sn, _, _ := unstructured.NestedString(ir.Object, "spec", "tls", "secretName"); sn != "platform-host-tls" {
+			t.Fatalf("tls.secretName = %q, want platform-host-tls", sn)
+		}
+	})
+
+	t.Run("omits secretName when not configured", func(t *testing.T) {
+		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(server).Build()
+		r := MCPServerReconciler{Client: c, Scheme: scheme}
+		if err := r.reconcileMTLSIngress(context.Background(), server); err != nil {
+			t.Fatalf("reconcile: %v", err)
+		}
+		ir := getCR(t, c, ingressRouteGVK, server.Name, server.Namespace)
+		if _, found, _ := unstructured.NestedString(ir.Object, "spec", "tls", "secretName"); found {
+			t.Fatal("tls.secretName should be absent without DefaultIngressTLSSecret (Traefik default resolver)")
+		}
+		if name, _, _ := unstructured.NestedString(ir.Object, "spec", "tls", "options", "name"); name != mtlsTLSOptionName(server) {
+			t.Fatalf("tls.options.name = %q", name)
+		}
+	})
+}
+
 func TestDeleteMTLSIngressRemovesAllResources(t *testing.T) {
 	scheme := traefikScheme(t)
 	server := mtlsServer()

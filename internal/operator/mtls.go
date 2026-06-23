@@ -401,6 +401,15 @@ func (r *MCPServerReconciler) reconcileMTLSIngress(ctx context.Context, mcpServe
 	if host := effectiveIngressHost(mcpServer); host != "" {
 		match = fmt.Sprintf("Host(`%s`) && %s", host, match)
 	}
+	// tls.options enforces client-cert verification (the mTLS half). tls.secretName
+	// terminates the caller-facing connection with the platform host certificate;
+	// when unset, Traefik falls back to its default certificate resolver.
+	tls := map[string]any{
+		"options": map[string]any{"name": mtlsTLSOptionName(mcpServer)},
+	}
+	if secret := strings.TrimSpace(r.DefaultIngressTLSSecret); secret != "" {
+		tls["secretName"] = secret
+	}
 	ingressRoute := r.traefikResource(mcpServer, ingressRouteGVK, mcpServer.Name, map[string]any{
 		"entryPoints": []any{"websecure"},
 		"routes": []any{map[string]any{
@@ -413,12 +422,7 @@ func (r *MCPServerReconciler) reconcileMTLSIngress(ctx context.Context, mcpServe
 				"serversTransport": mtlsServersTransportName(mcpServer),
 			}},
 		}},
-		// tls.options enforces client-cert verification. The server-side
-		// (caller-facing) certificate is supplied by the platform TLS setup for
-		// the shared host; per-server secretName is not set here.
-		"tls": map[string]any{
-			"options": map[string]any{"name": mtlsTLSOptionName(mcpServer)},
-		},
+		"tls": tls,
 	})
 
 	for _, obj := range []*unstructured.Unstructured{tlsOption, middleware, serversTransport, ingressRoute} {
