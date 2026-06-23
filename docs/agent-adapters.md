@@ -375,11 +375,12 @@ mcp-runtime setup \
 The environment equivalent is
 `MCP_SETUP_MTLS_CLUSTER_ISSUER=company-workload-ca`.
 
-Configure the MCPServer for host-based Traefik TLS passthrough:
+Configure the MCPServer for path-based routing under mtls:
 
 ```yaml
 spec:
-  ingressHost: tools.example.com
+  ingressHost: mcp.example.com
+  publicPathPrefix: workspace-assistant
   ingressClass: traefik
   gateway:
     enabled: true
@@ -388,9 +389,18 @@ spec:
     trustDomain: mcpruntime.org
 ```
 
-Path-based routing is not supported in this mode because terminating TLS at an
-HTTP ingress removes the client certificate before the request reaches the
-gateway.
+**How termination works.** Traefik terminates the caller's mTLS, verifies the
+client certificate against the identity CA, injects the verified SPIFFE identity
+as a trusted header (`X-MCP-Verified-SPIFFE-ID`), and re-encrypts to the gateway
+over a second mTLS hop. This is what allows **path-based routing** — a passthrough
+ingress could only route on SNI/host. The operator generates the Traefik
+`TLSOption` (`RequireAndVerifyClientCert`), the `spiffe-identity` middleware
+(strips client-supplied identity headers, then injects the verified one), a
+`ServersTransport` (the re-encrypted hop with a pinned ingress certificate), and
+a path-based `IngressRoute`. A `NetworkPolicy` restricts the gateway port to the
+ingress so the trusted header cannot be forged by another pod, and the gateway
+additionally requires the connection to be a verified mTLS hop before trusting
+the header.
 
 Enroll an external adapter after signing in to the platform:
 
@@ -410,7 +420,7 @@ principal, then returns short-lived `client.crt` and `ca.crt` files.
 
 ```bash
 mcp-runtime adapter proxy \
-  --runtime-url https://tools.example.com/mcp \
+  --runtime-url https://mcp.example.com/workspace-assistant/mcp \
   --tls-client-cert ~/.config/mcp-runtime/workspace-assistant/client.crt \
   --tls-client-key ~/.config/mcp-runtime/workspace-assistant/client.key \
   --tls-ca-bundle ~/.config/mcp-runtime/workspace-assistant/ca.crt
@@ -425,7 +435,7 @@ written to disk) and feeds it straight to the runtime transport:
 ```bash
 mcp-runtime adapter proxy \
   --auth mtls \
-  --runtime-url https://tools.example.com/mcp \
+  --runtime-url https://mcp.example.com/workspace-assistant/mcp \
   --platform-url https://platform.example.com/api \
   --server workspace-assistant \
   --namespace mcp-servers \
@@ -442,6 +452,25 @@ connections so subsequent requests renegotiate with it — long-running adapters
 keep working without restarts. Governance identity headers are suppressed in
 this mode. To reuse `enroll` output instead of in-memory enrollment, pass
 `--auth mtls` together with the `--tls-client-cert`/`-key`/`-ca-bundle` files.
+
+### Migrating a server from `header` to `mtls`
+
+`auth.mode` is per-MCPServer, so migrate one server at a time:
+
+1. Ensure the operator has `MCP_MTLS_CLUSTER_ISSUER` set and cert-manager is
+   installed (test-mode provisions `mcp-runtime-ca` automatically).
+2. Flip the MCPServer to `auth.mode: mtls` with a `trustDomain` (see the spec
+   above). The operator swaps the ingress to the terminate+re-encrypt path,
+   issues the gateway and Traefik certificates, writes the trust bundle, and
+   applies the gateway NetworkPolicy.
+3. Switch each adapter to `--auth mtls` (or distribute `enroll` output). In mtls
+   mode the gateway **ignores** `X-MCP-*` identity headers entirely — it derives
+   human, agent, team, and session identity from the verified SPIFFE URI mapped
+   to the rendered session binding — so header-mode and mtls-mode callers cannot
+   be mixed against the same server.
+
+Grants and sessions are unchanged: the same `MCPAccessGrant`/`MCPAgentSession`
+model applies; only how the caller's identity reaches the gateway changes.
 
 The gateway ignores `X-MCP-*` identity headers in mTLS mode. It derives human,
 agent, team, and session identity from the verified SPIFFE URI and the
