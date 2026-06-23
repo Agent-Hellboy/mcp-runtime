@@ -7,26 +7,10 @@ metadata:
     pod-security.kubernetes.io/audit: restricted
     pod-security.kubernetes.io/warn: restricted
 ---
-apiVersion: apiextensions.k8s.io/v1
-kind: CustomResourceDefinition
-metadata:
-  name: ingressroutetcps.traefik.io
-spec:
-  group: traefik.io
-  names:
-    kind: IngressRouteTCP
-    listKind: IngressRouteTCPList
-    plural: ingressroutetcps
-    singular: ingressroutetcp
-  scope: Namespaced
-  versions:
-    - name: v1alpha1
-      served: true
-      storage: true
-      schema:
-        openAPIV3Schema:
-          type: object
-          x-kubernetes-preserve-unknown-fields: true
+# Traefik CRDs (IngressRoute, IngressRouteTCP, Middleware, TLSOption,
+# ServersTransport, ...) are vendored from the official v2.10 bundle in
+# traefik-crds.yaml so the mtls terminate+re-encrypt path has the kinds the
+# operator generates.
 ---
 apiVersion: v1
 kind: Namespace
@@ -91,7 +75,8 @@ rules:
     resources: ["ingressclasses"]
     verbs: ["get", "list", "watch"]
   - apiGroups: ["traefik.io"]
-    resources: ["ingressroutetcps"]
+    resources:
+      ["ingressroutes", "ingressroutetcps", "middlewares", "tlsoptions", "serverstransports", "traefikservices"]
     verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -308,6 +293,8 @@ spec:
           - --ping.entryPoint=traefik
           - --providers.file.filename=/etc/traefik/dynamic/dynamic.yml
           - --providers.file.watch=true
+          # Local middleware that injects the verified SPIFFE identity for mtls servers.
+          - --experimental.localPlugins.spiffe-identity.moduleName=github.com/Agent-Hellboy/mcp-runtime/traefik-plugins/spiffe-identity
         ports:
           - name: web
             containerPort: 8000
@@ -318,6 +305,9 @@ spec:
         volumeMounts:
           - name: traefik-dynamic
             mountPath: /etc/traefik/dynamic
+            readOnly: true
+          - name: spiffe-identity-plugin
+            mountPath: /plugins-local/src/github.com/Agent-Hellboy/mcp-runtime/traefik-plugins/spiffe-identity
             readOnly: true
         resources:
           requests:
@@ -345,6 +335,16 @@ spec:
             items:
               - key: dynamic.yml
                 path: dynamic.yml
+        - name: spiffe-identity-plugin
+          configMap:
+            name: traefik-plugin-spiffe-identity
+            items:
+              - key: go.mod
+                path: go.mod
+              - key: .traefik.yml
+                path: .traefik.yml
+              - key: spiffe_identity.go
+                path: spiffe_identity.go
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget
