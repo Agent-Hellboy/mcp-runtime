@@ -3,7 +3,6 @@ package operator
 import (
 	"context"
 	"fmt"
-	"reflect"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -16,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
@@ -25,6 +25,9 @@ const (
 	// traefikNamespace is where the ingress controller runs; the gateway only
 	// honors the injected verified-identity header on connections from it.
 	traefikNamespace = "traefik"
+	// operatorFieldManager is the Server-Side Apply field owner for operator-
+	// managed cert-manager and Traefik resources.
+	operatorFieldManager = "mcp-runtime-operator"
 )
 
 const (
@@ -131,46 +134,21 @@ func (r *MCPServerReconciler) reconcileGatewayCertificate(ctx context.Context, m
 	})
 	certificate.SetOwnerReferences([]metav1.OwnerReference{*metav1.NewControllerRef(mcpServer, mcpv1alpha1.GroupVersion.WithKind("MCPServer"))})
 
-	current := &unstructured.Unstructured{}
-	current.SetGroupVersionKind(certificateGVK)
-	key := types.NamespacedName{Name: certificate.GetName(), Namespace: certificate.GetNamespace()}
-	if err := r.Get(ctx, key, current); err == nil {
-		currentSpec, _, _ := unstructured.NestedMap(current.Object, "spec")
-		desiredSpec, _, _ := unstructured.NestedMap(certificate.Object, "spec")
-		if !reflect.DeepEqual(currentSpec, desiredSpec) ||
-			!reflect.DeepEqual(current.GetLabels(), certificate.GetLabels()) ||
-			!reflect.DeepEqual(current.GetOwnerReferences(), certificate.GetOwnerReferences()) {
-			certificate.SetResourceVersion(current.GetResourceVersion())
-			return r.Update(ctx, certificate)
-		}
-		return nil
-	} else if !apierrors.IsNotFound(err) {
-		return err
-	}
-	return r.Create(ctx, certificate)
+	return r.applyUnstructured(ctx, certificate)
 }
 
-// upsertUnstructured creates or updates an unstructured object (cert-manager or
-// Traefik CRD), diffing the spec, labels, and owner references so reconciles are
-// idempotent. The object must already carry its GVK, name, and namespace.
-func (r *MCPServerReconciler) upsertUnstructured(ctx context.Context, obj *unstructured.Unstructured) error {
-	current := &unstructured.Unstructured{}
-	current.SetGroupVersionKind(obj.GroupVersionKind())
-	key := types.NamespacedName{Name: obj.GetName(), Namespace: obj.GetNamespace()}
-	if err := r.Get(ctx, key, current); err == nil {
-		currentSpec, _, _ := unstructured.NestedMap(current.Object, "spec")
-		desiredSpec, _, _ := unstructured.NestedMap(obj.Object, "spec")
-		if !reflect.DeepEqual(currentSpec, desiredSpec) ||
-			!reflect.DeepEqual(current.GetLabels(), obj.GetLabels()) ||
-			!reflect.DeepEqual(current.GetOwnerReferences(), obj.GetOwnerReferences()) {
-			obj.SetResourceVersion(current.GetResourceVersion())
-			return r.Update(ctx, obj)
-		}
-		return nil
-	} else if !apierrors.IsNotFound(err) {
-		return err
-	}
-	return r.Create(ctx, obj)
+// applyUnstructured idempotently reconciles an unstructured object (cert-manager
+// or Traefik CRD) via Server-Side Apply. SSA is used instead of a read +
+// reflect.DeepEqual + update because those CRDs have fields defaulted by their
+// own controllers/webhooks (e.g. cert-manager populates privateKey settings);
+// a structural diff against our desired spec would never match, producing an
+// update on every reconcile (a hot loop). With SSA the operator owns only the
+// fields it sets, so defaulted fields are left untouched and reconciles are
+// no-ops once converged. The object must carry its GVK, name, and namespace.
+func (r *MCPServerReconciler) applyUnstructured(ctx context.Context, obj *unstructured.Unstructured) error {
+	force := true
+	return r.Apply(ctx, client.ApplyConfigurationFromUnstructured(obj),
+		&client.ApplyOptions{FieldManager: operatorFieldManager, Force: &force})
 }
 
 // deleteUnstructured removes an object by GVK/name/namespace, tolerating absent
@@ -226,7 +204,7 @@ func (r *MCPServerReconciler) reconcileTraefikClientCertificate(ctx context.Cont
 		"mcpruntime.org/server":        mcpServer.Name,
 	})
 	cert.SetOwnerReferences([]metav1.OwnerReference{*metav1.NewControllerRef(mcpServer, mcpv1alpha1.GroupVersion.WithKind("MCPServer"))})
-	return r.upsertUnstructured(ctx, cert)
+	return r.applyUnstructured(ctx, cert)
 }
 
 // reconcileMTLSTrustBundle materializes the identity CA bundle as a Secret in
@@ -262,7 +240,11 @@ func (r *MCPServerReconciler) reconcileMTLSTrustBundle(ctx context.Context, mcpS
 	}
 	ca := gwSecret.Data["ca.crt"]
 	if len(ca) == 0 {
-		return nil
+		// The secret exists but cert-manager has not populated the CA yet. Return
+		// an error so the controller requeues rather than leaving the trust bundle
+		// permanently unwritten (the deployment could otherwise become ready and
+		// stop reconciliation in an incomplete state).
+		return fmt.Errorf("gateway secret %q has no ca.crt yet", gatewayTLSSecretName(mcpServer))
 	}
 
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, secret, func() error {
@@ -440,7 +422,7 @@ func (r *MCPServerReconciler) reconcileMTLSIngress(ctx context.Context, mcpServe
 	})
 
 	for _, obj := range []*unstructured.Unstructured{tlsOption, middleware, serversTransport, ingressRoute} {
-		if err := r.upsertUnstructured(ctx, obj); err != nil {
+		if err := r.applyUnstructured(ctx, obj); err != nil {
 			return err
 		}
 	}
