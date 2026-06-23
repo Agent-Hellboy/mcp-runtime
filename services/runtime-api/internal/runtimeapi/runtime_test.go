@@ -1102,7 +1102,7 @@ func TestRuntimeServerApplyPublicScopeResolvesCatalogNamespace(t *testing.T) {
 	}
 }
 
-func TestRuntimeServerApplyDefaultsGatewayAndAnalyticsSecret(t *testing.T) {
+func TestRuntimeServerApplyDefaultsGatewayAndExplicitAnalyticsSecret(t *testing.T) {
 	t.Setenv("PLATFORM_MODE", "public")
 	t.Setenv("PLATFORM_TEAM_TRAEFIK_WATCH", "disabled")
 	t.Setenv("MCP_SENTINEL_INGEST_URL", "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events")
@@ -1124,7 +1124,10 @@ func TestRuntimeServerApplyDefaultsGatewayAndAnalyticsSecret(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/api/runtime/servers", bytes.NewReader([]byte(`{
 		"name": "demo",
 		"scope": "public",
-		"spec": {"image":"registry.example.com/public/demo"}
+		"spec": {
+			"image":"registry.example.com/public/demo",
+			"analytics":{"ingestURL":"http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events"}
+		}
 	}`)))
 	request = request.WithContext(withPrincipal(request.Context(), principal{
 		Role:      roleUser,
@@ -1160,6 +1163,57 @@ func TestRuntimeServerApplyDefaultsGatewayAndAnalyticsSecret(t *testing.T) {
 	}
 }
 
+func TestRuntimeServerApplyOmitsAnalyticsWhenNotRequested(t *testing.T) {
+	t.Setenv("PLATFORM_MODE", "public")
+	t.Setenv("PLATFORM_TEAM_TRAEFIK_WATCH", "disabled")
+	t.Setenv("MCP_SENTINEL_INGEST_URL", "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events")
+	scheme := runtime.NewScheme()
+	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme: %v", err)
+	}
+	server := &RuntimeServer{
+		k8sClients: &k8sclient.Clients{
+			Dynamic: dynamicfake.NewSimpleDynamicClient(scheme),
+			Clientset: kubernetesfake.NewSimpleClientset(&corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: defaultAnalyticsCredentialSourceSecretName, Namespace: "mcp-sentinel"},
+				Data: map[string][]byte{
+					defaultAnalyticsCredentialSourceKey: []byte("ingest-key-1"),
+				},
+			}),
+		},
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/runtime/servers", bytes.NewReader([]byte(`{
+		"name": "demo",
+		"scope": "public",
+		"spec": {"image":"registry.example.com/public/demo"}
+	}`)))
+	request = request.WithContext(withPrincipal(request.Context(), principal{
+		Role:      roleUser,
+		Subject:   "user-1",
+		Namespace: "mcp-team-acme",
+	}))
+	recorder := httptest.NewRecorder()
+
+	server.HandleRuntimeServers(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", recorder.Code, recorder.Body.String())
+	}
+	current, err := server.controlPlane().GetServer(context.Background(), defaultPublicCatalogNamespace, "demo")
+	if err != nil {
+		t.Fatalf("GetServer: %v", err)
+	}
+	if current.Spec.Gateway == nil || !current.Spec.Gateway.Enabled {
+		t.Fatalf("gateway = %#v, want enabled", current.Spec.Gateway)
+	}
+	if current.Spec.Analytics != nil {
+		t.Fatalf("analytics = %#v, want nil when not requested", current.Spec.Analytics)
+	}
+	if _, err := server.k8sClients.Clientset.CoreV1().Secrets(defaultPublicCatalogNamespace).Get(context.Background(), "demo-analytics-creds", metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("analytics secret lookup err = %v, want not found", err)
+	}
+}
+
 func TestRuntimeServerApplyDefaultsAnalyticsSecretNameFitsDNSLabelLimit(t *testing.T) {
 	t.Setenv("PLATFORM_MODE", "public")
 	t.Setenv("PLATFORM_TEAM_TRAEFIK_WATCH", "disabled")
@@ -1183,7 +1237,10 @@ func TestRuntimeServerApplyDefaultsAnalyticsSecretNameFitsDNSLabelLimit(t *testi
 	request := httptest.NewRequest(http.MethodPost, "/api/runtime/servers", bytes.NewReader([]byte(`{
 		"name": "`+longName+`",
 		"scope": "public",
-		"spec": {"image":"registry.example.com/public/demo"}
+		"spec": {
+			"image":"registry.example.com/public/demo",
+			"analytics":{"ingestURL":"http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events"}
+		}
 	}`)))
 	request = request.WithContext(withPrincipal(request.Context(), principal{
 		Role:      roleUser,
@@ -1271,7 +1328,10 @@ func TestApplyPublishedServerDefaultsSkipsAnalyticsSecretWhenRBACRestricted(t *t
 	server := &RuntimeServer{
 		k8sClients: &k8sclient.Clients{Clientset: client},
 	}
-	spec := &mcpv1alpha1.MCPServerSpec{Gateway: &mcpv1alpha1.GatewayConfig{Enabled: true}}
+	spec := &mcpv1alpha1.MCPServerSpec{
+		Gateway:   &mcpv1alpha1.GatewayConfig{Enabled: true},
+		Analytics: &mcpv1alpha1.AnalyticsConfig{IngestURL: "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events"},
+	}
 
 	if err := server.applyPublishedServerDefaults(context.Background(), defaultPublicCatalogNamespace, "demo", spec); err != nil {
 		t.Fatalf("applyPublishedServerDefaults() error = %v", err)

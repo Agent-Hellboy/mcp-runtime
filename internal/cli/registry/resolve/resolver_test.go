@@ -92,7 +92,7 @@ func TestPlatformURL(t *testing.T) {
 		}
 	})
 
-	t.Run("non_test_uses_service_ip_when_registry_ingress_is_missing", func(t *testing.T) {
+	t.Run("non_test_uses_service_dns_when_registry_ingress_is_missing", func(t *testing.T) {
 		t.Setenv("MCP_RUNTIME_TEST_MODE", "")
 		url := PlatformURL(logger, (&fakeKubectl{clusterIP: "10.96.201.51", port: "5000"}).commandArgs, Config{
 			RegistryEndpoint:        "registry.local",
@@ -101,8 +101,8 @@ func TestPlatformURL(t *testing.T) {
 			DefaultRegistryHost:     "registry.local",
 			RegistryPort:            5000,
 		})
-		if url != "10.96.201.51:5000" {
-			t.Errorf("expected service IP registry URL, got %q", url)
+		if url != "registry.registry.svc.cluster.local:5000" {
+			t.Errorf("expected service DNS registry URL, got %q", url)
 		}
 	})
 

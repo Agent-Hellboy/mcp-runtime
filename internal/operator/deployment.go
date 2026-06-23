@@ -719,20 +719,16 @@ func serverUsesOAuth(mcpServer *mcpv1alpha1.MCPServer) bool {
 }
 
 // analyticsEnabled reports whether the gateway sidecar should emit analytics
-// for this MCPServer. Analytics is on by default whenever an ingest URL is
-// available — either from the server spec or the operator-level fallback —
-// unless the server explicitly opts out via Spec.Analytics.Disabled.
+// for this MCPServer. Analytics is opt-in per server; the operator-level
+// default only supplies the endpoint after the server requests analytics.
 func (r *MCPServerReconciler) analyticsEnabled(mcpServer *mcpv1alpha1.MCPServer) bool {
 	if mcpServer == nil {
 		return false
 	}
-	if mcpServer.Spec.Analytics != nil && mcpServer.Spec.Analytics.Disabled {
+	if mcpServer.Spec.Analytics == nil || mcpServer.Spec.Analytics.Disabled {
 		return false
 	}
-	url := ""
-	if mcpServer.Spec.Analytics != nil {
-		url = strings.TrimSpace(mcpServer.Spec.Analytics.IngestURL)
-	}
+	url := strings.TrimSpace(mcpServer.Spec.Analytics.IngestURL)
 	if url == "" {
 		url = strings.TrimSpace(r.DefaultAnalyticsIngestURL)
 	}

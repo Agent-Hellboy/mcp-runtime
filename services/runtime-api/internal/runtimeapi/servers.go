@@ -425,11 +425,6 @@ func analyticsConfigured(spec *mcpv1alpha1.MCPServerSpec) bool {
 	if spec.Analytics != nil && strings.TrimSpace(spec.Analytics.IngestURL) != "" {
 		return true
 	}
-	for _, key := range []string{"MCP_SENTINEL_INGEST_URL", "MCP_ANALYTICS_INGEST_URL"} {
-		if value := strings.TrimSpace(envOr(key, "")); value != "" {
-			return true
-		}
-	}
 	return false
 }
 

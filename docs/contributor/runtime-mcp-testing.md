@@ -73,17 +73,13 @@ servers:
       required: true
     gateway:
       enabled: true
-    analytics:
-      ingestURL: http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events
-      apiKeySecretRef:
-        name: workspace-assistant-mcp-analytics-creds
-        key: api-key
 EOF
 ```
 
-Create the analytics Secret when you apply raw YAML with `kubectl`. The
-platform-backed `mcp-runtime server deploy` path creates this per-server Secret
-automatically.
+If you add an `analytics.ingestURL` block and apply raw YAML with `kubectl`,
+create the analytics Secret yourself. The platform-backed
+`mcp-runtime server deploy` path creates the per-server Secret automatically
+when analytics is configured and `analytics.apiKeySecretRef` is empty.
 
 ```bash
 API_KEY="$(
@@ -131,14 +127,21 @@ PY
 ./bin/mcp-runtime server deploy workspace-assistant-mcp \
   --scope tenant \
   --metadata-file /tmp/workspace-assistant-mcp.yaml
-kubectl rollout status deploy/workspace-assistant-mcp -n mcp-servers --timeout=180s
+SERVER_NAMESPACE="$(
+  kubectl get deploy -A -l app=workspace-assistant-mcp \
+    -o jsonpath='{.items[0].metadata.namespace}'
+)"
+kubectl rollout status deploy/workspace-assistant-mcp -n "$SERVER_NAMESPACE" --timeout=180s
 ```
 
 ## Inspect Runtime Outputs
 
 ```bash
 SERVER=workspace-assistant-mcp
-NAMESPACE=mcp-servers
+NAMESPACE="$(
+  kubectl get deploy -A -l app="$SERVER" \
+    -o jsonpath='{.items[0].metadata.namespace}'
+)"
 
 kubectl get mcpserver "$SERVER" -n "$NAMESPACE" -o yaml
 kubectl get deploy/"$SERVER" svc/"$SERVER" ingress/"$SERVER" -n "$NAMESPACE" -o wide
