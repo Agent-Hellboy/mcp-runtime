@@ -6421,7 +6421,7 @@ components.
 
 - [`func BuildOperatorArgs(metricsAddr, probeAddr string, leaderElect, leaderElectChanged bool) []string`](#cli-setup-platform-func-buildoperatorargs-metricsaddr-probeaddr-string-leaderelect-leaderelectchanged-bool-string)
 - [`func SetupPlatform(logger *zap.Logger, plan setupplan.Plan, clusterMgr ClusterManagerAPI) error`](#cli-setup-platform-func-setupplatform-logger-zap-logger-plan-setupplan-plan-clustermgr-clustermanagerapi-error)
-- [`func ValidateMTLSSetupCLIFlags(withMTLS, tlsEnabled bool) error`](#cli-setup-platform-func-validatemtlssetupcliflags-withmtls-tlsenabled-bool-error)
+- [`func ValidateMTLSSetupCLIFlags(withMTLS, testMode, tlsEnabled bool, mtlsClusterIssuer string) error`](#cli-setup-platform-func-validatemtlssetupcliflags-withmtls-testmode-tlsenabled-bool-mtlsclusterissuer-string-error)
 - [`func ValidatePlatformMode(mode string) error`](#cli-setup-platform-func-validateplatformmode-mode-string-error)
 - [`func ValidatePublicPlatformAuthConfig(platformMode string, tlsEnabled, testMode bool, existingData map[string]string) error`](#cli-setup-platform-func-validatepublicplatformauthconfig-platformmode-string-tlsenabled-testmode-bool-existingdata-map-string-string-error)
 - [`func ValidatePublicPlatformAuthEnv(platformMode string, tlsEnabled, testMode bool) error`](#cli-setup-platform-func-validatepublicplatformauthenv-platformmode-string-tlsenabled-testmode-bool-error)
@@ -6457,12 +6457,15 @@ func BuildOperatorArgs(metricsAddr, probeAddr string, leaderElect, leaderElectCh
 func SetupPlatform(logger *zap.Logger, plan setupplan.Plan, clusterMgr ClusterManagerAPI) error
 ```
 
-<a id="cli-setup-platform-func-validatemtlssetupcliflags-withmtls-tlsenabled-bool-error"></a>
+<a id="cli-setup-platform-func-validatemtlssetupcliflags-withmtls-testmode-tlsenabled-bool-mtlsclusterissuer-string-error"></a>
 ```text
-func ValidateMTLSSetupCLIFlags(withMTLS, tlsEnabled bool) error
-    ValidateMTLSSetupCLIFlags enforces that the mTLS auth path is only enabled
-    alongside TLS: Traefik terminates the caller's mTLS on the websecure
-    entrypoint, which requires the TLS overlay and a host certificate.
+func ValidateMTLSSetupCLIFlags(withMTLS, testMode, tlsEnabled bool, mtlsClusterIssuer string) error
+    ValidateMTLSSetupCLIFlags enforces the mTLS setup flag contract:
+      - the mTLS auth path requires TLS (Traefik terminates the caller's mTLS on
+        the websecure entrypoint, which needs the TLS overlay + a host cert);
+      - --mtls-cluster-issuer only selects the workload issuer, so it must be
+        accompanied by an explicit opt-in (--with-mtls or --test-mode) rather
+        than silently enabling workload PKI.
 
 ```
 

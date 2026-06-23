@@ -39,12 +39,18 @@ func ValidateTLSSetupCLIFlags(
 	return nil
 }
 
-// ValidateMTLSSetupCLIFlags enforces that the mTLS auth path is only enabled
-// alongside TLS: Traefik terminates the caller's mTLS on the websecure
-// entrypoint, which requires the TLS overlay and a host certificate.
-func ValidateMTLSSetupCLIFlags(withMTLS, tlsEnabled bool) error {
+// ValidateMTLSSetupCLIFlags enforces the mTLS setup flag contract:
+//   - the mTLS auth path requires TLS (Traefik terminates the caller's mTLS on
+//     the websecure entrypoint, which needs the TLS overlay + a host cert);
+//   - --mtls-cluster-issuer only selects the workload issuer, so it must be
+//     accompanied by an explicit opt-in (--with-mtls or --test-mode) rather than
+//     silently enabling workload PKI.
+func ValidateMTLSSetupCLIFlags(withMTLS, testMode, tlsEnabled bool, mtlsClusterIssuer string) error {
 	if withMTLS && !tlsEnabled {
 		return core.NewWithSentinel(core.ErrFieldRequired, "--with-mtls requires --with-tls: mTLS terminates at the ingress on the websecure (TLS) entrypoint")
+	}
+	if strings.TrimSpace(mtlsClusterIssuer) != "" && !withMTLS && !testMode {
+		return core.NewWithSentinel(core.ErrFieldRequired, "--mtls-cluster-issuer only selects the workload issuer; pass --with-mtls (or --test-mode) to enable the mTLS auth path")
 	}
 	return nil
 }

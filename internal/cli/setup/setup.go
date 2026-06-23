@@ -187,7 +187,7 @@ will use to push and pull container images.`,
 			if err := setupplatform.ValidateRegistryTLSMode(registryMode, tlsEnabled, acmeEmail); err != nil {
 				return err
 			}
-			if err := setupplatform.ValidateMTLSSetupCLIFlags(withMTLS, tlsEnabled); err != nil {
+			if err := setupplatform.ValidateMTLSSetupCLIFlags(withMTLS, testMode, tlsEnabled, mtlsClusterIssuer); err != nil {
 				return err
 			}
 

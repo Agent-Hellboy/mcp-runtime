@@ -46,13 +46,25 @@ func TestValidateTLSSetupCLIFlags(t *testing.T) {
 
 func TestValidateMTLSSetupCLIFlags(t *testing.T) {
 	t.Parallel()
-	if err := ValidateMTLSSetupCLIFlags(true, false); err == nil || !errors.Is(err, core.ErrFieldRequired) {
+	// withMTLS, testMode, tlsEnabled, issuer
+	if err := ValidateMTLSSetupCLIFlags(true, false, false, ""); err == nil || !errors.Is(err, core.ErrFieldRequired) {
 		t.Fatalf("--with-mtls without --with-tls should fail with ErrFieldRequired, got %v", err)
 	}
-	if err := ValidateMTLSSetupCLIFlags(true, true); err != nil {
+	if err := ValidateMTLSSetupCLIFlags(true, false, true, ""); err != nil {
 		t.Fatalf("--with-mtls with --with-tls should pass, got %v", err)
 	}
-	if err := ValidateMTLSSetupCLIFlags(false, false); err != nil {
+	if err := ValidateMTLSSetupCLIFlags(false, false, false, ""); err != nil {
 		t.Fatalf("mtls disabled should pass, got %v", err)
+	}
+	// --mtls-cluster-issuer without an explicit opt-in is a silent misconfig.
+	if err := ValidateMTLSSetupCLIFlags(false, false, true, "corp-issuer"); err == nil || !errors.Is(err, core.ErrFieldRequired) {
+		t.Fatalf("--mtls-cluster-issuer without --with-mtls/--test-mode should fail, got %v", err)
+	}
+	// ...but it is fine alongside --with-mtls or --test-mode.
+	if err := ValidateMTLSSetupCLIFlags(true, false, true, "corp-issuer"); err != nil {
+		t.Fatalf("issuer + --with-mtls should pass, got %v", err)
+	}
+	if err := ValidateMTLSSetupCLIFlags(false, true, false, "mcp-runtime-ca"); err != nil {
+		t.Fatalf("issuer + --test-mode should pass, got %v", err)
 	}
 }
