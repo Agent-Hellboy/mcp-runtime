@@ -112,11 +112,9 @@ func (r *MCPServer) DefaultWithOptions(options MCPServerDefaultOptions) {
 	if strings.TrimSpace(r.Spec.IngressPath) == "" {
 		r.Spec.IngressPath = defaultIngressPathFromName(r.Name)
 	}
-	authMode := AuthMode("")
-	if r.Spec.Auth != nil {
-		authMode = r.Spec.Auth.Mode
-	}
-	if strings.TrimSpace(r.Spec.PublicPathPrefix) == "" && authMode != AuthModeMTLS {
+	// Path-based public routing is the default for all auth modes, including
+	// mtls: Traefik terminates the client mTLS and routes by path to the gateway.
+	if strings.TrimSpace(r.Spec.PublicPathPrefix) == "" {
 		r.Spec.PublicPathPrefix = defaultPublicPathPrefixFromName(r.Name)
 	}
 	if strings.TrimSpace(r.Spec.IngressClass) == "" {
@@ -315,9 +313,9 @@ func (r *MCPServer) validate() error {
 		if strings.TrimSpace(r.Spec.Auth.TrustDomain) == "" {
 			allErrs = append(allErrs, field.Required(specPath.Child("auth", "trustDomain"), "auth.trustDomain is required when auth.mode is mtls"))
 		}
-		if strings.TrimSpace(r.Spec.PublicPathPrefix) != "" {
-			allErrs = append(allErrs, field.Forbidden(specPath.Child("publicPathPrefix"), "auth.mode mtls requires host-based TLS passthrough and cannot use path-based routing"))
-		}
+		// Path-based routing is supported in mtls mode: Traefik terminates the
+		// client mTLS, injects the verified SPIFFE identity header, and routes by
+		// path to the gateway over a re-encrypted mTLS hop.
 		ingressClass := strings.TrimSpace(r.Spec.IngressClass)
 		if ingressClass != "" && ingressClass != "traefik" {
 			allErrs = append(allErrs, field.Invalid(specPath.Child("ingressClass"), r.Spec.IngressClass, "auth.mode mtls currently requires the traefik ingress class"))

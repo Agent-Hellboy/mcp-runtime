@@ -98,12 +98,14 @@ type resourceReadiness = operatorutil.ResourceReadiness
 //+kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=networking.k8s.io,resources=ingressclasses,verbs=get;list;watch
+//+kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups="",resources=events,verbs=create;patch;update
 //+kubebuilder:rbac:groups=mcpruntime.org,resources=mcpaccessgrants,verbs=get;list;watch
 //+kubebuilder:rbac:groups=mcpruntime.org,resources=mcpagentsessions,verbs=get;list;watch
 //+kubebuilder:rbac:groups=cert-manager.io,resources=certificates,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=traefik.io,resources=ingressroutetcps,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=traefik.io,resources=ingressroutetcps;ingressroutes;middlewares;tlsoptions;serverstransports,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile is part of the main kubernetes reconciliation loop
 func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -249,6 +251,13 @@ func (r *MCPServerReconciler) reconcileResources(ctx context.Context, mcpServer 
 		r.updateStatus(ctx, mcpServer, "Error", fmt.Sprintf("Failed to reconcile gateway Certificate: %v", err), resourceReadiness{})
 		return wrappedErr
 	}
+	if err := r.reconcileTraefikClientCertificate(ctx, mcpServer); err != nil {
+		contextMap["resource"] = "traefik-client-certificate"
+		wrappedErr := wrapOperatorError(err, "Failed to reconcile Traefik client Certificate", contextMap)
+		logOperatorError(logger, wrappedErr, "Failed to reconcile Traefik client Certificate")
+		r.updateStatus(ctx, mcpServer, "Error", fmt.Sprintf("Failed to reconcile Traefik client Certificate: %v", err), resourceReadiness{})
+		return wrappedErr
+	}
 	if err := r.reconcileDeployment(ctx, mcpServer); err != nil {
 		contextMap["resource"] = "deployment"
 		wrappedErr := wrapOperatorError(err, "Failed to reconcile Deployment", contextMap)
@@ -275,6 +284,20 @@ func (r *MCPServerReconciler) reconcileResources(ctx context.Context, mcpServer 
 		wrappedErr := wrapOperatorError(err, "Failed to reconcile Ingress", contextMap)
 		logOperatorError(logger, wrappedErr, "Failed to reconcile Ingress")
 		r.updateStatus(ctx, mcpServer, "Error", fmt.Sprintf("Failed to reconcile Ingress: %v", err), resourceReadiness{})
+		return wrappedErr
+	}
+	if err := r.reconcileMTLSNetworkPolicy(ctx, mcpServer); err != nil {
+		contextMap["resource"] = "networkpolicy"
+		wrappedErr := wrapOperatorError(err, "Failed to reconcile mTLS NetworkPolicy", contextMap)
+		logOperatorError(logger, wrappedErr, "Failed to reconcile mTLS NetworkPolicy")
+		r.updateStatus(ctx, mcpServer, "Error", fmt.Sprintf("Failed to reconcile mTLS NetworkPolicy: %v", err), resourceReadiness{})
+		return wrappedErr
+	}
+	if err := r.reconcileMTLSTrustBundle(ctx, mcpServer); err != nil {
+		contextMap["resource"] = "trust-bundle"
+		wrappedErr := wrapOperatorError(err, "Failed to reconcile mTLS trust bundle", contextMap)
+		logOperatorError(logger, wrappedErr, "Failed to reconcile mTLS trust bundle")
+		r.updateStatus(ctx, mcpServer, "Error", fmt.Sprintf("Failed to reconcile mTLS trust bundle: %v", err), resourceReadiness{})
 		return wrappedErr
 	}
 	return nil

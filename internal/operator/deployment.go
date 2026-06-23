@@ -478,6 +478,11 @@ func (r *MCPServerReconciler) buildGatewayContainer(mcpServer *mcpv1alpha1.MCPSe
 			corev1.EnvVar{Name: "TLS_KEY_FILE", Value: gatewayTLSMountDir + "/tls.key"},
 			corev1.EnvVar{Name: "TLS_CLIENT_CA_FILE", Value: gatewayTLSMountDir + "/ca.crt"},
 		)
+		// Pin the ingress identity so only the Traefik client certificate (not
+		// any other identity-CA-signed cert) is accepted over the re-encrypted hop.
+		if proxyID := traefikProxySPIFFEID(mcpServer); proxyID != "" {
+			envVars = append(envVars, corev1.EnvVar{Name: "TRUSTED_PROXY_SPIFFE_ID", Value: proxyID})
+		}
 	}
 	if mcpServer.Spec.Gateway.StripPrefix != "" {
 		envVars = append(envVars, corev1.EnvVar{Name: "STRIP_PREFIX", Value: mcpServer.Spec.Gateway.StripPrefix})

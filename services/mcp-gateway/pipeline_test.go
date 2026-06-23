@@ -191,22 +191,33 @@ func TestAuthFilterRejectsOAuthMissingBearer(t *testing.T) {
 	}
 }
 
-func TestAuthFilterMTLSUsesVerifiedSPIFFESessionAndIgnoresHeaders(t *testing.T) {
-	t.Parallel()
-	s := minimalServer()
-	ex := newTestExchange(http.MethodPost, "/mcp", `{}`, map[string]string{
-		defaultHumanHeader:   "spoofed-human",
-		defaultSessionHeader: "spoofed-session",
-	})
-	spiffeURI, err := url.Parse("spiffe://example.org/ns/team-a/session/session-1")
-	if err != nil {
-		t.Fatal(err)
+// verifiedProxyTLS builds a ConnectionState representing a verified mTLS hop
+// from the ingress. peerURIs are the URI SANs on the ingress's client cert
+// (used for trusted-proxy pinning); pass none when pinning is disabled.
+func verifiedProxyTLS(peerURIs ...string) *tls.ConnectionState {
+	cert := &x509.Certificate{}
+	for _, u := range peerURIs {
+		if parsed, err := url.Parse(u); err == nil {
+			cert.URIs = append(cert.URIs, parsed)
+		}
 	}
-	cert := &x509.Certificate{URIs: []*url.URL{spiffeURI}}
-	ex.R.TLS = &tls.ConnectionState{
+	return &tls.ConnectionState{
 		PeerCertificates: []*x509.Certificate{cert},
 		VerifiedChains:   [][]*x509.Certificate{{cert}},
 	}
+}
+
+func TestAuthFilterMTLSUsesVerifiedHeaderAndIgnoresGovernanceHeaders(t *testing.T) {
+	t.Parallel()
+	s := minimalServer()
+	ex := newTestExchange(http.MethodPost, "/mcp", `{}`, map[string]string{
+		// Spoofed governance headers must be ignored; identity comes only from
+		// the ingress-injected verified SPIFFE header.
+		defaultHumanHeader:          "spoofed-human",
+		defaultSessionHeader:        "spoofed-session",
+		defaultVerifiedSPIFFEHeader: "spiffe://example.org/ns/team-a/session/session-1",
+	})
+	ex.R.TLS = verifiedProxyTLS()
 	ex.Policy = &policypkg.Document{
 		Auth: &policypkg.Auth{Mode: "mtls", TrustDomain: "example.org"},
 		Sessions: []policypkg.Binding{{
@@ -223,6 +234,111 @@ func TestAuthFilterMTLSUsesVerifiedSPIFFESessionAndIgnoresHeaders(t *testing.T) 
 	}
 	if ex.Identity.HumanID != "human-1" || ex.Identity.SessionID != "session-1" {
 		t.Fatalf("identity = %#v, want rendered session identity", ex.Identity)
+	}
+}
+
+// TestAuthFilterMTLSRejectsForgedHeaderWithoutMTLS is the gateway half of the
+// "trusted header" guarantee: a request that carries the verified SPIFFE header
+// but did NOT arrive over a verified mTLS hop (e.g. a pod connecting directly to
+// the gateway, bypassing the ingress) must be rejected before the header is read.
+func TestAuthFilterMTLSRejectsForgedHeaderWithoutMTLS(t *testing.T) {
+	t.Parallel()
+	s := minimalServer()
+	ex := newTestExchange(http.MethodPost, "/mcp", `{}`, map[string]string{
+		defaultVerifiedSPIFFEHeader: "spiffe://example.org/ns/team-a/session/session-1",
+	})
+	// No ex.R.TLS — plaintext / ingress-bypassing connection.
+	ex.Policy = &policypkg.Document{
+		Auth:     &policypkg.Auth{Mode: "mtls", TrustDomain: "example.org"},
+		Sessions: []policypkg.Binding{{Name: "session-1", Namespace: "team-a", HumanID: "human-1"}},
+	}
+
+	if got := s.authFilter(ex); got != Reject {
+		t.Fatalf("authFilter mtls = %v, want Reject", got)
+	}
+	if ex.Decision.Reason != "missing_client_certificate" {
+		t.Fatalf("reason = %q, want missing_client_certificate", ex.Decision.Reason)
+	}
+	if ex.Identity != (identityContext{}) {
+		t.Fatalf("identity = %#v, want empty (forged header must not be trusted)", ex.Identity)
+	}
+}
+
+func TestAuthFilterMTLSRejectsMissingVerifiedHeader(t *testing.T) {
+	t.Parallel()
+	s := minimalServer()
+	ex := newTestExchange(http.MethodPost, "/mcp", `{}`, nil)
+	ex.R.TLS = verifiedProxyTLS()
+	ex.Policy = &policypkg.Document{Auth: &policypkg.Auth{Mode: "mtls", TrustDomain: "example.org"}}
+
+	if got := s.authFilter(ex); got != Reject {
+		t.Fatalf("authFilter mtls = %v, want Reject", got)
+	}
+	if ex.Decision.Reason != "missing_verified_identity" {
+		t.Fatalf("reason = %q, want missing_verified_identity", ex.Decision.Reason)
+	}
+}
+
+func TestAuthFilterMTLSRejectsWrongTrustDomain(t *testing.T) {
+	t.Parallel()
+	s := minimalServer()
+	ex := newTestExchange(http.MethodPost, "/mcp", `{}`, map[string]string{
+		defaultVerifiedSPIFFEHeader: "spiffe://attacker.org/ns/team-a/session/session-1",
+	})
+	ex.R.TLS = verifiedProxyTLS()
+	ex.Policy = &policypkg.Document{
+		Auth:     &policypkg.Auth{Mode: "mtls", TrustDomain: "example.org"},
+		Sessions: []policypkg.Binding{{Name: "session-1", Namespace: "team-a"}},
+	}
+
+	if got := s.authFilter(ex); got != Reject {
+		t.Fatalf("authFilter mtls = %v, want Reject", got)
+	}
+	if ex.Decision.Reason != "invalid_spiffe_identity" {
+		t.Fatalf("reason = %q, want invalid_spiffe_identity", ex.Decision.Reason)
+	}
+}
+
+func TestAuthFilterMTLSTrustedProxyPinning(t *testing.T) {
+	t.Parallel()
+	const proxyID = "spiffe://example.org/ns/traefik/sa/traefik"
+	for _, tc := range []struct {
+		name      string
+		peerURIs  []string
+		wantAllow bool
+		reason    string
+	}{
+		{name: "matching proxy identity", peerURIs: []string{proxyID}, wantAllow: true},
+		{name: "wrong proxy identity", peerURIs: []string{"spiffe://example.org/ns/evil/sa/evil"}, reason: "untrusted_proxy"},
+		{name: "no proxy identity", peerURIs: nil, reason: "untrusted_proxy"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := minimalServer()
+			s.trustedProxySPIFFE = proxyID
+			ex := newTestExchange(http.MethodPost, "/mcp", `{}`, map[string]string{
+				defaultVerifiedSPIFFEHeader: "spiffe://example.org/ns/team-a/session/session-1",
+			})
+			ex.R.TLS = verifiedProxyTLS(tc.peerURIs...)
+			ex.Policy = &policypkg.Document{
+				Auth:     &policypkg.Auth{Mode: "mtls", TrustDomain: "example.org"},
+				Sessions: []policypkg.Binding{{Name: "session-1", Namespace: "team-a", HumanID: "human-1"}},
+			}
+
+			got := s.authFilter(ex)
+			if tc.wantAllow {
+				if got != Continue {
+					t.Fatalf("authFilter = %v, want Continue", got)
+				}
+				return
+			}
+			if got != Reject {
+				t.Fatalf("authFilter = %v, want Reject", got)
+			}
+			if ex.Decision.Reason != tc.reason {
+				t.Fatalf("reason = %q, want %q", ex.Decision.Reason, tc.reason)
+			}
+		})
 	}
 }
 
@@ -273,16 +389,10 @@ func TestAuthFilterMTLSRejectsRevokedOrExpiredSession(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			s := minimalServer()
-			ex := newTestExchange(http.MethodPost, "/mcp", `{}`, nil)
-			spiffeURI, err := url.Parse("spiffe://example.org/ns/team-a/session/session-1")
-			if err != nil {
-				t.Fatal(err)
-			}
-			cert := &x509.Certificate{URIs: []*url.URL{spiffeURI}}
-			ex.R.TLS = &tls.ConnectionState{
-				PeerCertificates: []*x509.Certificate{cert},
-				VerifiedChains:   [][]*x509.Certificate{{cert}},
-			}
+			ex := newTestExchange(http.MethodPost, "/mcp", `{}`, map[string]string{
+				defaultVerifiedSPIFFEHeader: "spiffe://example.org/ns/team-a/session/session-1",
+			})
+			ex.R.TLS = verifiedProxyTLS()
 			ex.Policy = &policypkg.Document{
 				Auth:     &policypkg.Auth{Mode: "mtls", TrustDomain: "example.org"},
 				Sessions: []policypkg.Binding{tc.binding},

@@ -2,13 +2,7 @@ package adapter
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/x509"
-	"encoding/pem"
 	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -46,51 +40,17 @@ func newEnrollCmd(_ *core.Runtime) *cobra.Command {
 	bindPlatformSessionFlags(cmd, &flags)
 	_ = cmd.Flags().MarkHidden("auto-refresh")
 	cmd.Flags().StringVar(&outputDir, "output-dir", ".", "Directory for client.crt, client.key, and ca.crt")
-	cmd.Flags().StringVar(&trustDomain, "trust-domain", envOrDefault("MCP_MTLS_TRUST_DOMAIN", "mcpruntime.org"), "SPIFFE trust domain configured on the platform")
+	cmd.Flags().StringVar(&trustDomain, "trust-domain", envOrDefault(EnvMTLSTrustDomain, DefaultMTLSTrustDomain), "SPIFFE trust domain configured on the platform")
 	return cmd
 }
 
 func enrollAdapterCertificate(ctx context.Context, client *platformapi.PlatformClient, flags platformSessionFlags, outputDir, trustDomain string, out interface{ Write([]byte) (int, error) }) error {
-	trustDomain = strings.TrimSpace(trustDomain)
-	if trustDomain == "" {
+	if strings.TrimSpace(trustDomain) == "" {
 		return fmt.Errorf("--trust-domain must not be empty")
 	}
-	session, err := client.CreateAdapterSession(ctx, platformapi.AdapterSessionRequest{
-		ServerName: strings.TrimSpace(flags.server),
-		Namespace:  strings.TrimSpace(flags.namespace),
-		AgentID:    strings.TrimSpace(flags.agent),
-	})
+	cred, err := issueAdapterCredential(ctx, client, flags, trustDomain)
 	if err != nil {
-		return fmt.Errorf("create adapter session: %w", err)
-	}
-
-	spiffeID := &url.URL{
-		Scheme: "spiffe",
-		Host:   trustDomain,
-		Path:   "/ns/" + session.Namespace + "/session/" + session.Name,
-	}
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return fmt.Errorf("generate client key: %w", err)
-	}
-	csrDER, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
-		URIs: []*url.URL{spiffeID},
-	}, key)
-	if err != nil {
-		return fmt.Errorf("create CSR: %w", err)
-	}
-	csrPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrDER})
-	issued, err := client.IssueAdapterCertificate(ctx, platformapi.AdapterCertificateRequest{
-		Namespace: session.Namespace,
-		Session:   session.Name,
-		CSR:       string(csrPEM),
-	})
-	if err != nil {
-		return fmt.Errorf("issue adapter certificate: %w", err)
-	}
-	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
-	if err != nil {
-		return fmt.Errorf("marshal client key: %w", err)
+		return err
 	}
 
 	dir := filepath.Clean(outputDir)
@@ -102,16 +62,16 @@ func enrollAdapterCertificate(ctx context.Context, client *platformapi.PlatformC
 		data []byte
 		mode os.FileMode
 	}{
-		{"client.crt", []byte(issued.Certificate), 0o600},
-		{"client.key", pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}), 0o600},
-		{"ca.crt", []byte(issued.CABundle), 0o644},
+		{"client.crt", cred.CertPEM, 0o600},
+		{"client.key", cred.KeyPEM, 0o600},
+		{"ca.crt", cred.CABundle, 0o644},
 	}
 	for _, file := range files {
 		if err := writeCredentialFile(dir, file.name, file.data, file.mode); err != nil {
 			return fmt.Errorf("write %s: %w", file.name, err)
 		}
 	}
-	_, _ = fmt.Fprintf(out, "issued %s (expires %s)\n", issued.SPIFFEID, issued.ExpiresAt.Format("2006-01-02T15:04:05Z07:00"))
+	_, _ = fmt.Fprintf(out, "issued %s (expires %s)\n", cred.SPIFFEID, cred.ExpiresAt.Format("2006-01-02T15:04:05Z07:00"))
 	_, _ = fmt.Fprintf(out, "use --tls-client-cert %s --tls-client-key %s --tls-ca-bundle %s\n",
 		filepath.Join(dir, "client.crt"), filepath.Join(dir, "client.key"), filepath.Join(dir, "ca.crt"))
 	return nil
