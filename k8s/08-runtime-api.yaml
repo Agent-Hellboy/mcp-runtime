@@ -88,6 +88,15 @@ spec:
                   key: INTERNAL_AUTH_TOKEN
             - name: OTEL_SERVICE_NAME
               value: mcp-runtime-api
+            - name: MCP_REGISTRY_PUSH_TEMP_DIR
+              value: /tmp
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+          volumeMounts:
+            - name: runtime-api-tmp
+              mountPath: /tmp
           resources:
             requests:
               cpu: 50m
@@ -107,3 +116,6 @@ spec:
               port: 8084
             initialDelaySeconds: 10
             periodSeconds: 20
+      volumes:
+        - name: runtime-api-tmp
+          emptyDir: {}

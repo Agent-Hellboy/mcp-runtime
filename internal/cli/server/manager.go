@@ -595,7 +595,7 @@ func (m *ServerManager) DeployServer(name, namespace, team, scope, image, imageT
 		if scope == "" {
 			scope = string(selectedMetadata.Scope)
 		}
-		if namespace == "" && team == "" {
+		if namespace == "" && team == "" && (scope == "" || scope == string(publishscope.Tenant)) {
 			if !(scope == string(publishscope.Tenant) && strings.TrimSpace(selectedMetadata.Namespace) == core.NamespaceMCPServers) {
 				namespace = selectedMetadata.Namespace
 			}

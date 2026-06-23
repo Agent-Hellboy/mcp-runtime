@@ -184,9 +184,9 @@ func readRegistryPushRequest(r *http.Request) (out registryPushRequest, err erro
 				part.Close()
 				return registryPushRequest{}, fmt.Errorf("duplicate image upload")
 			}
-			if out.Target == "" || out.Scope == "" {
+			if out.Target == "" {
 				part.Close()
-				return registryPushRequest{}, fmt.Errorf("target and scope must be provided before image_tar")
+				return registryPushRequest{}, fmt.Errorf("target must be provided before image_tar")
 			}
 			tarFile, err = os.CreateTemp(registryPushTempDir(), "mcp-registry-upload-*.tar")
 			if err != nil {
@@ -235,7 +235,24 @@ func registryPushAuthContext(target string, scope publishscope.Scope, p principa
 			return "", "", fmt.Errorf("org catalog writes are restricted to admins")
 		}
 		return defaultOrgCatalogNamespace, "", nil
-	case publishscope.Tenant, "":
+	case "":
+		prefix, _, found := strings.Cut(repoPath, "/")
+		if !found || strings.TrimSpace(prefix) == "" {
+			if p.Role == roleAdmin {
+				return "", "", nil
+			}
+			return "", "", fmt.Errorf("tenant registry pushes require a team-scoped repository path")
+		}
+		if p.Role == roleAdmin {
+			return "", prefix, nil
+		}
+		for _, team := range p.Teams {
+			if prefix == strings.TrimSpace(team.Slug) || prefix == strings.TrimSpace(team.Namespace) {
+				return strings.TrimSpace(team.Namespace), strings.TrimSpace(team.Slug), nil
+			}
+		}
+		return "", "", fmt.Errorf("repository must be scoped to one of your teams (%s)", strings.Join(quoteStrings(principalRegistryScopes(p)), " or "))
+	case publishscope.Tenant:
 		prefix, _, found := strings.Cut(repoPath, "/")
 		if !found || strings.TrimSpace(prefix) == "" {
 			return "", "", fmt.Errorf("tenant registry pushes require a team-scoped repository path")

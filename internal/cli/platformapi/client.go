@@ -231,9 +231,9 @@ func (c *PlatformClient) PushRegistryImage(ctx context.Context, tarPath, target,
 	c.setAuthHeaders(req)
 	req.Header.Set("content-type", contentType)
 
-	client := c.http
-	if client == nil {
-		client = &http.Client{Timeout: 15 * time.Minute}
+	client := &http.Client{Timeout: 15 * time.Minute}
+	if c.http != nil && c.http.Transport != nil {
+		client.Transport = c.http.Transport
 	}
 	resp, err := client.Do(req)
 	if err != nil {

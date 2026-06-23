@@ -36,10 +36,10 @@ version: v1
 servers:
   - name: workspace-assistant-mcp
     description: Workspace assistant MCP server for task cards, release notes, and text cleanup.
+    namespace: mcp-servers
     route: /workspace-assistant-mcp/mcp
     publicPathPrefix: workspace-assistant-mcp
     port: 8088
-    namespace: mcp-servers
     envVars:
       - name: MCP_PATH
         value: /workspace-assistant-mcp/mcp
@@ -108,8 +108,25 @@ Build, push, and deploy:
 
 ./bin/mcp-runtime auth login --api-url http://localhost:18080
 
+# `server build image` updates the metadata with the resolved registry image
+# and tags that exact image locally. Push that image ref, not a guessed short
+# name, so the push command and deploy metadata stay in sync.
+IMAGE_REF="$(python3 - <<'PY'
+image = tag = ""
+with open('/tmp/workspace-assistant-mcp.yaml') as f:
+    for line in f:
+        stripped = line.strip()
+        if stripped.startswith("image: "):
+            image = stripped.split(":", 1)[1].strip()
+        elif stripped.startswith("imageTag: "):
+            tag = stripped.split(":", 1)[1].strip()
+if not image or not tag:
+    raise SystemExit("metadata missing image/imageTag; rerun server build image")
+print(f"{image}:{tag}")
+PY
+)"
 ./bin/mcp-runtime registry push \
-  --image workspace-assistant-mcp:dev
+  --image "$IMAGE_REF"
 
 ./bin/mcp-runtime server deploy workspace-assistant-mcp \
   --scope tenant \

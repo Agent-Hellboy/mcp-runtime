@@ -165,6 +165,41 @@ finding; route the report back to `internal/cli/core/errors.go` and
 
 ## Step 7 — Setup / registry / ingress regression (only when those areas changed)
 
+For user MCP server validation, follow
+`docs/contributor/runtime-mcp-testing.md` instead of hand-writing an
+`MCPServer` with placeholder images. Build the sample server with
+`server build image`, then push the exact image ref written back into metadata:
+
+```bash
+./bin/mcp-runtime server build image workspace-assistant-mcp \
+  --metadata-file /tmp/workspace-assistant-mcp.yaml \
+  --dockerfile examples/workspace-assistant-mcp/Dockerfile \
+  --context examples/workspace-assistant-mcp \
+  --tag dev
+IMAGE_REF="$(python3 - <<'PY'
+image = tag = ""
+with open('/tmp/workspace-assistant-mcp.yaml') as f:
+    for line in f:
+        stripped = line.strip()
+        if stripped.startswith("image: "):
+            image = stripped.split(":", 1)[1].strip()
+        elif stripped.startswith("imageTag: "):
+            tag = stripped.split(":", 1)[1].strip()
+if not image or not tag:
+    raise SystemExit("metadata missing image/imageTag; rerun server build image")
+print(f"{image}:{tag}")
+PY
+)"
+./bin/mcp-runtime registry push --image "$IMAGE_REF"
+./bin/mcp-runtime server deploy workspace-assistant-mcp \
+  --scope tenant \
+  --metadata-file /tmp/workspace-assistant-mcp.yaml
+```
+
+If `registry push` returns `504 Gateway Timeout`, treat that as a platform
+registry-push failure and inspect runtime-api / Traefik logs; do not replace
+the server with an unrelated image just to get a pod.
+
 ```bash
 # Re-run setup in place (test-mode is idempotent; this catches drift).
 MCP_SETUP_WAIT_TIMEOUT=900 \

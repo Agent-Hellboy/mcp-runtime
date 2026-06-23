@@ -46,6 +46,24 @@ func TestRegistryPushAuthContextTenantAllowsOwnedTeam(t *testing.T) {
 	}
 }
 
+func TestRegistryPushAuthContextEmptyScopeAllowsAdminUnscopedRepo(t *testing.T) {
+	t.Setenv("PLATFORM_MODE", "tenant")
+	namespace, teamSlug, err := registryPushAuthContext("registry.example.com/demo:v1", "", principal{Role: roleAdmin})
+	if err != nil {
+		t.Fatalf("registryPushAuthContext() error = %v", err)
+	}
+	if namespace != "" || teamSlug != "" {
+		t.Fatalf("namespace=%q teamSlug=%q", namespace, teamSlug)
+	}
+}
+
+func TestRegistryPushAuthContextTenantStillRequiresScopedRepo(t *testing.T) {
+	t.Setenv("PLATFORM_MODE", "tenant")
+	if _, _, err := registryPushAuthContext("registry.example.com/demo:v1", publishscope.Tenant, principal{Role: roleAdmin}); err == nil {
+		t.Fatal("expected tenant scope to require a team-scoped repository")
+	}
+}
+
 func TestRegistryPushAuthContextPublicRequiresCatalogWrite(t *testing.T) {
 	t.Setenv("PLATFORM_MODE", "tenant")
 	p := principal{Role: roleUser}
