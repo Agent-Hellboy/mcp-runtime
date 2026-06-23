@@ -60,7 +60,11 @@ type Input struct {
 	TLSClusterIssuer string
 	// MTLSClusterIssuer is a pre-existing enterprise workload issuer used for
 	// gateway server and adapter client certificates.
-	MTLSClusterIssuer  string
+	MTLSClusterIssuer string
+	// WithMTLS opts into the mTLS auth path outside test mode. When no
+	// MTLSClusterIssuer is supplied, setup provisions the bundled mcp-runtime-ca
+	// workload issuer (managed mode); supply MTLSClusterIssuer for an external one.
+	WithMTLS           bool
 	InstallCertManager bool
 }
 
@@ -88,6 +92,7 @@ type Plan struct {
 	ACMEStaging          bool
 	TLSClusterIssuer     string
 	MTLSClusterIssuer    string
+	WithMTLS             bool
 	InstallCertManager   bool
 }
 
@@ -153,7 +158,9 @@ func Build(input Input) Plan {
 	} else {
 		input.PlatformMode = PlatformModeTenant
 	}
-	if input.TestMode && strings.TrimSpace(input.MTLSClusterIssuer) == "" {
+	// Both test mode and an explicit --with-mtls without an external issuer fall
+	// back to the bundled mcp-runtime-ca workload issuer (managed mode).
+	if (input.TestMode || input.WithMTLS) && strings.TrimSpace(input.MTLSClusterIssuer) == "" {
 		input.MTLSClusterIssuer = DefaultTestMTLSClusterIssuer
 	}
 
@@ -211,5 +218,6 @@ func Build(input Input) Plan {
 		InstallCertManager: input.InstallCertManager,
 		TLSClusterIssuer:   input.TLSClusterIssuer,
 		MTLSClusterIssuer:  input.MTLSClusterIssuer,
+		WithMTLS:           input.WithMTLS,
 	}
 }

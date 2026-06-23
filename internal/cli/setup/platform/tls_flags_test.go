@@ -43,3 +43,16 @@ func TestValidateTLSSetupCLIFlags(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateMTLSSetupCLIFlags(t *testing.T) {
+	t.Parallel()
+	if err := ValidateMTLSSetupCLIFlags(true, false); err == nil || !errors.Is(err, core.ErrFieldRequired) {
+		t.Fatalf("--with-mtls without --with-tls should fail with ErrFieldRequired, got %v", err)
+	}
+	if err := ValidateMTLSSetupCLIFlags(true, true); err != nil {
+		t.Fatalf("--with-mtls with --with-tls should pass, got %v", err)
+	}
+	if err := ValidateMTLSSetupCLIFlags(false, false); err != nil {
+		t.Fatalf("mtls disabled should pass, got %v", err)
+	}
+}
