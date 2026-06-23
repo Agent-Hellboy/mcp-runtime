@@ -42,6 +42,21 @@ var ingressRouteTCPGVK = schema.GroupVersionKind{
 	Group: "traefik.io", Version: "v1alpha1", Kind: "IngressRouteTCP",
 }
 
+var (
+	ingressRouteGVK     = schema.GroupVersionKind{Group: "traefik.io", Version: "v1alpha1", Kind: "IngressRoute"}
+	middlewareGVK       = schema.GroupVersionKind{Group: "traefik.io", Version: "v1alpha1", Kind: "Middleware"}
+	tlsOptionGVK        = schema.GroupVersionKind{Group: "traefik.io", Version: "v1alpha1", Kind: "TLSOption"}
+	serversTransportGVK = schema.GroupVersionKind{Group: "traefik.io", Version: "v1alpha1", Kind: "ServersTransport"}
+)
+
+// spiffeIdentityPluginName must match the local plugin module name registered in
+// Traefik's static configuration (experimental.localPlugins).
+const spiffeIdentityPluginName = "spiffe-identity"
+
+// verifiedSPIFFEHeader is the header the spiffe-identity middleware injects and
+// the gateway reads. It must match the gateway's defaultVerifiedSPIFFEHeader.
+const verifiedSPIFFEHeader = "X-MCP-Verified-SPIFFE-ID"
+
 func serverUsesMTLS(mcpServer *mcpv1alpha1.MCPServer) bool {
 	return mcpServer != nil && mcpServer.Spec.Auth != nil && mcpServer.Spec.Auth.Mode == mcpv1alpha1.AuthModeMTLS
 }
@@ -135,26 +150,40 @@ func (r *MCPServerReconciler) reconcileGatewayCertificate(ctx context.Context, m
 	return r.Create(ctx, certificate)
 }
 
-// upsertCertificate creates or updates a cert-manager Certificate, diffing the
-// spec, labels, and owner references so reconciles are idempotent.
-func (r *MCPServerReconciler) upsertCertificate(ctx context.Context, cert *unstructured.Unstructured) error {
+// upsertUnstructured creates or updates an unstructured object (cert-manager or
+// Traefik CRD), diffing the spec, labels, and owner references so reconciles are
+// idempotent. The object must already carry its GVK, name, and namespace.
+func (r *MCPServerReconciler) upsertUnstructured(ctx context.Context, obj *unstructured.Unstructured) error {
 	current := &unstructured.Unstructured{}
-	current.SetGroupVersionKind(certificateGVK)
-	key := types.NamespacedName{Name: cert.GetName(), Namespace: cert.GetNamespace()}
+	current.SetGroupVersionKind(obj.GroupVersionKind())
+	key := types.NamespacedName{Name: obj.GetName(), Namespace: obj.GetNamespace()}
 	if err := r.Get(ctx, key, current); err == nil {
 		currentSpec, _, _ := unstructured.NestedMap(current.Object, "spec")
-		desiredSpec, _, _ := unstructured.NestedMap(cert.Object, "spec")
+		desiredSpec, _, _ := unstructured.NestedMap(obj.Object, "spec")
 		if !reflect.DeepEqual(currentSpec, desiredSpec) ||
-			!reflect.DeepEqual(current.GetLabels(), cert.GetLabels()) ||
-			!reflect.DeepEqual(current.GetOwnerReferences(), cert.GetOwnerReferences()) {
-			cert.SetResourceVersion(current.GetResourceVersion())
-			return r.Update(ctx, cert)
+			!reflect.DeepEqual(current.GetLabels(), obj.GetLabels()) ||
+			!reflect.DeepEqual(current.GetOwnerReferences(), obj.GetOwnerReferences()) {
+			obj.SetResourceVersion(current.GetResourceVersion())
+			return r.Update(ctx, obj)
 		}
 		return nil
 	} else if !apierrors.IsNotFound(err) {
 		return err
 	}
-	return r.Create(ctx, cert)
+	return r.Create(ctx, obj)
+}
+
+// deleteUnstructured removes an object by GVK/name/namespace, tolerating absent
+// objects and missing CRDs (so cleanup works even when Traefik CRDs are absent).
+func (r *MCPServerReconciler) deleteUnstructured(ctx context.Context, gvk schema.GroupVersionKind, name, namespace string) error {
+	obj := &unstructured.Unstructured{}
+	obj.SetGroupVersionKind(gvk)
+	obj.SetName(name)
+	obj.SetNamespace(namespace)
+	if err := r.Delete(ctx, obj); err != nil && !apierrors.IsNotFound(err) && !meta.IsNoMatchError(err) {
+		return err
+	}
+	return nil
 }
 
 // reconcileTraefikClientCertificate issues the client certificate the ingress
@@ -197,7 +226,7 @@ func (r *MCPServerReconciler) reconcileTraefikClientCertificate(ctx context.Cont
 		"mcpruntime.org/server":        mcpServer.Name,
 	})
 	cert.SetOwnerReferences([]metav1.OwnerReference{*metav1.NewControllerRef(mcpServer, mcpv1alpha1.GroupVersion.WithKind("MCPServer"))})
-	return r.upsertCertificate(ctx, cert)
+	return r.upsertUnstructured(ctx, cert)
 }
 
 // reconcileMTLSTrustBundle materializes the identity CA bundle as a Secret in
@@ -309,49 +338,126 @@ func (r *MCPServerReconciler) reconcileMTLSNetworkPolicy(ctx context.Context, mc
 	return err
 }
 
+func mtlsMiddlewareName(mcpServer *mcpv1alpha1.MCPServer) string {
+	return mcpServer.Name + "-spiffe-identity"
+}
+
+func mtlsTLSOptionName(mcpServer *mcpv1alpha1.MCPServer) string {
+	return mcpServer.Name + "-mtls"
+}
+
+func mtlsServersTransportName(mcpServer *mcpv1alpha1.MCPServer) string {
+	return mcpServer.Name + "-gateway"
+}
+
+// gatewayServerName is the SNI/verification name Traefik uses for the gateway
+// over the re-encrypted hop. It matches a dnsName on the gateway certificate.
+func gatewayServerName(mcpServer *mcpv1alpha1.MCPServer) string {
+	return fmt.Sprintf("%s.%s.svc.cluster.local", mcpServer.Name, mcpServer.Namespace)
+}
+
+// deleteMTLSIngress removes every Traefik resource the mtls path creates,
+// including the legacy passthrough IngressRouteTCP from the previous model.
 func (r *MCPServerReconciler) deleteMTLSIngress(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer) error {
-	route := &unstructured.Unstructured{}
-	route.SetGroupVersionKind(ingressRouteTCPGVK)
-	route.SetName(mcpServer.Name)
-	route.SetNamespace(mcpServer.Namespace)
-	if err := r.Delete(ctx, route); err != nil && !apierrors.IsNotFound(err) && !meta.IsNoMatchError(err) {
-		return err
+	ns := mcpServer.Namespace
+	for _, target := range []struct {
+		gvk  schema.GroupVersionKind
+		name string
+	}{
+		{ingressRouteGVK, mcpServer.Name},
+		{middlewareGVK, mtlsMiddlewareName(mcpServer)},
+		{tlsOptionGVK, mtlsTLSOptionName(mcpServer)},
+		{serversTransportGVK, mtlsServersTransportName(mcpServer)},
+		{ingressRouteTCPGVK, mcpServer.Name}, // legacy passthrough route
+	} {
+		if err := r.deleteUnstructured(ctx, target.gvk, target.name, ns); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
+// reconcileMTLSIngress generates the Traefik resources for the terminate-and-
+// re-encrypt model: a TLSOption that requires+verifies the caller's client
+// certificate, the spiffe-identity Middleware that injects the verified header,
+// a ServersTransport that re-encrypts to the gateway with the Traefik client
+// certificate, and a path-based IngressRoute tying them together. The legacy
+// passthrough IngressRouteTCP is removed.
 func (r *MCPServerReconciler) reconcileMTLSIngress(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer) error {
-	route := &unstructured.Unstructured{}
-	route.SetGroupVersionKind(ingressRouteTCPGVK)
-	route.SetName(mcpServer.Name)
-	route.SetNamespace(mcpServer.Namespace)
-	route.Object["spec"] = map[string]any{
-		"entryPoints": []any{"websecure"},
-		"routes": []any{map[string]any{
-			"match": fmt.Sprintf("HostSNI(`%s`)", effectiveIngressHost(mcpServer)),
-			"services": []any{map[string]any{
-				"name": mcpServer.Name,
-				"port": int64(mcpServer.Spec.ServicePort),
-			}},
-		}},
-		"tls": map[string]any{"passthrough": true},
-	}
-	route.SetOwnerReferences([]metav1.OwnerReference{*metav1.NewControllerRef(mcpServer, mcpv1alpha1.GroupVersion.WithKind("MCPServer"))})
-
-	current := &unstructured.Unstructured{}
-	current.SetGroupVersionKind(ingressRouteTCPGVK)
-	key := types.NamespacedName{Name: route.GetName(), Namespace: route.GetNamespace()}
-	if err := r.Get(ctx, key, current); err == nil {
-		currentSpec, _, _ := unstructured.NestedMap(current.Object, "spec")
-		desiredSpec, _, _ := unstructured.NestedMap(route.Object, "spec")
-		if !reflect.DeepEqual(currentSpec, desiredSpec) ||
-			!reflect.DeepEqual(current.GetOwnerReferences(), route.GetOwnerReferences()) {
-			route.SetResourceVersion(current.GetResourceVersion())
-			return r.Update(ctx, route)
-		}
-		return nil
-	} else if !apierrors.IsNotFound(err) {
+	// Drop the legacy passthrough route from the previous (gateway-terminates) model.
+	if err := r.deleteUnstructured(ctx, ingressRouteTCPGVK, mcpServer.Name, mcpServer.Namespace); err != nil {
 		return err
 	}
-	return r.Create(ctx, route)
+
+	trustDomain := ""
+	if mcpServer.Spec.Auth != nil {
+		trustDomain = strings.TrimSpace(mcpServer.Spec.Auth.TrustDomain)
+	}
+
+	tlsOption := r.traefikResource(mcpServer, tlsOptionGVK, mtlsTLSOptionName(mcpServer), map[string]any{
+		"minVersion": "VersionTLS12",
+		"clientAuth": map[string]any{
+			"secretNames":    []any{mtlsTrustBundleSecretName(mcpServer)},
+			"clientAuthType": "RequireAndVerifyClientCert",
+		},
+	})
+	middleware := r.traefikResource(mcpServer, middlewareGVK, mtlsMiddlewareName(mcpServer), map[string]any{
+		"plugin": map[string]any{
+			spiffeIdentityPluginName: map[string]any{
+				"verifiedHeader": verifiedSPIFFEHeader,
+				"trustDomain":    trustDomain,
+			},
+		},
+	})
+	serversTransport := r.traefikResource(mcpServer, serversTransportGVK, mtlsServersTransportName(mcpServer), map[string]any{
+		"serverName":          gatewayServerName(mcpServer),
+		"certificatesSecrets": []any{traefikClientCertSecretName(mcpServer)},
+		"rootCAsSecrets":      []any{mtlsTrustBundleSecretName(mcpServer)},
+	})
+
+	match := fmt.Sprintf("PathPrefix(`%s`)", effectiveIngressPath(mcpServer))
+	if host := effectiveIngressHost(mcpServer); host != "" {
+		match = fmt.Sprintf("Host(`%s`) && %s", host, match)
+	}
+	ingressRoute := r.traefikResource(mcpServer, ingressRouteGVK, mcpServer.Name, map[string]any{
+		"entryPoints": []any{"websecure"},
+		"routes": []any{map[string]any{
+			"match":       match,
+			"kind":        "Rule",
+			"middlewares": []any{map[string]any{"name": mtlsMiddlewareName(mcpServer)}},
+			"services": []any{map[string]any{
+				"name":             mcpServer.Name,
+				"port":             int64(mcpServer.Spec.Gateway.Port),
+				"serversTransport": mtlsServersTransportName(mcpServer),
+			}},
+		}},
+		// tls.options enforces client-cert verification. The server-side
+		// (caller-facing) certificate is supplied by the platform TLS setup for
+		// the shared host; per-server secretName is not set here.
+		"tls": map[string]any{
+			"options": map[string]any{"name": mtlsTLSOptionName(mcpServer)},
+		},
+	})
+
+	for _, obj := range []*unstructured.Unstructured{tlsOption, middleware, serversTransport, ingressRoute} {
+		if err := r.upsertUnstructured(ctx, obj); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// traefikResource builds an owned, labelled unstructured Traefik CR.
+func (r *MCPServerReconciler) traefikResource(mcpServer *mcpv1alpha1.MCPServer, gvk schema.GroupVersionKind, name string, spec map[string]any) *unstructured.Unstructured {
+	obj := &unstructured.Unstructured{}
+	obj.SetGroupVersionKind(gvk)
+	obj.SetName(name)
+	obj.SetNamespace(mcpServer.Namespace)
+	obj.Object["spec"] = spec
+	obj.SetLabels(map[string]string{
+		"app.kubernetes.io/managed-by": "mcp-runtime",
+		"mcpruntime.org/server":        mcpServer.Name,
+	})
+	obj.SetOwnerReferences([]metav1.OwnerReference{*metav1.NewControllerRef(mcpServer, mcpv1alpha1.GroupVersion.WithKind("MCPServer"))})
+	return obj
 }
