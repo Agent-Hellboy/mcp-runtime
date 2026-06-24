@@ -11,6 +11,7 @@ import (
 
 	"mcp-runtime/internal/cli/core"
 	"mcp-runtime/internal/cli/platformapi"
+	"mcp-runtime/pkg/certauth"
 )
 
 func newEnrollCmd(_ *core.Runtime) *cobra.Command {
@@ -67,7 +68,7 @@ func enrollAdapterCertificate(ctx context.Context, client *platformapi.PlatformC
 		{"ca.crt", cred.CABundle, 0o644},
 	}
 	for _, file := range files {
-		if err := writeCredentialFile(dir, file.name, file.data, file.mode); err != nil {
+		if err := certauth.WritePrivateFile(dir, file.name, file.data, file.mode); err != nil {
 			return fmt.Errorf("write %s: %w", file.name, err)
 		}
 	}
@@ -75,27 +76,6 @@ func enrollAdapterCertificate(ctx context.Context, client *platformapi.PlatformC
 	_, _ = fmt.Fprintf(out, "use --tls-client-cert %s --tls-client-key %s --tls-ca-bundle %s\n",
 		filepath.Join(dir, "client.crt"), filepath.Join(dir, "client.key"), filepath.Join(dir, "ca.crt"))
 	return nil
-}
-
-func writeCredentialFile(dir, name string, data []byte, mode os.FileMode) error {
-	root, err := os.OpenRoot(dir)
-	if err != nil {
-		return err
-	}
-	defer root.Close()
-	file, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
-	if err != nil {
-		return err
-	}
-	if err := file.Chmod(mode); err != nil {
-		_ = file.Close()
-		return err
-	}
-	if _, err := file.Write(data); err != nil {
-		_ = file.Close()
-		return err
-	}
-	return file.Close()
 }
 
 func envOrDefault(name, fallback string) string {

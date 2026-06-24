@@ -1,12 +1,11 @@
 package main
 
 import (
-	"crypto/x509"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
+	"mcp-runtime/pkg/identity"
 	policypkg "mcp-runtime/pkg/policy"
 )
 
@@ -96,7 +95,7 @@ func (s *gatewayServer) authenticateMTLS(r *http.Request, policy *policypkg.Docu
 	}
 	// (2) Optionally pin the trusted ingress identity.
 	if expected := strings.TrimSpace(s.trustedProxySPIFFE); expected != "" {
-		if !peerCertificateHasURI(r.TLS.PeerCertificates[0], expected) {
+		if !identity.CertificateHasURI(r.TLS.PeerCertificates[0], expected) {
 			return identityContext{}, "untrusted_proxy"
 		}
 	}
@@ -106,9 +105,9 @@ func (s *gatewayServer) authenticateMTLS(r *http.Request, policy *policypkg.Docu
 	if rawID == "" {
 		return identityContext{}, "missing_verified_identity"
 	}
-	namespace, sessionID, reason := parseSessionSPIFFE(rawID, policy.Auth.TrustDomain)
-	if reason != "" {
-		return identityContext{}, reason
+	namespace, sessionID, ok := identity.ParseSessionSPIFFE(rawID, policy.Auth.TrustDomain)
+	if !ok {
+		return identityContext{}, "invalid_spiffe_identity"
 	}
 
 	for _, binding := range policy.Sessions {
@@ -138,46 +137,6 @@ func (s *gatewayServer) verifiedSPIFFEHeaderName() string {
 		return h
 	}
 	return defaultVerifiedSPIFFEHeader
-}
-
-// parseSessionSPIFFE parses a session-bound SPIFFE ID of the form
-// spiffe://<trustDomain>/ns/<namespace>/session/<sessionID>. On any deviation
-// (wrong scheme, wrong trust domain, malformed path) it returns a denial
-// reason. It is deliberately strict and fails closed.
-func parseSessionSPIFFE(raw, trustDomain string) (namespace, sessionID, reason string) {
-	uri, err := url.Parse(raw)
-	if err != nil || uri == nil {
-		return "", "", "invalid_spiffe_identity"
-	}
-	if !strings.EqualFold(uri.Scheme, "spiffe") || !strings.EqualFold(uri.Host, strings.TrimSpace(trustDomain)) {
-		return "", "", "invalid_spiffe_identity"
-	}
-	parts := strings.Split(strings.Trim(uri.EscapedPath(), "/"), "/")
-	if len(parts) != 4 || parts[0] != "ns" || parts[2] != "session" {
-		return "", "", "invalid_spiffe_identity"
-	}
-	namespace, err = url.PathUnescape(parts[1])
-	if err != nil || strings.TrimSpace(namespace) == "" {
-		return "", "", "invalid_spiffe_identity"
-	}
-	sessionID, err = url.PathUnescape(parts[3])
-	if err != nil || strings.TrimSpace(sessionID) == "" {
-		return "", "", "invalid_spiffe_identity"
-	}
-	return namespace, sessionID, ""
-}
-
-// peerCertificateHasURI reports whether cert carries want as a URI SAN.
-func peerCertificateHasURI(cert *x509.Certificate, want string) bool {
-	if cert == nil {
-		return false
-	}
-	for _, uri := range cert.URIs {
-		if uri != nil && uri.String() == want {
-			return true
-		}
-	}
-	return false
 }
 
 func mtlsBindingExpired(expiresAt string) bool {

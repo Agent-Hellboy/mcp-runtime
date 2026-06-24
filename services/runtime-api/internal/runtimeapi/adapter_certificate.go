@@ -2,10 +2,8 @@ package runtimeapi
 
 import (
 	"context"
-	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
-	"encoding/pem"
 	"fmt"
 	"net/http"
 	"os"
@@ -15,6 +13,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+
+	"mcp-runtime/pkg/certauth"
+	"mcp-runtime/pkg/identity"
 )
 
 const adapterCertificateRequestMaxBytes = 64 << 10
@@ -113,8 +114,8 @@ func (s *AccessService) HandleAdapterCertificate(w http.ResponseWriter, r *http.
 		return
 	}
 
-	expectedSPIFFEID := fmt.Sprintf("spiffe://%s/ns/%s/session/%s", trustDomain, req.Namespace, req.Session)
-	csrDER, err := validateAdapterCSR(req.CSR, expectedSPIFFEID)
+	expectedSPIFFEID := identity.SessionSPIFFEID(trustDomain, req.Namespace, req.Session)
+	csrDER, err := certauth.ValidateCSRPEM(req.CSR, expectedSPIFFEID)
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
@@ -172,24 +173,6 @@ func (s *AccessService) HandleAdapterCertificate(w http.ResponseWriter, r *http.
 		SPIFFEID:    expectedSPIFFEID,
 		ExpiresAt:   expiresAt,
 	})
-}
-
-func validateAdapterCSR(raw, expectedSPIFFEID string) ([]byte, error) {
-	block, _ := pem.Decode([]byte(raw))
-	if block == nil || block.Type != "CERTIFICATE REQUEST" {
-		return nil, fmt.Errorf("csr must be a PEM CERTIFICATE REQUEST")
-	}
-	csr, err := x509.ParseCertificateRequest(block.Bytes)
-	if err != nil || csr.CheckSignature() != nil {
-		return nil, fmt.Errorf("csr is invalid or has an invalid signature")
-	}
-	if len(csr.URIs) != 1 || csr.URIs[0].String() != expectedSPIFFEID {
-		return nil, fmt.Errorf("csr must contain exactly the SPIFFE URI %q", expectedSPIFFEID)
-	}
-	if len(csr.DNSNames) != 0 || len(csr.EmailAddresses) != 0 || len(csr.IPAddresses) != 0 {
-		return nil, fmt.Errorf("csr may not contain DNS, email, or IP subject alternative names")
-	}
-	return block.Bytes, nil
 }
 
 func waitForIssuedAdapterCertificate(ctx context.Context, s *AccessService, namespace, name string) (string, string, error) {

@@ -2,17 +2,12 @@ package adapter
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/x509"
-	"encoding/pem"
 	"fmt"
-	"net/url"
 	"strings"
 	"time"
 
 	"mcp-runtime/internal/cli/platformapi"
+	"mcp-runtime/pkg/certauth"
 )
 
 // issuedCredential is a platform-signed, session-bound mTLS credential. The
@@ -28,33 +23,6 @@ type issuedCredential struct {
 	SPIFFEID  string
 	Session   platformapi.AdapterSession
 	ExpiresAt time.Time
-}
-
-// buildSessionCSR generates a fresh P-256 key and a CSR whose only SAN is the
-// session's SPIFFE URI. It returns the PKCS#8 key PEM and the CSR PEM.
-func buildSessionCSR(trustDomain, namespace, sessionName string) (keyPEM, csrPEM []byte, spiffe *url.URL, err error) {
-	spiffe = &url.URL{
-		Scheme: "spiffe",
-		Host:   trustDomain,
-		Path:   "/ns/" + namespace + "/session/" + sessionName,
-	}
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("generate client key: %w", err)
-	}
-	csrDER, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
-		URIs: []*url.URL{spiffe},
-	}, key)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("create CSR: %w", err)
-	}
-	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("marshal client key: %w", err)
-	}
-	keyPEM = pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})
-	csrPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrDER})
-	return keyPEM, csrPEM, spiffe, nil
 }
 
 // issueAdapterCredential issues (or reuses) an adapter session for the target
@@ -74,7 +42,7 @@ func issueAdapterCredential(ctx context.Context, client *platformapi.PlatformCli
 		return issuedCredential{}, fmt.Errorf("create adapter session: %w", err)
 	}
 
-	keyPEM, csrPEM, _, err := buildSessionCSR(trustDomain, session.Namespace, session.Name)
+	keyPEM, csrPEM, _, err := certauth.BuildSessionCSR(trustDomain, session.Namespace, session.Name)
 	if err != nil {
 		return issuedCredential{}, err
 	}
