@@ -73,6 +73,7 @@ func New(runtime *core.Runtime, clusterMgr setupplatform.ClusterManagerAPI) *cob
 	var acmeStaging bool
 	var tlsClusterIssuer string
 	var mtlsClusterIssuer string
+	var withMTLS bool
 	var skipCertManagerInstall bool
 	mgr := newManager(runtime, clusterMgr)
 
@@ -153,6 +154,7 @@ will use to push and pull container images.`,
 			envBool("acme-staging", &acmeStaging, "MCP_ACME_STAGING")
 			envStr("tls-cluster-issuer", &tlsClusterIssuer, "MCP_SETUP_TLS_CLUSTER_ISSUER", "MCP_TLS_CLUSTER_ISSUER")
 			envStr("mtls-cluster-issuer", &mtlsClusterIssuer, "MCP_SETUP_MTLS_CLUSTER_ISSUER", "MCP_MTLS_CLUSTER_ISSUER")
+			envBool("with-mtls", &withMTLS, "MCP_SETUP_WITH_MTLS")
 			envBool("skip-cert-manager-install", &skipCertManagerInstall, "MCP_SETUP_SKIP_CERT_MANAGER_INSTALL")
 
 			// Deployment behaviour
@@ -185,6 +187,9 @@ will use to push and pull container images.`,
 			if err := setupplatform.ValidateRegistryTLSMode(registryMode, tlsEnabled, acmeEmail); err != nil {
 				return err
 			}
+			if err := setupplatform.ValidateMTLSSetupCLIFlags(withMTLS, testMode, tlsEnabled, mtlsClusterIssuer); err != nil {
+				return err
+			}
 
 			plan := setupplan.Build(setupplan.Input{
 				Kubeconfig:             kubeconfig,
@@ -211,6 +216,7 @@ will use to push and pull container images.`,
 				ACMEStaging:            acmeStaging,
 				TLSClusterIssuer:       tlsClusterIssuer,
 				MTLSClusterIssuer:      mtlsClusterIssuer,
+				WithMTLS:               withMTLS,
 				InstallCertManager:     !skipCertManagerInstall,
 			})
 
@@ -236,6 +242,7 @@ will use to push and pull container images.`,
 	cmd.Flags().StringVar(&acmeEmail, "acme-email", "", "Contact email for Let's Encrypt (HTTP-01 via cert-manager). Mutually exclusive with --tls-cluster-issuer. Overrides env MCP_ACME_EMAIL")
 	cmd.Flags().StringVar(&tlsClusterIssuer, "tls-cluster-issuer", "", "Use an existing cert-manager ClusterIssuer (e.g. internal CA; setup does not create it). Mutually exclusive with --acme-email. Overrides env MCP_SETUP_TLS_CLUSTER_ISSUER")
 	cmd.Flags().StringVar(&mtlsClusterIssuer, "mtls-cluster-issuer", "", "Use an existing enterprise cert-manager ClusterIssuer for gateway and adapter client certificates. Overrides env MCP_SETUP_MTLS_CLUSTER_ISSUER")
+	cmd.Flags().BoolVar(&withMTLS, "with-mtls", false, "Enable the mTLS auth path (requires --with-tls). Provisions the bundled mcp-runtime-ca workload issuer unless --mtls-cluster-issuer names an external one. Overrides env MCP_SETUP_WITH_MTLS")
 	cmd.Flags().BoolVar(&acmeStaging, "acme-staging", false, "Use Let's Encrypt staging CA (also set MCP_ACME_STAGING=1)")
 	cmd.Flags().BoolVar(&skipCertManagerInstall, "skip-cert-manager-install", false, "Do not install cert-manager; require CRDs to already exist")
 	cmd.Flags().BoolVar(&testMode, "test-mode", false, "Test mode for local Kind/dev installs; builds and pushes latest-tag runtime images, provisions a local workload mTLS issuer, and relaxes production guardrails")

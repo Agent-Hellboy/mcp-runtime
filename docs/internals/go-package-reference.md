@@ -6355,7 +6355,11 @@ type Input struct {
 	TLSClusterIssuer string
 	// MTLSClusterIssuer is a pre-existing enterprise workload issuer used for
 	// gateway server and adapter client certificates.
-	MTLSClusterIssuer  string
+	MTLSClusterIssuer string
+	// WithMTLS opts into the mTLS auth path outside test mode. When no
+	// MTLSClusterIssuer is supplied, setup provisions the bundled mcp-runtime-ca
+	// workload issuer (managed mode); supply MTLSClusterIssuer for an external one.
+	WithMTLS           bool
 	InstallCertManager bool
 }
     Input captures the raw CLI inputs for setup.
@@ -6387,6 +6391,7 @@ type Plan struct {
 	ACMEStaging          bool
 	TLSClusterIssuer     string
 	MTLSClusterIssuer    string
+	WithMTLS             bool
 	InstallCertManager   bool
 }
     Plan captures the resolved setup decisions.
@@ -6429,6 +6434,7 @@ components.
 
 - [`func BuildOperatorArgs(metricsAddr, probeAddr string, leaderElect, leaderElectChanged bool) []string`](#cli-setup-platform-func-buildoperatorargs-metricsaddr-probeaddr-string-leaderelect-leaderelectchanged-bool-string)
 - [`func SetupPlatform(logger *zap.Logger, plan setupplan.Plan, clusterMgr ClusterManagerAPI) error`](#cli-setup-platform-func-setupplatform-logger-zap-logger-plan-setupplan-plan-clustermgr-clustermanagerapi-error)
+- [`func ValidateMTLSSetupCLIFlags(withMTLS, testMode, tlsEnabled bool, mtlsClusterIssuer string) error`](#cli-setup-platform-func-validatemtlssetupcliflags-withmtls-testmode-tlsenabled-bool-mtlsclusterissuer-string-error)
 - [`func ValidatePlatformMode(mode string) error`](#cli-setup-platform-func-validateplatformmode-mode-string-error)
 - [`func ValidatePublicPlatformAuthConfig(platformMode string, tlsEnabled, testMode bool, existingData map[string]string) error`](#cli-setup-platform-func-validatepublicplatformauthconfig-platformmode-string-tlsenabled-testmode-bool-existingdata-map-string-string-error)
 - [`func ValidatePublicPlatformAuthEnv(platformMode string, tlsEnabled, testMode bool) error`](#cli-setup-platform-func-validatepublicplatformauthenv-platformmode-string-tlsenabled-testmode-bool-error)
@@ -6462,6 +6468,18 @@ func BuildOperatorArgs(metricsAddr, probeAddr string, leaderElect, leaderElectCh
 <a id="cli-setup-platform-func-setupplatform-logger-zap-logger-plan-setupplan-plan-clustermgr-clustermanagerapi-error"></a>
 ```text
 func SetupPlatform(logger *zap.Logger, plan setupplan.Plan, clusterMgr ClusterManagerAPI) error
+```
+
+<a id="cli-setup-platform-func-validatemtlssetupcliflags-withmtls-testmode-tlsenabled-bool-mtlsclusterissuer-string-error"></a>
+```text
+func ValidateMTLSSetupCLIFlags(withMTLS, testMode, tlsEnabled bool, mtlsClusterIssuer string) error
+    ValidateMTLSSetupCLIFlags enforces the mTLS setup flag contract:
+      - the mTLS auth path requires TLS (Traefik terminates the caller's mTLS on
+        the websecure entrypoint, which needs the TLS overlay + a host cert);
+      - --mtls-cluster-issuer only selects the workload issuer, so it must be
+        accompanied by an explicit opt-in (--with-mtls or --test-mode) rather
+        than silently enabling workload PKI.
+
 ```
 
 <a id="cli-setup-platform-func-validateplatformmode-mode-string-error"></a>

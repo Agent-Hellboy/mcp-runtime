@@ -39,6 +39,22 @@ func ValidateTLSSetupCLIFlags(
 	return nil
 }
 
+// ValidateMTLSSetupCLIFlags enforces the mTLS setup flag contract:
+//   - the mTLS auth path requires TLS (Traefik terminates the caller's mTLS on
+//     the websecure entrypoint, which needs the TLS overlay + a host cert);
+//   - --mtls-cluster-issuer only selects the workload issuer, so it must be
+//     accompanied by an explicit opt-in (--with-mtls or --test-mode) rather than
+//     silently enabling workload PKI.
+func ValidateMTLSSetupCLIFlags(withMTLS, testMode, tlsEnabled bool, mtlsClusterIssuer string) error {
+	if withMTLS && !tlsEnabled {
+		return core.NewWithSentinel(core.ErrFieldRequired, "--with-mtls requires --with-tls: mTLS terminates at the ingress on the websecure (TLS) entrypoint")
+	}
+	if strings.TrimSpace(mtlsClusterIssuer) != "" && !withMTLS && !testMode {
+		return core.NewWithSentinel(core.ErrFieldRequired, "--mtls-cluster-issuer only selects the workload issuer; pass --with-mtls (or --test-mode) to enable the mTLS auth path")
+	}
+	return nil
+}
+
 func setupTLSStep(logger *zap.Logger, plan setupplan.Plan, deps SetupDeps) error {
 	// Step 3: Configure TLS (if enabled)
 	core.Step("Step 3: Configure TLS")
@@ -71,12 +87,15 @@ func setupWorkloadPKI(logger *zap.Logger, plan setupplan.Plan) error {
 		return core.WrapWithSentinel(core.ErrCertManagerNotInstalled, err, "workload mTLS requires cert-manager; install it or omit --skip-cert-manager-install")
 	}
 
-	if plan.TestMode && issuer == setupplan.DefaultTestMTLSClusterIssuer {
+	// Managed mode: provision the bundled mcp-runtime-ca workload issuer when it
+	// is the selected issuer (test mode or --with-mtls without an external one).
+	// Otherwise the issuer is enterprise-managed and must already exist.
+	if (plan.TestMode || plan.WithMTLS) && issuer == setupplan.DefaultTestMTLSClusterIssuer {
 		if _, err := ensureCASecretClientGo(); err != nil {
-			return core.WrapWithSentinel(core.ErrCASecretNotFound, err, "create test-mode workload CA")
+			return core.WrapWithSentinel(core.ErrCASecretNotFound, err, "create managed workload CA")
 		}
 		if err := applyManifestFile("config/cert-manager/cluster-issuer.yaml", "", os.Stdout); err != nil {
-			return core.WrapWithSentinel(core.ErrClusterIssuerApplyFailed, err, "apply test-mode workload ClusterIssuer")
+			return core.WrapWithSentinel(core.ErrClusterIssuerApplyFailed, err, "apply managed workload ClusterIssuer")
 		}
 	} else if err := checkNamedClusterIssuerClientGo(issuer); err != nil {
 		return err
