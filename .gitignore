@@ -42,7 +42,9 @@ tags
 /chain-bench-results.json
 docs/COVERAGE_IMPROVEMENT_PLAN.md
 graphify-out/
-plan/
+# Anchored to the repo root: ignore a top-level scratch plan/ dir only, not
+# real packages like internal/cli/setup/plan/.
+/plan/
 __pycache__/
 *.pyc
 
