@@ -130,15 +130,69 @@ func (s *AccessService) HandleAdapterCertificate(w http.ResponseWriter, r *http.
 		writeAPIError(w, http.StatusForbidden, "adapter session is too close to expiry")
 		return
 	}
+	certificate, caBundle, err := s.issueSessionCertificateDER(r.Context(), req.Namespace, req.Session, csrDER, duration)
+	if err != nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "issue adapter certificate", err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, adapterCertificateResponse{
+		Certificate: certificate,
+		CABundle:    caBundle,
+		SPIFFEID:    expectedSPIFFEID,
+		ExpiresAt:   expiresAt,
+	})
+}
+
+func (s *AccessService) issueSessionCertificate(
+	ctx context.Context,
+	namespace, sessionName, trustDomain, csr string,
+) (string, string, error) {
+	csrDER, err := certauth.ValidateCSRPEM(csr, identity.SessionSPIFFEID(trustDomain, namespace, sessionName))
+	if err != nil {
+		return "", "", err
+	}
+	if s.k8sClients == nil || s.k8sClients.Dynamic == nil || s.accessMgr == nil {
+		return "", "", fmt.Errorf("kubernetes not available")
+	}
+	session, err := s.accessMgr.GetSession(ctx, sessionName, namespace)
+	if err != nil || session == nil {
+		return "", "", fmt.Errorf("adapter session not found")
+	}
+	if session.Spec.ExpiresAt == nil || !session.Spec.ExpiresAt.After(time.Now()) {
+		return "", "", fmt.Errorf("adapter session is expired")
+	}
+	duration := time.Until(session.Spec.ExpiresAt.Time.UTC())
+	if duration > adapterSessionMaxTTL {
+		duration = adapterSessionMaxTTL
+	}
+	if duration < time.Minute {
+		return "", "", fmt.Errorf("adapter session is too close to expiry")
+	}
+	return s.issueSessionCertificateDER(ctx, namespace, sessionName, csrDER, duration)
+}
+
+func (s *AccessService) issueSessionCertificateDER(
+	ctx context.Context,
+	namespace, sessionName string,
+	csrDER []byte,
+	duration time.Duration,
+) (string, string, error) {
+	if s.k8sClients == nil || s.k8sClients.Dynamic == nil {
+		return "", "", fmt.Errorf("kubernetes not available")
+	}
+	issuer := strings.TrimSpace(os.Getenv("MCP_MTLS_CLUSTER_ISSUER"))
+	if issuer == "" {
+		return "", "", fmt.Errorf("workload certificate issuer is not configured")
+	}
 	resource := &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "cert-manager.io/v1",
 		"kind":       "CertificateRequest",
 		"metadata": map[string]any{
-			"generateName": "adapter-" + req.Session + "-",
-			"namespace":    req.Namespace,
+			"generateName": "adapter-" + sessionName + "-",
+			"namespace":    namespace,
 			"labels": map[string]any{
 				"app.kubernetes.io/managed-by": "mcp-runtime",
-				"mcpruntime.org/session":       req.Session,
+				"mcpruntime.org/session":       sessionName,
 			},
 		},
 		"spec": map[string]any{
@@ -152,27 +206,16 @@ func (s *AccessService) HandleAdapterCertificate(w http.ResponseWriter, r *http.
 			},
 		},
 	}}
-	created, err := s.k8sClients.Dynamic.Resource(certificateRequestGVR).Namespace(req.Namespace).Create(
-		r.Context(), resource, metav1.CreateOptions{},
+	created, err := s.k8sClients.Dynamic.Resource(certificateRequestGVR).Namespace(namespace).Create(
+		ctx, resource, metav1.CreateOptions{},
 	)
 	if err != nil {
-		writeAPIError(w, http.StatusServiceUnavailable, "create certificate request", err)
-		return
+		return "", "", fmt.Errorf("create certificate request: %w", err)
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	waitCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	certificate, caBundle, err := waitForIssuedAdapterCertificate(ctx, s, req.Namespace, created.GetName())
-	if err != nil {
-		writeAPIError(w, http.StatusServiceUnavailable, "issue adapter certificate", err)
-		return
-	}
-	writeJSON(w, http.StatusCreated, adapterCertificateResponse{
-		Certificate: certificate,
-		CABundle:    caBundle,
-		SPIFFEID:    expectedSPIFFEID,
-		ExpiresAt:   expiresAt,
-	})
+	return waitForIssuedAdapterCertificate(waitCtx, s, namespace, created.GetName())
 }
 
 func waitForIssuedAdapterCertificate(ctx context.Context, s *AccessService, namespace, name string) (string, string, error) {
