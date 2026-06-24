@@ -50,6 +50,7 @@ var (
 	middlewareGVK       = schema.GroupVersionKind{Group: "traefik.io", Version: "v1alpha1", Kind: "Middleware"}
 	tlsOptionGVK        = schema.GroupVersionKind{Group: "traefik.io", Version: "v1alpha1", Kind: "TLSOption"}
 	serversTransportGVK = schema.GroupVersionKind{Group: "traefik.io", Version: "v1alpha1", Kind: "ServersTransport"}
+	tlsStoreGVK         = schema.GroupVersionKind{Group: "traefik.io", Version: "v1alpha1", Kind: "TLSStore"}
 )
 
 // spiffeIdentityPluginName must match the local plugin module name registered in
@@ -401,6 +402,12 @@ func (r *MCPServerReconciler) reconcileMTLSIngress(ctx context.Context, mcpServe
 	if host := effectiveIngressHost(mcpServer); host != "" {
 		match = fmt.Sprintf("Host(`%s`) && %s", host, match)
 	}
+	// tls.options enforces client-cert verification (the mTLS half). The
+	// caller-facing server certificate comes from the cluster-wide default
+	// (a TLSStore named "default"; see reconcileDefaultTLSStore), never a
+	// per-IngressRoute secretName — Traefik resolves secretName only in the
+	// IngressRoute's own (tenant) namespace, where the shared platform host
+	// certificate does not exist.
 	ingressRoute := r.traefikResource(mcpServer, ingressRouteGVK, mcpServer.Name, map[string]any{
 		"entryPoints": []any{"websecure"},
 		"routes": []any{map[string]any{
@@ -413,20 +420,48 @@ func (r *MCPServerReconciler) reconcileMTLSIngress(ctx context.Context, mcpServe
 				"serversTransport": mtlsServersTransportName(mcpServer),
 			}},
 		}},
-		// tls.options enforces client-cert verification. The server-side
-		// (caller-facing) certificate is supplied by the platform TLS setup for
-		// the shared host; per-server secretName is not set here.
 		"tls": map[string]any{
 			"options": map[string]any{"name": mtlsTLSOptionName(mcpServer)},
 		},
 	})
 
+	if err := r.reconcileDefaultTLSStore(ctx); err != nil {
+		return err
+	}
 	for _, obj := range []*unstructured.Unstructured{tlsOption, middleware, serversTransport, ingressRoute} {
 		if err := r.applyUnstructured(ctx, obj); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// reconcileDefaultTLSStore provisions the cluster-wide caller-facing server
+// certificate for mtls hosts as Traefik's default certificate.
+//
+// Traefik supports exactly one TLSStore named "default", and it (with its
+// referenced secret) must live in a namespace Traefik watches. The operator
+// therefore converges every mtls server on a SINGLE TLSStore in the configured
+// DefaultIngressTLSSecretNamespace — never one per tenant namespace, which would
+// both create conflicting "default" stores and reference a host secret that does
+// not exist there. It carries no owner reference (it is a shared platform object
+// not owned by any one MCPServer); Server-Side Apply keeps concurrent reconciles
+// idempotent. A no-op when the host secret/namespace is not configured.
+func (r *MCPServerReconciler) reconcileDefaultTLSStore(ctx context.Context) error {
+	secret := strings.TrimSpace(r.DefaultIngressTLSSecret)
+	namespace := strings.TrimSpace(r.DefaultIngressTLSSecretNamespace)
+	if secret == "" || namespace == "" {
+		return nil
+	}
+	store := &unstructured.Unstructured{}
+	store.SetGroupVersionKind(tlsStoreGVK)
+	store.SetName("default")
+	store.SetNamespace(namespace)
+	store.Object["spec"] = map[string]any{
+		"defaultCertificate": map[string]any{"secretName": secret},
+	}
+	store.SetLabels(map[string]string{"app.kubernetes.io/managed-by": "mcp-runtime"})
+	return r.applyUnstructured(ctx, store)
 }
 
 // traefikResource builds an owned, labelled unstructured Traefik CR.

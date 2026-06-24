@@ -23,7 +23,7 @@ func traefikScheme(t *testing.T) *runtime.Scheme {
 		t.Fatalf("scheme: %v", err)
 	}
 	for _, gvk := range []schema.GroupVersionKind{
-		ingressRouteGVK, middlewareGVK, tlsOptionGVK, serversTransportGVK, ingressRouteTCPGVK,
+		ingressRouteGVK, middlewareGVK, tlsOptionGVK, serversTransportGVK, ingressRouteTCPGVK, tlsStoreGVK,
 	} {
 		scheme.AddKnownTypeWithName(gvk, &unstructured.Unstructured{})
 		scheme.AddKnownTypeWithName(gvk.GroupVersion().WithKind(gvk.Kind+"List"), &unstructured.UnstructuredList{})
@@ -109,6 +109,60 @@ func TestReconcileMTLSIngressGeneratesTraefikResources(t *testing.T) {
 	if tlsName, _, _ := unstructured.NestedString(ir.Object, "spec", "tls", "options", "name"); tlsName != mtlsTLSOptionName(server) {
 		t.Fatalf("tls.options.name = %q", tlsName)
 	}
+}
+
+func TestReconcileMTLSIngressNeverSetsPerRouteSecretName(t *testing.T) {
+	// The caller-facing host cert is the cluster-wide default (TLSStore), never a
+	// per-IngressRoute secretName — which Traefik would resolve only in the
+	// tenant namespace, where the shared platform host secret does not exist.
+	scheme := traefikScheme(t)
+	server := mtlsServer()
+	server.Spec.IngressHost = "mcp.example.com"
+	server.Spec.PublicPathPrefix = "secure-demo"
+
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(server).Build()
+	r := MCPServerReconciler{Client: c, Scheme: scheme, DefaultIngressTLSSecret: "platform-host-tls", DefaultIngressTLSSecretNamespace: "mcp-servers"}
+	if err := r.reconcileMTLSIngress(context.Background(), server); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	ir := getCR(t, c, ingressRouteGVK, server.Name, server.Namespace)
+	if _, found, _ := unstructured.NestedString(ir.Object, "spec", "tls", "secretName"); found {
+		t.Fatal("tls.secretName must never be set on the IngressRoute (cross-namespace); use the default TLSStore")
+	}
+	if name, _, _ := unstructured.NestedString(ir.Object, "spec", "tls", "options", "name"); name != mtlsTLSOptionName(server) {
+		t.Fatalf("tls.options.name = %q", name)
+	}
+}
+
+func TestReconcileDefaultTLSStore(t *testing.T) {
+	scheme := traefikScheme(t)
+	server := mtlsServer()
+	key := types.NamespacedName{Name: "default", Namespace: "mcp-servers"}
+
+	t.Run("creates a single default store in the configured namespace", func(t *testing.T) {
+		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(server).Build()
+		r := MCPServerReconciler{Client: c, Scheme: scheme, DefaultIngressTLSSecret: "platform-host-tls", DefaultIngressTLSSecretNamespace: "mcp-servers"}
+		if err := r.reconcileDefaultTLSStore(context.Background()); err != nil {
+			t.Fatalf("reconcile: %v", err)
+		}
+		store := getCR(t, c, tlsStoreGVK, "default", "mcp-servers")
+		if sn, _, _ := unstructured.NestedString(store.Object, "spec", "defaultCertificate", "secretName"); sn != "platform-host-tls" {
+			t.Fatalf("defaultCertificate.secretName = %q, want platform-host-tls", sn)
+		}
+	})
+
+	t.Run("no-op when host secret/namespace unset", func(t *testing.T) {
+		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(server).Build()
+		r := MCPServerReconciler{Client: c, Scheme: scheme} // no DefaultIngressTLSSecret*
+		if err := r.reconcileDefaultTLSStore(context.Background()); err != nil {
+			t.Fatalf("reconcile: %v", err)
+		}
+		store := &unstructured.Unstructured{}
+		store.SetGroupVersionKind(tlsStoreGVK)
+		if err := c.Get(context.Background(), key, store); !apierrors.IsNotFound(err) {
+			t.Fatalf("expected no TLSStore when unconfigured, got %v", err)
+		}
+	})
 }
 
 func TestDeleteMTLSIngressRemovesAllResources(t *testing.T) {

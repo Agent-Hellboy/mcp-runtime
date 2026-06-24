@@ -2555,6 +2555,19 @@ type MCPServerReconciler struct {
 	// DefaultIngressTLS enables Traefik TLS routing for MCP server ingresses by default.
 	DefaultIngressTLS bool
 
+	// DefaultIngressTLSSecret is the Kubernetes TLS Secret holding the
+	// caller-facing (user->Traefik) host certificate for mtls servers. Path-based
+	// mtls servers share one host, so this single platform host certificate is
+	// published as Traefik's default certificate via a TLSStore named "default"
+	// (see reconcileDefaultTLSStore) rather than a per-IngressRoute secretName.
+	// Empty falls back to Traefik's built-in default certificate.
+	DefaultIngressTLSSecret string
+
+	// DefaultIngressTLSSecretNamespace is the Traefik-watched namespace that holds
+	// the DefaultIngressTLSSecret and the single "default" TLSStore. Must be one
+	// of the namespaces Traefik's kubernetescrd provider watches.
+	DefaultIngressTLSSecretNamespace string
+
 	// IngressReadinessMode controls how ingress readiness is evaluated.
 	IngressReadinessMode string
 

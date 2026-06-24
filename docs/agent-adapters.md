@@ -402,6 +402,16 @@ ingress so the trusted header cannot be forged by another pod, and the gateway
 additionally requires the connection to be a verified mTLS hop before trusting
 the header.
 
+The caller-facing (user→Traefik) server certificate for the shared mtls host is
+published as Traefik's **default certificate** via a single `TLSStore` named
+`default`, not a per-IngressRoute `secretName` (Traefik resolves `secretName`
+only in the IngressRoute's own tenant namespace, where the shared platform host
+certificate does not exist). Configure the operator with
+`MCP_DEFAULT_INGRESS_TLS_SECRET` (the host certificate Secret) and
+`MCP_DEFAULT_INGRESS_TLS_SECRET_NAMESPACE` (a Traefik-watched namespace holding
+that Secret); the operator then reconciles the one `default` TLSStore there.
+When unset, Traefik falls back to its built-in default certificate.
+
 Enroll an external adapter after signing in to the platform:
 
 ```bash

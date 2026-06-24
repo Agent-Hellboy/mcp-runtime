@@ -44,6 +44,19 @@ type MCPServerReconciler struct {
 	// DefaultIngressTLS enables Traefik TLS routing for MCP server ingresses by default.
 	DefaultIngressTLS bool
 
+	// DefaultIngressTLSSecret is the Kubernetes TLS Secret holding the
+	// caller-facing (user->Traefik) host certificate for mtls servers. Path-based
+	// mtls servers share one host, so this single platform host certificate is
+	// published as Traefik's default certificate via a TLSStore named "default"
+	// (see reconcileDefaultTLSStore) rather than a per-IngressRoute secretName.
+	// Empty falls back to Traefik's built-in default certificate.
+	DefaultIngressTLSSecret string
+
+	// DefaultIngressTLSSecretNamespace is the Traefik-watched namespace that holds
+	// the DefaultIngressTLSSecret and the single "default" TLSStore. Must be one
+	// of the namespaces Traefik's kubernetescrd provider watches.
+	DefaultIngressTLSSecretNamespace string
+
 	// IngressReadinessMode controls how ingress readiness is evaluated.
 	IngressReadinessMode string
 
@@ -105,7 +118,7 @@ type resourceReadiness = operatorutil.ResourceReadiness
 //+kubebuilder:rbac:groups=mcpruntime.org,resources=mcpaccessgrants,verbs=get;list;watch
 //+kubebuilder:rbac:groups=mcpruntime.org,resources=mcpagentsessions,verbs=get;list;watch
 //+kubebuilder:rbac:groups=cert-manager.io,resources=certificates,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=traefik.io,resources=ingressroutetcps;ingressroutes;middlewares;tlsoptions;serverstransports,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=traefik.io,resources=ingressroutetcps;ingressroutes;middlewares;tlsoptions;tlsstores;serverstransports,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile is part of the main kubernetes reconciliation loop
 func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
