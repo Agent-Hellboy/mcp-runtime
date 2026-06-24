@@ -75,8 +75,12 @@ func (s preflightStep) Run(logger *zap.Logger, _ SetupDeps, ctx *SetupContext) e
 		if !ctx.Plan.TLSEnabled {
 			issues = append(issues, checkCertManagerCRDs(bg, clients, ctx.Plan.InstallCertManager)...)
 		}
-		testModeIssuerWillBeCreated := ctx.Plan.TestMode && issuer == setupplan.DefaultTestMTLSClusterIssuer
-		if issuer != strings.TrimSpace(ctx.Plan.TLSClusterIssuer) && !testModeIssuerWillBeCreated {
+		// The bundled mcp-runtime-ca issuer is created later by setupWorkloadPKI
+		// (test mode or --with-mtls managed mode), so it will not exist at
+		// preflight on a clean cluster — don't require it up front. This mirrors
+		// the managed-provisioning condition in setupWorkloadPKI.
+		managedIssuerWillBeCreated := (ctx.Plan.TestMode || ctx.Plan.WithMTLS) && issuer == setupplan.DefaultTestMTLSClusterIssuer
+		if issuer != strings.TrimSpace(ctx.Plan.TLSClusterIssuer) && !managedIssuerWillBeCreated {
 			issues = append(issues, checkClusterIssuerExists(bg, clients, issuer)...)
 		}
 	}
