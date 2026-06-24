@@ -3885,6 +3885,7 @@ print('adapter-session reused:', resp['name'])
   if deep_request_flows_enabled || scenario_selected "cli-platform"; then
     log_line policy "running platform CLI request-flow sweep"
     ensure_api_port_forward
+    ensure_gateway_port_forward
     if [[ -z "${ADAPTER_PLATFORM_TOKEN:-}" ]]; then
       ADAPTER_PLATFORM_TOKEN="$(PLATFORM_ADMIN_EMAIL="${PLATFORM_ADMIN_EMAIL}" PLATFORM_ADMIN_PASSWORD="${PLATFORM_ADMIN_PASSWORD}" python3 -c '
 import json, os
@@ -4845,6 +4846,7 @@ print('adapter-session reused:', resp['name'])
 if deep_request_flows_enabled || scenario_selected "cli-platform"; then
   log_line policy "running platform CLI request-flow sweep"
   ensure_api_port_forward
+  ensure_gateway_port_forward
   if [[ -z "${ADAPTER_PLATFORM_TOKEN:-}" ]]; then
     ADAPTER_PLATFORM_TOKEN="$(PLATFORM_ADMIN_EMAIL="${PLATFORM_ADMIN_EMAIL}" PLATFORM_ADMIN_PASSWORD="${PLATFORM_ADMIN_PASSWORD}" python3 -c '
 import json, os
