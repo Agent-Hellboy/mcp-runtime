@@ -10,7 +10,7 @@ set -euo pipefail
 #
 # Set E2E_SCENARIOS to a comma-separated subset for local debugging.
 # Supported values: all, smoke-auth, governance, trust, oauth, observability,
-# multitenancy, api-platform, ui-auth, adapter-proxy, cli-platform.
+# multitenancy, api-platform, ui-auth, adapter-proxy, cli-platform, mtls.
 # observability requires the full traffic suite: smoke-auth, governance, trust, oauth.
 #
 # Set E2E_DEEP_REQUEST_FLOWS=1 for pre-release runs that should exercise
@@ -366,11 +366,11 @@ validate_scenarios() {
   local scenario
   for scenario in "${E2E_SCENARIO_LIST[@]}"; do
     case "${scenario}" in
-      all|smoke-auth|governance|trust|oauth|observability|multitenancy|api-platform|ui-auth|adapter-proxy|cli-platform)
+      all|smoke-auth|governance|trust|oauth|observability|multitenancy|api-platform|ui-auth|adapter-proxy|cli-platform|mtls)
         ;;
       *)
         echo "unsupported E2E scenario: ${scenario}" >&2
-        echo "supported values: all, smoke-auth, governance, trust, oauth, observability, multitenancy, api-platform, ui-auth, adapter-proxy, cli-platform" >&2
+        echo "supported values: all, smoke-auth, governance, trust, oauth, observability, multitenancy, api-platform, ui-auth, adapter-proxy, cli-platform, mtls" >&2
         exit 1
         ;;
     esac
@@ -388,7 +388,7 @@ validate_scenarios() {
 
   if deep_request_flows_enabled; then
     local required
-    for required in smoke-auth governance trust oauth observability multitenancy api-platform ui-auth adapter-proxy cli-platform; do
+    for required in smoke-auth governance trust oauth observability multitenancy api-platform ui-auth adapter-proxy cli-platform mtls; do
       if ! scenario_selected "${required}"; then
         echo "E2E_DEEP_REQUEST_FLOWS=1 requires all E2E scenarios" >&2
         echo "set E2E_SCENARIOS=all or include every supported scenario" >&2
@@ -959,6 +959,9 @@ ensure_gateway_port_forward() {
   fi
   wait_port "${SENTINEL_PORT}"
 }
+
+# shellcheck source=scenarios/mtls.sh
+source "${PROJECT_ROOT}/test/e2e/scenarios/mtls.sh"
 
 refresh_mcp_proxy_urls() {
   MCP_INGRESS_PATH="/${SERVER_NAME}/mcp"
@@ -6055,6 +6058,11 @@ fi
 
 fi
 
+fi
+
+if scenario_selected "mtls"; then
+  run_e2e_mtls_scenario
+  cleanup_mcp_server_and_wait "${MTLS_SERVER_NAME}" mcp-servers 120s
 fi
 
 echo "[cli] checking sentinel restart command"
