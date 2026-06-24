@@ -55,19 +55,20 @@ func main() {
 	}
 
 	if err = (&operator.MCPServerReconciler{
-		Client:                    mgr.GetClient(),
-		Scheme:                    mgr.GetScheme(),
-		DefaultIngressHost:        os.Getenv("MCP_DEFAULT_INGRESS_HOST"),
-		DefaultIngressEntryPoints: strings.TrimSpace(os.Getenv("MCP_DEFAULT_INGRESS_ENTRYPOINTS")),
-		DefaultIngressTLS:         boolFromEnv(os.Getenv("MCP_DEFAULT_INGRESS_TLS")),
-		DefaultIngressTLSSecret:   strings.TrimSpace(os.Getenv("MCP_DEFAULT_INGRESS_TLS_SECRET")),
-		IngressReadinessMode:      ingressReadinessMode,
-		ProvisionedRegistry:       registryConfig,
-		GatewayProxyImage:         gatewayProxyImageFromEnv(os.Getenv),
-		GatewayOTLPEndpoint:       gatewayOTLPEndpointFromEnv(os.Getenv),
-		DefaultAnalyticsIngestURL: analyticsIngestURLFromEnv(os.Getenv),
-		ClusterName:               clusterNameFromEnv(os.Getenv),
-		MTLSClusterIssuer:         strings.TrimSpace(os.Getenv("MCP_MTLS_CLUSTER_ISSUER")),
+		Client:                           mgr.GetClient(),
+		Scheme:                           mgr.GetScheme(),
+		DefaultIngressHost:               os.Getenv("MCP_DEFAULT_INGRESS_HOST"),
+		DefaultIngressEntryPoints:        strings.TrimSpace(os.Getenv("MCP_DEFAULT_INGRESS_ENTRYPOINTS")),
+		DefaultIngressTLS:                boolFromEnv(os.Getenv("MCP_DEFAULT_INGRESS_TLS")),
+		DefaultIngressTLSSecret:          strings.TrimSpace(os.Getenv("MCP_DEFAULT_INGRESS_TLS_SECRET")),
+		DefaultIngressTLSSecretNamespace: strings.TrimSpace(os.Getenv("MCP_DEFAULT_INGRESS_TLS_SECRET_NAMESPACE")),
+		IngressReadinessMode:             ingressReadinessMode,
+		ProvisionedRegistry:              registryConfig,
+		GatewayProxyImage:                gatewayProxyImageFromEnv(os.Getenv),
+		GatewayOTLPEndpoint:              gatewayOTLPEndpointFromEnv(os.Getenv),
+		DefaultAnalyticsIngestURL:        analyticsIngestURLFromEnv(os.Getenv),
+		ClusterName:                      clusterNameFromEnv(os.Getenv),
+		MTLSClusterIssuer:                strings.TrimSpace(os.Getenv("MCP_MTLS_CLUSTER_ISSUER")),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "MCPServer")
 		os.Exit(1)
