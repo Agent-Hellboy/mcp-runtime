@@ -58,14 +58,18 @@ func (r *certReloader) GetCertificate(*tls.ClientHelloInfo) (*tls.Certificate, e
 func (r *certReloader) watch(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-	lastMod := r.modTime()
+	lastMod, _ := r.modTime()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			mod := r.modTime()
-			if mod.IsZero() || mod.Equal(lastMod) {
+			mod, err := r.modTime()
+			if err != nil {
+				log.Printf("gateway TLS certificate watch: failed to stat certificate file: %v", err)
+				continue
+			}
+			if mod.Equal(lastMod) {
 				continue
 			}
 			if err := r.reload(); err != nil {
@@ -78,10 +82,10 @@ func (r *certReloader) watch(ctx context.Context, interval time.Duration) {
 	}
 }
 
-func (r *certReloader) modTime() time.Time {
+func (r *certReloader) modTime() (time.Time, error) {
 	fi, err := os.Stat(r.certFile)
 	if err != nil {
-		return time.Time{}
+		return time.Time{}, err
 	}
-	return fi.ModTime()
+	return fi.ModTime(), nil
 }
