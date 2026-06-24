@@ -14,6 +14,7 @@ This file is the **onboarding index** for the MCP Runtime repo. It complements `
 | Public k3s deploy scripts | `k3s-public-ops` |
 | Real-cluster QA sweeps | `qa-e2e-operations`, `qa-e2e-security`, `qa-e2e-ui`, … |
 | Release / ship readiness | `release-readiness` |
+| API / CRD / CLI design & "is this good design?" review | `design-principles` |
 | Codebase navigation | `graphify` (when `graphify-out/` exists) |
 
 ## Repository map (where to look)
