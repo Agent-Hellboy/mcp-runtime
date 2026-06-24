@@ -58,13 +58,11 @@ type Input struct {
 	ACMEStaging bool
 	// TLSClusterIssuer is a pre-existing cert-manager.io ClusterIssuer (e.g. org internal CA / Vault / ADCS). Mutually exclusive with ACMEmail.
 	TLSClusterIssuer string
-	// MTLSClusterIssuer is a pre-existing enterprise workload issuer used for
-	// gateway server and adapter client certificates.
-	MTLSClusterIssuer string
-	// WithMTLS opts into the mTLS auth path outside test mode. When no
-	// MTLSClusterIssuer is supplied, setup provisions the bundled mcp-runtime-ca
-	// workload issuer (managed mode); supply MTLSClusterIssuer for an external one.
-	WithMTLS           bool
+	// MTLSClusterIssuer enables the mTLS auth path by naming the workload issuer
+	// for gateway server and adapter client certificates. Name an enterprise
+	// ClusterIssuer, or the bundled mcp-runtime-ca to have setup provision it.
+	// Test mode defaults this to mcp-runtime-ca automatically.
+	MTLSClusterIssuer  string
 	InstallCertManager bool
 }
 
@@ -92,7 +90,6 @@ type Plan struct {
 	ACMEStaging          bool
 	TLSClusterIssuer     string
 	MTLSClusterIssuer    string
-	WithMTLS             bool
 	InstallCertManager   bool
 }
 
@@ -158,9 +155,11 @@ func Build(input Input) Plan {
 	} else {
 		input.PlatformMode = PlatformModeTenant
 	}
-	// Both test mode and an explicit --with-mtls without an external issuer fall
-	// back to the bundled mcp-runtime-ca workload issuer (managed mode).
-	if (input.TestMode || input.WithMTLS) && strings.TrimSpace(input.MTLSClusterIssuer) == "" {
+	// Test mode defaults to the bundled mcp-runtime-ca workload issuer so the
+	// mTLS path works out of the box on local clusters. Prod opts in explicitly
+	// by naming an issuer via --mtls-cluster-issuer (the bundled name is allowed
+	// and provisioned by setupWorkloadPKI).
+	if input.TestMode && strings.TrimSpace(input.MTLSClusterIssuer) == "" {
 		input.MTLSClusterIssuer = DefaultTestMTLSClusterIssuer
 	}
 
@@ -218,6 +217,5 @@ func Build(input Input) Plan {
 		InstallCertManager: input.InstallCertManager,
 		TLSClusterIssuer:   input.TLSClusterIssuer,
 		MTLSClusterIssuer:  input.MTLSClusterIssuer,
-		WithMTLS:           input.WithMTLS,
 	}
 }

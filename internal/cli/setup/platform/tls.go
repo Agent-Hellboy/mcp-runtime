@@ -39,18 +39,14 @@ func ValidateTLSSetupCLIFlags(
 	return nil
 }
 
-// ValidateMTLSSetupCLIFlags enforces the mTLS setup flag contract:
-//   - the mTLS auth path requires TLS (Traefik terminates the caller's mTLS on
-//     the websecure entrypoint, which needs the TLS overlay + a host cert);
-//   - --mtls-cluster-issuer only selects the workload issuer, so it must be
-//     accompanied by an explicit opt-in (--with-mtls or --test-mode) rather than
-//     silently enabling workload PKI.
-func ValidateMTLSSetupCLIFlags(withMTLS, testMode, tlsEnabled bool, mtlsClusterIssuer string) error {
-	if withMTLS && !tlsEnabled {
-		return core.NewWithSentinel(core.ErrFieldRequired, "--with-mtls requires --with-tls: mTLS terminates at the ingress on the websecure (TLS) entrypoint")
-	}
-	if strings.TrimSpace(mtlsClusterIssuer) != "" && !withMTLS && !testMode {
-		return core.NewWithSentinel(core.ErrFieldRequired, "--mtls-cluster-issuer only selects the workload issuer; pass --with-mtls (or --test-mode) to enable the mTLS auth path")
+// ValidateMTLSSetupCLIFlags enforces the mTLS setup flag contract. The mTLS auth
+// path is enabled by naming a workload issuer with --mtls-cluster-issuer (test
+// mode defaults it to the bundled mcp-runtime-ca). It requires --with-tls because
+// Traefik terminates the caller's mTLS on the websecure (TLS) entrypoint; test
+// mode is exempt (it serves the bundled self-signed default certificate there).
+func ValidateMTLSSetupCLIFlags(testMode, tlsEnabled bool, mtlsClusterIssuer string) error {
+	if strings.TrimSpace(mtlsClusterIssuer) != "" && !tlsEnabled && !testMode {
+		return core.NewWithSentinel(core.ErrFieldRequired, "--mtls-cluster-issuer requires --with-tls: mTLS terminates at the ingress on the websecure (TLS) entrypoint")
 	}
 	return nil
 }
@@ -87,10 +83,10 @@ func setupWorkloadPKI(logger *zap.Logger, plan setupplan.Plan) error {
 		return core.WrapWithSentinel(core.ErrCertManagerNotInstalled, err, "workload mTLS requires cert-manager; install it or omit --skip-cert-manager-install")
 	}
 
-	// Managed mode: provision the bundled mcp-runtime-ca workload issuer when it
-	// is the selected issuer (test mode or --with-mtls without an external one).
-	// Otherwise the issuer is enterprise-managed and must already exist.
-	if (plan.TestMode || plan.WithMTLS) && issuer == setupplan.DefaultTestMTLSClusterIssuer {
+	// Managed mode: provision the bundled mcp-runtime-ca workload issuer whenever
+	// it is the selected issuer (test mode defaults to it; prod can name it
+	// explicitly). Otherwise the issuer is enterprise-managed and must exist.
+	if issuer == setupplan.DefaultTestMTLSClusterIssuer {
 		if _, err := ensureCASecretClientGo(); err != nil {
 			return core.WrapWithSentinel(core.ErrCASecretNotFound, err, "create managed workload CA")
 		}

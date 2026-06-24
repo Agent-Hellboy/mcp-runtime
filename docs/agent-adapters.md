@@ -366,19 +366,20 @@ Kind without public DNS or a production CA.
 ```bash
 mcp-runtime setup \
   --with-tls \
-  --with-mtls \
   --tls-cluster-issuer letsencrypt-prod \
   --mtls-cluster-issuer company-workload-ca
 ```
 
-`--with-mtls` enables the mTLS auth path outside test mode (it requires
-`--with-tls`, since Traefik terminates the caller's mTLS on the websecure
-entrypoint). Without `--mtls-cluster-issuer`, `--with-mtls` provisions the
-bundled `mcp-runtime-ca` workload issuer (managed mode); pass
-`--mtls-cluster-issuer` to use an enterprise issuer instead. `--tls-cluster-issuer`
-controls public ingress and registry certificates; `--mtls-cluster-issuer`
-controls gateway and adapter workload certificates. Environment equivalents:
-`MCP_SETUP_WITH_MTLS=1`, `MCP_SETUP_MTLS_CLUSTER_ISSUER=company-workload-ca`.
+`--mtls-cluster-issuer` is the single switch for the mTLS auth path outside test
+mode: naming a workload issuer enables it. It requires `--with-tls` because
+Traefik terminates the caller's mTLS on the websecure entrypoint. Name your
+enterprise issuer, or name the bundled `mcp-runtime-ca` to have setup provision
+a managed CA for you. `--tls-cluster-issuer` controls public ingress and
+registry certificates and is separate from `--mtls-cluster-issuer` (which
+controls gateway and adapter workload certificates). Environment equivalent:
+`MCP_SETUP_MTLS_CLUSTER_ISSUER=company-workload-ca`. Test mode
+(`setup --test-mode`) defaults the issuer to `mcp-runtime-ca` automatically — no
+mTLS flag needed.
 
 Configure the MCPServer for path-based routing under mtls:
 
