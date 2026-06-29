@@ -56,8 +56,11 @@ func ValidateCSRPEM(raw, expectedSPIFFEID string) ([]byte, error) {
 		return nil, fmt.Errorf("csr must be a PEM CERTIFICATE REQUEST")
 	}
 	csr, err := x509.ParseCertificateRequest(block.Bytes)
-	if err != nil || csr.CheckSignature() != nil {
-		return nil, fmt.Errorf("csr is invalid or has an invalid signature")
+	if err != nil {
+		return nil, fmt.Errorf("parse csr: %w", err)
+	}
+	if err := csr.CheckSignature(); err != nil {
+		return nil, fmt.Errorf("csr signature verification failed: %w", err)
 	}
 	if len(csr.URIs) != 1 || csr.URIs[0].String() != expectedSPIFFEID {
 		return nil, fmt.Errorf("csr must contain exactly the SPIFFE URI %q", expectedSPIFFEID)

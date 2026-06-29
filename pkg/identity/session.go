@@ -14,7 +14,7 @@ func SessionSPIFFEID(trustDomain, namespace, session string) string {
 	trustDomain = strings.TrimSpace(trustDomain)
 	namespace = strings.TrimSpace(namespace)
 	session = strings.TrimSpace(session)
-	return fmt.Sprintf("spiffe://%s/ns/%s/session/%s", trustDomain, namespace, session)
+	return fmt.Sprintf("spiffe://%s/ns/%s/session/%s", trustDomain, url.PathEscape(namespace), url.PathEscape(session))
 }
 
 // ParseSessionSPIFFE parses a session-bound SPIFFE ID of the form
@@ -26,6 +26,11 @@ func ParseSessionSPIFFE(raw, trustDomain string) (namespace, sessionID string, o
 		return "", "", false
 	}
 	if !strings.EqualFold(uri.Scheme, "spiffe") || !strings.EqualFold(uri.Host, strings.TrimSpace(trustDomain)) {
+		return "", "", false
+	}
+	// SPIFFE IDs must not carry query parameters or fragments; reject them to
+	// avoid parameter-injection bypasses.
+	if uri.RawQuery != "" || uri.Fragment != "" {
 		return "", "", false
 	}
 	parts := strings.Split(strings.Trim(uri.EscapedPath(), "/"), "/")

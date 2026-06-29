@@ -11,6 +11,20 @@ func TestSessionSPIFFEID(t *testing.T) {
 	}
 }
 
+func TestSessionSPIFFEIDEscapesSpecialChars(t *testing.T) {
+	t.Parallel()
+	got := SessionSPIFFEID("example.org", "team/a", "session#1")
+	want := "spiffe://example.org/ns/team%2Fa/session/session%231"
+	if got != want {
+		t.Fatalf("SessionSPIFFEID() = %q, want %q", got, want)
+	}
+	// Round-trips back to the original components.
+	ns, sess, ok := ParseSessionSPIFFE(got, "example.org")
+	if !ok || ns != "team/a" || sess != "session#1" {
+		t.Fatalf("round-trip = (%q, %q, %v), want (%q, %q, true)", ns, sess, ok, "team/a", "session#1")
+	}
+}
+
 func TestParseSessionSPIFFE(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -28,6 +42,26 @@ func TestParseSessionSPIFFE(t *testing.T) {
 			wantNS:   "team-a",
 			wantSess: "session-1",
 			wantOK:   true,
+		},
+		{
+			name:     "valid with special characters",
+			raw:      "spiffe://example.org/ns/team%2Fa/session/session%231",
+			trust:    "example.org",
+			wantNS:   "team/a",
+			wantSess: "session#1",
+			wantOK:   true,
+		},
+		{
+			name:   "rejected with query",
+			raw:    "spiffe://example.org/ns/team-a/session/session-1?foo=bar",
+			trust:  "example.org",
+			wantOK: false,
+		},
+		{
+			name:   "rejected with fragment",
+			raw:    "spiffe://example.org/ns/team-a/session/session-1#baz",
+			trust:  "example.org",
+			wantOK: false,
 		},
 		{
 			name:   "wrong trust domain",
