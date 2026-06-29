@@ -46,25 +46,28 @@ func TestValidateTLSSetupCLIFlags(t *testing.T) {
 
 func TestValidateMTLSSetupCLIFlags(t *testing.T) {
 	t.Parallel()
-	// withMTLS, testMode, tlsEnabled, issuer
-	if err := ValidateMTLSSetupCLIFlags(true, false, false, ""); err == nil || !errors.Is(err, core.ErrFieldRequired) {
-		t.Fatalf("--with-mtls without --with-tls should fail with ErrFieldRequired, got %v", err)
+	cases := []struct {
+		name          string
+		testMode, tls bool
+		issuer        string
+		wantErr       bool
+	}{
+		{name: "no mtls requested", wantErr: false},
+		{name: "issuer alone needs tls", issuer: "corp-issuer", wantErr: true},
+		{name: "issuer + tls enables mtls", issuer: "corp-issuer", tls: true, wantErr: false},
+		{name: "issuer + test-mode is exempt from tls", issuer: "mcp-runtime-ca", testMode: true, wantErr: false},
 	}
-	if err := ValidateMTLSSetupCLIFlags(true, false, true, ""); err != nil {
-		t.Fatalf("--with-mtls with --with-tls should pass, got %v", err)
-	}
-	if err := ValidateMTLSSetupCLIFlags(false, false, false, ""); err != nil {
-		t.Fatalf("mtls disabled should pass, got %v", err)
-	}
-	// --mtls-cluster-issuer without an explicit opt-in is a silent misconfig.
-	if err := ValidateMTLSSetupCLIFlags(false, false, true, "corp-issuer"); err == nil || !errors.Is(err, core.ErrFieldRequired) {
-		t.Fatalf("--mtls-cluster-issuer without --with-mtls/--test-mode should fail, got %v", err)
-	}
-	// ...but it is fine alongside --with-mtls or --test-mode.
-	if err := ValidateMTLSSetupCLIFlags(true, false, true, "corp-issuer"); err != nil {
-		t.Fatalf("issuer + --with-mtls should pass, got %v", err)
-	}
-	if err := ValidateMTLSSetupCLIFlags(false, true, false, "mcp-runtime-ca"); err != nil {
-		t.Fatalf("issuer + --test-mode should pass, got %v", err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := ValidateMTLSSetupCLIFlags(tc.testMode, tc.tls, tc.issuer)
+			if tc.wantErr {
+				if err == nil || !errors.Is(err, core.ErrFieldRequired) {
+					t.Fatalf("want ErrFieldRequired, got %v", err)
+				}
+			} else if err != nil {
+				t.Fatalf("want nil, got %v", err)
+			}
+		})
 	}
 }

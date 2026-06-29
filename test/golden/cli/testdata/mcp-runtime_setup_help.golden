@@ -23,7 +23,7 @@ Flags:
       --ingress string                      Ingress controller to install automatically during setup (traefik|none) (default "traefik")
       --ingress-manifest string             Manifest to apply when installing the ingress controller (default "config/ingress/overlays/http")
       --kubeconfig string                   Path to kubeconfig file (default: ~/.kube/config)
-      --mtls-cluster-issuer string          Use an existing enterprise cert-manager ClusterIssuer for gateway and adapter client certificates. Overrides env MCP_SETUP_MTLS_CLUSTER_ISSUER
+      --mtls-cluster-issuer string          Enable the mTLS auth path with this cert-manager ClusterIssuer for gateway and adapter client certificates (requires --with-tls). Name an enterprise issuer, or the bundled mcp-runtime-ca to have setup provision it. Test mode defaults to mcp-runtime-ca. Overrides env MCP_SETUP_MTLS_CLUSTER_ISSUER
       --operator-leader-elect               Override operator leader election when set
       --operator-metrics-addr string        Operator metrics bind address (default: :8080 from manager.yaml)
       --operator-probe-addr string          Operator health probe bind address (default: :8081 from manager.yaml)
@@ -37,7 +37,6 @@ Flags:
       --strict-prod                         Require production-style registry and TLS validation for non-test setup
       --test-mode                           Test mode for local Kind/dev installs; builds and pushes latest-tag runtime images, provisions a local workload mTLS issuer, and relaxes production guardrails
       --tls-cluster-issuer string           Use an existing cert-manager ClusterIssuer (e.g. internal CA; setup does not create it). Mutually exclusive with --acme-email. Overrides env MCP_SETUP_TLS_CLUSTER_ISSUER
-      --with-mtls                           Enable the mTLS auth path (requires --with-tls). Provisions the bundled mcp-runtime-ca workload issuer unless --mtls-cluster-issuer names an external one. Overrides env MCP_SETUP_WITH_MTLS
       --with-tls                            Enable TLS overlays (ingress/registry). Use --acme-email for public Let's Encrypt, --tls-cluster-issuer for an org ClusterIssuer, or the bundled mcp-runtime-ca private CA (no ACME) when neither is set
       --without-sentinel                    Skip deploying the bundled mcp-sentinel stack
 
