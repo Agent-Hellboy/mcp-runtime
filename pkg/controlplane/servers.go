@@ -261,6 +261,14 @@ func ServerInfoFromMCPServer(mcpServer mcpv1alpha1.MCPServer, deploymentStatus S
 			deploymentStatus.Status = "Unknown"
 		}
 	}
+	authMode := mcpv1alpha1.AuthModeHeader
+	trustDomain := ""
+	if mcpServer.Spec.Auth != nil {
+		if mode := mcpServer.Spec.Auth.Mode; mode != "" {
+			authMode = mode
+		}
+		trustDomain = strings.TrimSpace(mcpServer.Spec.Auth.TrustDomain)
+	}
 	return ServerInfo{
 		Name:        mcpServer.Name,
 		Namespace:   mcpServer.Namespace,
@@ -274,6 +282,8 @@ func ServerInfoFromMCPServer(mcpServer mcpv1alpha1.MCPServer, deploymentStatus S
 		Labels:      mcpServer.Labels,
 		Age:         mcpServer.CreationTimestamp.Format("2006-01-02T15:04:05Z"),
 		Endpoint:    PublicMCPEndpoint(mcpServer),
+		AuthMode:    authMode,
+		TrustDomain: trustDomain,
 		ServicePort: mcpServer.Spec.ServicePort,
 		Generation:  mcpServer.Generation,
 		Tools:       mcpServer.Spec.Tools,

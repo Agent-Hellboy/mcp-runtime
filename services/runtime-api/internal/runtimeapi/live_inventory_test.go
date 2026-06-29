@@ -305,6 +305,32 @@ func TestRuntimeServerGetReturnsSingleServerShape(t *testing.T) {
 	}
 }
 
+func TestServerUsesMTLSAuth(t *testing.T) {
+	t.Parallel()
+	if !serverUsesMTLSAuth(controlplane.ServerInfo{AuthMode: mcpv1alpha1.AuthModeMTLS}) {
+		t.Fatal("expected mtls auth mode")
+	}
+	if serverUsesMTLSAuth(controlplane.ServerInfo{AuthMode: mcpv1alpha1.AuthModeHeader}) {
+		t.Fatal("header auth mode must not use mtls probe path")
+	}
+}
+
+func TestMTLSLiveInventoryEndpointRequiresHTTPS(t *testing.T) {
+	t.Parallel()
+	_, err := mtlsLiveInventoryEndpoint(controlplane.ServerInfo{
+		Endpoint: "http://mcp.example.org/demo/mcp",
+	})
+	if err == nil {
+		t.Fatal("expected error for non-https public endpoint")
+	}
+	got, err := mtlsLiveInventoryEndpoint(controlplane.ServerInfo{
+		Endpoint: "https://mcp.example.org/demo/mcp",
+	})
+	if err != nil || got != "https://mcp.example.org/demo/mcp" {
+		t.Fatalf("endpoint = (%q, %v)", got, err)
+	}
+}
+
 func TestMCPLiveInventoryProberEndpointPrefersPublicEndpoint(t *testing.T) {
 	prober := &mcpLiveInventoryProber{}
 	got, err := prober.endpoint(controlplane.ServerInfo{

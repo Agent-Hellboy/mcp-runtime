@@ -48,6 +48,7 @@ type AccessService struct {
 type InventoryService struct {
 	k8sClients         *k8sclient.Clients
 	control            *controlplane.Manager
+	access             *AccessService
 	liveInventoryOnce  sync.Once
 	liveInventoryCache *liveInventoryCache
 	liveInventoryProbe liveInventoryProber
@@ -129,6 +130,7 @@ func (s *RuntimeServer) Inventory() *InventoryService {
 		s.inventory = &InventoryService{
 			k8sClients:         s.k8sClients,
 			control:            s.control,
+			access:             s.Access(),
 			liveInventoryProbe: s.liveInventoryProbe,
 		}
 	})
