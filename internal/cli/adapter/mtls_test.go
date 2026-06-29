@@ -20,6 +20,7 @@ import (
 
 	"mcp-runtime/internal/agentadapter"
 	"mcp-runtime/internal/cli/platformapi"
+	"mcp-runtime/pkg/certauth"
 )
 
 // fakeMTLSServer extends the platform session endpoint with a CSR-signing
@@ -120,32 +121,19 @@ func fakeMTLSServer(t *testing.T, expiresAt time.Time, certCalls *int32) (*httpt
 }
 
 func TestBuildSessionCSROnlySpiffeSAN(t *testing.T) {
-	keyPEM, csrPEM, _, err := buildSessionCSR("mcpruntime.org", "mcp-team-acme", "adapter-xyz")
+	keyPEM, csrPEM, spiffeID, err := certauth.BuildSessionCSR("mcpruntime.org", "mcp-team-acme", "adapter-xyz")
 	if err != nil {
-		t.Fatalf("buildSessionCSR: %v", err)
+		t.Fatalf("BuildSessionCSR: %v", err)
 	}
 	if block, _ := pem.Decode(keyPEM); block == nil || block.Type != "PRIVATE KEY" {
 		t.Fatal("key PEM is not a PRIVATE KEY block")
 	}
-	block, _ := pem.Decode(csrPEM)
-	if block == nil || block.Type != "CERTIFICATE REQUEST" {
-		t.Fatal("csr PEM is not a CERTIFICATE REQUEST block")
-	}
-	csr, err := x509.ParseCertificateRequest(block.Bytes)
-	if err != nil {
-		t.Fatalf("parse CSR: %v", err)
-	}
-	if err := csr.CheckSignature(); err != nil {
-		t.Fatalf("csr signature: %v", err)
-	}
-	// Mirror the server-side validateAdapterCSR contract: exactly one SPIFFE URI
-	// SAN and no DNS/email/IP names.
 	want := "spiffe://mcpruntime.org/ns/mcp-team-acme/session/adapter-xyz"
-	if len(csr.URIs) != 1 || csr.URIs[0].String() != want {
-		t.Fatalf("URIs = %v, want exactly [%s]", csr.URIs, want)
+	if spiffeID != want {
+		t.Fatalf("spiffeID = %q, want %q", spiffeID, want)
 	}
-	if len(csr.DNSNames) != 0 || len(csr.EmailAddresses) != 0 || len(csr.IPAddresses) != 0 {
-		t.Fatalf("csr has unexpected SANs: dns=%v email=%v ip=%v", csr.DNSNames, csr.EmailAddresses, csr.IPAddresses)
+	if _, err := certauth.ValidateCSRPEM(string(csrPEM), want); err != nil {
+		t.Fatalf("ValidateCSRPEM: %v", err)
 	}
 }
 
