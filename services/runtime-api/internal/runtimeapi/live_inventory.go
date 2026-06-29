@@ -98,8 +98,9 @@ func (s *InventoryService) liveInventory() *liveInventoryCache {
 		prober := s.liveInventoryProbe
 		if prober == nil {
 			prober = &mcpLiveInventoryProber{
-				client: &http.Client{Timeout: liveInventoryProbeTimeout},
-				access: s.access,
+				client:      &http.Client{Timeout: liveInventoryProbeTimeout},
+				access:      s.access,
+				mtlsClients: make(map[string]*cachedMTLSClient),
 			}
 		}
 		s.liveInventoryCache = newLiveInventoryCache(liveInventoryTTL, prober)
@@ -249,6 +250,9 @@ type mcpLiveInventoryProber struct {
 	baseURLForServer func(controlplane.ServerInfo) string
 	now              func() time.Time
 	access           *AccessService
+
+	mu          sync.Mutex
+	mtlsClients map[string]*cachedMTLSClient
 }
 
 func (p *mcpLiveInventoryProber) probe(ctx context.Context, server controlplane.ServerInfo) (*liveInventory, error) {

@@ -44,20 +44,62 @@ func mtlsLiveInventoryEndpoint(server controlplane.ServerInfo) (string, error) {
 	return "", fmt.Errorf("mTLS live inventory requires a public https MCP endpoint")
 }
 
+// cachedMTLSClient holds a probe client and the expiry of its leaf certificate
+// so we can reuse the client (and its connection pool) until the certificate is
+// close to expiring.
+type cachedMTLSClient struct {
+	client    *http.Client
+	expiresAt time.Time
+}
+
+// mtlsClientRenewBefore is how long before certificate expiry we discard a cached
+// client and mint a fresh one.
+const mtlsClientRenewBefore = 2 * time.Minute
+
+// mtlsProbeClient returns an mTLS-capable HTTP client for the server, reusing a
+// cached client (and its underlying connection pool) until the client
+// certificate nears expiry. Caching avoids recreating the transport — and, for
+// issuer-backed certs, re-issuing a CertificateRequest — on every probe.
 func (p *mcpLiveInventoryProber) mtlsProbeClient(ctx context.Context, server controlplane.ServerInfo) (*http.Client, error) {
+	cacheKey := server.Namespace + "/" + server.Name
+
+	p.mu.Lock()
+	if p.mtlsClients == nil {
+		p.mtlsClients = make(map[string]*cachedMTLSClient)
+	} else if cached, ok := p.mtlsClients[cacheKey]; ok &&
+		(cached.expiresAt.IsZero() || p.currentTime().Add(mtlsClientRenewBefore).Before(cached.expiresAt)) {
+		p.mu.Unlock()
+		return cached.client, nil
+	}
+	p.mu.Unlock()
+
+	client, expiresAt, err := p.newMTLSProbeClient(ctx, server)
+	if err != nil {
+		return nil, err
+	}
+
+	p.mu.Lock()
+	p.mtlsClients[cacheKey] = &cachedMTLSClient{client: client, expiresAt: expiresAt}
+	p.mu.Unlock()
+	return client, nil
+}
+
+// newMTLSProbeClient builds a fresh mTLS client, either from configured client
+// cert files or by issuing a short-lived session certificate via the issuer.
+func (p *mcpLiveInventoryProber) newMTLSProbeClient(ctx context.Context, server controlplane.ServerInfo) (*http.Client, time.Time, error) {
 	if certFile := strings.TrimSpace(os.Getenv(liveInventoryClientCertEnv)); certFile != "" {
 		keyFile := strings.TrimSpace(os.Getenv(liveInventoryClientKeyEnv))
 		if keyFile == "" {
-			return nil, fmt.Errorf("mTLS live inventory client key file is not configured")
+			return nil, time.Time{}, fmt.Errorf("mTLS live inventory client key file is not configured")
 		}
 		return tlsHTTPClientFromFiles(certFile, keyFile, strings.TrimSpace(os.Getenv(liveInventoryClientCAEnv)), liveInventoryProbeTimeout)
 	}
 	if p.access == nil {
-		return nil, fmt.Errorf("mTLS live inventory certificate issuer is not configured")
+		return nil, time.Time{}, fmt.Errorf("mTLS live inventory certificate issuer is not configured")
 	}
 	keyPEM, csrPEM, _, err := certauth.BuildSessionCSR(server.TrustDomain, server.Namespace, liveInventoryProbeSessionName())
 	if err != nil {
-		return nil, err
+		return nil, time.Time{}, err
 	}
 	certPEM, caPEM, err := p.access.issueSessionCertificate(
 		ctx,
@@ -67,15 +109,28 @@ func (p *mcpLiveInventoryProber) mtlsProbeClient(ctx context.Context, server con
 		string(csrPEM),
 	)
 	if err != nil {
-		return nil, err
+		return nil, time.Time{}, err
 	}
 	return tlsHTTPClientFromPEM(keyPEM, []byte(certPEM), []byte(caPEM), liveInventoryProbeTimeout)
 }
 
-func tlsHTTPClientFromFiles(certFile, keyFile, caFile string, timeout time.Duration) (*http.Client, error) {
+// leafNotAfter returns the NotAfter of the keypair's leaf certificate, or the
+// zero time if it cannot be parsed.
+func leafNotAfter(cert tls.Certificate) time.Time {
+	if len(cert.Certificate) == 0 {
+		return time.Time{}
+	}
+	leaf, err := x509.ParseCertificate(cert.Certificate[0])
+	if err != nil {
+		return time.Time{}
+	}
+	return leaf.NotAfter
+}
+
+func tlsHTTPClientFromFiles(certFile, keyFile, caFile string, timeout time.Duration) (*http.Client, time.Time, error) {
 	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
 	if err != nil {
-		return nil, fmt.Errorf("load mTLS client key pair: %w", err)
+		return nil, time.Time{}, fmt.Errorf("load mTLS client key pair: %w", err)
 	}
 	tlsConfig := &tls.Config{
 		MinVersion:   tls.VersionTLS12,
@@ -84,11 +139,11 @@ func tlsHTTPClientFromFiles(certFile, keyFile, caFile string, timeout time.Durat
 	if caFile != "" {
 		caPEM, err := os.ReadFile(caFile)
 		if err != nil {
-			return nil, fmt.Errorf("read mTLS client CA bundle: %w", err)
+			return nil, time.Time{}, fmt.Errorf("read mTLS client CA bundle: %w", err)
 		}
 		pool := x509.NewCertPool()
 		if !pool.AppendCertsFromPEM(caPEM) {
-			return nil, fmt.Errorf("parse mTLS client CA bundle")
+			return nil, time.Time{}, fmt.Errorf("parse mTLS client CA bundle")
 		}
 		tlsConfig.RootCAs = pool
 	}
@@ -97,13 +152,13 @@ func tlsHTTPClientFromFiles(certFile, keyFile, caFile string, timeout time.Durat
 		Transport: &http.Transport{
 			TLSClientConfig: tlsConfig,
 		},
-	}, nil
+	}, leafNotAfter(cert), nil
 }
 
-func tlsHTTPClientFromPEM(keyPEM, certPEM, caPEM []byte, timeout time.Duration) (*http.Client, error) {
+func tlsHTTPClientFromPEM(keyPEM, certPEM, caPEM []byte, timeout time.Duration) (*http.Client, time.Time, error) {
 	cert, err := tls.X509KeyPair(certPEM, keyPEM)
 	if err != nil {
-		return nil, fmt.Errorf("load mTLS client key pair: %w", err)
+		return nil, time.Time{}, fmt.Errorf("load mTLS client key pair: %w", err)
 	}
 	tlsConfig := &tls.Config{
 		MinVersion:   tls.VersionTLS12,
@@ -112,7 +167,7 @@ func tlsHTTPClientFromPEM(keyPEM, certPEM, caPEM []byte, timeout time.Duration) 
 	if len(caPEM) > 0 {
 		pool := x509.NewCertPool()
 		if !pool.AppendCertsFromPEM(caPEM) {
-			return nil, fmt.Errorf("parse mTLS client CA bundle")
+			return nil, time.Time{}, fmt.Errorf("parse mTLS client CA bundle")
 		}
 		tlsConfig.RootCAs = pool
 	}
@@ -121,5 +176,5 @@ func tlsHTTPClientFromPEM(keyPEM, certPEM, caPEM []byte, timeout time.Duration) 
 		Transport: &http.Transport{
 			TLSClientConfig: tlsConfig,
 		},
-	}, nil
+	}, leafNotAfter(cert), nil
 }
