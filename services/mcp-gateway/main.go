@@ -129,6 +129,7 @@ func main() {
 	tlsCertFile := strings.TrimSpace(os.Getenv("TLS_CERT_FILE"))
 	tlsKeyFile := strings.TrimSpace(os.Getenv("TLS_KEY_FILE"))
 	tlsClientCAFile := strings.TrimSpace(os.Getenv("TLS_CLIENT_CA_FILE"))
+	var tlsReloader *certReloader
 	if tlsCertFile != "" || tlsKeyFile != "" || tlsClientCAFile != "" {
 		tlsConfig, err := gatewayTLSConfig(tlsClientCAFile)
 		if err != nil {
@@ -137,6 +138,13 @@ func main() {
 		if tlsCertFile == "" || tlsKeyFile == "" {
 			log.Fatal("configure gateway mTLS: TLS_CERT_FILE and TLS_KEY_FILE are required")
 		}
+		// Serve the certificate via GetCertificate so cert-manager rotations are
+		// picked up without a restart (see certReloader).
+		tlsReloader, err = newCertReloader(tlsCertFile, tlsKeyFile)
+		if err != nil {
+			log.Fatalf("load gateway TLS certificate: %v", err)
+		}
+		tlsConfig.GetCertificate = tlsReloader.GetCertificate
 		httpServer.TLSConfig = tlsConfig
 	}
 
@@ -149,7 +157,9 @@ func main() {
 	go func() {
 		var err error
 		if httpServer.TLSConfig != nil {
-			err = httpServer.ListenAndServeTLS(tlsCertFile, tlsKeyFile)
+			// Cert/key come from TLSConfig.GetCertificate (the reloader), so the
+			// filename args are empty.
+			err = httpServer.ListenAndServeTLS("", "")
 		} else {
 			err = httpServer.ListenAndServe()
 		}
@@ -160,6 +170,9 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if tlsReloader != nil {
+		go tlsReloader.watch(ctx, defaultCertReloadInterval)
+	}
 
 	select {
 	case err := <-serverErrs:
