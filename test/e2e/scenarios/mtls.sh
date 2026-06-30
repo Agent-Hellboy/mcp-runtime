@@ -170,7 +170,7 @@ spec:
       decision: allow
 EOF
   (cd "${WORKDIR}" && "${PROJECT_ROOT}/bin/mcp-runtime" access --use-kube grant apply --file mtls-grant.yaml)
-  wait_for_policy_text "\"name\": \"${MTLS_SERVER_NAME}-grant\""
+  wait_for_policy_text "\"name\": \"${MTLS_SERVER_NAME}-grant\"" "${MTLS_SERVER_NAME}"
 
   MTLS_CERT_DIR="${WORKDIR}/mtls-certs"
   mkdir -p "${MTLS_CERT_DIR}"
@@ -183,7 +183,7 @@ EOF
       --trust-domain "${MTLS_TRUST_DOMAIN}" \
       --output-dir "${MTLS_CERT_DIR}")"
   MTLS_SESSION_NAME="$(printf '%s\n' "${MTLS_ENROLL_OUT}" | python3 -c 'import re,sys; m=re.search(r"/session/([^\\s]+)", sys.stdin.read()); print(m.group(1) if m else ""); sys.exit(0 if m else 1)')"
-  wait_for_policy_text "\"name\": \"${MTLS_SESSION_NAME}\""
+  wait_for_policy_text "\"name\": \"${MTLS_SESSION_NAME}\"" "${MTLS_SERVER_NAME}"
 
   MTLS_CLIENT_CERT="${MTLS_CERT_DIR}/client.crt"
   MTLS_CLIENT_KEY="${MTLS_CERT_DIR}/client.key"

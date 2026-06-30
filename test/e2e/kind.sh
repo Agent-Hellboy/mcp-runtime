@@ -1729,17 +1729,18 @@ PY
 
 wait_for_policy_text() {
   local text="$1"
-  local tries="${2:-40}"
+  local server="${2:-${SERVER_NAME}}"
+  local tries="${3:-40}"
   local i
   for i in $(seq 1 "${tries}"); do
     local current
-    current="$(kubectl get configmap "${SERVER_NAME}-gateway-policy" -n mcp-servers -o "jsonpath={.data.policy\.json}" 2>/dev/null || true)"
+    current="$(kubectl get configmap "${server}-gateway-policy" -n mcp-servers -o "jsonpath={.data.policy\.json}" 2>/dev/null || true)"
     if [[ "${current}" == *"${text}"* ]]; then
       return 0
     fi
     sleep 2
   done
-  echo "timed out waiting for policy text: ${text}" >&2
+  echo "timed out waiting for policy text in ${server}-gateway-policy: ${text}" >&2
   return 1
 }
 
