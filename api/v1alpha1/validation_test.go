@@ -62,6 +62,39 @@ func TestMCPAccessGrantValidateAllowsTeamOnlySubject(t *testing.T) {
 	}
 }
 
+func TestMCPAccessGrantValidateAllowsWildcardSubject(t *testing.T) {
+	grant := &MCPAccessGrant{
+		ObjectMeta: metav1.ObjectMeta{Name: "grant"},
+		Spec: MCPAccessGrantSpec{
+			ServerRef: ServerReference{Name: "payments"},
+		},
+	}
+
+	if err := grant.validate(); err != nil {
+		t.Fatalf("expected empty subject to remain a wildcard grant, got %v", err)
+	}
+}
+
+func TestMCPAccessGrantValidateCreateWarnsOnWildcardSubject(t *testing.T) {
+	grant := &MCPAccessGrant{
+		ObjectMeta: metav1.ObjectMeta{Name: "grant"},
+		Spec: MCPAccessGrantSpec{
+			ServerRef: ServerReference{Name: "payments"},
+		},
+	}
+
+	warnings, err := grant.ValidateCreate()
+	if err != nil {
+		t.Fatalf("expected wildcard grant to validate, got %v", err)
+	}
+	if len(warnings) != 1 {
+		t.Fatalf("expected one wildcard warning, got %d: %v", len(warnings), warnings)
+	}
+	if !strings.Contains(warnings[0], "wildcard grant") {
+		t.Fatalf("expected wildcard warning, got %q", warnings[0])
+	}
+}
+
 func TestMCPAccessGrantValidateRejectsWhitespaceTeamID(t *testing.T) {
 	grant := &MCPAccessGrant{
 		ObjectMeta: metav1.ObjectMeta{Name: "grant"},
@@ -80,30 +113,19 @@ func TestMCPAccessGrantValidateRejectsWhitespaceTeamID(t *testing.T) {
 	}
 }
 
-func TestMCPAgentSessionValidateUsesInjectedTimeSource(t *testing.T) {
-	fixedNow := time.Date(2026, time.March, 25, 12, 0, 0, 0, time.UTC)
-	originalNowFunc := nowFunc
-	nowFunc = func() time.Time { return fixedNow }
-	t.Cleanup(func() {
-		nowFunc = originalNowFunc
-	})
-
+func TestMCPAgentSessionValidateAllowsExpiredSessionState(t *testing.T) {
 	session := &MCPAgentSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "session"},
 		Spec: MCPAgentSessionSpec{
 			ServerRef:      ServerReference{Name: "payments"},
 			Subject:        SubjectRef{AgentID: "ops-agent"},
 			ConsentedTrust: TrustLevelMedium,
-			ExpiresAt:      &metav1.Time{Time: fixedNow},
+			ExpiresAt:      &metav1.Time{Time: time.Date(2026, time.March, 25, 12, 0, 0, 0, time.UTC)},
 		},
 	}
 
-	err := session.validate()
-	if err == nil {
-		t.Fatal("expected validation error for expired session")
-	}
-	if !strings.Contains(err.Error(), "expiresAt") {
-		t.Fatalf("expected expiresAt validation error, got %v", err)
+	if err := session.validate(); err != nil {
+		t.Fatalf("expired sessions should remain valid persisted state: %v", err)
 	}
 }
 
@@ -176,6 +198,53 @@ func TestMCPServerDefault(t *testing.T) {
 	}
 	if server.Spec.IngressClass != "traefik" {
 		t.Fatalf("expected ingressClass default, got %q", server.Spec.IngressClass)
+	}
+}
+
+func TestMCPServerDefaultsPublicPathPrefixForMTLS(t *testing.T) {
+	// In the Traefik-terminates model, mtls uses path-based routing like every
+	// other auth mode, so publicPathPrefix is defaulted rather than skipped.
+	server := &MCPServer{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-server"},
+		Spec: MCPServerSpec{
+			Image: "example.com/mcp-server",
+			Auth:  &AuthConfig{Mode: AuthModeMTLS, TrustDomain: "example.org"},
+			Gateway: &GatewayConfig{
+				Enabled: true,
+			},
+		},
+	}
+
+	server.DefaultWithOptions(MCPServerDefaultOptions{DefaultIngressHost: "mcp.example.com"})
+
+	if server.Spec.PublicPathPrefix == "" {
+		t.Fatal("expected a publicPathPrefix default for mTLS (path-based routing)")
+	}
+	if err := server.validate(); err != nil {
+		t.Fatalf("defaulted mTLS server should validate: %v", err)
+	}
+}
+
+func TestMCPServerDefaultWithOptions(t *testing.T) {
+	server := &MCPServer{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-server"},
+		Spec: MCPServerSpec{
+			Image:     "example.com/mcp-server",
+			Gateway:   &GatewayConfig{Enabled: true},
+			Analytics: &AnalyticsConfig{},
+		},
+	}
+
+	server.DefaultWithOptions(MCPServerDefaultOptions{
+		DefaultIngressHost:        "mcp.example.com",
+		DefaultAnalyticsIngestURL: "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events",
+	})
+
+	if server.Spec.IngressHost != "mcp.example.com" {
+		t.Fatalf("expected ingressHost default from options, got %q", server.Spec.IngressHost)
+	}
+	if server.Spec.Analytics == nil || server.Spec.Analytics.IngestURL != "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events" {
+		t.Fatalf("expected analytics ingest URL default from options, got %#v", server.Spec.Analytics)
 	}
 }
 

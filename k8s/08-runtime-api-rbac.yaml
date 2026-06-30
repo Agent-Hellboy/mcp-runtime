@@ -1,0 +1,175 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mcp-runtime-api
+  namespace: mcp-sentinel
+automountServiceAccountToken: true
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: mcp-runtime-api
+rules:
+  # Authenticated external adapters submit CSRs; the API can create and read
+  # only cert-manager CertificateRequests, never private-key Secrets.
+  - apiGroups: ["cert-manager.io"]
+    resources: ["certificaterequests"]
+    verbs: ["create", "get", "list", "watch"]
+  - apiGroups: ["mcpruntime.org"]
+    resources: ["mcpaccessgrants", "mcpagentsessions"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["mcpruntime.org"]
+    resources: ["mcpaccessgrants", "mcpagentsessions"]
+    verbs: ["create", "update", "delete"]
+  - apiGroups: ["mcpruntime.org"]
+    resources: ["mcpaccessgrants"]
+    verbs: ["patch"]
+  - apiGroups: ["mcpruntime.org"]
+    resources: ["mcpagentsessions"]
+    verbs: ["patch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["statefulsets", "daemonsets"]
+    verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["endpoints"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["namespaces", "resourcequotas", "limitranges"]
+    verbs: ["get", "list", "watch", "create"]
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["update", "patch"]
+  - apiGroups: [""]
+    resources: ["serviceaccounts"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles", "rolebindings"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterroles"]
+    resourceNames: ["mcp-runtime-api-team-secrets"]
+    verbs: ["bind"]
+  - apiGroups: [""]
+    resources: ["users", "groups"]
+    verbs: ["impersonate"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get"]
+  - apiGroups: ["mcpruntime.org"]
+    resources: ["mcpservers"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: mcp-runtime-api
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: mcp-runtime-api
+subjects:
+  - kind: ServiceAccount
+    name: mcp-runtime-api
+    namespace: mcp-sentinel
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: mcp-sentinel-platform-admin
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: mcp-runtime-api
+subjects:
+  - kind: Group
+    name: platform:role:admin
+    apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: mcp-runtime-api-registry-push
+  namespace: mcp-sentinel
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create", "get", "list", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: mcp-runtime-api-registry-push
+  namespace: mcp-sentinel
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: mcp-runtime-api-registry-push
+subjects:
+  - kind: ServiceAccount
+    name: mcp-runtime-api
+    namespace: mcp-sentinel
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: mcp-runtime-api-team-secrets
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: mcp-runtime-api-user-key-secret
+  namespace: mcp-sentinel
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["mcp-sentinel-user-api-keys"]
+    verbs: ["get", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["mcp-sentinel-secrets"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: mcp-runtime-api-user-key-secret
+  namespace: mcp-sentinel
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: mcp-runtime-api-user-key-secret
+subjects:
+  - kind: ServiceAccount
+    name: mcp-runtime-api
+    namespace: mcp-sentinel

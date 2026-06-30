@@ -28,6 +28,7 @@ const (
 const (
 	DefaultOrgCatalogNamespace    = "mcp-servers-org"
 	DefaultPublicCatalogNamespace = "mcp-servers-public"
+	DefaultTestMTLSClusterIssuer  = "mcp-runtime-ca"
 )
 
 // Input captures the raw CLI inputs for setup.
@@ -56,7 +57,12 @@ type Input struct {
 	ACMEmail    string
 	ACMEStaging bool
 	// TLSClusterIssuer is a pre-existing cert-manager.io ClusterIssuer (e.g. org internal CA / Vault / ADCS). Mutually exclusive with ACMEmail.
-	TLSClusterIssuer   string
+	TLSClusterIssuer string
+	// MTLSClusterIssuer enables the mTLS auth path by naming the workload issuer
+	// for gateway server and adapter client certificates. Name an enterprise
+	// ClusterIssuer, or the bundled mcp-runtime-ca to have setup provision it.
+	// Test mode defaults this to mcp-runtime-ca automatically.
+	MTLSClusterIssuer  string
 	InstallCertManager bool
 }
 
@@ -83,6 +89,7 @@ type Plan struct {
 	ACMEmail             string
 	ACMEStaging          bool
 	TLSClusterIssuer     string
+	MTLSClusterIssuer    string
 	InstallCertManager   bool
 }
 
@@ -148,6 +155,13 @@ func Build(input Input) Plan {
 	} else {
 		input.PlatformMode = PlatformModeTenant
 	}
+	// Test mode defaults to the bundled mcp-runtime-ca workload issuer so the
+	// mTLS path works out of the box on local clusters. Prod opts in explicitly
+	// by naming an issuer via --mtls-cluster-issuer (the bundled name is allowed
+	// and provisioned by setupWorkloadPKI).
+	if input.TestMode && strings.TrimSpace(input.MTLSClusterIssuer) == "" {
+		input.MTLSClusterIssuer = DefaultTestMTLSClusterIssuer
+	}
 
 	manifestPath := input.IngressManifest
 	if !input.IngressManifestChanged {
@@ -202,5 +216,6 @@ func Build(input Input) Plan {
 		ACMEStaging:        input.ACMEStaging,
 		InstallCertManager: input.InstallCertManager,
 		TLSClusterIssuer:   input.TLSClusterIssuer,
+		MTLSClusterIssuer:  input.MTLSClusterIssuer,
 	}
 }

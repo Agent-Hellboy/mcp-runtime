@@ -14,6 +14,9 @@ data:
   OIDC_JWKS_URL: ""
   GOOGLE_CLIENT_ID: ""
   PLATFORM_MODE: "tenant"
+  # Existing enterprise cert-manager ClusterIssuer used for workload mTLS.
+  # Setup fills this from --mtls-cluster-issuer.
+  MCP_MTLS_CLUSTER_ISSUER: ""
   PLATFORM_ORG_NAMESPACE: "mcp-servers-org"
   PLATFORM_PUBLIC_NAMESPACE: "mcp-servers-public"
   PLATFORM_MCP_ACTIVE_SERVER_LIMIT: "5"
@@ -25,9 +28,10 @@ data:
   MCP_REGISTRY_INGRESS_HOST: ""
   MCP_PLATFORM_DOMAIN: ""
   MCP_MCP_INGRESS_HOST: ""
-  API_BASE: "/api"
+  API_BASE: "/api/v1"
   OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"
   MCP_CLUSTER_NAME: "local"
   # Dashboard observability links
   GRAFANA_URL: "/grafana"
+  PROMETHEUS_API_URL: "http://prometheus:9090/prometheus"
   DASHBOARD_REFRESH_INTERVAL: "30"

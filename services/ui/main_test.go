@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -382,6 +381,10 @@ func TestStaticAppMovesTenantRetireActionToMyActivity(t *testing.T) {
 		`function isTenantUser()`,
 		`if (isTenantUser() && server.namespace && server.name)`,
 		`retireButton.textContent = "Retire"`,
+		`metricsButton.textContent = "Prometheus"`,
+		`grafanaButton.textContent = "Grafana"`,
+		`async function openScopedObservability(server, target)`,
+		`server.observability?.prometheus?.queries?.length`,
 		`authenticated && !isTenantUser()`,
 		`await loadUserDashboard()`,
 	} {
@@ -517,7 +520,9 @@ func TestStaticMarkupBoundsLongActivityTables(t *testing.T) {
 		t.Fatalf("expected long dashboard tables to use scroll-table, got %d", got)
 	}
 	for _, want := range []string{
-		`placeholder="Search servers"`,
+		`placeholder="Search servers and tools"`,
+		`id="tool-catalog-body"`,
+		`id="tool-risk-filter"`,
 		`class="analytics-tabset" data-analytics-tabset`,
 		`id="governance-decisions" data-admin-only="true"`,
 		`data-analytics-tab-target="governance-decision-audit"`,
@@ -576,268 +581,6 @@ func TestStaticAppRoutesDecisionAuditThroughGovernance(t *testing.T) {
 	}
 	if strings.Contains(source, `loadDashboardAnalytics();`+"\n"+`        loadEvents();`) {
 		t.Fatal("dashboard tab should not load decision audit events")
-	}
-}
-
-func TestAPIProxyRequiresAuthenticatedSession(t *testing.T) {
-	upstreamCalled := false
-	store := newUISessionStore(time.Now)
-	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		upstreamCalled = true
-		if got := r.Header.Get("x-api-key"); got != "api-secret" {
-			t.Fatalf("x-api-key = %q, want %q", got, "api-secret")
-		}
-		if got := r.Header.Get("Cookie"); got != "" {
-			t.Fatalf("Cookie header forwarded upstream: %q", got)
-		}
-		if got := r.URL.Path; got != "/api/dashboard/summary" {
-			t.Fatalf("path = %q, want /api/dashboard/summary", got)
-		}
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     http.Header{"content-type": []string{"application/json"}},
-			Body:       io.NopCloser(strings.NewReader(`{"ok":true}`)),
-		}, nil
-	})
-	target, err := url.Parse("http://api.example")
-	if err != nil {
-		t.Fatalf("url.Parse() error = %v", err)
-	}
-	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", []string{"api-secret"}, store, false, transport)
-
-	recorder := httptest.NewRecorder()
-	proxy.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/dashboard/summary", nil))
-	if recorder.Code != http.StatusUnauthorized {
-		t.Fatalf("unauthenticated status = %d, want %d", recorder.Code, http.StatusUnauthorized)
-	}
-	if upstreamCalled {
-		t.Fatal("unauthenticated request reached upstream")
-	}
-
-	login := httptest.NewRecorder()
-	handleLogin("ui-secret", "api-secret", "http://api.example", store).ServeHTTP(login, httptest.NewRequest(http.MethodPost, "/auth/login", strings.NewReader(`{"api_key":"ui-secret"}`)))
-	if login.Code != http.StatusOK {
-		t.Fatalf("login status = %d, want %d; body=%s", login.Code, http.StatusOK, login.Body.String())
-	}
-	cookies := login.Result().Cookies()
-	if len(cookies) != 1 {
-		t.Fatalf("login cookies = %d, want 1", len(cookies))
-	}
-	if strings.Contains(cookies[0].Value, "ui-secret") {
-		t.Fatal("session cookie contains raw API key")
-	}
-
-	authed := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/dashboard/summary", nil)
-	req.AddCookie(cookies[0])
-	proxy.ServeHTTP(authed, req)
-	if authed.Code != http.StatusOK {
-		t.Fatalf("authenticated status = %d, want %d; body=%s", authed.Code, http.StatusOK, authed.Body.String())
-	}
-	if !upstreamCalled {
-		t.Fatal("authenticated request did not reach upstream")
-	}
-}
-
-func TestAPIProxyAllowsPlatformLoginWithoutSession(t *testing.T) {
-	upstreamCalled := false
-	store := newUISessionStore(time.Now)
-	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		upstreamCalled = true
-		if got := r.URL.Path; got != "/api/auth/login" {
-			t.Fatalf("path = %q, want /api/auth/login", got)
-		}
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     http.Header{"content-type": []string{"application/json"}},
-			Body:       io.NopCloser(strings.NewReader(`{"access_token":"tok","token_type":"bearer","user":{"role":"user"}}`)),
-		}, nil
-	})
-	target, err := url.Parse("http://api.example")
-	if err != nil {
-		t.Fatalf("url.Parse() error = %v", err)
-	}
-	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", []string{"api-secret"}, store, false, transport)
-
-	recorder := httptest.NewRecorder()
-	proxy.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"email":"test@mcpruntime.org","password":"test@123"}`)))
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
-	}
-	if !upstreamCalled {
-		t.Fatal("platform login request did not reach upstream")
-	}
-}
-
-func TestAPIProxyAllowsDirectAPIKeyClients(t *testing.T) {
-	upstreamCalled := false
-	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		upstreamCalled = true
-		if got := r.Header.Get("x-api-key"); got != "api-secret" {
-			t.Fatalf("x-api-key forwarded upstream = %q, want %q", got, "api-secret")
-		}
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     http.Header{"content-type": []string{"application/json"}},
-			Body:       io.NopCloser(strings.NewReader(`{"ok":true}`)),
-		}, nil
-	})
-	target, err := url.Parse("http://api.example")
-	if err != nil {
-		t.Fatalf("url.Parse() error = %v", err)
-	}
-	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", []string{"api-secret", "backup-secret"}, newUISessionStore(time.Now), false, transport)
-
-	recorder := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
-	req.Header.Set("x-api-key", "backup-secret")
-	proxy.ServeHTTP(recorder, req)
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("direct API-key status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
-	}
-	if !upstreamCalled {
-		t.Fatal("direct API-key request did not reach upstream")
-	}
-}
-
-func TestAPIProxyForwardsUserAPIKeyClients(t *testing.T) {
-	upstreamCalled := false
-	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		upstreamCalled = true
-		if got := r.Header.Get("x-api-key"); got != "mcpu-user-key" {
-			t.Fatalf("x-api-key forwarded upstream = %q, want user key", got)
-		}
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     http.Header{"content-type": []string{"application/json"}},
-			Body:       io.NopCloser(strings.NewReader(`{"authenticated":true}`)),
-		}, nil
-	})
-	target, err := url.Parse("http://api.example")
-	if err != nil {
-		t.Fatalf("url.Parse() error = %v", err)
-	}
-	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", []string{"api-secret"}, newUISessionStore(time.Now), false, transport)
-
-	recorder := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
-	req.Header.Set("x-api-key", "mcpu-user-key")
-	proxy.ServeHTTP(recorder, req)
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("user API-key status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
-	}
-	if !upstreamCalled {
-		t.Fatal("user API-key request did not reach upstream")
-	}
-}
-
-func TestAPIProxyRejectsAnonymousRuntimeServers(t *testing.T) {
-	upstreamCalled := false
-	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		upstreamCalled = true
-		return nil, fmt.Errorf("anonymous request unexpectedly reached upstream: %s", r.URL.String())
-	})
-	target, err := url.Parse("http://api.example")
-	if err != nil {
-		t.Fatalf("url.Parse() error = %v", err)
-	}
-	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", []string{"api-secret"}, newUISessionStore(time.Now), false, transport)
-
-	recorder := httptest.NewRecorder()
-	proxy.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "http://localhost:18080/api/runtime/servers?namespace=user-private", nil))
-	if recorder.Code != http.StatusUnauthorized {
-		t.Fatalf("anonymous runtime servers status = %d, want %d; body=%s", recorder.Code, http.StatusUnauthorized, recorder.Body.String())
-	}
-	if upstreamCalled {
-		t.Fatal("anonymous runtime servers request reached upstream")
-	}
-}
-
-func TestAPIProxyAllowsAnonymousPublicCatalog(t *testing.T) {
-	t.Setenv("PLATFORM_PUBLIC_NAMESPACE", "mcp-servers-public")
-	upstreamCalled := false
-	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		upstreamCalled = true
-		if got := r.Header.Get("x-api-key"); got != "api-secret" {
-			t.Fatalf("x-api-key = %q, want %q", got, "api-secret")
-		}
-		if got := r.Header.Get("authorization"); got != "" {
-			t.Fatalf("authorization forwarded upstream: %q", got)
-		}
-		if got := r.URL.Path; got != "/api/runtime/servers" {
-			t.Fatalf("path = %q, want /api/runtime/servers", got)
-		}
-		if got := r.URL.Query().Get("namespace"); got != "mcp-servers-public" {
-			t.Fatalf("namespace = %q, want mcp-servers-public", got)
-		}
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     http.Header{"content-type": []string{"application/json"}},
-			Body:       io.NopCloser(strings.NewReader(`{"servers":[]}`)),
-		}, nil
-	})
-	target, err := url.Parse("http://api.example")
-	if err != nil {
-		t.Fatalf("url.Parse() error = %v", err)
-	}
-	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", []string{"api-secret"}, newUISessionStore(time.Now), true, transport)
-
-	recorder := httptest.NewRecorder()
-	proxy.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "http://localhost:18080/api/runtime/servers", nil))
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("anonymous public catalog status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
-	}
-	if !upstreamCalled {
-		t.Fatal("anonymous public catalog request did not reach upstream")
-	}
-
-	forbidden := httptest.NewRecorder()
-	proxy.ServeHTTP(forbidden, httptest.NewRequest(http.MethodGet, "http://localhost:18080/api/runtime/servers?namespace=user-private", nil))
-	if forbidden.Code != http.StatusForbidden {
-		t.Fatalf("private namespace status = %d, want %d; body=%s", forbidden.Code, http.StatusForbidden, forbidden.Body.String())
-	}
-}
-
-func TestAPIProxyUsesSessionBeforeAnonymousPublicCatalog(t *testing.T) {
-	store := newUISessionStore(time.Now)
-	sess, err := store.createSession(context.Background(), uiSession{
-		Principal:      sessionPrincipal{Role: "admin", Subject: "admin-1"},
-		UpstreamAPIKey: "session-secret",
-	})
-	if err != nil {
-		t.Fatalf("createSession() error = %v", err)
-	}
-
-	upstreamCalled := false
-	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		upstreamCalled = true
-		if got := r.Header.Get("x-api-key"); got != "session-secret" {
-			t.Fatalf("x-api-key = %q, want session-secret", got)
-		}
-		if got := r.URL.Query().Get("namespace"); got != "admin-private" {
-			t.Fatalf("namespace = %q, want admin-private", got)
-		}
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     http.Header{"content-type": []string{"application/json"}},
-			Body:       io.NopCloser(strings.NewReader(`{"servers":[]}`)),
-		}, nil
-	})
-	target, err := url.Parse("http://api.example")
-	if err != nil {
-		t.Fatalf("url.Parse() error = %v", err)
-	}
-	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", []string{"api-secret"}, store, true, transport)
-
-	recorder := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "http://localhost:18080/api/runtime/servers?namespace=admin-private", nil)
-	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sess.ID})
-	proxy.ServeHTTP(recorder, req)
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("authenticated public-mode status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
-	}
-	if !upstreamCalled {
-		t.Fatal("authenticated public-mode request did not reach upstream")
 	}
 }
 
@@ -907,31 +650,6 @@ func TestHandleLoginWithOIDCToken(t *testing.T) {
 	if got := sess.UpstreamAuthHeader; strings.Contains(got, "id-token") {
 		t.Fatalf("stored upstream authorization leaked raw id token: %q", got)
 	}
-
-	upstreamCalled := false
-	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		upstreamCalled = true
-		if got := r.Header.Get("authorization"); got != "Bearer platform-token" {
-			t.Fatalf("authorization forwarded = %q", got)
-		}
-		if got := r.Header.Get("x-api-key"); got != "" {
-			t.Fatalf("x-api-key unexpectedly set: %q", got)
-		}
-		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"content-type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"ok":true}`))}, nil
-	})
-	target, _ := url.Parse("http://api.example")
-	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", []string{"api-secret"}, store, false, transport)
-
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/user/api-keys", nil)
-	req.AddCookie(cookies[0])
-	proxy.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("proxy status = %d body=%s", rec.Code, rec.Body.String())
-	}
-	if !upstreamCalled {
-		t.Fatal("proxy did not call upstream")
-	}
 }
 
 func TestHandleLoginWithOIDCTokenCapsSessionToTokenExpiry(t *testing.T) {
@@ -986,7 +704,7 @@ func TestLoginOIDCSessionFallsBackToTokenVerificationWhenPlatformStoreUnavailabl
 	authHTTPClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		paths = append(paths, r.URL.Path)
 		switch r.URL.Path {
-		case "/api/auth/oidc":
+		case "/api/v1/auth/oidc":
 			if r.Method != http.MethodPost {
 				t.Fatalf("oidc method = %s, want POST", r.Method)
 			}
@@ -1002,7 +720,7 @@ func TestLoginOIDCSessionFallsBackToTokenVerificationWhenPlatformStoreUnavailabl
 				Header:     http.Header{"content-type": []string{"application/json"}},
 				Body:       io.NopCloser(strings.NewReader(`{"error":"platform identity database not configured"}`)),
 			}, nil
-		case "/api/auth/me":
+		case "/api/v1/auth/me":
 			if got := r.Header.Get("authorization"); got != "Bearer "+idToken {
 				t.Fatalf("fallback authorization = %q, want bearer id token", got)
 			}
@@ -1031,7 +749,7 @@ func TestLoginOIDCSessionFallsBackToTokenVerificationWhenPlatformStoreUnavailabl
 	if expiresAt.After(exp.Add(time.Second)) || expiresAt.Before(exp.Add(-time.Second)) {
 		t.Fatalf("session expiry = %s, want %s", expiresAt.Format(time.RFC3339), exp.Format(time.RFC3339))
 	}
-	if len(paths) != 2 || paths[0] != "/api/auth/oidc" || paths[1] != "/api/auth/me" {
+	if len(paths) != 2 || paths[0] != "/api/v1/auth/oidc" || paths[1] != "/api/v1/auth/me" {
 		t.Fatalf("request paths = %v, want oidc exchange then auth/me fallback", paths)
 	}
 }
@@ -1107,28 +825,6 @@ func TestHandleLoginWithPassword(t *testing.T) {
 	if len(cookies) != 1 {
 		t.Fatalf("cookies = %d, want 1", len(cookies))
 	}
-
-	upstreamCalled := false
-	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		upstreamCalled = true
-		if got := r.Header.Get("authorization"); got != "Bearer platform-token" {
-			t.Fatalf("authorization forwarded = %q", got)
-		}
-		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"content-type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"ok":true}`))}, nil
-	})
-	target, _ := url.Parse("http://api.example")
-	proxy := newAPIProxyWithTransport(target, "/api", "api-secret", []string{"api-secret"}, store, false, transport)
-
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/user/api-keys", nil)
-	req.AddCookie(cookies[0])
-	proxy.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("proxy status = %d body=%s", rec.Code, rec.Body.String())
-	}
-	if !upstreamCalled {
-		t.Fatal("proxy did not call upstream")
-	}
 }
 
 func TestLoginClientIDUsesForwardedFor(t *testing.T) {
@@ -1138,6 +834,25 @@ func TestLoginClientIDUsesForwardedFor(t *testing.T) {
 
 	if got := loginClientID(req); got != "203.0.113.10" {
 		t.Fatalf("loginClientID() = %q, want forwarded client", got)
+	}
+}
+
+func TestLoginClientIDEmptyForwardedForFallsBackToRemoteAddr(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
+	req.RemoteAddr = "198.51.100.20:54321"
+	req.Header.Set("x-forwarded-for", " , ")
+
+	if got := loginClientID(req); got != "198.51.100.20" {
+		t.Fatalf("loginClientID() = %q, want remote addr host", got)
+	}
+}
+
+func TestLoginClientIDUnknownWhenNoAddressAvailable(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
+	req.RemoteAddr = ""
+
+	if got := loginClientID(req); got != loginClientUnknownIP {
+		t.Fatalf("loginClientID() = %q, want %q", got, loginClientUnknownIP)
 	}
 }
 
@@ -1184,6 +899,62 @@ func TestHandleLoginSuccessResetsFailureCounter(t *testing.T) {
 	defer loginAttempts.mu.Unlock()
 	if got := loginAttempts.clients["198.51.100.11"].failures; got != 0 {
 		t.Fatalf("failure count after success = %d, want 0", got)
+	}
+}
+
+func TestLoginAttemptTrackerPrunesIdleClientsPeriodically(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	tracker := newLoginAttemptTracker(func() time.Time { return now })
+
+	tracker.recordFailure("client-old")
+	now = now.Add(loginAttemptIdleTTL + time.Second)
+	tracker.recordFailure("client-new")
+
+	if _, ok := tracker.clients["client-old"]; ok {
+		t.Fatal("idle login attempt client was not pruned")
+	}
+	if _, ok := tracker.clients["client-new"]; !ok {
+		t.Fatal("new login attempt client missing")
+	}
+}
+
+func TestLoginAttemptTrackerDoesNotPruneOnEveryRequest(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	tracker := newLoginAttemptTracker(func() time.Time { return now })
+	tracker.recordFailure("client")
+	firstPrune := tracker.lastPrune
+
+	now = now.Add(loginAttemptPruneInterval / 2)
+	tracker.recordFailure("client")
+
+	if !tracker.lastPrune.Equal(firstPrune) {
+		t.Fatalf("last prune = %s, want %s", tracker.lastPrune, firstPrune)
+	}
+}
+
+func TestLoginAttemptTrackerCapsClientsAndPreservesLockedClients(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	tracker := newLoginAttemptTracker(func() time.Time { return now })
+	tracker.clients["locked"] = &loginClientState{
+		lastSeen:    now,
+		lockedUntil: now.Add(loginLockoutDuration),
+	}
+
+	for i := 0; i < loginAttemptMaxClients; i++ {
+		now = now.Add(time.Millisecond)
+		if !tracker.allow(fmt.Sprintf("client-%d", i)) {
+			t.Fatalf("client-%d should be allowed on first attempt", i)
+		}
+	}
+
+	if got := len(tracker.clients); got > loginAttemptMaxClients {
+		t.Fatalf("login attempt clients = %d, want <= %d", got, loginAttemptMaxClients)
+	}
+	if _, ok := tracker.clients["locked"]; !ok {
+		t.Fatal("active lockout was evicted before unlocked clients")
+	}
+	if _, ok := tracker.clients["client-0"]; ok {
+		t.Fatal("oldest unlocked client was not evicted")
 	}
 }
 
@@ -1264,7 +1035,7 @@ func TestSecurityHeadersMiddlewareSetsCacheControlOnAPI(t *testing.T) {
 	}))
 
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/runtime/servers", nil))
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/runtime/servers", nil))
 	if got := rec.Header().Get("Cache-Control"); got != "no-store, no-cache, must-revalidate" {
 		t.Fatalf("Cache-Control on /api = %q, want no-store, no-cache, must-revalidate", got)
 	}

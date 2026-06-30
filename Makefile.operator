@@ -28,11 +28,11 @@ help: ## Display this help message.
 
 ##@ Development
 
-manifests: controller-gen ## Generate ClusterRole and CustomResourceDefinition objects.
-	$(CONTROLLER_GEN) rbac:roleName=mcp-runtime-operator-role crd webhook paths="./api/..." output:crd:artifacts:config=config/crd/bases
+manifests: controller-gen ## Generate ClusterRole, CustomResourceDefinition, and webhook objects.
+	$(CONTROLLER_GEN) rbac:roleName=mcp-runtime-operator-role crd webhook paths="./api/..." output:crd:artifacts:config=config/crd/bases output:webhook:artifacts:config=config/webhook
 
 generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
-	$(CONTROLLER_GEN) object:headerFile="hack/boilerplate.go.txt" paths="./..."
+	$(CONTROLLER_GEN) object:headerFile="hack/boilerplate.go.txt" paths="./api/..."
 
 CONTROLLER_GEN = $(shell pwd)/bin/controller-gen
 controller-gen: ## Download controller-gen locally if necessary.

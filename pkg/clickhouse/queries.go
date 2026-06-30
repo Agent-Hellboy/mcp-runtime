@@ -49,18 +49,23 @@ type DashboardSummary struct {
 	LastEventTime  string `json:"last_event_time,omitempty"`
 }
 
-const eventSelectColumns = "timestamp, trace_id, source, event_type, server, namespace, team_id, cluster, human_id, agent_id, session_id, decision, tool_name, payload"
+const (
+	eventSelectColumns = "timestamp, trace_id, source, event_type, server, namespace, team_id, cluster, human_id, agent_id, session_id, decision, tool_name, payload"
+	maxEventOffset     = 100000
+)
 
 // RowScanner abstracts row scanning for testability.
 type RowScanner interface {
 	Scan(dest ...any) error
 }
 
-// QueryEvents returns events from ClickHouse with optional limit.
-func (c *Client) QueryEvents(ctx context.Context, limit int) ([]EventRow, error) {
+// QueryEvents returns events from ClickHouse with limit and offset.
+func (c *Client) QueryEvents(ctx context.Context, limit, offset int) ([]EventRow, error) {
 	limit = normalizeEventLimit(limit)
+	offset = normalizeEventOffset(offset)
 
-	query := fmt.Sprintf("SELECT %s FROM %s.events ORDER BY timestamp DESC LIMIT %d", eventSelectColumns, c.DBName, limit)
+	query := fmt.Sprintf("SELECT %s FROM %s.events ORDER BY timestamp DESC LIMIT %d OFFSET %d",
+		eventSelectColumns, c.DBName, limit, offset)
 	rows, err := c.Conn.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query events: %w", err)
@@ -160,15 +165,17 @@ type EventFilters struct {
 	ToolName  string
 	Reason    string
 	Limit     int
+	Offset    int
 }
 
 // QueryEventsFiltered returns events filtered by various fields.
 func (c *Client) QueryEventsFiltered(ctx context.Context, filters EventFilters) ([]EventRow, error) {
 	filters.Limit = normalizeEventLimit(filters.Limit)
+	filters.Offset = normalizeEventOffset(filters.Offset)
 
 	whereClause, args := buildEventFilterWhereClause(filters)
 
-	query := buildEventFilterQuery(c.DBName, whereClause, filters.Limit)
+	query := buildEventFilterQuery(c.DBName, whereClause, filters.Limit, filters.Offset)
 
 	rows, err := c.Conn.Query(ctx, query, args...)
 	if err != nil {
@@ -255,9 +262,10 @@ func buildEventFilterWhereClause(filters EventFilters) (string, []interface{}) {
 	return whereClause, args
 }
 
-func buildEventFilterQuery(dbName, whereClause string, limit int) string {
-	return fmt.Sprintf("SELECT %s FROM %s.events %s ORDER BY timestamp DESC LIMIT %d",
-		eventSelectColumns, dbName, whereClause, limit)
+func buildEventFilterQuery(dbName, whereClause string, limit, offset int) string {
+	offset = normalizeEventOffset(offset)
+	return fmt.Sprintf("SELECT %s FROM %s.events %s ORDER BY timestamp DESC LIMIT %d OFFSET %d",
+		eventSelectColumns, dbName, whereClause, limit, offset)
 }
 
 // QueryDashboardSummary returns summary statistics for the dashboard.
@@ -351,4 +359,14 @@ func normalizeEventLimit(limit int) int {
 		return 1000
 	}
 	return limit
+}
+
+func normalizeEventOffset(offset int) int {
+	if offset < 0 {
+		return 0
+	}
+	if offset > maxEventOffset {
+		return maxEventOffset
+	}
+	return offset
 }

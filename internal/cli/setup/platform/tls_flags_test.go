@@ -43,3 +43,31 @@ func TestValidateTLSSetupCLIFlags(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateMTLSSetupCLIFlags(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name          string
+		testMode, tls bool
+		issuer        string
+		wantErr       bool
+	}{
+		{name: "no mtls requested", wantErr: false},
+		{name: "issuer alone needs tls", issuer: "corp-issuer", wantErr: true},
+		{name: "issuer + tls enables mtls", issuer: "corp-issuer", tls: true, wantErr: false},
+		{name: "issuer + test-mode is exempt from tls", issuer: "mcp-runtime-ca", testMode: true, wantErr: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := ValidateMTLSSetupCLIFlags(tc.testMode, tc.tls, tc.issuer)
+			if tc.wantErr {
+				if err == nil || !errors.Is(err, core.ErrFieldRequired) {
+					t.Fatalf("want ErrFieldRequired, got %v", err)
+				}
+			} else if err != nil {
+				t.Fatalf("want nil, got %v", err)
+			}
+		})
+	}
+}

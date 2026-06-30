@@ -20,12 +20,14 @@ import (
 
 	"mcp-runtime/internal/cli/core"
 	"mcp-runtime/internal/cli/kube"
+	"mcp-runtime/internal/cli/kubeerr"
 	"mcp-runtime/internal/cli/registry"
 	"mcp-runtime/internal/cli/setup/assetpath"
 	"mcp-runtime/internal/cli/setup/ingressmanifest"
 	setupplan "mcp-runtime/internal/cli/setup/plan"
 	"mcp-runtime/pkg/k8sclient"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -33,18 +35,14 @@ import (
 )
 
 const (
-	kafkaStatefulSetName = "kafka"
-	kafkaPodName         = "kafka-0"
-	kafkaPodContainer    = "kafka"
-	kafkaPVCName         = "kafka-data-kafka-0"
+	kafkaStatefulSetName     = "kafka"
+	kafkaTopicInitJob        = "kafka-topic-init"
+	kafkaPodName             = "kafka-0"
+	kafkaPodContainer        = "kafka"
+	kafkaPVCName             = "kafka-data-kafka-0"
+	kafkaHeadlessServiceName = "kafka-headless"
+	kafkaKRaftReplicaCount   = int32(3)
 )
-
-func zookeeperRolloutKind(storageMode string) string {
-	if storageMode == setupplan.StorageModeHostpath {
-		return "statefulset"
-	}
-	return "deployment"
-}
 
 func deployAnalyticsManifests(logger *zap.Logger, images AnalyticsImageSet, storageMode, platformMode string) error {
 	return deployAnalyticsManifestsClientGo(logger, images, storageMode, platformMode)
@@ -106,6 +104,13 @@ func deployAnalyticsManifestsClientGo(logger *zap.Logger, images AnalyticsImageS
 		postgresManifest = "k8s/20-postgres-hostpath.yaml"
 	}
 
+	if err := ensureAnalyticsHostpathDirs(storageMode); err != nil {
+		return err
+	}
+	if err := reconcileKafkaStatefulSetForKRaftUpgradeClientGo(); err != nil {
+		return err
+	}
+
 	core.Info("Applying analytics storage and messaging components")
 	for _, manifest := range []string{
 		clickhouseManifest,
@@ -119,12 +124,11 @@ func deployAnalyticsManifestsClientGo(logger *zap.Logger, images AnalyticsImageS
 	if err := waitForRolloutStatusWithClientGo("statefulset", "clickhouse", core.DefaultAnalyticsNamespace, rolloutTimeoutDuration); err != nil {
 		return mcpSentinelDependencyRolloutFailed(core.DefaultKubectlClient(), err, "statefulset", "clickhouse", core.DefaultAnalyticsNamespace, "storage (clickhouse)")
 	}
-	zookeeperKind := zookeeperRolloutKind(storageMode)
-	if err := waitForRolloutStatusWithClientGo(zookeeperKind, "zookeeper", core.DefaultAnalyticsNamespace, rolloutTimeoutDuration); err != nil {
-		return mcpSentinelDependencyRolloutFailed(core.DefaultKubectlClient(), err, zookeeperKind, "zookeeper", core.DefaultAnalyticsNamespace, "messaging (zookeeper)")
-	}
 	if err := waitForKafkaRolloutClientGo(logger, rolloutTimeoutDuration, storageMode); err != nil {
 		return mcpSentinelDependencyRolloutFailed(core.DefaultKubectlClient(), err, "statefulset", "kafka", core.DefaultAnalyticsNamespace, "messaging (kafka)")
+	}
+	if err := initializeKafkaTopicsClientGo(images, imagePullSecretName, platformMode, rolloutTimeoutDuration); err != nil {
+		return err
 	}
 
 	core.Info("Initializing ClickHouse schema")
@@ -143,8 +147,12 @@ func deployAnalyticsManifestsClientGo(logger *zap.Logger, images AnalyticsImageS
 		postgresManifest,
 		"k8s/06-ingest.yaml",
 		"k8s/07-processor.yaml",
-		"k8s/08-api.yaml",
-		"k8s/08-api-rbac.yaml",
+		"k8s/08-platform-api.yaml",
+		"k8s/08-platform-api-rbac.yaml",
+		"k8s/08-runtime-api.yaml",
+		"k8s/08-runtime-api-rbac.yaml",
+		"k8s/08-analytics-api.yaml",
+		"k8s/22-split-api-networkpolicy.yaml",
 		"k8s/09-ui.yaml",
 		"k8s/10-gateway.yaml",
 		"k8s/11-prometheus.yaml",
@@ -179,7 +187,9 @@ func deployAnalyticsManifestsClientGo(logger *zap.Logger, images AnalyticsImageS
 		{kind: "statefulset", name: "mcp-sentinel-postgres"},
 		{kind: "deployment", name: "mcp-sentinel-ingest"},
 		{kind: "deployment", name: "mcp-sentinel-processor"},
-		{kind: "deployment", name: "mcp-sentinel-api"},
+		{kind: "deployment", name: "mcp-platform-api"},
+		{kind: "deployment", name: "mcp-runtime-api"},
+		{kind: "deployment", name: "mcp-analytics-api"},
 		{kind: "deployment", name: "mcp-sentinel-ui"},
 		{kind: "deployment", name: "mcp-sentinel-gateway"},
 		{kind: "deployment", name: "prometheus"},
@@ -264,6 +274,13 @@ func deployAnalyticsManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap
 		postgresManifest = "k8s/20-postgres-hostpath.yaml"
 	}
 
+	if err := ensureAnalyticsHostpathDirs(storageMode); err != nil {
+		return err
+	}
+	if err := reconcileKafkaStatefulSetForKRaftUpgradeWithKubectl(kubectl); err != nil {
+		return err
+	}
+
 	core.Info("Applying analytics storage and messaging components")
 	for _, manifest := range []string{
 		clickhouseManifest,
@@ -277,12 +294,11 @@ func deployAnalyticsManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap
 	if err := waitForRolloutStatusWithKubectl(kubectl, "statefulset", "clickhouse", core.DefaultAnalyticsNamespace, rolloutTimeout); err != nil {
 		return mcpSentinelDependencyRolloutFailed(kubectl, err, "statefulset", "clickhouse", core.DefaultAnalyticsNamespace, "storage (clickhouse)")
 	}
-	zookeeperKind := zookeeperRolloutKind(storageMode)
-	if err := waitForRolloutStatusWithKubectl(kubectl, zookeeperKind, "zookeeper", core.DefaultAnalyticsNamespace, rolloutTimeout); err != nil {
-		return mcpSentinelDependencyRolloutFailed(kubectl, err, zookeeperKind, "zookeeper", core.DefaultAnalyticsNamespace, "messaging (zookeeper)")
-	}
 	if err := waitForKafkaRolloutWithKubectl(kubectl, rolloutTimeout, storageMode); err != nil {
 		return mcpSentinelDependencyRolloutFailed(kubectl, err, "statefulset", "kafka", core.DefaultAnalyticsNamespace, "messaging (kafka)")
+	}
+	if err := initializeKafkaTopicsWithKubectl(kubectl, images, imagePullSecretName, platformMode, rolloutTimeout); err != nil {
+		return err
 	}
 
 	core.Info("Initializing ClickHouse schema")
@@ -301,8 +317,12 @@ func deployAnalyticsManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap
 		postgresManifest,
 		"k8s/06-ingest.yaml",
 		"k8s/07-processor.yaml",
-		"k8s/08-api.yaml",
-		"k8s/08-api-rbac.yaml",
+		"k8s/08-platform-api.yaml",
+		"k8s/08-platform-api-rbac.yaml",
+		"k8s/08-runtime-api.yaml",
+		"k8s/08-runtime-api-rbac.yaml",
+		"k8s/08-analytics-api.yaml",
+		"k8s/22-split-api-networkpolicy.yaml",
 		"k8s/09-ui.yaml",
 		"k8s/10-gateway.yaml",
 		"k8s/11-prometheus.yaml",
@@ -330,7 +350,9 @@ func deployAnalyticsManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap
 		{kind: "statefulset", name: "mcp-sentinel-postgres"},
 		{kind: "deployment", name: "mcp-sentinel-ingest"},
 		{kind: "deployment", name: "mcp-sentinel-processor"},
-		{kind: "deployment", name: "mcp-sentinel-api"},
+		{kind: "deployment", name: "mcp-platform-api"},
+		{kind: "deployment", name: "mcp-runtime-api"},
+		{kind: "deployment", name: "mcp-analytics-api"},
 		{kind: "deployment", name: "mcp-sentinel-ui"},
 		{kind: "deployment", name: "mcp-sentinel-gateway"},
 		{kind: "deployment", name: "prometheus"},
@@ -413,6 +435,11 @@ func waitForKafkaRolloutClientGo(logger *zap.Logger, rolloutTimeout time.Duratio
 	}
 }
 
+func isKubectlNotFound(output string) bool {
+	normalized := strings.ToLower(output)
+	return strings.Contains(normalized, "not found") || strings.Contains(normalized, "notfound")
+}
+
 func waitForKafkaRolloutWithKubectl(kubectl core.KubectlRunner, rolloutTimeout, storageMode string) error {
 	if err := waitForRolloutStatusWithKubectl(kubectl, "statefulset", kafkaStatefulSetName, core.DefaultAnalyticsNamespace, rolloutTimeout); err == nil {
 		return nil
@@ -428,10 +455,7 @@ func waitForKafkaRolloutWithKubectl(kubectl core.KubectlRunner, rolloutTimeout, 
 	}
 }
 
-func recoverKafkaClusterIDMismatchClientGo(logger *zap.Logger, storageMode string) (bool, error) {
-	if strings.EqualFold(strings.TrimSpace(storageMode), setupplan.StorageModeHostpath) {
-		return false, nil
-	}
+func recoverKafkaClusterIDMismatchClientGo(logger *zap.Logger, _ string) (bool, error) {
 	clients, err := platformKubernetesClients()
 	if err != nil {
 		return false, err
@@ -441,46 +465,23 @@ func recoverKafkaClusterIDMismatchClientGo(logger *zap.Logger, storageMode strin
 		return false, nil
 	}
 	if logger != nil {
-		logger.Warn("Kafka cluster ID mismatch detected; resetting bundled Kafka PVC")
+		logger.Warn("Kafka cluster ID mismatch detected; refusing destructive automatic recovery")
 	}
-	core.Warn("Kafka data volume has stale cluster metadata; resetting bundled Kafka state")
-	if err := scaleKafkaStatefulSetClientGo(clients, 0); err != nil {
-		return false, err
-	}
-	if err := waitForKafkaPodDeletionClientGo(clients, 2*time.Minute); err != nil {
-		return false, err
-	}
-	if err := clients.Clientset.CoreV1().PersistentVolumeClaims(core.DefaultAnalyticsNamespace).Delete(context.Background(), kafkaPVCName, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
-		return false, err
-	}
-	if err := scaleKafkaStatefulSetClientGo(clients, 1); err != nil {
-		return false, err
-	}
-	return true, nil
+	return false, fmt.Errorf(
+		"kafka cluster ID does not match stored metadata; setup will not delete persistent volume %s/%s automatically. Restore or migrate metadata to match the Kafka volume, or explicitly reset both stores if data loss is acceptable",
+		core.DefaultAnalyticsNamespace, kafkaPVCName,
+	)
 }
 
-func recoverKafkaClusterIDMismatchWithKubectl(kubectl core.KubectlRunner, storageMode string) (bool, error) {
-	if strings.EqualFold(strings.TrimSpace(storageMode), setupplan.StorageModeHostpath) {
-		return false, nil
-	}
+func recoverKafkaClusterIDMismatchWithKubectl(kubectl core.KubectlRunner, _ string) (bool, error) {
 	logs, err := kafkaLogsWithKubectl(kubectl)
 	if err != nil || !isKafkaClusterIDMismatchLog(logs) {
 		return false, nil
 	}
-	core.Warn("Kafka data volume has stale cluster metadata; resetting bundled Kafka state")
-	if err := kubectl.RunWithOutput([]string{"scale", "statefulset/" + kafkaStatefulSetName, "-n", core.DefaultAnalyticsNamespace, "--replicas=0"}, os.Stdout, os.Stderr); err != nil {
-		return false, err
-	}
-	if err := waitForKafkaPodDeletionWithKubectl(kubectl, 2*time.Minute); err != nil {
-		return false, err
-	}
-	if err := kubectl.RunWithOutput([]string{"delete", "pvc/" + kafkaPVCName, "-n", core.DefaultAnalyticsNamespace, "--ignore-not-found=true", "--wait=true", "--timeout=120s"}, os.Stdout, os.Stderr); err != nil {
-		return false, err
-	}
-	if err := kubectl.RunWithOutput([]string{"scale", "statefulset/" + kafkaStatefulSetName, "-n", core.DefaultAnalyticsNamespace, "--replicas=1"}, os.Stdout, os.Stderr); err != nil {
-		return false, err
-	}
-	return true, nil
+	return false, fmt.Errorf(
+		"kafka cluster ID does not match stored metadata; setup will not delete persistent volume %s/%s automatically. Restore or migrate metadata to match the Kafka volume, or explicitly reset both stores if data loss is acceptable",
+		core.DefaultAnalyticsNamespace, kafkaPVCName,
+	)
 }
 
 func kafkaLogsClientGo(clients *k8sclient.Clients) (string, error) {
@@ -519,43 +520,30 @@ func isKafkaClusterIDMismatchLog(logs string) bool {
 	return strings.Contains(logs, "InconsistentClusterIdException") && strings.Contains(logs, "clusterId")
 }
 
-func scaleKafkaStatefulSetClientGo(clients *k8sclient.Clients, replicas int32) error {
-	stsClient := clients.Clientset.AppsV1().StatefulSets(core.DefaultAnalyticsNamespace)
-	current, err := stsClient.Get(context.Background(), kafkaStatefulSetName, metav1.GetOptions{})
-	if err != nil {
+func initializeKafkaTopicsClientGo(images AnalyticsImageSet, imagePullSecretName, platformMode string, timeout time.Duration) error {
+	if err := deleteJobIfExistsClientGo(kafkaTopicInitJob, core.DefaultAnalyticsNamespace); err != nil {
 		return err
 	}
-	copy := current.DeepCopy()
-	copy.Spec.Replicas = &replicas
-	_, err = stsClient.Update(context.Background(), copy, metav1.UpdateOptions{})
-	return err
+	if err := applyRenderedManifestClientGo("k8s/05-kafka-topic-init.yaml", images, imagePullSecretName, platformMode); err != nil {
+		return err
+	}
+	if err := waitForJobCompletionClientGo(kafkaTopicInitJob, core.DefaultAnalyticsNamespace, timeout); err != nil {
+		return mcpSentinelDependencyJobFailed(core.DefaultKubectlClient(), err, kafkaTopicInitJob, core.DefaultAnalyticsNamespace, "Kafka topic initialization")
+	}
+	return nil
 }
 
-func waitForKafkaPodDeletionClientGo(clients *k8sclient.Clients, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		_, err := clients.Clientset.CoreV1().Pods(core.DefaultAnalyticsNamespace).Get(context.Background(), kafkaPodName, metav1.GetOptions{})
-		if apierrors.IsNotFound(err) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		time.Sleep(2 * time.Second)
+func initializeKafkaTopicsWithKubectl(kubectl core.KubectlRunner, images AnalyticsImageSet, imagePullSecretName, platformMode, timeout string) error {
+	if err := deleteJobIfExistsWithKubectl(kubectl, kafkaTopicInitJob, core.DefaultAnalyticsNamespace); err != nil {
+		return err
 	}
-	return fmt.Errorf("timed out waiting for %s pod deletion", kafkaPodName)
-}
-
-func waitForKafkaPodDeletionWithKubectl(kubectl core.KubectlRunner, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		out, err := kubectlText(kubectl, []string{"get", "pod", kafkaPodName, "-n", core.DefaultAnalyticsNamespace, "-o", "name"})
-		if err != nil || strings.TrimSpace(out) == "" {
-			return nil
-		}
-		time.Sleep(2 * time.Second)
+	if err := applyRenderedManifest(kubectl, "k8s/05-kafka-topic-init.yaml", images, imagePullSecretName, platformMode); err != nil {
+		return err
 	}
-	return fmt.Errorf("timed out waiting for %s pod deletion", kafkaPodName)
+	if err := waitForJobCompletionWithKubectl(kubectl, kafkaTopicInitJob, core.DefaultAnalyticsNamespace, timeout); err != nil {
+		return mcpSentinelDependencyJobFailed(kubectl, err, kafkaTopicInitJob, core.DefaultAnalyticsNamespace, "Kafka topic initialization")
+	}
+	return nil
 }
 
 func applyCatalogNamespaceForMode(platformMode string) error {
@@ -689,11 +677,20 @@ func renderAnalyticsManifest(content string, images AnalyticsImageSet, imagePull
 	if mode, ok := setupplan.NormalizePlatformMode(platformMode); ok && mode != "" {
 		replacements[`PLATFORM_MODE: "tenant"`] = fmt.Sprintf(`PLATFORM_MODE: "%s"`, mode)
 	}
+	if issuer := strings.TrimSpace(os.Getenv("MCP_MTLS_CLUSTER_ISSUER")); issuer != "" {
+		replacements[`MCP_MTLS_CLUSTER_ISSUER: ""`] = fmt.Sprintf(`MCP_MTLS_CLUSTER_ISSUER: %q`, issuer)
+	}
 	if strings.TrimSpace(images.Ingest) != "" {
 		replacements["image: mcp-sentinel-ingest:latest"] = "image: " + images.Ingest
 	}
-	if strings.TrimSpace(images.API) != "" {
-		replacements["image: mcp-sentinel-api:latest"] = "image: " + images.API
+	if strings.TrimSpace(images.PlatformAPI) != "" {
+		replacements["image: mcp-platform-api:latest"] = "image: " + images.PlatformAPI
+	}
+	if strings.TrimSpace(images.RuntimeAPI) != "" {
+		replacements["image: mcp-runtime-api:latest"] = "image: " + images.RuntimeAPI
+	}
+	if strings.TrimSpace(images.AnalyticsAPI) != "" {
+		replacements["image: mcp-analytics-api:latest"] = "image: " + images.AnalyticsAPI
 	}
 	if strings.TrimSpace(images.Processor) != "" {
 		replacements["image: mcp-sentinel-processor:latest"] = "image: " + images.Processor
@@ -706,9 +703,6 @@ func renderAnalyticsManifest(content string, images AnalyticsImageSet, imagePull
 	}
 	if strings.TrimSpace(images.ClickHouse) != "" {
 		replacements["image: clickhouse/clickhouse-server:23.8"] = "image: " + images.ClickHouse
-	}
-	if strings.TrimSpace(images.Zookeeper) != "" {
-		replacements["image: confluentinc/cp-zookeeper:7.5.1"] = "image: " + images.Zookeeper
 	}
 	if strings.TrimSpace(images.Kafka) != "" {
 		replacements["image: confluentinc/cp-kafka:7.5.1"] = "image: " + images.Kafka
@@ -1002,7 +996,11 @@ func renderAnalyticsSecretManifestWithReader(readSecret analyticsSecretValueRead
 			postgresDB,
 		)
 	}
-	platformJWTSecret, err := existingSecretDataValueOrRandomWithReader(readSecret, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "PLATFORM_JWT_SECRET", 32)
+	jwtSecret, err := existingSecretDataValueOrRandomWithReader(readSecret, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "JWT_SECRET", 32)
+	if err != nil {
+		return "", core.WrapWithSentinel(core.ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
+	}
+	internalAuthToken, err := existingSecretDataValueOrRandomWithReader(readSecret, core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "INTERNAL_AUTH_TOKEN", 32)
 	if err != nil {
 		return "", core.WrapWithSentinel(core.ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
 	}
@@ -1088,7 +1086,8 @@ func renderAnalyticsSecretManifestWithReader(readSecret analyticsSecretValueRead
 		"POSTGRES_PASSWORD":       postgresPassword,
 		"POSTGRES_DB":             postgresDB,
 		"POSTGRES_DSN":            postgresDSN,
-		"PLATFORM_JWT_SECRET":     platformJWTSecret,
+		"JWT_SECRET":              jwtSecret,
+		"INTERNAL_AUTH_TOKEN":     internalAuthToken,
 		"GRAFANA_ADMIN_USER":      "admin",
 		"GRAFANA_ADMIN_PASSWORD":  grafanaPassword,
 	}
@@ -1280,7 +1279,14 @@ func ensureBundledPublicRegistryPullSecretClientGo(namespace string, images []st
 }
 
 func analyticsImagePullSecretCandidates(images AnalyticsImageSet) []string {
-	return []string{images.Ingest, images.API, images.Processor, images.UI}
+	return []string{
+		images.Ingest,
+		images.PlatformAPI,
+		images.RuntimeAPI,
+		images.AnalyticsAPI,
+		images.Processor,
+		images.UI,
+	}
 }
 
 func bundledPublicRegistryPullSecretHost(images []string) string {
@@ -1623,7 +1629,9 @@ func restartAnalyticsDeploymentsClientGo() error {
 	ctx := context.Background()
 	now := time.Now()
 	deployments := []string{
-		"mcp-sentinel-api",
+		"mcp-platform-api",
+		"mcp-runtime-api",
+		"mcp-analytics-api",
 		"mcp-sentinel-ui",
 		"mcp-sentinel-ingest",
 		"mcp-sentinel-processor",
@@ -1702,4 +1710,124 @@ func syncPostgresPasswordClientGo() error {
 // shellQuote wraps s in single quotes, escaping any embedded single quotes.
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
+var analyticsHostpathDirs = []string{
+	"/var/lib/mcp-runtime/clickhouse",
+	"/var/lib/mcp-runtime/kafka/0",
+	"/var/lib/mcp-runtime/kafka/1",
+	"/var/lib/mcp-runtime/kafka/2",
+}
+
+func ensureAnalyticsHostpathDirs(storageMode string) error {
+	if storageMode != setupplan.StorageModeHostpath {
+		return nil
+	}
+	var failures []string
+	for _, dir := range analyticsHostpathDirs {
+		if err := os.MkdirAll(dir, 0o750); err != nil {
+			failures = append(failures, fmt.Sprintf("%s: %v", dir, err))
+		}
+	}
+	if len(failures) == 0 {
+		return nil
+	}
+	core.Warn(fmt.Sprintf(
+		"Could not create hostpath directories on this machine (%s). Create them on the node labeled mcp-runtime.org/local-storage=true before Kafka/ClickHouse pods start.",
+		strings.Join(failures, "; "),
+	))
+	return nil
+}
+
+func reconcileKafkaStatefulSetForKRaftUpgradeClientGo() error {
+	clients, err := platformKubernetesClients()
+	if err != nil {
+		return err
+	}
+	namespace := core.DefaultAnalyticsNamespace
+	statefulSets := clients.Clientset.AppsV1().StatefulSets(namespace)
+	current, err := statefulSets.Get(context.Background(), kafkaStatefulSetName, metav1.GetOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("inspect Kafka StatefulSet: %w", err)
+	}
+	if !kafkaStatefulSetNeedsKRaftRecreate(current) {
+		return nil
+	}
+	core.Warn("Legacy Kafka StatefulSet layout detected; recreating it for KRaft migration (PVCs are preserved)")
+	propagation := metav1.DeletePropagationForeground
+	if err := statefulSets.Delete(context.Background(), kafkaStatefulSetName, metav1.DeleteOptions{PropagationPolicy: &propagation}); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("delete legacy Kafka StatefulSet: %w", err)
+	}
+	return waitForStatefulSetDeletionClientGo(clients, namespace, kafkaStatefulSetName, 5*time.Minute)
+}
+
+func reconcileKafkaStatefulSetForKRaftUpgradeWithKubectl(kubectl core.KubectlRunner) error {
+	namespace := core.DefaultAnalyticsNamespace
+	output, err := kubectlText(kubectl, []string{
+		"get", "statefulset", kafkaStatefulSetName, "-n", namespace, "-o", "json",
+	})
+	if err != nil {
+		if isKubectlNotFound(output) {
+			return nil
+		}
+		return fmt.Errorf("inspect Kafka StatefulSet: %s", kubeerr.CommandDetail(output, err))
+	}
+	if strings.TrimSpace(output) == "" {
+		return nil
+	}
+	var current appsv1.StatefulSet
+	if err := json.Unmarshal([]byte(output), &current); err != nil {
+		return fmt.Errorf("decode Kafka StatefulSet: %w", err)
+	}
+	if !kafkaStatefulSetNeedsKRaftRecreate(&current) {
+		return nil
+	}
+	core.Warn("Legacy Kafka StatefulSet layout detected; recreating it for KRaft migration (PVCs are preserved)")
+	if err := kubectl.RunWithOutput([]string{
+		"delete", "statefulset/" + kafkaStatefulSetName,
+		"-n", namespace,
+		"--wait=true",
+		"--timeout=300s",
+	}, os.Stdout, os.Stderr); err != nil {
+		return fmt.Errorf("delete legacy Kafka StatefulSet: %w", err)
+	}
+	return nil
+}
+
+func kafkaStatefulSetNeedsKRaftRecreate(sts *appsv1.StatefulSet) bool {
+	if sts == nil {
+		return false
+	}
+	if sts.Spec.ServiceName != kafkaHeadlessServiceName {
+		return true
+	}
+	if sts.Spec.PodManagementPolicy != appsv1.ParallelPodManagement {
+		return true
+	}
+	if sts.Spec.Replicas == nil || *sts.Spec.Replicas != kafkaKRaftReplicaCount {
+		return true
+	}
+	if sts.Annotations == nil || sts.Annotations["mcpruntime.org/kafka-mode"] != "kraft" {
+		return true
+	}
+	return false
+}
+
+func waitForStatefulSetDeletionClientGo(clients *k8sclient.Clients, namespace, name string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		_, err := clients.Clientset.AppsV1().StatefulSets(namespace).Get(context.Background(), name, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		if err != nil {
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		time.Sleep(2 * time.Second)
+	}
+	return fmt.Errorf("timed out waiting for statefulset/%s deletion", name)
 }

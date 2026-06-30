@@ -174,19 +174,35 @@ kubectl create secret docker-registry mcp-runtime-registry-pull \
    kubectl exec -n mcp-sentinel kafka-0 -- \
      kafka-topics --list --bootstrap-server localhost:9092
    ```
-   If `mcp.events` is missing, re-run `setup`.
+   If `mcp.events` is missing, inspect `job/kafka-topic-init` and rerun `setup`.
+
+4. Check the three-broker KRaft quorum and replicas:
+   ```bash
+   kubectl get pods -n mcp-sentinel -l app=kafka -o wide
+   kubectl exec -n mcp-sentinel kafka-0 -- \
+     kafka-metadata-quorum --bootstrap-server localhost:9092 describe --status
+   kubectl exec -n mcp-sentinel kafka-0 -- \
+     kafka-topics --bootstrap-server localhost:9092 --describe --topic mcp.events
+   ```
+   Healthy output shows three Kafka pods, three `mcp.events` partitions, replica
+   factor `3`, and all assigned replicas in ISR.
+
+4. If Kafka reports `InconsistentClusterIdException`, do not delete the Kafka
+   PVC automatically. The stored broker metadata no longer matches the
+   configured KRaft cluster ID. Back up any data you need, scale Kafka to zero,
+   delete all three `kafka-data-kafka-{0,1,2}` PVCs, then rerun setup.
 
 ---
 
-### Sentinel API returns 401
+### Split Sentinel API returns 401
 
-The `mcp-sentinel-api` pods may have started with stale API keys from a previous
+The split API pods (`mcp-platform-api`, `mcp-runtime-api`, `mcp-analytics-api`) may have started with stale API keys from a previous
 setup run.
 
 ```bash
 # Restart to pick up current keys
-kubectl rollout restart deployment/mcp-sentinel-api -n mcp-sentinel
-kubectl rollout status deployment/mcp-sentinel-api -n mcp-sentinel --timeout=120s
+kubectl rollout restart deployment/mcp-platform-api deployment/mcp-runtime-api deployment/mcp-analytics-api -n mcp-sentinel
+kubectl rollout status deployment/mcp-platform-api -n mcp-sentinel --timeout=120s
 ```
 
 ---

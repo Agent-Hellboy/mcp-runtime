@@ -4,13 +4,14 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// +kubebuilder:validation:Enum=none;header;oauth
+// +kubebuilder:validation:Enum=none;header;oauth;mtls
 type AuthMode string
 
 const (
 	AuthModeNone   AuthMode = "none"
 	AuthModeHeader AuthMode = "header"
 	AuthModeOAuth  AuthMode = "oauth"
+	AuthModeMTLS   AuthMode = "mtls"
 )
 
 // +kubebuilder:validation:Enum=allow-list;observe
@@ -45,6 +46,15 @@ const (
 	ToolSideEffectRead        ToolSideEffect = "read"
 	ToolSideEffectWrite       ToolSideEffect = "write"
 	ToolSideEffectDestructive ToolSideEffect = "destructive"
+)
+
+// +kubebuilder:validation:Enum=low;medium;high
+type ToolRiskLevel string
+
+const (
+	ToolRiskLevelLow    ToolRiskLevel = "low"
+	ToolRiskLevelMedium ToolRiskLevel = "medium"
+	ToolRiskLevelHigh   ToolRiskLevel = "high"
 )
 
 // +kubebuilder:validation:Enum=RollingUpdate;Recreate;Canary
@@ -140,9 +150,9 @@ type MCPServerSpec struct {
 	Gateway *GatewayConfig `json:"gateway,omitempty"`
 
 	// Analytics configures audit/analytics emission for the gateway sidecar.
-	// Analytics is only applied when Gateway is enabled. Emission is on by
-	// default whenever the operator has an analytics ingest URL configured;
-	// set Analytics.Disabled to true to opt this server out.
+	// Analytics is only applied when Gateway is enabled and this field is set.
+	// If set without an ingest URL, the operator may supply its configured
+	// default ingest URL.
 	Analytics *AnalyticsConfig `json:"analytics,omitempty"`
 
 	// Rollout configures deployment rollout behavior for this server.
@@ -184,6 +194,7 @@ type ToolConfig struct {
 	Description   string            `json:"description,omitempty"`
 	RequiredTrust TrustLevel        `json:"requiredTrust,omitempty"`
 	SideEffect    ToolSideEffect    `json:"sideEffect"`
+	RiskLevel     ToolRiskLevel     `json:"riskLevel,omitempty"`
 	Labels        map[string]string `json:"labels,omitempty"`
 }
 
@@ -206,6 +217,9 @@ type AuthConfig struct {
 	TokenHeader     string   `json:"tokenHeader,omitempty"`
 	IssuerURL       string   `json:"issuerURL,omitempty"`
 	Audience        string   `json:"audience,omitempty"`
+	// TrustDomain is the SPIFFE trust domain accepted from verified client
+	// certificate URI SANs when mode is mtls.
+	TrustDomain string `json:"trustDomain,omitempty"`
 }
 
 // PolicyConfig configures authorization behavior at the gateway.
@@ -255,12 +269,11 @@ type GatewayConfig struct {
 // +kubebuilder:object:generate=true
 type AnalyticsConfig struct {
 	// Disabled suppresses analytics emission from the gateway sidecar for this
-	// server. Analytics is on by default whenever the operator has an analytics
-	// ingest URL configured (via Spec.Analytics.IngestURL or the operator's
-	// MCP_SENTINEL_INGEST_URL env). Set Disabled to true to opt out per server.
+	// server.
 	Disabled bool `json:"disabled,omitempty"`
 
-	// IngestURL is the analytics ingest endpoint.
+	// IngestURL is the analytics ingest endpoint. If empty, the operator may
+	// supply its configured default ingest URL.
 	IngestURL string `json:"ingestURL,omitempty"`
 
 	// Source is the event source label attached to emitted analytics events.
@@ -328,6 +341,8 @@ type MCPServerStatus struct {
 // +kubebuilder:printcolumn:name="Gateway",type="boolean",JSONPath=".status.gatewayReady"
 // +kubebuilder:printcolumn:name="Ready",type="boolean",JSONPath=".status.deploymentReady"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
+// +kubebuilder:webhook:path=/mutate-mcpruntime-org-v1alpha1-mcpserver,mutating=true,failurePolicy=ignore,sideEffects=None,groups=mcpruntime.org,resources=mcpservers,verbs=create;update,versions=v1alpha1,name=mmcpserver.kb.io,admissionReviewVersions=v1,serviceName=mcp-runtime-operator-webhook-service,serviceNamespace=mcp-runtime,servicePort=443
+// +kubebuilder:webhook:path=/validate-mcpruntime-org-v1alpha1-mcpserver,mutating=false,failurePolicy=fail,sideEffects=None,groups=mcpruntime.org,resources=mcpservers,verbs=create;update,versions=v1alpha1,name=vmcpserver.kb.io,admissionReviewVersions=v1,serviceName=mcp-runtime-operator-webhook-service,serviceNamespace=mcp-runtime,servicePort=443
 
 // MCPServer is the Schema for the mcpservers API.
 type MCPServer struct {

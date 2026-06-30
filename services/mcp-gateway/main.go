@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"net/url"
@@ -12,6 +15,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	_ "go.uber.org/automaxprocs" // align GOMAXPROCS with container CPU quota
 
@@ -20,6 +25,7 @@ import (
 
 func main() {
 	port := serviceutil.EnvOr("PORT", "8091")
+	metricsPort := serviceutil.EnvOr("METRICS_PORT", "9103")
 	upstream := serviceutil.EnvOr("UPSTREAM_URL", "http://127.0.0.1:8090")
 	analyticsURL := strings.TrimSpace(os.Getenv("ANALYTICS_INGEST_URL"))
 	apiKey := strings.TrimSpace(os.Getenv("ANALYTICS_API_KEY"))
@@ -56,6 +62,7 @@ func main() {
 
 	srv := &gatewayServer{
 		proxy:                 proxy,
+		metrics:               newGatewayMetrics(prometheus.DefaultRegisterer),
 		analyticsURL:          analyticsURL,
 		apiKey:                apiKey,
 		source:                source,
@@ -71,6 +78,8 @@ func main() {
 		defaultAgentHeader:    serviceutil.EnvOr("AGENT_ID_HEADER", defaultAgentHeader),
 		defaultTeamHeader:     serviceutil.EnvOr("TEAM_ID_HEADER", defaultTeamHeader),
 		defaultSessionHeader:  serviceutil.EnvOr("SESSION_ID_HEADER", defaultSessionHeader),
+		verifiedSPIFFEHeader:  serviceutil.EnvOr("VERIFIED_SPIFFE_HEADER", defaultVerifiedSPIFFEHeader),
+		trustedProxySPIFFE:    strings.TrimSpace(os.Getenv("TRUSTED_PROXY_SPIFFE_ID")),
 		defaultPolicyMode:     serviceutil.EnvOr("POLICY_MODE", defaultPolicyMode),
 		defaultPolicyDecision: serviceutil.EnvOr("POLICY_DEFAULT_DECISION", defaultPolicyDecision),
 		defaultPolicyVersion:  serviceutil.EnvOr("POLICY_VERSION", defaultPolicyVersion),
@@ -81,11 +90,20 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
+	// Liveness: always OK while the process is serving.
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
+	// Readiness: OK only after a valid policy snapshot has been activated.
+	mux.HandleFunc("/ready", srv.handleReady)
+	// Sanitized applied-policy metadata (schema version, revision, reload state).
+	mux.HandleFunc("/config/status", srv.handleConfigStatus)
+	// Prometheus metrics, including policy reload observability.
+	mux.Handle("/metrics", promhttp.Handler())
 	mux.HandleFunc("/", srv.handleGateway)
+
+	metricsShutdown, metricsErrs := serviceutil.StartMetricsServer(metricsPort)
 
 	shutdown, err := initTracer("mcp-gateway")
 	if err != nil {
@@ -98,7 +116,7 @@ func main() {
 		}()
 	}
 
-	log.Printf("mcp-gateway listening on :%s -> %s", port, upstream)
+	log.Printf("mcp-gateway listening on :%s -> %s (metrics on :%s)", port, upstream, metricsPort)
 	handler := otelhttp.NewHandler(mux, "http.server")
 	httpServer := &http.Server{
 		Addr:              ":" + port,
@@ -108,21 +126,58 @@ func main() {
 		WriteTimeout:      5 * time.Minute,
 		IdleTimeout:       60 * time.Second,
 	}
+	tlsCertFile := strings.TrimSpace(os.Getenv("TLS_CERT_FILE"))
+	tlsKeyFile := strings.TrimSpace(os.Getenv("TLS_KEY_FILE"))
+	tlsClientCAFile := strings.TrimSpace(os.Getenv("TLS_CLIENT_CA_FILE"))
+	var tlsReloader *certReloader
+	if tlsCertFile != "" || tlsKeyFile != "" || tlsClientCAFile != "" {
+		tlsConfig, err := gatewayTLSConfig(tlsClientCAFile)
+		if err != nil {
+			log.Fatalf("configure gateway mTLS: %v", err)
+		}
+		if tlsCertFile == "" || tlsKeyFile == "" {
+			log.Fatal("configure gateway mTLS: TLS_CERT_FILE and TLS_KEY_FILE are required")
+		}
+		// Serve the certificate via GetCertificate so cert-manager rotations are
+		// picked up without a restart (see certReloader).
+		tlsReloader, err = newCertReloader(tlsCertFile, tlsKeyFile)
+		if err != nil {
+			log.Fatalf("load gateway TLS certificate: %v", err)
+		}
+		tlsConfig.GetCertificate = tlsReloader.GetCertificate
+		httpServer.TLSConfig = tlsConfig
+	}
 
-	serverErr := make(chan error, 1)
+	serverErrs := make(chan error, 2)
 	go func() {
-		serverErr <- httpServer.ListenAndServe()
+		if err, ok := <-metricsErrs; ok {
+			serverErrs <- err
+		}
+	}()
+	go func() {
+		var err error
+		if httpServer.TLSConfig != nil {
+			// Cert/key come from TLSConfig.GetCertificate (the reloader), so the
+			// filename args are empty.
+			err = httpServer.ListenAndServeTLS("", "")
+		} else {
+			err = httpServer.ListenAndServe()
+		}
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serverErrs <- err
+		}
 	}()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if tlsReloader != nil {
+		go tlsReloader.watch(ctx, defaultCertReloadInterval)
+	}
 
 	select {
-	case err := <-serverErr:
+	case err := <-serverErrs:
 		srv.stopAnalyticsDispatcher()
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("server failed: %v", err)
-		}
+		log.Fatalf("server failed: %v", err)
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
@@ -130,8 +185,31 @@ func main() {
 			srv.stopAnalyticsDispatcher()
 			log.Fatalf("server shutdown failed: %v", err)
 		}
+		if err := metricsShutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			srv.stopAnalyticsDispatcher()
+			log.Fatalf("metrics shutdown failed: %v", err)
+		}
 		srv.stopAnalyticsDispatcher()
 	}
+}
+
+func gatewayTLSConfig(clientCAFile string) (*tls.Config, error) {
+	if clientCAFile == "" {
+		return nil, errors.New("TLS_CLIENT_CA_FILE is required")
+	}
+	caPEM, err := os.ReadFile(clientCAFile)
+	if err != nil {
+		return nil, fmt.Errorf("read client CA bundle: %w", err)
+	}
+	clientCAs := x509.NewCertPool()
+	if !clientCAs.AppendCertsFromPEM(caPEM) {
+		return nil, errors.New("client CA bundle contains no certificates")
+	}
+	return &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		ClientAuth: tls.RequireAndVerifyClientCert,
+		ClientCAs:  clientCAs,
+	}, nil
 }
 
 // initTracer initializes OpenTelemetry tracing for the service.

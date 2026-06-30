@@ -8,9 +8,11 @@ import (
 	"encoding/json"
 	"io"
 	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -18,6 +20,9 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v4"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
@@ -522,6 +527,268 @@ func TestAuditPayloadIncludesLatencyMetadata(t *testing.T) {
 	}
 }
 
+func TestGatewayMetricsNotExposedOnMainListener(t *testing.T) {
+	t.Parallel()
+
+	registry := prometheus.NewRegistry()
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(upstream.Close)
+
+	target, err := url.Parse(upstream.URL)
+	if err != nil {
+		t.Fatalf("url.Parse() error = %v", err)
+	}
+
+	proxy := &gatewayServer{
+		proxy:                 newUpstreamReverseProxy(target),
+		metrics:               newGatewayMetrics(registry),
+		httpClient:            &http.Client{Timeout: 2 * time.Second},
+		defaultHumanHeader:    defaultHumanHeader,
+		defaultAgentHeader:    defaultAgentHeader,
+		defaultTeamHeader:     defaultTeamHeader,
+		defaultSessionHeader:  defaultSessionHeader,
+		defaultPolicyMode:     defaultPolicyMode,
+		defaultPolicyDecision: defaultPolicyDecision,
+		defaultPolicyVersion:  "test-policy",
+		oauthProviders:        map[string]*oauthProvider{},
+	}
+	proxy.snapshotPolicy(policySnapshot{Policy: headerPolicy()})
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", proxy.handleGateway)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	mux.ServeHTTP(recorder, request)
+
+	if strings.Contains(recorder.Body.String(), "mcp_gateway_requests_total") {
+		t.Fatalf("main listener exposed prometheus metrics: status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestGatewayMetricsAvailableOnMetricsPort(t *testing.T) {
+	t.Parallel()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = listener.Close()
+	})
+
+	registry := prometheus.NewRegistry()
+	metrics := newGatewayMetrics(registry)
+	metrics.recordRequest(
+		gatewayMetricScope{Namespace: "mcp-servers", Server: "demo", Cluster: "kind", TeamID: "team-acme"},
+		httptest.NewRequest(http.MethodPost, "http://proxy.example.com/mcp", nil),
+		"tools/call",
+		policypkg.Decision{Allowed: true, Status: http.StatusOK, Reason: "allowed", PolicyVersion: "test-policy"},
+		http.StatusOK,
+		time.Millisecond,
+		0,
+		0,
+	)
+
+	metricsServer := &http.Server{
+		Handler: serviceutilMetricsHandler(registry),
+	}
+	go func() {
+		_ = metricsServer.Serve(listener)
+	}()
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = metricsServer.Shutdown(ctx)
+	})
+
+	resp, err := http.Get("http://" + listener.Addr().String() + "/metrics")
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("ReadAll() error = %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("metrics status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if !strings.Contains(string(body), "mcp_gateway_requests_total") {
+		t.Fatalf("metrics body missing gateway counter: %s", body)
+	}
+}
+
+func serviceutilMetricsHandler(registry *prometheus.Registry) http.Handler {
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", promhttp.HandlerFor(registry, promhttp.HandlerOpts{}))
+	return mux
+}
+
+func TestGatewayMetricsRecordRequestsPolicyDecisionsAndBytes(t *testing.T) {
+	t.Parallel()
+
+	registry := prometheus.NewRegistry()
+	policy := &policypkg.Document{
+		Server: policypkg.Server{
+			Name:      "demo",
+			Namespace: "mcp-servers",
+			TeamID:    "team-acme",
+			Cluster:   "kind",
+		},
+		Auth: &policypkg.Auth{
+			Mode:            "header",
+			HumanIDHeader:   defaultHumanHeader,
+			AgentIDHeader:   defaultAgentHeader,
+			TeamIDHeader:    defaultTeamHeader,
+			SessionIDHeader: defaultSessionHeader,
+		},
+		Policy: &policypkg.Config{
+			Mode:            "allow-list",
+			DefaultDecision: "deny",
+			PolicyVersion:   "test-policy",
+		},
+	}
+	proxy := newTestGatewayServer(t, policy, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	proxy.metrics = newGatewayMetrics(registry)
+
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo"}}`
+	req := httptest.NewRequest(http.MethodPost, "http://proxy.example.com/mcp", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(defaultHumanHeader, "human-1")
+	recorder := httptest.NewRecorder()
+
+	proxy.handleGateway(recorder, req)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusForbidden)
+	}
+
+	requestLabels := []string{"mcp-servers", "demo", "kind", "team-acme", http.MethodPost, "tools/call", "deny", "403"}
+	if got := testutil.ToFloat64(proxy.metrics.requestsTotal.WithLabelValues(requestLabels...)); got != 1 {
+		t.Fatalf("requests total = %v, want 1", got)
+	}
+	if got := testutil.ToFloat64(proxy.metrics.policyDecisionsTotal.WithLabelValues("mcp-servers", "demo", "kind", "team-acme", "deny", "no_matching_grant", "tools/call")); got != 1 {
+		t.Fatalf("policy decisions total = %v, want 1", got)
+	}
+	if got := testutil.ToFloat64(proxy.metrics.requestBytesTotal.WithLabelValues(requestLabels...)); got != float64(len(body)) {
+		t.Fatalf("request bytes total = %v, want %d", got, len(body))
+	}
+	if got := testutil.ToFloat64(proxy.metrics.responseBytesTotal.WithLabelValues(requestLabels...)); got == 0 {
+		t.Fatal("response bytes total = 0, want denied response bytes")
+	}
+	if got := testutil.ToFloat64(proxy.metrics.inflightRequests.WithLabelValues("mcp-servers", "demo", "kind", "team-acme")); got != 0 {
+		t.Fatalf("inflight requests = %v, want 0 after request completion", got)
+	}
+	if metrics := gatherMetricsText(t, registry); !strings.Contains(metrics, "mcp_gateway_request_duration_seconds_bucket") {
+		t.Fatalf("duration histogram was not exposed:\n%s", metrics)
+	}
+}
+
+func TestGatewayMetricsRecordPolicyReloadResults(t *testing.T) {
+	t.Parallel()
+
+	registry := prometheus.NewRegistry()
+	policyFile := filepath.Join(t.TempDir(), "policy.json")
+	writeStampedPolicy(t, policyFile, func(doc *policypkg.Document) {
+		doc.Server.TeamID = "team-acme"
+		doc.Server.Cluster = "kind"
+		doc.Auth = &policypkg.Auth{Mode: "header"}
+		doc.Policy = &policypkg.Config{
+			Mode:            "observe",
+			DefaultDecision: "deny",
+			PolicyVersion:   "test-policy",
+		}
+	})
+	proxy := &gatewayServer{
+		metrics:               newGatewayMetrics(registry),
+		policyFile:            policyFile,
+		serverName:            "demo",
+		serverNamespace:       "mcp-servers",
+		clusterName:           "kind",
+		defaultHumanHeader:    defaultHumanHeader,
+		defaultAgentHeader:    defaultAgentHeader,
+		defaultTeamHeader:     defaultTeamHeader,
+		defaultSessionHeader:  defaultSessionHeader,
+		defaultPolicyMode:     defaultPolicyMode,
+		defaultPolicyDecision: defaultPolicyDecision,
+		defaultPolicyVersion:  "test-policy",
+	}
+
+	if err := proxy.reloadPolicy(); err != nil {
+		t.Fatalf("reloadPolicy() error = %v", err)
+	}
+	if got := testutil.ToFloat64(proxy.metrics.policyReloadsTotal.WithLabelValues("mcp-servers", "demo", "kind", "team-acme", "success")); got != 1 {
+		t.Fatalf("successful policy reloads = %v, want 1", got)
+	}
+	if got := testutil.ToFloat64(proxy.metrics.policyLastReload.WithLabelValues("mcp-servers", "demo", "kind", "team-acme")); got == 0 {
+		t.Fatal("policy last reload timestamp = 0, want non-zero")
+	}
+
+	if err := os.WriteFile(policyFile, []byte(`{`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if err := proxy.reloadPolicy(); err == nil {
+		t.Fatal("reloadPolicy() error = nil, want malformed policy error")
+	}
+	if got := testutil.ToFloat64(proxy.metrics.policyReloadsTotal.WithLabelValues("mcp-servers", "demo", "kind", "team-acme", "error")); got != 1 {
+		t.Fatalf("failed policy reloads = %v, want 1", got)
+	}
+}
+
+func TestGatewayMetricMethodsUseBoundedLabels(t *testing.T) {
+	t.Parallel()
+
+	if got := metricHTTPMethod("CUSTOM-" + strings.Repeat("x", 80)); got != "OTHER" {
+		t.Fatalf("metricHTTPMethod() = %q, want OTHER", got)
+	}
+	if got := metricRPCMethod("attacker/" + strings.Repeat("x", 80)); got != "other" {
+		t.Fatalf("metricRPCMethod() = %q, want other", got)
+	}
+	if got := metricRPCMethod("tools/call"); got != "tools/call" {
+		t.Fatalf("metricRPCMethod(tools/call) = %q", got)
+	}
+}
+
+func TestAuditPayloadIncludesToolRiskLevel(t *testing.T) {
+	t.Parallel()
+
+	proxy := &gatewayServer{
+		serverName:           "example-server",
+		serverNamespace:      "mcp-servers",
+		defaultPolicyVersion: "test-policy",
+	}
+	req := httptest.NewRequest(http.MethodPost, "http://proxy.example.com/mcp", strings.NewReader(`{"jsonrpc":"2.0"}`))
+	policy := &policypkg.Document{
+		Tools: []policypkg.Tool{{
+			Name:          "refund_invoice",
+			RequiredTrust: "high",
+			SideEffect:    "destructive",
+		}},
+	}
+
+	payload := proxy.auditPayload(
+		req,
+		"/mcp",
+		"tools/call",
+		"refund_invoice",
+		identityContext{HumanID: "human-1"},
+		policy,
+		policypkg.Decision{Allowed: true, Reason: "allowed", PolicyVersion: "test-policy"},
+		http.StatusOK,
+		1,
+		2,
+	)
+
+	if got := payload["risk_level"]; got != "high" {
+		t.Fatalf("risk_level = %#v, want high", got)
+	}
+}
+
 func TestStartPolicyCacheRequiresConfiguredPolicyFile(t *testing.T) {
 	t.Parallel()
 
@@ -569,6 +836,45 @@ func TestEmitIfEnabledDropsWhenQueueIsFull(t *testing.T) {
 		}
 	default:
 		t.Fatal("analytics queue unexpectedly drained")
+	}
+	if got := proxy.analyticsDropped.Load(); got != 1 {
+		t.Fatalf("analytics dropped count = %d, want 1", got)
+	}
+}
+
+func TestEmitIfEnabledDropsWhenDispatcherClosed(t *testing.T) {
+	t.Parallel()
+
+	proxy := &gatewayServer{
+		analyticsURL:    "http://analytics.example.com",
+		analyticsClosed: true,
+	}
+
+	proxy.emitIfEnabled(context.Background(), events.Envelope{Source: "closed", EventType: "mcp.request"})
+
+	if got := proxy.analyticsDropped.Load(); got != 1 {
+		t.Fatalf("analytics dropped count = %d, want 1", got)
+	}
+}
+
+func TestShouldLogAnalyticsDropSamples(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		dropped uint64
+		want    bool
+	}{
+		{dropped: 0, want: false},
+		{dropped: 1, want: true},
+		{dropped: 2, want: true},
+		{dropped: 3, want: false},
+		{dropped: 4, want: true},
+		{dropped: 7, want: false},
+		{dropped: 8, want: true},
+	} {
+		if got := shouldLogAnalyticsDrop(tc.dropped); got != tc.want {
+			t.Fatalf("shouldLogAnalyticsDrop(%d) = %v, want %v", tc.dropped, got, tc.want)
+		}
 	}
 }
 
@@ -960,8 +1266,17 @@ func newTestGatewayServer(t *testing.T, policy *policypkg.Document, upstream htt
 		defaultPolicyVersion:  "test-policy",
 		oauthProviders:        map[string]*oauthProvider{},
 	}
-	server.snapshotPolicy(policySnapshot{Policy: policy})
+	server.snapshotPolicy(policySnapshot{Policy: policy, Revision: policy.Revision, LoadedAt: time.Now(), Ready: true})
 	return server
+}
+
+func gatherMetricsText(t *testing.T, registry *prometheus.Registry) string {
+	t.Helper()
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	promhttp.HandlerFor(registry, promhttp.HandlerOpts{}).ServeHTTP(recorder, request)
+	return recorder.Body.String()
 }
 
 func oauthPolicy(issuerURL string) *policypkg.Document {

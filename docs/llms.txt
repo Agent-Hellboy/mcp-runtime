@@ -6,6 +6,7 @@
 - Quickstart: https://docs.mcpruntime.org/quickstart/ — Deploy a governed server in 10 minutes using the live platform. No cluster needed. Includes binary install, server init with tool discovery, grant, adapter proxy.
 - Getting Started (self-host): https://docs.mcpruntime.org/getting-started/ — Install MCP Runtime on your own Kubernetes cluster. Binary install, cluster readiness, setup, health check.
 - Concepts: https://docs.mcpruntime.org/concepts/ — Core abstractions: MCPServer, MCPAccessGrant, MCPAgentSession, gateway, adapter, trust levels, side effects, platform mode, scopes, .mcp/servers.yaml.
+- Identity and authorization: https://docs.mcpruntime.org/identity-and-authorization/ — Platform principals, team and server ownership, agent identities, grants, sessions, gateway tool-call decisions, and Kubernetes workload identity.
 
 ## Developer guide
 
@@ -33,7 +34,7 @@
 ## Reference
 
 - CLI reference: https://docs.mcpruntime.org/cli/ — Every command: auth, server, registry, access, adapter, team, sentinel, setup, cluster, bootstrap. Flags, defaults, examples.
-- API and CRDs: https://docs.mcpruntime.org/api/ — MCPServer, MCPAccessGrant, MCPAgentSession field reference, gateway headers, HTTP endpoints.
+- API and CRDs: https://docs.mcpruntime.org/api/ — MCPServer, MCPAccessGrant, MCPAgentSession field reference, gateway headers, HTTP endpoints (`/api/v1/*`).
 - Architecture: https://docs.mcpruntime.org/architecture/ — System design: control plane, registry, broker, operator, Sentinel services, request flow.
 
 ## Contributor guide

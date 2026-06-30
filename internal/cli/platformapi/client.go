@@ -56,7 +56,7 @@ func NewPlatformClient() (*PlatformClient, error) {
 		baseURL:   NormalizeBaseURL(base),
 		token:     tok,
 		http:      &http.Client{Timeout: 2 * time.Minute},
-		apiPrefix: "/api",
+		apiPrefix: "/api/v1",
 	}, nil
 }
 
@@ -231,9 +231,9 @@ func (c *PlatformClient) PushRegistryImage(ctx context.Context, tarPath, target,
 	c.setAuthHeaders(req)
 	req.Header.Set("content-type", contentType)
 
-	client := c.http
-	if client == nil {
-		client = &http.Client{Timeout: 15 * time.Minute}
+	client := &http.Client{Timeout: 15 * time.Minute}
+	if c.http != nil && c.http.Transport != nil {
+		client.Transport = c.http.Transport
 	}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -581,6 +581,7 @@ func httpAPIError(status int, body []byte) error {
 type ServerListItem struct {
 	Name        string            `json:"name"`
 	Namespace   string            `json:"namespace"`
+	TeamID      string            `json:"team_id,omitempty"`
 	Image       string            `json:"image,omitempty"`
 	ImageTag    string            `json:"imageTag,omitempty"`
 	Description string            `json:"description,omitempty"`
@@ -588,10 +589,43 @@ type ServerListItem struct {
 	Status      string            `json:"status"`
 	Labels      map[string]string `json:"labels"`
 	Age         string            `json:"age"`
+	Endpoint    string            `json:"endpoint,omitempty"`
+	Tools       []ToolConfig      `json:"tools,omitempty"`
+	AccessJSON  map[string]any    `json:"access_json,omitempty"`
 }
 
 type serverListResponse struct {
 	Servers []ServerListItem `json:"servers"`
+}
+
+type ToolConfig struct {
+	Name          string            `json:"name"`
+	Description   string            `json:"description,omitempty"`
+	RequiredTrust string            `json:"requiredTrust,omitempty"`
+	SideEffect    string            `json:"sideEffect,omitempty"`
+	RiskLevel     string            `json:"riskLevel,omitempty"`
+	Labels        map[string]string `json:"labels,omitempty"`
+}
+
+type RuntimeToolRow struct {
+	ToolName      string            `json:"tool_name"`
+	Description   string            `json:"description,omitempty"`
+	ServerName    string            `json:"server_name"`
+	Namespace     string            `json:"namespace"`
+	TeamID        string            `json:"team_id,omitempty"`
+	EndpointURL   string            `json:"endpoint_url,omitempty"`
+	Declared      bool              `json:"declared"`
+	Live          bool              `json:"live"`
+	DriftStatus   string            `json:"drift_status"`
+	RequiredTrust string            `json:"required_trust,omitempty"`
+	SideEffect    string            `json:"side_effect,omitempty"`
+	RiskLevel     string            `json:"risk_level,omitempty"`
+	Labels        map[string]string `json:"labels,omitempty"`
+	ConnectConfig map[string]any    `json:"connect_config,omitempty"`
+}
+
+type runtimeToolsResponse struct {
+	Tools []RuntimeToolRow `json:"tools"`
 }
 
 type runtimeServerApplyRequest struct {
@@ -694,6 +728,32 @@ func (c *PlatformClient) ListRuntimeServers(ctx context.Context, namespace strin
 		return nil, err
 	}
 	return out.Servers, nil
+}
+
+func (c *PlatformClient) ListRuntimeTools(ctx context.Context, filters map[string]string) ([]RuntimeToolRow, error) {
+	v := url.Values{}
+	for key, value := range filters {
+		if strings.TrimSpace(value) != "" {
+			v.Set(key, strings.TrimSpace(value))
+		}
+	}
+	resp, err := c.do(ctx, http.MethodGet, "/runtime/tools", v.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	b, err := readBody(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, httpAPIError(resp.StatusCode, b)
+	}
+	var out runtimeToolsResponse
+	if err := json.Unmarshal(b, &out); err != nil {
+		return nil, err
+	}
+	return out.Tools, nil
 }
 
 func (c *PlatformClient) ApplyRuntimeServer(ctx context.Context, name, namespace string, spec mcpv1alpha1.MCPServerSpec) (ServerListItem, error) {

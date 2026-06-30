@@ -230,6 +230,16 @@ func (r *MCPServerReconciler) buildDeploymentContainers(mcpServer *mcpv1alpha1.M
 				},
 			},
 		})
+		if serverUsesMTLS(mcpServer) {
+			volumes = append(volumes, corev1.Volume{
+				Name: gatewayTLSVolumeName,
+				VolumeSource: corev1.VolumeSource{
+					Secret: &corev1.SecretVolumeSource{
+						SecretName: gatewayTLSSecretName(mcpServer),
+					},
+				},
+			})
+		}
 	}
 
 	return containers, volumes, nil
@@ -427,8 +437,10 @@ func (r *MCPServerReconciler) buildGatewayContainer(mcpServer *mcpv1alpha1.MCPSe
 	}
 
 	port := mcpServer.Spec.Gateway.Port
+	metricsPort := int32(DefaultGatewayMetricsPort)
 	envVars := []corev1.EnvVar{
 		{Name: "PORT", Value: strconv.Itoa(int(port))},
+		{Name: "METRICS_PORT", Value: strconv.Itoa(int(metricsPort))},
 		{Name: "UPSTREAM_URL", Value: mcpServer.Spec.Gateway.UpstreamURL},
 		{Name: "POLICY_FILE", Value: gatewayPolicyFilePath},
 		{Name: "MCP_SERVER_NAME", Value: mcpServer.Name},
@@ -459,6 +471,18 @@ func (r *MCPServerReconciler) buildGatewayContainer(mcpServer *mcpv1alpha1.MCPSe
 			corev1.EnvVar{Name: "SESSION_ID_HEADER", Value: mcpServer.Spec.Auth.SessionIDHeader},
 			corev1.EnvVar{Name: "AUTH_MODE", Value: string(mcpServer.Spec.Auth.Mode)},
 		)
+	}
+	if serverUsesMTLS(mcpServer) {
+		envVars = append(envVars,
+			corev1.EnvVar{Name: "TLS_CERT_FILE", Value: gatewayTLSMountDir + "/tls.crt"},
+			corev1.EnvVar{Name: "TLS_KEY_FILE", Value: gatewayTLSMountDir + "/tls.key"},
+			corev1.EnvVar{Name: "TLS_CLIENT_CA_FILE", Value: gatewayTLSMountDir + "/ca.crt"},
+		)
+		// Pin the ingress identity so only the Traefik client certificate (not
+		// any other identity-CA-signed cert) is accepted over the re-encrypted hop.
+		if proxyID := traefikProxySPIFFEID(mcpServer); proxyID != "" {
+			envVars = append(envVars, corev1.EnvVar{Name: "TRUSTED_PROXY_SPIFFE_ID", Value: proxyID})
+		}
 	}
 	if mcpServer.Spec.Gateway.StripPrefix != "" {
 		envVars = append(envVars, corev1.EnvVar{Name: "STRIP_PREFIX", Value: mcpServer.Spec.Gateway.StripPrefix})
@@ -512,6 +536,11 @@ func (r *MCPServerReconciler) buildGatewayContainer(mcpServer *mcpv1alpha1.MCPSe
 				ContainerPort: port,
 				Protocol:      corev1.ProtocolTCP,
 			},
+			{
+				Name:          "metrics",
+				ContainerPort: metricsPort,
+				Protocol:      corev1.ProtocolTCP,
+			},
 		},
 		Env:             envVars,
 		SecurityContext: kubeworkload.RestrictedReadOnlyContainerSecurityContext(),
@@ -531,11 +560,24 @@ func (r *MCPServerReconciler) buildGatewayContainer(mcpServer *mcpv1alpha1.MCPSe
 		},
 		ReadinessProbe: &corev1.Probe{
 			ProbeHandler: corev1.ProbeHandler{
-				TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(port)},
+				HTTPGet: &corev1.HTTPGetAction{
+					Path: "/ready",
+					Port: intstr.FromInt32(port),
+				},
 			},
 			InitialDelaySeconds: 3,
 			PeriodSeconds:       5,
 		},
+	}
+	if serverUsesMTLS(mcpServer) {
+		container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{
+			Name:      gatewayTLSVolumeName,
+			MountPath: gatewayTLSMountDir,
+			ReadOnly:  true,
+		})
+		container.ReadinessProbe.ProbeHandler = corev1.ProbeHandler{
+			TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(port)},
+		}
 	}
 	gatewayResources := mcpv1alpha1.ResourceRequirements{}
 	if mcpServer.Spec.Gateway != nil && mcpServer.Spec.Gateway.Resources != nil {
@@ -682,20 +724,16 @@ func serverUsesOAuth(mcpServer *mcpv1alpha1.MCPServer) bool {
 }
 
 // analyticsEnabled reports whether the gateway sidecar should emit analytics
-// for this MCPServer. Analytics is on by default whenever an ingest URL is
-// available — either from the server spec or the operator-level fallback —
-// unless the server explicitly opts out via Spec.Analytics.Disabled.
+// for this MCPServer. Analytics is opt-in per server; the operator-level
+// default only supplies the endpoint after the server requests analytics.
 func (r *MCPServerReconciler) analyticsEnabled(mcpServer *mcpv1alpha1.MCPServer) bool {
 	if mcpServer == nil {
 		return false
 	}
-	if mcpServer.Spec.Analytics != nil && mcpServer.Spec.Analytics.Disabled {
+	if mcpServer.Spec.Analytics == nil || mcpServer.Spec.Analytics.Disabled {
 		return false
 	}
-	url := ""
-	if mcpServer.Spec.Analytics != nil {
-		url = strings.TrimSpace(mcpServer.Spec.Analytics.IngestURL)
-	}
+	url := strings.TrimSpace(mcpServer.Spec.Analytics.IngestURL)
 	if url == "" {
 		url = strings.TrimSpace(r.DefaultAnalyticsIngestURL)
 	}

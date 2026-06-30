@@ -3,6 +3,7 @@ package pii_redactor
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -78,6 +79,37 @@ func TestNewNilConfigUsesDefaults(t *testing.T) {
 	}
 	if middleware.maxBody != 1<<20 {
 		t.Fatalf("maxBody = %d, want %d", middleware.maxBody, 1<<20)
+	}
+}
+
+// errReadCloser returns an error partway through Read to simulate a request
+// body that cannot be fully read.
+type errReadCloser struct{}
+
+func (errReadCloser) Read([]byte) (int, error) { return 0, errors.New("read failed") }
+func (errReadCloser) Close() error             { return nil }
+
+func TestUnreadableRequestBodyFailsClosed(t *testing.T) {
+	called := false
+	handler, err := New(context.Background(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusNoContent)
+	}), &Config{MaxBodyBytes: 1024}, "pii")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "http://traefik.local/api", nil)
+	req.Body = errReadCloser{}
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want %d (fail-closed on unreadable body)", rec.Code, http.StatusBadGateway)
+	}
+	if called {
+		t.Fatal("upstream handler must not be called when the request body cannot be read")
 	}
 }
 

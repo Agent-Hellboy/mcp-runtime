@@ -9,6 +9,7 @@ import (
 	"mcp-runtime/internal/cli/admin"
 	"mcp-runtime/internal/cli/auth"
 	"mcp-runtime/internal/cli/bootstrap"
+	"mcp-runtime/internal/cli/catalog"
 	"mcp-runtime/internal/cli/cluster"
 	"mcp-runtime/internal/cli/core"
 	"mcp-runtime/internal/cli/registry"
@@ -25,6 +26,7 @@ func AddCommands(root *cobra.Command, logger *zap.Logger) {
 	clusterMgr := cluster.DefaultClusterManager(logger)
 
 	root.AddCommand(cluster.NewWithManager(clusterMgr))
+	root.AddCommand(catalog.New(runtime))
 	root.AddCommand(registry.New(runtime))
 	root.AddCommand(server.New(runtime))
 	root.AddCommand(access.New(runtime))

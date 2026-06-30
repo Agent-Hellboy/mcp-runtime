@@ -1,6 +1,6 @@
 ---
 name: qa-e2e-ui
-description: Browser-first real-cluster Sentinel UI/dashboard QA - role-based navigation, auth flows, every tab, forms, filters, destructive actions, rendered data, network/API evidence, console evidence, responsive/accessibility checks, cleanup, static assets, and public-host defenses. Use when Codex is asked to QA UI changes, dashboard regressions, login/admin/tenant flows, browser-visible API behavior, or copyable MCP connect config. Complements qa-e2e-security with feature-correctness and browser interaction checks. Assumes qa-cluster-bringup has run.
+description: Browser-first real-cluster Sentinel UI/dashboard QA - role-based navigation, auth flows, every tab, forms, filters, destructive actions, rendered data, network/API evidence, console evidence, responsive/accessibility checks, cleanup, static assets, and public-host defenses. Use when Codex is asked to QA UI changes, dashboard regressions, login/admin/tenant flows, browser-visible API behavior, copyable MCP connect config, or backend analytics/observability changes that must be validated through UI controls. Complements qa-e2e-security with feature-correctness and browser interaction checks. Assumes qa-cluster-bringup has run.
 ---
 
 # QA - E2E UI (live cluster)
@@ -57,6 +57,23 @@ trap 'rm -rf "$QA_TMP"' EXIT
 If the live cluster has unrelated user changes, work with them. Do not retire
 or mutate non-temporary objects unless the user explicitly approves.
 
+If you rebuild the API or UI image before a browser pass, build for the Kind
+node architecture, not your memory of the last machine:
+
+```bash
+NODE_ARCH="$(docker version --format '{{.Server.Arch}}')"
+IMAGE="registry.registry.svc.cluster.local:5000/<repo>:ui-qa-$(date +%s)"
+docker build --platform="linux/${NODE_ARCH}" -t "$IMAGE" -f "$DOCKERFILE" .
+docker image inspect "$IMAGE" --format '{{.Os}}/{{.Architecture}}'
+kind load docker-image "$IMAGE" --name mcp-runtime
+kubectl set image -n mcp-sentinel deploy/"$DEPLOYMENT" "$CONTAINER=$IMAGE"
+kubectl rollout status -n mcp-sentinel deploy/"$DEPLOYMENT" --timeout=180s
+```
+
+`kind load docker-image` can load the wrong architecture into containerd. A UI
+QA pass is invalid if the pod is still running an old image or an image whose
+architecture does not match the Kind node.
+
 ## Step 2 - Choose audit mode
 
 - **full-ui**: every visible capability and every role. Default for broad UI
@@ -72,10 +89,17 @@ Diff guidance:
 |---|---|
 | `services/ui/main.go` | Dashboard Load, Auth, UI->API Proxy, affected tabs |
 | `services/ui/static/**` | Browser Matrix, Static Assets, Responsive/A11y |
-| `services/api/internal/runtimeapi/**` | Catalog, Governance, Operations, API Contract |
-| `services/api/internal/platformstore/**` or auth code | Auth, API Keys, Role Gating |
+| `services/runtime-api/internal/runtimeapi/**` | Catalog, Governance, Operations, API Contract |
+| `services/runtime-api/internal/runtimeapi/*observability*`, `services/mcp-gateway/**`, `k8s/*prometheus*` | My Activity scoped observability, Prometheus and Grafana actions, scoped query evidence, tenant negative checks |
+| `services/platform-api/internal/platformstore/**` or auth code | Auth, API Keys, Role Gating |
 | `config/ingress/**`, `k8s/**` UI ingress | Public-host Defense |
 | `docs/**`, `website/**` only | Dashboard Load smoke, then report docs-only scope |
+
+Before selecting checks, map every touched UI-visible change to a browser
+workflow. If the diff affects data rendered by a tab but not `services/ui/**`
+directly, still validate the owning tab and controls through the browser. Do
+not report a backend-only pass for a change whose success or failure is visible
+in the dashboard.
 
 ## Step 3 - Browser instrumentation is required
 
@@ -141,6 +165,23 @@ sections that match the diff plus Role And Session Flows. In `smoke`, cover:
 Create or mutate only temporary `qa-audit-*` objects for destructive actions.
 Record every skipped page/control with the reason and the fixture or cluster
 mode needed to cover it later.
+
+For changed UI-visible behavior, include at least one positive and one negative
+browser/API assertion for the exact changed control. Examples:
+
+- Metrics/observability: tenant-owned `qa-audit-*` server shows per-server
+  `Prometheus` and `Grafana` actions by default. The clicked URL or fetched
+  link is scoped to its namespace/server, and a shared or foreign namespace
+  returns 403/404 for the same tenant session.
+- Tenant observability buttons: tenant users should not see the raw header
+  `Prometheus` or `Grafana` links; those are admin-only cluster-wide surfaces.
+  Tenant users should see per-server `Prometheus` and `Grafana` actions in My
+  Activity when scoped observability is available.
+- Analytics: changing the server selector triggers a network request with the
+  selected namespace/server filters and excludes shared catalog servers from
+  personal totals.
+- Role-gated actions: the allowed role sees and can run the action; signed-out
+  or disallowed roles cannot see it or receive an intentional auth error.
 
 ## Step 6 - Curl smoke and API contract evidence
 
@@ -260,7 +301,7 @@ Expected:
 Actual:
 Network/API evidence:
 Console evidence:
-Likely implementation area: <services/ui/static/app.js | services/ui/main.go | services/api/...>
+Likely implementation area: <services/ui/static/app.js | services/ui/main.go | services/platform-api/... | services/runtime-api/...>
 Recommended regression test:
 Status: Open
 ```

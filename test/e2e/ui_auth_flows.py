@@ -4,13 +4,15 @@ import re
 import urllib.error
 import urllib.request
 
+from _helpers_loader import load_e2e_helpers
+
+_helpers = load_e2e_helpers()
+check = _helpers.check
+
 ui_base = os.environ["UI_BASE"]
 gateway_base = os.environ["GATEWAY_BASE"]
 api_key = os.environ["API_KEY"]
 platform_mode = os.environ["E2E_PLATFORM_MODE"]
-
-
-import os as _os; exec(open(_os.environ["E2E_HELPERS"]).read())
 
 
 def request(url, *, method="GET", headers=None, body=None):

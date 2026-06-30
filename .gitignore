@@ -1,4 +1,5 @@
 .gocache/
+prs/
 bin/
 man/
 cover.out
@@ -28,6 +29,7 @@ r.go
 tags
 
 # Local/generated artifacts
+/.playwright-mcp/
 /mcp-sentinel/
 /services/mcp-server/mcp-sentinel-mcp-server
 /services/ui/mcp-sentinel-ui
@@ -35,9 +37,19 @@ tags
 /services/ui/frontend/dist/
 /services/ui/frontend/.vite/
 /services/ui/frontend/*.tsbuildinfo
+/services/ingest/mcp-sentinel-ingest
+/services/processor/mcp-sentinel-processor
+/services/mcp-gateway/mcp-sentinel-mcp-gateway
+/services/platform-api/mcp-platform-api
+/services/runtime-api/mcp-runtime-api
+/services/analytics-api/mcp-analytics-api
 /unit.out
 /chain-bench-results.json
 docs/COVERAGE_IMPROVEMENT_PLAN.md
+graphify-out/
+# Anchored to the repo root: ignore a top-level scratch plan/ dir only, not
+# real packages like internal/cli/setup/plan/.
+/plan/
 __pycache__/
 *.pyc
 
@@ -48,3 +60,4 @@ __pycache__/
 
 # Local-only helper scripts and scratch files
 /.local/
+/examples/lead-discovery/

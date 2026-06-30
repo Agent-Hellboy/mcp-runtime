@@ -2,11 +2,14 @@ package adapter
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"mcp-runtime/internal/cli/core"
+	"mcp-runtime/pkg/certauth"
 )
 
 func TestAdapterCommandRegistersProxyAndStdio(t *testing.T) {
@@ -21,6 +24,24 @@ func TestAdapterCommandRegistersProxyAndStdio(t *testing.T) {
 		if !subs[want] {
 			t.Fatalf("adapter command missing %q subcommand; got %v", want, subs)
 		}
+	}
+}
+
+func TestWriteCredentialFileUsesOutputRoot(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if err := certauth.WritePrivateFile(dir, "client.key", []byte("secret"), 0o600); err != nil {
+		t.Fatalf("WritePrivateFile() error = %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "client.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "secret" {
+		t.Fatalf("credential data = %q, want secret", string(data))
+	}
+	if err := certauth.WritePrivateFile(dir, "../escape", []byte("nope"), 0o600); err == nil {
+		t.Fatal("WritePrivateFile() allowed path traversal")
 	}
 }
 

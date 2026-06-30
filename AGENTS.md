@@ -13,6 +13,8 @@ This file is the **onboarding index** for the MCP Runtime repo. It complements `
 | Public domain, TLS, ACME, prod hostnames | `mcp-runtime-platform-public` |
 | Public k3s deploy scripts | `k3s-public-ops` |
 | Real-cluster QA sweeps | `qa-e2e-operations`, `qa-e2e-security`, `qa-e2e-ui`, … |
+| Release / ship readiness | `release-readiness` |
+| API / CRD / CLI design & "is this good design?" review | `design-principles` |
 | Codebase navigation | `graphify` (when `graphify-out/` exists) |
 
 ## Repository map (where to look)
@@ -20,13 +22,13 @@ This file is the **onboarding index** for the MCP Runtime repo. It complements `
 | Area | Path | Notes |
 |------|------|--------|
 | User-facing CLI | `cmd/mcp-runtime/`, `internal/cli/root/`, `internal/cli/<command>/`, `internal/cli/core/` | Cobra routing; `setup`, `status`, `registry`, `server`, `access`, … |
-| Agent adapters | `internal/cli/adapter/`, `internal/agentadapter/`, `services/api/internal/runtimeapi/adapter.go` | `adapter proxy/stdio` → `POST /api/runtime/adapter/sessions`; grants enforced on platform |
+| Agent adapters | `internal/cli/adapter/`, `internal/agentadapter/`, `services/runtime-api/internal/runtimeapi/adapter*.go` | `adapter proxy/stdio` use issued sessions; `adapter enroll` submits a local-key CSR for enterprise mTLS |
 | Operator | `cmd/operator/`, `internal/operator/` | `MCPServer` reconciliation, ingress (`ingressClass` default **traefik**), gateway |
 | API & CRD types | `api/v1alpha1/`, `config/crd/bases/` | Source of truth for object shapes |
 | Access and policy | `pkg/access/`, `pkg/policy/` | Grant/session helpers; gateway policy contract |
 | Control-plane / K8s | `pkg/controlplane/`, `pkg/k8sclient/`, `pkg/kubeworkload/`, `pkg/manifest/`, `pkg/metadata/` | MCPServer ops, manifests, registry resolution |
 | Sentinel packages | `pkg/events/`, `pkg/clickhouse/`, `pkg/serviceutil/`, `pkg/sentinel/` | Events, analytics, service utilities |
-| Sentinel services | `services/api`, `services/ui`, `services/ingest`, `services/processor`, `services/mcp-gateway`, … | Separate `go.mod` where present; Go 1.26 for shared imports |
+| Sentinel services | `services/platform-api`, `services/runtime-api`, `services/analytics-api`, `services/ui`, `services/ingest`, `services/processor`, `services/mcp-gateway`, … | Separate `go.mod` where present; Go 1.26 for shared imports |
 | Samples / install YAML | `examples/workspace-assistant-mcp/`, `k8s/`, `config/` | Demo server; overlays and CRDs |
 | Team isolation | `docs/multi-team.md` | Namespaces, RBAC, ingress watch scope |
 | Deployment targets | `docs/deployment-targets.md`, `docs/k3s-on-prem-cluster.md` | Before distribution-specific runbooks |
@@ -34,6 +36,25 @@ This file is the **onboarding index** for the MCP Runtime repo. It complements `
 | Agent skills | `.codex/skills/`, `.claude/skills` → `../.codex/skills` | Canonical skills tree |
 
 **Patterns:** mirror nearest similar packages; CLI errors → `internal/cli/core/errors.go`, `pkg/errx/`.
+
+## Agent workflow passes
+
+Use repo-local skills as the source of truth for review, QA, security, release,
+and design passes. External agent frameworks such as gstack can inspire process,
+but do not make them required or let them override MCP Runtime-specific skills
+unless their workflow has been adapted into `.codex/skills/`.
+
+- **Code review:** use the default code-review stance for ordinary PR review;
+  add `security-audit`, `k8s-hardening-audit`, or `supply-chain-audit` when the
+  diff crosses those trust boundaries.
+- **Browser/UI QA and design critique:** use `qa-e2e-ui` for dashboard
+  workflows, role-gating, responsive checks, console/network evidence, and
+  visual/design regressions.
+- **DevEx review:** for CLI, docs, setup, contributor, and golden-help changes,
+  combine `repo-guidance-sync` with the relevant targeted tests.
+- **Ship/canary/release:** use `release-readiness` to compose CI parity,
+  real-cluster operations, security, UI, protocol, performance, docs, and
+  deployment/canary evidence before tagging or promoting a release.
 
 ## Build, test, and quality (before you push)
 
@@ -91,7 +112,7 @@ MCP_SETUP_WAIT_TIMEOUT=900 ./bin/mcp-runtime setup --test-mode --ingress-manifes
 kubectl port-forward -n traefik svc/traefik 18080:8000
 ```
 
-`setup --test-mode` builds and pushes images to the bundled registry (`registry.registry.svc.cluster.local:5000` in Kind). Prefer existing `kind-mcp-runtime` when healthy. Contributor runbook: `docs/contributor/README.md`.
+`setup --test-mode` builds and pushes images to the bundled registry (`registry.registry.svc.cluster.local:5000` in Kind) and provisions the local `mcp-runtime-ca` workload issuer for mTLS/SPIFFE validation. Prefer existing `kind-mcp-runtime` when healthy. Contributor runbook: `docs/contributor/README.md`.
 
 Endpoints, API keys, test logins: **`mcp-runtime-local-dev`** skill.
 
@@ -129,3 +150,11 @@ Grafana: dev ingress `/grafana` or `https://platform.<domain>/grafana` (admin). 
 ## graphify
 
 When `graphify-out/graph.json` exists: `graphify query`, `graphify path`, `graphify explain` before broad grep; `graphify update .` after code changes. See `.codex/skills/graphify/SKILL.md`.
+
+**Stale graph:** if a query returns no nodes (or misses one) for a symbol that clearly exists in the code, the graph is stale — run `graphify update .` (incremental re-extract of new/changed files) and retry. If the node is still missing, do a full rebuild (`/graphify .`) before falling back to grep, so the graph stays trustworthy for the next query.
+
+In any agent prompt, include:
+
+> Use `graphify query "<your question>"` to look up any code structure before grepping files. The graph is at `graphify-out/graph.json`.
+
+The `PreToolUse` hook already injects this reminder whenever a Bash command contains `grep`, `find`, or similar — so agents running in this repo are automatically nudged toward the graph.

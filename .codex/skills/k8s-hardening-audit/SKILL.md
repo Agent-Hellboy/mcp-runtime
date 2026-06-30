@@ -135,7 +135,7 @@ Probe with a test pod:
 
 ```sh
 kubectl -n mcp-servers run probe --rm -i --image=busybox:1.36 --restart=Never -- sh -c '
-  wget -T2 -qO- http://mcp-sentinel-api.mcp-sentinel.svc:8080/health || echo BLOCKED
+  wget -T2 -qO- http://mcp-platform-api.mcp-sentinel.svc:8080/health || echo BLOCKED
 '
 ```
 

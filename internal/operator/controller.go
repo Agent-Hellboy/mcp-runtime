@@ -3,7 +3,6 @@ package operator
 import (
 	"context"
 	"fmt"
-	"reflect"
 	"strings"
 	"time"
 
@@ -45,6 +44,19 @@ type MCPServerReconciler struct {
 	// DefaultIngressTLS enables Traefik TLS routing for MCP server ingresses by default.
 	DefaultIngressTLS bool
 
+	// DefaultIngressTLSSecret is the Kubernetes TLS Secret holding the
+	// caller-facing (user->Traefik) host certificate for mtls servers. Path-based
+	// mtls servers share one host, so this single platform host certificate is
+	// published as Traefik's default certificate via a TLSStore named "default"
+	// (see reconcileDefaultTLSStore) rather than a per-IngressRoute secretName.
+	// Empty falls back to Traefik's built-in default certificate.
+	DefaultIngressTLSSecret string
+
+	// DefaultIngressTLSSecretNamespace is the Traefik-watched namespace that holds
+	// the DefaultIngressTLSSecret and the single "default" TLSStore. Must be one
+	// of the namespaces Traefik's kubernetescrd provider watches.
+	DefaultIngressTLSSecretNamespace string
+
 	// IngressReadinessMode controls how ingress readiness is evaluated.
 	IngressReadinessMode string
 
@@ -63,6 +75,10 @@ type MCPServerReconciler struct {
 
 	// ClusterName is the cluster label attached to policy and audit events.
 	ClusterName string
+
+	// MTLSClusterIssuer is the pre-existing cert-manager ClusterIssuer used for
+	// gateway and adapter workload certificates.
+	MTLSClusterIssuer string
 }
 
 // Use constants from constants.go
@@ -95,10 +111,14 @@ type resourceReadiness = operatorutil.ResourceReadiness
 //+kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=networking.k8s.io,resources=ingressclasses,verbs=get;list;watch
+//+kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups="",resources=events,verbs=create;patch;update
 //+kubebuilder:rbac:groups=mcpruntime.org,resources=mcpaccessgrants,verbs=get;list;watch
 //+kubebuilder:rbac:groups=mcpruntime.org,resources=mcpagentsessions,verbs=get;list;watch
+//+kubebuilder:rbac:groups=cert-manager.io,resources=certificates,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=traefik.io,resources=ingressroutetcps;ingressroutes;middlewares;tlsoptions;tlsstores;serverstransports,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile is part of the main kubernetes reconciliation loop
 func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -114,17 +134,9 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	logger.Info("Reconciling MCPServer", "name", mcpServer.Name, "namespace", mcpServer.Namespace)
 
+	mcpServer = r.defaultedMCPServerForReconcile(mcpServer)
 	if err := r.validateMCPServerSpec(ctx, mcpServer, logger); err != nil {
 		return ctrl.Result{}, err
-	}
-
-	// Set defaults and update spec only if changed
-	requeue, err := r.applyDefaultsIfNeeded(ctx, mcpServer, logger)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-	if requeue {
-		return ctrl.Result{}, nil
 	}
 
 	if err := r.validateIngressConfig(ctx, mcpServer, logger); err != nil {
@@ -164,20 +176,6 @@ func (r *MCPServerReconciler) fetchMCPServer(ctx context.Context, req ctrl.Reque
 		return nil, false, err
 	}
 	return &mcpServer, true, nil
-}
-
-func (r *MCPServerReconciler) applyDefaultsIfNeeded(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer, logger logr.Logger) (bool, error) {
-	original := mcpServer.DeepCopy()
-	r.setDefaults(mcpServer)
-	if reflect.DeepEqual(original.Spec, mcpServer.Spec) {
-		return false, nil
-	}
-	if err := r.Update(ctx, mcpServer); err != nil {
-		logger.Error(err, "Failed to update MCPServer spec with defaults")
-		return false, err
-	}
-	// Requeue to work with the updated object and avoid stale data
-	return true, nil
 }
 
 func (r *MCPServerReconciler) validateMCPServerSpec(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer, logger logr.Logger) error {
@@ -259,6 +257,20 @@ func (r *MCPServerReconciler) reconcileResources(ctx context.Context, mcpServer 
 		r.updateStatus(ctx, mcpServer, "Error", fmt.Sprintf("Failed to reconcile policy ConfigMap: %v", err), resourceReadiness{})
 		return wrappedErr
 	}
+	if err := r.reconcileGatewayCertificate(ctx, mcpServer); err != nil {
+		contextMap["resource"] = "certificate"
+		wrappedErr := wrapOperatorError(err, "Failed to reconcile gateway Certificate", contextMap)
+		logOperatorError(logger, wrappedErr, "Failed to reconcile gateway Certificate")
+		r.updateStatus(ctx, mcpServer, "Error", fmt.Sprintf("Failed to reconcile gateway Certificate: %v", err), resourceReadiness{})
+		return wrappedErr
+	}
+	if err := r.reconcileTraefikClientCertificate(ctx, mcpServer); err != nil {
+		contextMap["resource"] = "traefik-client-certificate"
+		wrappedErr := wrapOperatorError(err, "Failed to reconcile Traefik client Certificate", contextMap)
+		logOperatorError(logger, wrappedErr, "Failed to reconcile Traefik client Certificate")
+		r.updateStatus(ctx, mcpServer, "Error", fmt.Sprintf("Failed to reconcile Traefik client Certificate: %v", err), resourceReadiness{})
+		return wrappedErr
+	}
 	if err := r.reconcileDeployment(ctx, mcpServer); err != nil {
 		contextMap["resource"] = "deployment"
 		wrappedErr := wrapOperatorError(err, "Failed to reconcile Deployment", contextMap)
@@ -285,6 +297,20 @@ func (r *MCPServerReconciler) reconcileResources(ctx context.Context, mcpServer 
 		wrappedErr := wrapOperatorError(err, "Failed to reconcile Ingress", contextMap)
 		logOperatorError(logger, wrappedErr, "Failed to reconcile Ingress")
 		r.updateStatus(ctx, mcpServer, "Error", fmt.Sprintf("Failed to reconcile Ingress: %v", err), resourceReadiness{})
+		return wrappedErr
+	}
+	if err := r.reconcileMTLSNetworkPolicy(ctx, mcpServer); err != nil {
+		contextMap["resource"] = "networkpolicy"
+		wrappedErr := wrapOperatorError(err, "Failed to reconcile mTLS NetworkPolicy", contextMap)
+		logOperatorError(logger, wrappedErr, "Failed to reconcile mTLS NetworkPolicy")
+		r.updateStatus(ctx, mcpServer, "Error", fmt.Sprintf("Failed to reconcile mTLS NetworkPolicy: %v", err), resourceReadiness{})
+		return wrappedErr
+	}
+	if err := r.reconcileMTLSTrustBundle(ctx, mcpServer); err != nil {
+		contextMap["resource"] = "trust-bundle"
+		wrappedErr := wrapOperatorError(err, "Failed to reconcile mTLS trust bundle", contextMap)
+		logOperatorError(logger, wrappedErr, "Failed to reconcile mTLS trust bundle")
+		r.updateStatus(ctx, mcpServer, "Error", fmt.Sprintf("Failed to reconcile mTLS trust bundle: %v", err), resourceReadiness{})
 		return wrappedErr
 	}
 	return nil
@@ -347,22 +373,15 @@ func determinePhase(readiness resourceReadiness, mcpServer *mcpv1alpha1.MCPServe
 	return "Pending", false
 }
 
-func (r *MCPServerReconciler) setDefaults(mcpServer *mcpv1alpha1.MCPServer) {
-	ingressHostUnset := strings.TrimSpace(mcpServer.Spec.IngressHost) == ""
-	publicPathPrefixUnset := strings.TrimSpace(mcpServer.Spec.PublicPathPrefix) == ""
-
-	mcpServer.Default()
-
-	if ingressHostUnset && publicPathPrefixUnset {
-		mcpServer.Spec.IngressHost = strings.TrimSpace(r.DefaultIngressHost)
-	}
-
-	if mcpServer.Spec.Analytics != nil && !mcpServer.Spec.Analytics.Disabled {
-		if strings.TrimSpace(mcpServer.Spec.Analytics.IngestURL) == "" {
-			mcpServer.Spec.Analytics.IngestURL = strings.TrimSpace(r.DefaultAnalyticsIngestURL)
-		}
-	}
+func (r *MCPServerReconciler) defaultedMCPServerForReconcile(mcpServer *mcpv1alpha1.MCPServer) *mcpv1alpha1.MCPServer {
+	defaulted := mcpServer.DeepCopy()
+	defaulted.DefaultWithOptions(mcpv1alpha1.MCPServerDefaultOptions{
+		DefaultIngressHost:        r.DefaultIngressHost,
+		DefaultAnalyticsIngestURL: r.DefaultAnalyticsIngestURL,
+	})
+	return defaulted
 }
+
 func (r *MCPServerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&mcpv1alpha1.MCPServer{}).

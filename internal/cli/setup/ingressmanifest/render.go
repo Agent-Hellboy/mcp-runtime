@@ -18,8 +18,8 @@ const (
 )
 
 // RenderPlatformUIIngress emits an Ingress that maps platform.<domain> to the
-// dashboard UI and /api on the same UI service (which reverse-proxies to
-// mcp-sentinel-api via API_UPSTREAM). It also emits a separate admin-gated
+// dashboard UI and /api/v1/* to the split API services. Server-side UI auth
+// still uses API_UPSTREAM against platform-api. A separate admin-gated Ingress
 // Ingress on the same host for /grafana. The observability Ingress uses the
 // repo-managed sentinel-admin-auth@file Traefik middleware so Grafana is
 // reachable from admin UI links without exposing it raw on the public platform
@@ -77,20 +77,7 @@ func RenderPlatformUIIngress(host, issuerName, analyticsNamespace string) string
 	b.WriteString("\n")
 	b.WriteString("      http:\n")
 	b.WriteString("        paths:\n")
-	b.WriteString("          - path: /api/runtime/registry/push\n")
-	b.WriteString("            pathType: Exact\n")
-	b.WriteString("            backend:\n")
-	b.WriteString("              service:\n")
-	b.WriteString("                name: mcp-sentinel-api\n")
-	b.WriteString("                port:\n")
-	b.WriteString("                  number: 8080\n")
-	b.WriteString("          - path: /api\n")
-	b.WriteString("            pathType: Prefix\n")
-	b.WriteString("            backend:\n")
-	b.WriteString("              service:\n")
-	b.WriteString("                name: mcp-sentinel-ui\n")
-	b.WriteString("                port:\n")
-	b.WriteString("                  number: 8082\n")
+	writeAPIIngressPaths(&b)
 	b.WriteString("          - path: /\n")
 	b.WriteString("            pathType: Prefix\n")
 	b.WriteString("            backend:\n")
@@ -176,4 +163,18 @@ func RenderPlatformUIIngress(host, issuerName, analyticsNamespace string) string
 	}
 
 	return b.String()
+}
+
+func writeAPIIngressPaths(b *strings.Builder) {
+	for _, route := range PlatformAPIPaths() {
+		b.WriteString("          - path: ")
+		b.WriteString(route.Path)
+		b.WriteString("\n            pathType: ")
+		b.WriteString(route.PathType)
+		b.WriteString("\n            backend:\n              service:\n                name: ")
+		b.WriteString(route.Service)
+		b.WriteString("\n                port:\n                  number: ")
+		b.WriteString(strconv.Itoa(route.Port))
+		b.WriteString("\n")
+	}
 }

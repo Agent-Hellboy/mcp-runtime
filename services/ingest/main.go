@@ -79,11 +79,7 @@ func main() {
 		}
 	}
 
-	writer := &kafka.Writer{
-		Addr:         kafka.TCP(brokers...),
-		Topic:        topic,
-		BatchTimeout: 200 * time.Millisecond,
-	}
+	writer := newKafkaWriter(brokers, topic)
 
 	server := &ingestServer{
 		writer:       writer,
@@ -93,6 +89,10 @@ func main() {
 		jwks:         jwks,
 		oidcIssuer:   oidcIssuer,
 		oidcAudience: oidcAudience,
+	}
+
+	if len(apiKeys) == 0 && jwks == nil {
+		log.Printf("WARNING: ingest authentication is DISABLED — no INGEST_API_KEYS and no OIDC_JWKS_URL configured; /events will accept unauthenticated requests")
 	}
 
 	mux := http.NewServeMux()
@@ -145,6 +145,15 @@ func main() {
 	_ = httpServer.Shutdown(shutdownCtx)
 	_ = metricsShutdown(shutdownCtx)
 	_ = writer.Close()
+}
+
+func newKafkaWriter(brokers []string, topic string) *kafka.Writer {
+	return &kafka.Writer{
+		Addr:         kafka.TCP(brokers...),
+		Topic:        topic,
+		BatchTimeout: 200 * time.Millisecond,
+		RequiredAcks: kafka.RequireAll,
+	}
 }
 
 const ingestEventMaxBytes = 1 << 20 // 1MB

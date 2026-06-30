@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -16,11 +15,10 @@ import (
 )
 
 var (
-	_       admission.Defaulter[*MCPServer]       = mcpServerWebhook{}
-	_       admission.Validator[*MCPServer]       = mcpServerWebhook{}
-	_       admission.Validator[*MCPAccessGrant]  = mcpAccessGrantValidator{}
-	_       admission.Validator[*MCPAgentSession] = mcpAgentSessionValidator{}
-	nowFunc                                       = time.Now
+	_ admission.Defaulter[*MCPServer]       = mcpServerWebhook{}
+	_ admission.Validator[*MCPServer]       = mcpServerWebhook{}
+	_ admission.Validator[*MCPAccessGrant]  = mcpAccessGrantValidator{}
+	_ admission.Validator[*MCPAgentSession] = mcpAgentSessionValidator{}
 )
 
 const (
@@ -81,8 +79,23 @@ func gatewayEnabled(spec MCPServerSpec) bool {
 	return spec.Gateway != nil && spec.Gateway.Enabled
 }
 
-// +kubebuilder:webhook:path=/mutate-mcpruntime-org-v1alpha1-mcpserver,mutating=true,failurePolicy=fail,sideEffects=None,groups=mcpruntime.org,resources=mcpservers,verbs=create;update,versions=v1alpha1,name=mmcpserver.kb.io,admissionReviewVersions=v1
+// MCPServerDefaultOptions holds operator-scoped values that the admission
+// webhook can use while defaulting MCPServer objects.
+type MCPServerDefaultOptions struct {
+	DefaultIngressHost        string
+	DefaultAnalyticsIngestURL string
+}
+
 func (r *MCPServer) Default() {
+	r.DefaultWithOptions(MCPServerDefaultOptions{})
+}
+
+// DefaultWithOptions applies MCPServer defaults, including operator-configured
+// fallbacks when the webhook is registered by the operator manager.
+func (r *MCPServer) DefaultWithOptions(options MCPServerDefaultOptions) {
+	ingressHostUnset := strings.TrimSpace(r.Spec.IngressHost) == ""
+	publicPathPrefixUnset := strings.TrimSpace(r.Spec.PublicPathPrefix) == ""
+
 	if strings.TrimSpace(r.Spec.ImageTag) == "" && !imageHasTagOrDigest(strings.TrimSpace(r.Spec.Image)) {
 		r.Spec.ImageTag = defaultImageTag
 	}
@@ -99,11 +112,16 @@ func (r *MCPServer) Default() {
 	if strings.TrimSpace(r.Spec.IngressPath) == "" {
 		r.Spec.IngressPath = defaultIngressPathFromName(r.Name)
 	}
+	// Path-based public routing is the default for all auth modes, including
+	// mtls: Traefik terminates the client mTLS and routes by path to the gateway.
 	if strings.TrimSpace(r.Spec.PublicPathPrefix) == "" {
 		r.Spec.PublicPathPrefix = defaultPublicPathPrefixFromName(r.Name)
 	}
 	if strings.TrimSpace(r.Spec.IngressClass) == "" {
 		r.Spec.IngressClass = defaultIngressClass
+	}
+	if ingressHostUnset && publicPathPrefixUnset {
+		r.Spec.IngressHost = strings.TrimSpace(options.DefaultIngressHost)
 	}
 
 	if gatewayEnabled(r.Spec) {
@@ -194,6 +212,9 @@ func (r *MCPServer) Default() {
 		if strings.TrimSpace(r.Spec.Analytics.EventType) == "" {
 			r.Spec.Analytics.EventType = defaultAnalyticsEventType
 		}
+		if strings.TrimSpace(r.Spec.Analytics.IngestURL) == "" {
+			r.Spec.Analytics.IngestURL = strings.TrimSpace(options.DefaultAnalyticsIngestURL)
+		}
 	}
 
 	if r.Spec.Rollout != nil {
@@ -209,18 +230,23 @@ func (r *MCPServer) Default() {
 	}
 }
 
-// +kubebuilder:webhook:path=/validate-mcpruntime-org-v1alpha1-mcpserver,mutating=false,failurePolicy=fail,sideEffects=None,groups=mcpruntime.org,resources=mcpservers,verbs=create;update,versions=v1alpha1,name=vmcpserver.kb.io,admissionReviewVersions=v1
 func (r *MCPServer) SetupWebhookWithManager(mgr ctrl.Manager) error {
+	return r.SetupWebhookWithManagerWithOptions(mgr, MCPServerDefaultOptions{})
+}
+
+func (r *MCPServer) SetupWebhookWithManagerWithOptions(mgr ctrl.Manager, options MCPServerDefaultOptions) error {
 	return ctrl.NewWebhookManagedBy(mgr, r).
-		WithDefaulter(mcpServerWebhook{}).
-		WithValidator(mcpServerWebhook{}).
+		WithDefaulter(mcpServerWebhook{defaultOptions: options}).
+		WithValidator(mcpServerWebhook{defaultOptions: options}).
 		Complete()
 }
 
-type mcpServerWebhook struct{}
+type mcpServerWebhook struct {
+	defaultOptions MCPServerDefaultOptions
+}
 
-func (mcpServerWebhook) Default(_ context.Context, obj *MCPServer) error {
-	obj.Default()
+func (w mcpServerWebhook) Default(_ context.Context, obj *MCPServer) error {
+	obj.DefaultWithOptions(w.defaultOptions)
 	return nil
 }
 
@@ -279,6 +305,21 @@ func (r *MCPServer) validate() error {
 	}
 	if gatewayEnabled(r.Spec) && r.Spec.Auth != nil && r.Spec.Auth.Mode == AuthModeOAuth && strings.TrimSpace(r.Spec.Auth.IssuerURL) == "" {
 		allErrs = append(allErrs, field.Required(specPath.Child("auth", "issuerURL"), "auth.issuerURL is required when auth.mode is oauth"))
+	}
+	if r.Spec.Auth != nil && r.Spec.Auth.Mode == AuthModeMTLS {
+		if !gatewayEnabled(r.Spec) {
+			allErrs = append(allErrs, field.Required(specPath.Child("gateway", "enabled"), "gateway.enabled is required when auth.mode is mtls"))
+		}
+		if strings.TrimSpace(r.Spec.Auth.TrustDomain) == "" {
+			allErrs = append(allErrs, field.Required(specPath.Child("auth", "trustDomain"), "auth.trustDomain is required when auth.mode is mtls"))
+		}
+		// Path-based routing is supported in mtls mode: Traefik terminates the
+		// client mTLS, injects the verified SPIFFE identity header, and routes by
+		// path to the gateway over a re-encrypted mTLS hop.
+		ingressClass := strings.TrimSpace(r.Spec.IngressClass)
+		if ingressClass != "" && ingressClass != "traefik" {
+			allErrs = append(allErrs, field.Invalid(specPath.Child("ingressClass"), r.Spec.IngressClass, "auth.mode mtls currently requires the traefik ingress class"))
+		}
 	}
 	if r.Spec.Gateway == nil || !r.Spec.Gateway.Enabled {
 		if r.Spec.Analytics != nil && !r.Spec.Analytics.Disabled &&
@@ -385,7 +426,6 @@ func validateRolloutValue(fieldPath *field.Path, value string) *field.Error {
 	return nil
 }
 
-// +kubebuilder:webhook:path=/validate-mcpruntime-org-v1alpha1-mcpaccessgrant,mutating=false,failurePolicy=fail,sideEffects=None,groups=mcpruntime.org,resources=mcpaccessgrants,verbs=create;update,versions=v1alpha1,name=vmcpaccessgrant.kb.io,admissionReviewVersions=v1
 func (r *MCPAccessGrant) SetupWebhookWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewWebhookManagedBy(mgr, r).
 		WithValidator(mcpAccessGrantValidator{}).
@@ -407,15 +447,27 @@ func (mcpAccessGrantValidator) ValidateDelete(_ context.Context, obj *MCPAccessG
 }
 
 func (r *MCPAccessGrant) ValidateCreate() (admission.Warnings, error) {
-	return nil, r.validate()
+	return r.wildcardSubjectWarnings(), r.validate()
 }
 
 func (r *MCPAccessGrant) ValidateUpdate(_ runtime.Object) (admission.Warnings, error) {
-	return nil, r.validate()
+	return r.wildcardSubjectWarnings(), r.validate()
 }
 
 func (r *MCPAccessGrant) ValidateDelete() (admission.Warnings, error) {
 	return nil, nil
+}
+
+func (r *MCPAccessGrant) wildcardSubjectWarnings() admission.Warnings {
+	subject := r.Spec.Subject
+	if strings.TrimSpace(subject.HumanID) != "" ||
+		strings.TrimSpace(subject.AgentID) != "" ||
+		strings.TrimSpace(subject.TeamID) != "" {
+		return nil
+	}
+	return admission.Warnings{
+		"MCPAccessGrant subject is empty (wildcard grant): the gateway matches any authenticated principal for the server; adapter session creation still requires subject alignment with the caller",
+	}
 }
 
 func (r *MCPAccessGrant) validate() error {
@@ -424,9 +476,6 @@ func (r *MCPAccessGrant) validate() error {
 
 	if strings.TrimSpace(r.Spec.ServerRef.Name) == "" {
 		allErrs = append(allErrs, field.Required(specPath.Child("serverRef", "name"), "serverRef.name is required"))
-	}
-	if strings.TrimSpace(r.Spec.Subject.HumanID) == "" && strings.TrimSpace(r.Spec.Subject.AgentID) == "" && strings.TrimSpace(r.Spec.Subject.TeamID) == "" {
-		allErrs = append(allErrs, field.Required(specPath.Child("subject"), "one of subject.humanID, subject.agentID, or subject.teamID is required"))
 	}
 	if err := validateTeamIDField(specPath.Child("subject", "teamID"), r.Spec.Subject.TeamID); err != nil {
 		allErrs = append(allErrs, err)
@@ -475,7 +524,6 @@ func (r *MCPAccessGrant) validate() error {
 	return apierrors.NewInvalid(schema.GroupKind{Group: GroupVersion.Group, Kind: "MCPAccessGrant"}, r.Name, allErrs)
 }
 
-// +kubebuilder:webhook:path=/validate-mcpruntime-org-v1alpha1-mcpagentsession,mutating=false,failurePolicy=fail,sideEffects=None,groups=mcpruntime.org,resources=mcpagentsessions,verbs=create;update,versions=v1alpha1,name=vmcpagentsession.kb.io,admissionReviewVersions=v1
 func (r *MCPAgentSession) SetupWebhookWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewWebhookManagedBy(mgr, r).
 		WithValidator(mcpAgentSessionValidator{}).
@@ -520,10 +568,6 @@ func (r *MCPAgentSession) validate() error {
 	}
 	if err := validateTeamIDField(specPath.Child("subject", "teamID"), r.Spec.Subject.TeamID); err != nil {
 		allErrs = append(allErrs, err)
-	}
-	now := nowFunc().UTC()
-	if r.Spec.ExpiresAt != nil && !r.Spec.ExpiresAt.Time.After(now) {
-		allErrs = append(allErrs, field.Invalid(specPath.Child("expiresAt"), r.Spec.ExpiresAt.Time.Format(time.RFC3339), "expiresAt must be in the future"))
 	}
 	if ref := r.Spec.UpstreamTokenSecretRef; ref != nil {
 		if strings.TrimSpace(ref.Name) == "" {

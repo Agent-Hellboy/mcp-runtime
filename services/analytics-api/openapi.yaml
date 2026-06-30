@@ -1,0 +1,105 @@
+openapi: 3.1.0
+info:
+  title: MCP Runtime Analytics API
+  version: 1.0.0
+paths:
+  /health:
+    get:
+      responses:
+        "200":
+          description: service is up
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthOK"
+  /ready:
+    get:
+      responses:
+        "200":
+          description: dependencies ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthOK"
+        "503":
+          description: dependency unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/openapi.yaml:
+    get:
+      responses:
+        "200":
+          description: OpenAPI document
+          content:
+            application/yaml:
+              schema:
+                type: string
+  /api/v1/stats:
+    get:
+      responses:
+        "200":
+          description: aggregate stats
+          content:
+            application/json:
+              schema:
+                type: object
+        "401":
+          description: unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/events:
+    get:
+      responses:
+        "200":
+          description: event list
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: invalid query
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          description: unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/user/analytics/usage:
+    get:
+      responses:
+        "200":
+          description: user usage
+          content:
+            application/json:
+              schema:
+                type: object
+        "401":
+          description: unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+components:
+  schemas:
+    ErrorEnvelope:
+      type: object
+      required: [error, message]
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+    HealthOK:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean

@@ -1,7 +1,9 @@
 package platform
 
 import (
+	"crypto/x509"
 	"encoding/base64"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +18,10 @@ import (
 
 	"go.uber.org/zap"
 	"gopkg.in/yaml.v3"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 
 	"mcp-runtime/internal/cli/cluster"
 	"mcp-runtime/internal/cli/core"
@@ -178,6 +184,253 @@ func TestBuildOperatorImagePassesDockerPlatform(t *testing.T) {
 	}
 }
 
+func TestGenerateOperatorWebhookCertificate(t *testing.T) {
+	caPEM, caKeyPEM, certPEM, keyPEM, err := generateOperatorWebhookCertificate(time.Date(2026, 5, 15, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("generateOperatorWebhookCertificate failed: %v", err)
+	}
+
+	caBlock, _ := pem.Decode(caPEM)
+	if caBlock == nil {
+		t.Fatal("expected CA certificate PEM block")
+	}
+	caCert, err := x509.ParseCertificate(caBlock.Bytes)
+	if err != nil {
+		t.Fatalf("parse CA certificate: %v", err)
+	}
+	if !caCert.IsCA {
+		t.Fatal("expected CA certificate to be a CA")
+	}
+	caKeyBlock, _ := pem.Decode(caKeyPEM)
+	if caKeyBlock == nil {
+		t.Fatal("expected CA private key PEM block")
+	}
+
+	certBlock, _ := pem.Decode(certPEM)
+	if certBlock == nil {
+		t.Fatal("expected serving certificate PEM block")
+	}
+	servingCert, err := x509.ParseCertificate(certBlock.Bytes)
+	if err != nil {
+		t.Fatalf("parse serving certificate: %v", err)
+	}
+	if servingCert.IsCA {
+		t.Fatal("serving certificate should not be a CA")
+	}
+	keyBlock, _ := pem.Decode(keyPEM)
+	if keyBlock == nil {
+		t.Fatal("expected serving private key PEM block")
+	}
+
+	roots := x509.NewCertPool()
+	roots.AddCert(caCert)
+	serviceDNS := operatorWebhookServiceName + "." + core.NamespaceMCPRuntime + ".svc"
+	if _, err := servingCert.Verify(x509.VerifyOptions{DNSName: serviceDNS, Roots: roots}); err != nil {
+		t.Fatalf("serving certificate did not verify for %s: %v", serviceDNS, err)
+	}
+	if !caCert.NotAfter.After(servingCert.NotAfter) {
+		t.Fatalf("CA expiry %s must outlive serving certificate expiry %s", caCert.NotAfter, servingCert.NotAfter)
+	}
+}
+
+func TestReusableOperatorWebhookServingCert(t *testing.T) {
+	issued := time.Date(2026, 5, 15, 0, 0, 0, 0, time.UTC)
+	caPEM, _, certPEM, keyPEM, err := generateOperatorWebhookCertificate(issued)
+	if err != nil {
+		t.Fatalf("generateOperatorWebhookCertificate failed: %v", err)
+	}
+
+	if !reusableOperatorWebhookServingCert(caPEM, certPEM, keyPEM, issued) {
+		t.Fatal("expected freshly generated certificate to be reusable")
+	}
+	insideRenewalWindow := issued.AddDate(1, 0, 0).Add(-29 * 24 * time.Hour)
+	if reusableOperatorWebhookServingCert(caPEM, certPEM, keyPEM, insideRenewalWindow) {
+		t.Fatal("expected certificate inside the renewal window to be rotated")
+	}
+	if reusableOperatorWebhookServingCert(nil, certPEM, keyPEM, issued) {
+		t.Fatal("expected secret without ca.crt to be rotated")
+	}
+
+	_, _, _, otherKeyPEM, err := generateOperatorWebhookCertificate(issued)
+	if err != nil {
+		t.Fatalf("generateOperatorWebhookCertificate failed: %v", err)
+	}
+	if reusableOperatorWebhookServingCert(caPEM, certPEM, otherKeyPEM, issued) {
+		t.Fatal("expected mismatched private key to be rotated")
+	}
+}
+
+func operatorWebhookSecretJSON(caPEM, caKeyPEM, certPEM, keyPEM []byte) []byte {
+	return []byte(fmt.Sprintf(`{"data":{"ca.crt":%q,"ca.key":%q,"tls.crt":%q,"tls.key":%q}}`,
+		base64.StdEncoding.EncodeToString(caPEM),
+		base64.StdEncoding.EncodeToString(caKeyPEM),
+		base64.StdEncoding.EncodeToString(certPEM),
+		base64.StdEncoding.EncodeToString(keyPEM)))
+}
+
+func TestEnsureOperatorWebhookTLSSecretReusesValidSecret(t *testing.T) {
+	caPEM, caKeyPEM, certPEM, keyPEM, err := generateOperatorWebhookCertificate(time.Now().UTC())
+	if err != nil {
+		t.Fatalf("generateOperatorWebhookCertificate failed: %v", err)
+	}
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			if commandHasArgs(spec, "get", "secret", operatorWebhookSecretName) {
+				return &core.MockCommand{Args: spec.Args, OutputData: operatorWebhookSecretJSON(caPEM, caKeyPEM, certPEM, keyPEM)}
+			}
+			if commandHasArgs(spec, "apply") {
+				t.Errorf("expected no apply while reusing webhook secret, got %#v", spec.Args)
+			}
+			return &core.MockCommand{Args: spec.Args}
+		},
+	}
+	kubectl := core.NewTestKubectlClient(mock)
+
+	got, err := ensureOperatorWebhookTLSSecret(kubectl)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(got) != string(caPEM) {
+		t.Fatal("expected existing CA bundle to be returned without rotation")
+	}
+}
+
+func TestEnsureOperatorWebhookTLSSecretRenewsExpiringServingCert(t *testing.T) {
+	// Issued ~11.5 months ago, the serving certificate expires inside the
+	// 30-day renewal window and must be re-signed with the stored CA.
+	caPEM, caKeyPEM, certPEM, keyPEM, err := generateOperatorWebhookCertificate(time.Now().UTC().AddDate(0, -11, -15))
+	if err != nil {
+		t.Fatalf("generateOperatorWebhookCertificate failed: %v", err)
+	}
+	applied := 0
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			cmd := &core.MockCommand{Args: spec.Args}
+			if commandHasArgs(spec, "get", "secret", operatorWebhookSecretName) {
+				cmd.OutputData = operatorWebhookSecretJSON(caPEM, caKeyPEM, certPEM, keyPEM)
+			}
+			if commandHasArgs(spec, "apply") {
+				applied++
+				cmd.RunFunc = func() error {
+					_, err := io.ReadAll(cmd.StdinR)
+					return err
+				}
+			}
+			return cmd
+		},
+	}
+	kubectl := core.NewTestKubectlClient(mock)
+
+	got, err := ensureOperatorWebhookTLSSecret(kubectl)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if applied == 0 {
+		t.Fatal("expected expiring webhook secret to be re-applied")
+	}
+	if string(got) != string(caPEM) {
+		t.Fatal("expected serving-certificate renewal to keep the existing CA bundle")
+	}
+}
+
+func TestEnsureOperatorWebhookTLSSecretRotatesLegacySecretWithoutCAKey(t *testing.T) {
+	caPEM, _, certPEM, keyPEM, err := generateOperatorWebhookCertificate(time.Now().UTC().AddDate(0, -11, -15))
+	if err != nil {
+		t.Fatalf("generateOperatorWebhookCertificate failed: %v", err)
+	}
+	applied := 0
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			cmd := &core.MockCommand{Args: spec.Args}
+			if commandHasArgs(spec, "get", "secret", operatorWebhookSecretName) {
+				cmd.OutputData = []byte(fmt.Sprintf(`{"data":{"ca.crt":%q,"tls.crt":%q,"tls.key":%q}}`,
+					base64.StdEncoding.EncodeToString(caPEM),
+					base64.StdEncoding.EncodeToString(certPEM),
+					base64.StdEncoding.EncodeToString(keyPEM)))
+			}
+			if commandHasArgs(spec, "apply") {
+				applied++
+				cmd.RunFunc = func() error {
+					_, err := io.ReadAll(cmd.StdinR)
+					return err
+				}
+			}
+			return cmd
+		},
+	}
+	kubectl := core.NewTestKubectlClient(mock)
+
+	got, err := ensureOperatorWebhookTLSSecret(kubectl)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if applied == 0 {
+		t.Fatal("expected legacy webhook secret without ca.key to be re-applied")
+	}
+	if string(got) == string(caPEM) {
+		t.Fatal("expected legacy secret without ca.key to rotate the CA bundle")
+	}
+}
+
+func TestEnsureOperatorWebhookTLSSecretClientGoReusesValidSecret(t *testing.T) {
+	caPEM, caKeyPEM, certPEM, keyPEM, err := generateOperatorWebhookCertificate(time.Now().UTC())
+	if err != nil {
+		t.Fatalf("generateOperatorWebhookCertificate failed: %v", err)
+	}
+	resetPlatformKubeconfig(t)
+	swapKubernetesClientsForTest(t, newPlatformKubernetesTestClients([]runtime.Object{&corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: operatorWebhookSecretName, Namespace: core.NamespaceMCPRuntime},
+		Type:       corev1.SecretTypeTLS,
+		Data: map[string][]byte{
+			"ca.crt":  caPEM,
+			"ca.key":  caKeyPEM,
+			"tls.crt": certPEM,
+			"tls.key": keyPEM,
+		},
+	}}, nil))
+
+	got, err := ensureOperatorWebhookTLSSecretClientGo()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(got) != string(caPEM) {
+		t.Fatal("expected existing CA bundle to be returned without rotation")
+	}
+}
+
+func TestInjectOperatorWebhookCABundleQualifiesConfigurationNames(t *testing.T) {
+	rendered, err := injectOperatorWebhookCABundle([]byte(`
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: mutating-webhook-configuration
+webhooks:
+- name: example
+  clientConfig: {}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: validating-webhook-configuration
+webhooks:
+- name: example
+  clientConfig: {}
+`), []byte("test-ca"))
+	if err != nil {
+		t.Fatalf("injectOperatorWebhookCABundle failed: %v", err)
+	}
+	body := string(rendered)
+	for _, expected := range []string{
+		"name: mcp-runtime-mutating-webhook-configuration",
+		"name: mcp-runtime-validating-webhook-configuration",
+		"caBundle:",
+	} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("rendered webhook manifest missing %q:\n%s", expected, body)
+		}
+	}
+}
+
 func TestGetOperatorImage(t *testing.T) {
 	origOverride := core.DefaultCLIConfig.OperatorImage
 	origTagResolver := setupImageTagResolver
@@ -304,8 +557,8 @@ func TestPlatformImageDefaultsUseInternalRegistryWithPlatformDomain(t *testing.T
 	if gotGateway != "registry.registry.svc.cluster.local:5000/mcp-sentinel-mcp-gateway:latest" {
 		t.Fatalf("gateway image = %q, want internal registry service DNS", gotGateway)
 	}
-	gotAPI := analyticsImageFor(nil, "mcp-sentinel-api")
-	if gotAPI != "registry.registry.svc.cluster.local:5000/mcp-sentinel-api:latest" {
+	gotAPI := analyticsImageFor(nil, "mcp-platform-api")
+	if gotAPI != "registry.registry.svc.cluster.local:5000/mcp-platform-api:latest" {
 		t.Fatalf("analytics image = %q, want internal registry service DNS", gotAPI)
 	}
 }
@@ -871,7 +1124,7 @@ func TestEnsureAnalyticsImagePullSecretForBundledPublicRegistry(t *testing.T) {
 	kubectl := core.NewTestKubectlClient(mock)
 
 	secretName, err := ensureAnalyticsImagePullSecret(kubectl, AnalyticsImageSet{
-		API: "registry.mcpruntime.org/mcp-sentinel-api:dev",
+		PlatformAPI: "registry.mcpruntime.org/mcp-platform-api:dev",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -911,7 +1164,7 @@ func TestBundledPublicRegistryPullSecretHostSkipsClusterDNS(t *testing.T) {
 		RegistryIngressHost: "registry.local",
 	}
 
-	got := bundledPublicRegistryPullSecretHost([]string{"registry.registry.svc.cluster.local:5000/mcp-sentinel-api:dev"})
+	got := bundledPublicRegistryPullSecretHost([]string{"registry.registry.svc.cluster.local:5000/mcp-platform-api:dev"})
 	if got != "" {
 		t.Fatalf("expected no public pull secret host for cluster DNS, got %q", got)
 	}
@@ -1148,8 +1401,11 @@ func TestRenderAnalyticsSecretManifestGeneratesKeysWhenMissing(t *testing.T) {
 	if data["POSTGRES_DSN"] == "" {
 		t.Fatalf("expected generated postgres DSN, got %q", manifest)
 	}
-	if data["PLATFORM_JWT_SECRET"] == "" {
-		t.Fatalf("expected generated platform jwt secret, got %q", manifest)
+	if data["JWT_SECRET"] == "" {
+		t.Fatalf("expected generated jwt secret, got %q", manifest)
+	}
+	if data["INTERNAL_AUTH_TOKEN"] == "" {
+		t.Fatalf("expected generated internal auth token, got %q", manifest)
 	}
 }
 
@@ -1459,7 +1715,7 @@ data:
   PLATFORM_REGISTRY_URL: ""
   MCP_REGISTRY_ENDPOINT: ""
   MCP_REGISTRY_INGRESS_HOST: ""
-`, setupplan.PlatformModePublic, AnalyticsImageSet{API: "10.96.223.152:5000/mcp-sentinel-api:a1f967c"})
+`, setupplan.PlatformModePublic, AnalyticsImageSet{PlatformAPI: "10.96.223.152:5000/mcp-platform-api:a1f967c"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1595,10 +1851,12 @@ func TestPrepareAnalyticsImagesUsesTestModeImageSet(t *testing.T) {
 	}
 
 	want := AnalyticsImageSet{
-		Ingest:    "registry.example.com/mcp-sentinel-ingest:latest",
-		API:       "registry.example.com/mcp-sentinel-api:latest",
-		Processor: "registry.example.com/mcp-sentinel-processor:latest",
-		UI:        "registry.example.com/mcp-sentinel-ui:latest",
+		Ingest:       "registry.example.com/mcp-sentinel-ingest:latest",
+		PlatformAPI:  "registry.example.com/mcp-platform-api:latest",
+		RuntimeAPI:   "registry.example.com/mcp-runtime-api:latest",
+		AnalyticsAPI: "registry.example.com/mcp-analytics-api:latest",
+		Processor:    "registry.example.com/mcp-sentinel-processor:latest",
+		UI:           "registry.example.com/mcp-sentinel-ui:latest",
 	}
 	if got != want {
 		t.Fatalf("prepareAnalyticsImages() = %+v, want %+v", got, want)
@@ -1607,7 +1865,7 @@ func TestPrepareAnalyticsImagesUsesTestModeImageSet(t *testing.T) {
 		t.Fatalf("expected %d builds in test mode, got %d", len(analyticsComponents), buildCalls)
 	}
 	// Sentinel service Dockerfiles need the repo root context for shared packages and service modules.
-	wantBuildContexts := []string{".", ".", ".", "."}
+	wantBuildContexts := []string{".", ".", ".", ".", ".", "."}
 	if !slices.Equal(buildContexts, wantBuildContexts) {
 		t.Fatalf("build contexts = %v, want %v", buildContexts, wantBuildContexts)
 	}
@@ -1769,10 +2027,12 @@ func TestPrepareAnalyticsImagesParallelBuildsPreparesInternalRegistryOnce(t *tes
 	}
 
 	want := AnalyticsImageSet{
-		Ingest:    "registry.local:5000/mcp-sentinel-ingest:latest",
-		API:       "registry.local:5000/mcp-sentinel-api:latest",
-		Processor: "registry.local:5000/mcp-sentinel-processor:latest",
-		UI:        "registry.local:5000/mcp-sentinel-ui:latest",
+		Ingest:       "registry.local:5000/mcp-sentinel-ingest:latest",
+		PlatformAPI:  "registry.local:5000/mcp-platform-api:latest",
+		RuntimeAPI:   "registry.local:5000/mcp-runtime-api:latest",
+		AnalyticsAPI: "registry.local:5000/mcp-analytics-api:latest",
+		Processor:    "registry.local:5000/mcp-sentinel-processor:latest",
+		UI:           "registry.local:5000/mcp-sentinel-ui:latest",
 	}
 	if got != want {
 		t.Fatalf("prepareAnalyticsImages() = %+v, want %+v", got, want)
@@ -1826,7 +2086,7 @@ spec:
 	}
 }
 
-func TestDeployAnalyticsManifestsWithKubectl_RecreatesClickhouseInitJob(t *testing.T) {
+func TestDeployAnalyticsManifestsWithKubectl_RecreatesInitializationJobs(t *testing.T) {
 	orig := core.DefaultCLIConfig
 	t.Cleanup(func() {
 		core.DefaultCLIConfig = orig
@@ -1856,10 +2116,15 @@ func TestDeployAnalyticsManifestsWithKubectl_RecreatesClickhouseInitJob(t *testi
 		"03-clickhouse.yaml",
 		"04-clickhouse-init.yaml",
 		"05-kafka.yaml",
+		"05-kafka-topic-init.yaml",
 		"06-ingest.yaml",
 		"07-processor.yaml",
-		"08-api.yaml",
-		"08-api-rbac.yaml",
+		"08-platform-api.yaml",
+		"08-platform-api-rbac.yaml",
+		"08-runtime-api.yaml",
+		"08-runtime-api-rbac.yaml",
+		"08-analytics-api.yaml",
+		"22-split-api-networkpolicy.yaml",
 		"09-ui.yaml",
 		"10-gateway.yaml",
 		"11-prometheus.yaml",
@@ -1882,8 +2147,10 @@ func TestDeployAnalyticsManifestsWithKubectl_RecreatesClickhouseInitJob(t *testi
 		_ = os.Chdir(cwd)
 	})
 
-	deleteIndex := -1
-	waitIndex := -1
+	clickhouseDeleteIndex := -1
+	clickhouseWaitIndex := -1
+	kafkaDeleteIndex := -1
+	kafkaWaitIndex := -1
 	var mock *core.MockExecutor
 	mock = &core.MockExecutor{
 		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
@@ -1893,7 +2160,7 @@ func TestDeployAnalyticsManifestsWithKubectl_RecreatesClickhouseInitJob(t *testi
 				cmd.OutputErr = errors.New("not found")
 			}
 			if contains(spec.Args, "delete") && contains(spec.Args, "job/clickhouse-init") {
-				deleteIndex = len(mock.Commands) - 1
+				clickhouseDeleteIndex = len(mock.Commands) - 1
 				for _, want := range []string{"--ignore-not-found=true", "--wait=true", "--timeout=60s"} {
 					if !contains(spec.Args, want) {
 						t.Fatalf("delete job args missing %s: %v", want, spec.Args)
@@ -1901,7 +2168,13 @@ func TestDeployAnalyticsManifestsWithKubectl_RecreatesClickhouseInitJob(t *testi
 				}
 			}
 			if contains(spec.Args, "wait") && contains(spec.Args, "job/clickhouse-init") {
-				waitIndex = len(mock.Commands) - 1
+				clickhouseWaitIndex = len(mock.Commands) - 1
+			}
+			if contains(spec.Args, "delete") && contains(spec.Args, "job/kafka-topic-init") {
+				kafkaDeleteIndex = len(mock.Commands) - 1
+			}
+			if contains(spec.Args, "wait") && contains(spec.Args, "job/kafka-topic-init") {
+				kafkaWaitIndex = len(mock.Commands) - 1
 			}
 			return cmd
 		},
@@ -1909,22 +2182,33 @@ func TestDeployAnalyticsManifestsWithKubectl_RecreatesClickhouseInitJob(t *testi
 	kubectl := core.NewTestKubectlClient(mock)
 
 	err = deployAnalyticsManifestsWithKubectl(kubectl, zap.NewNop(), AnalyticsImageSet{
-		Ingest:    "example.com/mcp-sentinel-ingest:latest",
-		API:       "example.com/mcp-sentinel-api:latest",
-		Processor: "example.com/mcp-sentinel-processor:latest",
-		UI:        "example.com/mcp-sentinel-ui:latest",
+		Ingest:       "example.com/mcp-sentinel-ingest:latest",
+		PlatformAPI:  "example.com/mcp-platform-api:latest",
+		RuntimeAPI:   "example.com/mcp-runtime-api:latest",
+		AnalyticsAPI: "example.com/mcp-analytics-api:latest",
+		Processor:    "example.com/mcp-sentinel-processor:latest",
+		UI:           "example.com/mcp-sentinel-ui:latest",
 	}, "", setupplan.PlatformModeTenant)
 	if err != nil {
 		t.Fatalf("deployAnalyticsManifestsWithKubectl returned error: %v", err)
 	}
-	if deleteIndex == -1 {
+	if clickhouseDeleteIndex == -1 {
 		t.Fatal("expected setup to delete any existing clickhouse-init job before reapplying it")
 	}
-	if waitIndex == -1 {
+	if clickhouseWaitIndex == -1 {
 		t.Fatal("expected setup to wait for clickhouse-init job completion")
 	}
-	if deleteIndex > waitIndex {
-		t.Fatalf("expected clickhouse-init delete before wait, got delete index %d wait index %d", deleteIndex, waitIndex)
+	if clickhouseDeleteIndex > clickhouseWaitIndex {
+		t.Fatalf("expected clickhouse-init delete before wait, got delete index %d wait index %d", clickhouseDeleteIndex, clickhouseWaitIndex)
+	}
+	if kafkaDeleteIndex == -1 {
+		t.Fatal("expected setup to delete any existing kafka-topic-init job before reapplying it")
+	}
+	if kafkaWaitIndex == -1 {
+		t.Fatal("expected setup to wait for kafka-topic-init job completion")
+	}
+	if kafkaDeleteIndex > kafkaWaitIndex {
+		t.Fatalf("expected kafka-topic-init delete before wait, got delete index %d wait index %d", kafkaDeleteIndex, kafkaWaitIndex)
 	}
 }
 
@@ -1972,6 +2256,52 @@ func TestPrometheusScrapesClickHouseMetricsPort(t *testing.T) {
 	}
 }
 
+func TestPrometheusScrapesSplitAPIJobs(t *testing.T) {
+	content, err := os.ReadFile("../../../../k8s/11-prometheus.yaml")
+	if err != nil {
+		t.Fatalf("failed to read prometheus manifest: %v", err)
+	}
+	text := string(content)
+	for _, want := range []string{
+		"job_name: mcp-platform-api",
+		`targets: ["mcp-platform-api:9090"]`,
+		"job_name: mcp-runtime-api",
+		`targets: ["mcp-runtime-api:9094"]`,
+		"job_name: mcp-analytics-api",
+		`targets: ["mcp-analytics-api:9095"]`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected Prometheus config to include %q, got:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, `job_name: mcp-sentinel-api`) {
+		t.Fatalf("Prometheus still references monolith mcp-sentinel-api scrape job:\n%s", text)
+	}
+}
+
+func TestPrometheusDiscoversGatewaySidecarMetrics(t *testing.T) {
+	content, err := os.ReadFile("../../../../k8s/11-prometheus.yaml")
+	if err != nil {
+		t.Fatalf("failed to read prometheus manifest: %v", err)
+	}
+	text := string(content)
+	for _, want := range []string{
+		"kind: ServiceAccount",
+		"name: prometheus",
+		"name: mcp-sentinel-prometheus-discovery",
+		"resources: [\"endpoints\", \"pods\", \"services\"]",
+		"job_name: mcp-gateway-sidecars",
+		"role: endpoints",
+		"__meta_kubernetes_service_annotation_prometheus_io_scrape",
+		"__meta_kubernetes_service_label_app_kubernetes_io_managed_by",
+		"__meta_kubernetes_service_annotation_prometheus_io_port",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected Prometheus manifest to contain %q, got:\n%s", want, text)
+		}
+	}
+}
+
 func TestClickHouseExposesPrometheusMetrics(t *testing.T) {
 	for _, path := range []string{"../../../../k8s/03-clickhouse.yaml", "../../../../k8s/03-clickhouse-hostpath.yaml"} {
 		content, err := os.ReadFile(path)
@@ -2012,9 +2342,9 @@ func TestTempoLocalBlocksDoNotShareWALPath(t *testing.T) {
 }
 
 func TestAPIManifestIncludesPlatformAdminBootstrapEnv(t *testing.T) {
-	content, err := os.ReadFile("../../../../k8s/08-api.yaml")
+	content, err := os.ReadFile("../../../../k8s/08-platform-api.yaml")
 	if err != nil {
-		t.Fatalf("failed to read api manifest: %v", err)
+		t.Fatalf("failed to read platform-api manifest: %v", err)
 	}
 	text := string(content)
 	for _, want := range []string{
@@ -2059,10 +2389,15 @@ func TestDeployAnalyticsManifestsReturnsRolloutFailures(t *testing.T) {
 		"04-clickhouse-init.yaml",
 		"05-kafka.yaml",
 		"05-kafka-hostpath.yaml",
+		"05-kafka-topic-init.yaml",
 		"06-ingest.yaml",
 		"07-processor.yaml",
-		"08-api.yaml",
-		"08-api-rbac.yaml",
+		"08-platform-api.yaml",
+		"08-platform-api-rbac.yaml",
+		"08-runtime-api.yaml",
+		"08-runtime-api-rbac.yaml",
+		"08-analytics-api.yaml",
+		"22-split-api-networkpolicy.yaml",
 		"09-ui.yaml",
 		"10-gateway.yaml",
 		"11-prometheus.yaml",
@@ -2100,7 +2435,7 @@ func TestDeployAnalyticsManifestsReturnsRolloutFailures(t *testing.T) {
 			case contains(spec.Args, "get") && contains(spec.Args, "secret"):
 				cmd.OutputData = []byte("Error from server (NotFound): secrets \"mcp-sentinel-secrets\" not found")
 				cmd.OutputErr = errors.New("not found")
-			case contains(spec.Args, "rollout") && contains(spec.Args, "deployment/mcp-sentinel-api"):
+			case contains(spec.Args, "rollout") && contains(spec.Args, "deployment/mcp-platform-api"):
 				cmd.RunErr = errors.New("image pull failed")
 			}
 			return cmd
@@ -2109,15 +2444,17 @@ func TestDeployAnalyticsManifestsReturnsRolloutFailures(t *testing.T) {
 	kubectl := core.NewTestKubectlClient(mock)
 
 	err = deployAnalyticsManifestsWithKubectl(kubectl, zap.NewNop(), AnalyticsImageSet{
-		Ingest:    "example.com/mcp-sentinel-ingest:latest",
-		API:       "example.com/mcp-sentinel-api:latest",
-		Processor: "example.com/mcp-sentinel-processor:latest",
-		UI:        "example.com/mcp-sentinel-ui:latest",
+		Ingest:       "example.com/mcp-sentinel-ingest:latest",
+		PlatformAPI:  "example.com/mcp-platform-api:latest",
+		RuntimeAPI:   "example.com/mcp-runtime-api:latest",
+		AnalyticsAPI: "example.com/mcp-analytics-api:latest",
+		Processor:    "example.com/mcp-sentinel-processor:latest",
+		UI:           "example.com/mcp-sentinel-ui:latest",
 	}, "", setupplan.PlatformModeTenant)
 	if err == nil {
 		t.Fatal("expected rollout failure")
 	}
-	if !strings.Contains(err.Error(), "deployment/mcp-sentinel-api") {
+	if !strings.Contains(err.Error(), "deployment/mcp-platform-api") {
 		t.Fatalf("expected failing workload in error, got %v", err)
 	}
 }
@@ -2150,6 +2487,7 @@ func TestDeployAnalyticsManifestsWithKubectl_HostpathUsesHostpathManifests(t *te
 		"03-clickhouse-hostpath.yaml",
 		"04-clickhouse-init.yaml",
 		"05-kafka-hostpath.yaml",
+		"05-kafka-topic-init.yaml",
 		"20-postgres-hostpath.yaml",
 	} {
 		if err := os.WriteFile(filepath.Join(manifestDir, name), []byte(manifestContent), 0o644); err != nil {
@@ -2177,10 +2515,12 @@ func TestDeployAnalyticsManifestsWithKubectl_HostpathUsesHostpathManifests(t *te
 	kubectl := core.NewTestKubectlClient(mock)
 
 	err = deployAnalyticsManifestsWithKubectl(kubectl, zap.NewNop(), AnalyticsImageSet{
-		Ingest:    "example.com/mcp-sentinel-ingest:latest",
-		API:       "example.com/mcp-sentinel-api:latest",
-		Processor: "example.com/mcp-sentinel-processor:latest",
-		UI:        "example.com/mcp-sentinel-ui:latest",
+		Ingest:       "example.com/mcp-sentinel-ingest:latest",
+		PlatformAPI:  "example.com/mcp-platform-api:latest",
+		RuntimeAPI:   "example.com/mcp-runtime-api:latest",
+		AnalyticsAPI: "example.com/mcp-analytics-api:latest",
+		Processor:    "example.com/mcp-sentinel-processor:latest",
+		UI:           "example.com/mcp-sentinel-ui:latest",
 	}, setupplan.StorageModeHostpath, setupplan.PlatformModeTenant)
 	if err == nil {
 		t.Fatal("expected failure from rollout timeout")
@@ -2218,10 +2558,15 @@ func TestDeployAnalyticsManifestsWithKubectl_WaitsForPostgresStatefulSet(t *test
 		"03-clickhouse.yaml",
 		"04-clickhouse-init.yaml",
 		"05-kafka.yaml",
+		"05-kafka-topic-init.yaml",
 		"06-ingest.yaml",
 		"07-processor.yaml",
-		"08-api.yaml",
-		"08-api-rbac.yaml",
+		"08-platform-api.yaml",
+		"08-platform-api-rbac.yaml",
+		"08-runtime-api.yaml",
+		"08-runtime-api-rbac.yaml",
+		"08-analytics-api.yaml",
+		"22-split-api-networkpolicy.yaml",
 		"09-ui.yaml",
 		"10-gateway.yaml",
 		"11-prometheus.yaml",
@@ -2260,10 +2605,12 @@ func TestDeployAnalyticsManifestsWithKubectl_WaitsForPostgresStatefulSet(t *test
 	kubectl := core.NewTestKubectlClient(mock)
 
 	err = deployAnalyticsManifestsWithKubectl(kubectl, zap.NewNop(), AnalyticsImageSet{
-		Ingest:    "example.com/mcp-sentinel-ingest:latest",
-		API:       "example.com/mcp-sentinel-api:latest",
-		Processor: "example.com/mcp-sentinel-processor:latest",
-		UI:        "example.com/mcp-sentinel-ui:latest",
+		Ingest:       "example.com/mcp-sentinel-ingest:latest",
+		PlatformAPI:  "example.com/mcp-platform-api:latest",
+		RuntimeAPI:   "example.com/mcp-runtime-api:latest",
+		AnalyticsAPI: "example.com/mcp-analytics-api:latest",
+		Processor:    "example.com/mcp-sentinel-processor:latest",
+		UI:           "example.com/mcp-sentinel-ui:latest",
 	}, "", setupplan.PlatformModeTenant)
 	if err == nil {
 		t.Fatal("expected failure from postgres rollout timeout")
@@ -2532,6 +2879,9 @@ func TestDeployOperatorManifestsWithKubectl(t *testing.T) {
 	})
 
 	var managerManifest string
+	var webhookTLSSecretManifest string
+	var webhookServiceManifest string
+	var webhookConfigManifest string
 	mock := &core.MockExecutor{
 		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
 			cmd := &core.MockCommand{Args: spec.Args}
@@ -2542,6 +2892,23 @@ func TestDeployOperatorManifestsWithKubectl(t *testing.T) {
 						return err
 					}
 					managerManifest = string(data)
+					return nil
+				}
+			} else if commandHasArgs(spec, "apply", "-f", "-") {
+				cmd.RunFunc = func() error {
+					data, err := io.ReadAll(cmd.StdinR)
+					if err != nil {
+						return err
+					}
+					manifest := string(data)
+					switch {
+					case strings.Contains(manifest, "name: "+operatorWebhookSecretName):
+						webhookTLSSecretManifest = manifest
+					case strings.Contains(manifest, "kind: Service") && strings.Contains(manifest, operatorWebhookServiceName):
+						webhookServiceManifest = manifest
+					case strings.Contains(manifest, "MutatingWebhookConfiguration") || strings.Contains(manifest, "ValidatingWebhookConfiguration"):
+						webhookConfigManifest = manifest
+					}
 					return nil
 				}
 			}
@@ -2583,6 +2950,28 @@ func TestDeployOperatorManifestsWithKubectl(t *testing.T) {
 	}
 	if !strings.Contains(managerManifest, "name: MCP_SENTINEL_INGEST_URL") || !strings.Contains(managerManifest, "value: "+defaultAnalyticsIngestURL) {
 		t.Fatalf("expected manager manifest to include analytics ingest env, got:\n%s", managerManifest)
+	}
+	if !strings.Contains(managerManifest, "name: MCP_ENABLE_WEBHOOKS") || !strings.Contains(managerManifest, "value: \"true\"") {
+		t.Fatalf("expected manager manifest to enable webhooks, got:\n%s", managerManifest)
+	}
+	if !strings.Contains(managerManifest, "secretName: "+operatorWebhookSecretName) ||
+		!strings.Contains(managerManifest, "mountPath: "+operatorWebhookCertDir) {
+		t.Fatalf("expected manager manifest to mount webhook cert secret, got:\n%s", managerManifest)
+	}
+	if !strings.Contains(managerManifest, operatorWebhookCertHashAnnotation+":") {
+		t.Fatalf("expected manager manifest to include webhook cert hash annotation, got:\n%s", managerManifest)
+	}
+	if !strings.Contains(webhookTLSSecretManifest, "name: "+operatorWebhookSecretName) ||
+		!strings.Contains(webhookTLSSecretManifest, "tls.crt:") ||
+		!strings.Contains(webhookTLSSecretManifest, "tls.key:") {
+		t.Fatalf("expected webhook TLS secret manifest, got:\n%s", webhookTLSSecretManifest)
+	}
+	if !strings.Contains(webhookServiceManifest, "name: "+operatorWebhookServiceName) {
+		t.Fatalf("expected webhook service manifest, got:\n%s", webhookServiceManifest)
+	}
+	if !strings.Contains(webhookConfigManifest, "caBundle:") ||
+		!strings.Contains(webhookConfigManifest, "name: "+operatorWebhookServiceName) {
+		t.Fatalf("expected webhook configuration with caBundle, got:\n%s", webhookConfigManifest)
 	}
 
 	var (
@@ -3219,7 +3608,7 @@ func TestIsKafkaClusterIDMismatchLog(t *testing.T) {
 	}
 }
 
-func TestRecoverKafkaClusterIDMismatchWithKubectlResetsBundledState(t *testing.T) {
+func TestRecoverKafkaClusterIDMismatchWithKubectlRefusesDestructiveReset(t *testing.T) {
 	var commands [][]string
 	mock := &core.MockExecutor{
 		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
@@ -3228,9 +3617,6 @@ func TestRecoverKafkaClusterIDMismatchWithKubectlResetsBundledState(t *testing.T
 			switch {
 			case slices.Equal(spec.Args, []string{"logs", kafkaPodName, "-n", core.DefaultAnalyticsNamespace, "-c", kafkaPodContainer}):
 				cmd.OutputData = []byte(`kafka.common.InconsistentClusterIdException: The Cluster ID a doesn't match stored clusterId Some(b) in meta.properties`)
-			case slices.Equal(spec.Args, []string{"get", "pod", kafkaPodName, "-n", core.DefaultAnalyticsNamespace, "-o", "name"}):
-				cmd.OutputData = []byte(`Error from server (NotFound): pods "kafka-0" not found`)
-				cmd.OutputErr = errors.New("not found")
 			}
 			return cmd
 		},
@@ -3238,20 +3624,16 @@ func TestRecoverKafkaClusterIDMismatchWithKubectlResetsBundledState(t *testing.T
 	kubectl := core.NewTestKubectlClient(mock)
 
 	recovered, err := recoverKafkaClusterIDMismatchWithKubectl(kubectl, "")
-	if err != nil {
-		t.Fatalf("recoverKafkaClusterIDMismatchWithKubectl returned error: %v", err)
+	if err == nil {
+		t.Fatal("expected destructive recovery to be refused")
 	}
-	if !recovered {
-		t.Fatal("expected kafka cluster ID mismatch recovery to run")
+	if recovered {
+		t.Fatal("did not expect Kafka state to be reset")
 	}
-
-	want := [][]string{
-		{"logs", kafkaPodName, "-n", core.DefaultAnalyticsNamespace, "-c", kafkaPodContainer},
-		{"scale", "statefulset/" + kafkaStatefulSetName, "-n", core.DefaultAnalyticsNamespace, "--replicas=0"},
-		{"get", "pod", kafkaPodName, "-n", core.DefaultAnalyticsNamespace, "-o", "name"},
-		{"delete", "pvc/" + kafkaPVCName, "-n", core.DefaultAnalyticsNamespace, "--ignore-not-found=true", "--wait=true", "--timeout=120s"},
-		{"scale", "statefulset/" + kafkaStatefulSetName, "-n", core.DefaultAnalyticsNamespace, "--replicas=1"},
+	if !strings.Contains(err.Error(), "will not delete persistent volume") {
+		t.Fatalf("unexpected error: %v", err)
 	}
+	want := [][]string{{"logs", kafkaPodName, "-n", core.DefaultAnalyticsNamespace, "-c", kafkaPodContainer}}
 	if !slices.EqualFunc(commands, want, func(got, want []string) bool {
 		return slices.Equal(got, want)
 	}) {
@@ -3259,18 +3641,30 @@ func TestRecoverKafkaClusterIDMismatchWithKubectlResetsBundledState(t *testing.T
 	}
 }
 
-func TestRecoverKafkaClusterIDMismatchWithKubectlSkipsHostpath(t *testing.T) {
-	mock := &core.MockExecutor{}
-	kubectl := core.NewTestKubectlClient(mock)
+func TestKafkaStatefulSetNeedsKRaftRecreateDetectsLegacyLayout(t *testing.T) {
+	replicas := int32(1)
+	legacy := &appsv1.StatefulSet{
+		Spec: appsv1.StatefulSetSpec{
+			ServiceName: "kafka",
+			Replicas:    &replicas,
+		},
+	}
+	if !kafkaStatefulSetNeedsKRaftRecreate(legacy) {
+		t.Fatal("expected legacy single-broker Kafka layout to require recreate")
+	}
 
-	recovered, err := recoverKafkaClusterIDMismatchWithKubectl(kubectl, setupplan.StorageModeHostpath)
-	if err != nil {
-		t.Fatalf("recoverKafkaClusterIDMismatchWithKubectl returned error: %v", err)
+	currentReplicas := kafkaKRaftReplicaCount
+	current := &appsv1.StatefulSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Annotations: map[string]string{"mcpruntime.org/kafka-mode": "kraft"},
+		},
+		Spec: appsv1.StatefulSetSpec{
+			ServiceName:         kafkaHeadlessServiceName,
+			PodManagementPolicy: appsv1.ParallelPodManagement,
+			Replicas:            &currentReplicas,
+		},
 	}
-	if recovered {
-		t.Fatal("did not expect hostpath mode to auto-reset kafka state")
-	}
-	if len(mock.Commands) != 0 {
-		t.Fatalf("expected no kubectl calls in hostpath mode, got %#v", mock.Commands)
+	if kafkaStatefulSetNeedsKRaftRecreate(current) {
+		t.Fatal("did not expect current KRaft layout to require recreate")
 	}
 }

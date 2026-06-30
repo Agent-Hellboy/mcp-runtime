@@ -32,7 +32,7 @@ func TestInitServerCreatesMetadata(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), ".mcp")
 	mgr := NewServerManager(core.NewTestKubectlClient(&core.MockExecutor{}), zap.NewNop())
 
-	if err := mgr.InitServer("payments", dir, "", "v1", "tenant", "allow-list", "deny", true, 8088, []string{"add", "add", "echo"}, []string{"refund_invoice:high:destructive"}, false); err != nil {
+	if err := mgr.InitServer("payments", dir, "", "v1", "tenant", "allow-list", "deny", true, 8088, []string{"add", "add", "echo"}, []string{"refund_invoice:high:destructive"}, "", false); err != nil {
 		t.Fatalf("InitServer() error = %v", err)
 	}
 
@@ -100,17 +100,35 @@ func TestInitServerCreatesMetadata(t *testing.T) {
 	}
 }
 
+func TestInitServerSetsToolRisk(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), ".mcp")
+	mgr := NewServerManager(core.NewTestKubectlClient(&core.MockExecutor{}), zap.NewNop())
+
+	if err := mgr.InitServer("payments", dir, "", "latest", "tenant", "allow-list", "deny", true, 8088, []string{"add"}, []string{"refund_invoice:high:destructive"}, "high", false); err != nil {
+		t.Fatalf("InitServer() error = %v", err)
+	}
+	registry, err := metadata.LoadFromFile(filepath.Join(dir, "servers.yaml"))
+	if err != nil {
+		t.Fatalf("LoadFromFile() error = %v", err)
+	}
+	for _, tool := range registry.Servers[0].Tools {
+		if tool.RiskLevel != metadata.ToolRiskLevelHigh {
+			t.Fatalf("tool risk = %#v, want high for %#v", tool.RiskLevel, tool)
+		}
+	}
+}
+
 func TestInitServerAppendsAndRejectsDuplicate(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), ".mcp")
 	mgr := NewServerManager(core.NewTestKubectlClient(&core.MockExecutor{}), zap.NewNop())
 
-	if err := mgr.InitServer("one", dir, "", "latest", "tenant", "allow-list", "deny", true, 8088, nil, nil, false); err != nil {
+	if err := mgr.InitServer("one", dir, "", "latest", "tenant", "allow-list", "deny", true, 8088, nil, nil, "", false); err != nil {
 		t.Fatalf("InitServer(one) error = %v", err)
 	}
-	if err := mgr.InitServer("two", dir, "custom/two", "v2", "org", "allow-list", "deny", true, 9000, []string{"search"}, nil, false); err != nil {
+	if err := mgr.InitServer("two", dir, "custom/two", "v2", "org", "allow-list", "deny", true, 9000, []string{"search"}, nil, "", false); err != nil {
 		t.Fatalf("InitServer(two) error = %v", err)
 	}
-	err := mgr.InitServer("one", dir, "", "latest", "tenant", "allow-list", "deny", true, 8088, nil, nil, false)
+	err := mgr.InitServer("one", dir, "", "latest", "tenant", "allow-list", "deny", true, 8088, nil, nil, "", false)
 	if err == nil || !strings.Contains(err.Error(), "--force") {
 		t.Fatalf("duplicate error = %v, want --force guidance", err)
 	}
@@ -128,7 +146,7 @@ func TestInitServerUsesGovernanceFlags(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), ".mcp")
 	mgr := NewServerManager(core.NewTestKubectlClient(&core.MockExecutor{}), zap.NewNop())
 
-	if err := mgr.InitServer("payments", dir, "", "latest", "tenant", "observe", "allow", false, 8088, nil, nil, false); err != nil {
+	if err := mgr.InitServer("payments", dir, "", "latest", "tenant", "observe", "allow", false, 8088, nil, nil, "", false); err != nil {
 		t.Fatalf("InitServer() error = %v", err)
 	}
 
@@ -149,11 +167,11 @@ func TestInitServerRejectsInvalidGovernanceFlags(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), ".mcp")
 	mgr := NewServerManager(core.NewTestKubectlClient(&core.MockExecutor{}), zap.NewNop())
 
-	err := mgr.InitServer("payments", dir, "", "latest", "tenant", "audit", "deny", true, 8088, nil, nil, false)
+	err := mgr.InitServer("payments", dir, "", "latest", "tenant", "audit", "deny", true, 8088, nil, nil, "", false)
 	if err == nil || !strings.Contains(err.Error(), "invalid policy mode") {
 		t.Fatalf("policy mode error = %v, want invalid policy mode", err)
 	}
-	err = mgr.InitServer("payments", dir, "", "latest", "tenant", "allow-list", "maybe", true, 8088, nil, nil, false)
+	err = mgr.InitServer("payments", dir, "", "latest", "tenant", "allow-list", "maybe", true, 8088, nil, nil, "", false)
 	if err == nil || !strings.Contains(err.Error(), "invalid default decision") {
 		t.Fatalf("default decision error = %v, want invalid default decision", err)
 	}
@@ -163,10 +181,10 @@ func TestInitServerForceReplacesExisting(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), ".mcp")
 	mgr := NewServerManager(core.NewTestKubectlClient(&core.MockExecutor{}), zap.NewNop())
 
-	if err := mgr.InitServer("payments", dir, "payments", "v1", "tenant", "allow-list", "deny", true, 8088, []string{"add"}, nil, false); err != nil {
+	if err := mgr.InitServer("payments", dir, "payments", "v1", "tenant", "allow-list", "deny", true, 8088, []string{"add"}, nil, "", false); err != nil {
 		t.Fatalf("InitServer() error = %v", err)
 	}
-	if err := mgr.InitServer("payments", dir, "payments-v2", "v2", "tenant", "allow-list", "deny", true, 9090, []string{"echo"}, nil, true); err != nil {
+	if err := mgr.InitServer("payments", dir, "payments-v2", "v2", "tenant", "allow-list", "deny", true, 9090, []string{"echo"}, nil, "", true); err != nil {
 		t.Fatalf("InitServer(force) error = %v", err)
 	}
 	registry, err := metadata.LoadFromFile(filepath.Join(dir, "servers.yaml"))
@@ -186,7 +204,7 @@ func TestInitServerRejectsDuplicateToolSpec(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), ".mcp")
 	mgr := NewServerManager(core.NewTestKubectlClient(&core.MockExecutor{}), zap.NewNop())
 
-	err := mgr.InitServer("payments", dir, "", "latest", "tenant", "allow-list", "deny", true, 8088, []string{"add"}, []string{"add:high:write"}, false)
+	err := mgr.InitServer("payments", dir, "", "latest", "tenant", "allow-list", "deny", true, 8088, []string{"add"}, []string{"add:high:write"}, "", false)
 	if err == nil || !strings.Contains(err.Error(), "duplicate tool metadata") {
 		t.Fatalf("error = %v, want duplicate tool metadata", err)
 	}
@@ -196,7 +214,7 @@ func TestInitServerRejectsInvalidToolSpec(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), ".mcp")
 	mgr := NewServerManager(core.NewTestKubectlClient(&core.MockExecutor{}), zap.NewNop())
 
-	err := mgr.InitServer("payments", dir, "", "latest", "tenant", "allow-list", "deny", true, 8088, nil, []string{"refund_invoice:full:danger"}, false)
+	err := mgr.InitServer("payments", dir, "", "latest", "tenant", "allow-list", "deny", true, 8088, nil, []string{"refund_invoice:full:danger"}, "", false)
 	if err == nil || !strings.Contains(err.Error(), "trust must be low, medium, or high") {
 		t.Fatalf("error = %v, want trust validation", err)
 	}
@@ -305,7 +323,7 @@ func TestServerManager_ListServersModeSelection(t *testing.T) {
 		apiCalls := 0
 		api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			apiCalls++
-			if r.URL.Path != "/api/runtime/servers" {
+			if r.URL.Path != "/api/v1/runtime/servers" {
 				t.Fatalf("unexpected platform path %q", r.URL.Path)
 			}
 			if r.Header.Get("x-api-key") != "token-1" {
@@ -1074,13 +1092,13 @@ func TestDeployServerWaitsForReadyStatus(t *testing.T) {
 	apiCalls := 0
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api/runtime/teams/core":
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/runtime/teams/core":
 			w.Header().Set("content-type", "application/json")
 			_, _ = w.Write([]byte(`{"team":{"slug":"core","name":"Core","namespace":"mcp-team-core"}}`))
-		case r.Method == http.MethodPost && r.URL.Path == "/api/runtime/servers":
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/runtime/servers":
 			w.Header().Set("content-type", "application/json")
 			_, _ = w.Write([]byte(`{"server":{"name":"data-utility","namespace":"mcp-team-core","ready":"False","status":"PartiallyReady","age":"0s"}}`))
-		case r.Method == http.MethodGet && r.URL.Path == "/api/runtime/servers":
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/runtime/servers":
 			apiCalls++
 			w.Header().Set("content-type", "application/json")
 			if apiCalls == 1 {
@@ -1135,10 +1153,10 @@ servers:
 	var appliedNamespace string
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api/auth/me":
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/auth/me":
 			w.Header().Set("content-type", "application/json")
 			_, _ = w.Write([]byte(`{"authenticated":true,"principal":{"role":"user","teams":[{"slug":"core","namespace":"mcp-team-core"}]}}`))
-		case r.Method == http.MethodPost && r.URL.Path == "/api/runtime/servers":
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/runtime/servers":
 			var payload struct {
 				Namespace string `json:"namespace"`
 			}
@@ -1148,7 +1166,7 @@ servers:
 			appliedNamespace = payload.Namespace
 			w.Header().Set("content-type", "application/json")
 			_, _ = w.Write([]byte(`{"server":{"name":"data-utility","namespace":"mcp-team-core","ready":"True","status":"Ready","age":"0s"}}`))
-		case r.Method == http.MethodGet && r.URL.Path == "/api/runtime/servers":
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/runtime/servers":
 			w.Header().Set("content-type", "application/json")
 			_, _ = w.Write([]byte(`{"servers":[{"name":"data-utility","namespace":"mcp-team-core","ready":"True","status":"Ready","age":"1s"}]}`))
 		default:
@@ -1180,7 +1198,7 @@ servers:
 func TestDeployServerTenantScopeRequiresTeamWhenAmbiguous(t *testing.T) {
 	t.Setenv("MCP_RUNTIME_CONFIG_DIR", t.TempDir())
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/api/auth/me" {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/auth/me" {
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
 		w.Header().Set("content-type", "application/json")
@@ -1201,13 +1219,13 @@ func TestDeployServerFailsWhenServerDoesNotBecomeReady(t *testing.T) {
 	t.Setenv("MCP_RUNTIME_CONFIG_DIR", t.TempDir())
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api/runtime/teams/core":
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/runtime/teams/core":
 			w.Header().Set("content-type", "application/json")
 			_, _ = w.Write([]byte(`{"team":{"slug":"core","name":"Core","namespace":"mcp-team-core"}}`))
-		case r.Method == http.MethodPost && r.URL.Path == "/api/runtime/servers":
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/runtime/servers":
 			w.Header().Set("content-type", "application/json")
 			_, _ = w.Write([]byte(`{"server":{"name":"data-utility","namespace":"mcp-team-core","ready":"False","status":"PartiallyReady","age":"0s"}}`))
-		case r.Method == http.MethodGet && r.URL.Path == "/api/runtime/servers":
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/runtime/servers":
 			w.Header().Set("content-type", "application/json")
 			_, _ = w.Write([]byte(`{"servers":[{"name":"data-utility","namespace":"mcp-team-core","ready":"False","status":"PartiallyReady","age":"1s"}]}`))
 		default:

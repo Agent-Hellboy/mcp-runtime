@@ -14,10 +14,10 @@ import (
 	"mime"
 	"net"
 	"net/http"
-	"net/http/httputil"
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -40,6 +40,10 @@ const (
 	defaultLoginFailureWindow     = 15 * time.Minute
 	defaultLoginFailureThreshold  = 5
 	defaultLoginLockoutDuration   = 5 * time.Minute
+	loginAttemptIdleTTL           = 30 * time.Minute
+	loginAttemptMaxClients        = 4096
+	loginAttemptPruneInterval     = time.Minute
+	loginAttemptEvictionBatch     = 256
 	loginFailureLogEvery          = 3
 	loginRequestMaxBytes          = 8 * 1024
 )
@@ -77,14 +81,16 @@ type uiSessionStore struct {
 }
 
 type loginAttemptTracker struct {
-	mu      sync.Mutex
-	clients map[string]*loginClientState
-	now     func() time.Time
+	mu        sync.Mutex
+	clients   map[string]*loginClientState
+	now       func() time.Time
+	lastPrune time.Time
 }
 
 type loginClientState struct {
 	tokens         int
 	lastRefill     time.Time
+	lastSeen       time.Time
 	failures       int
 	failuresExpire time.Time
 	lockedUntil    time.Time
@@ -102,11 +108,11 @@ var (
 // with API configuration for the frontend. Includes tracing support.
 func main() {
 	port := serviceutil.EnvOr("PORT", "8082")
-	apiBase := serviceutil.EnvOr("API_BASE", "/api")
+	apiBase := serviceutil.EnvOr("API_BASE", "/api/v1")
 	apiKey := strings.TrimSpace(os.Getenv("API_KEY"))
 	apiKeys := strings.TrimSpace(os.Getenv("API_KEYS"))
 	adminAPIKeys := strings.TrimSpace(os.Getenv("ADMIN_API_KEYS"))
-	apiUpstream := serviceutil.EnvOr("API_UPSTREAM", "http://mcp-sentinel-api:8080")
+	apiUpstream := serviceutil.EnvOr("API_UPSTREAM", "http://mcp-platform-api.mcp-sentinel.svc.cluster.local:8080")
 	if apiKey == "" && apiKeys == "" {
 		log.Printf("WARNING: neither API_KEY nor API_KEYS is set; UI API-key login is disabled")
 	}
@@ -153,13 +159,6 @@ func newMux(apiBase, apiUpstream, apiKey, apiKeys, adminAPIKeys string) (*http.S
 		upstreamAPIKey = apiKey
 		apiKeys = apiKey
 	}
-	target, err := url.Parse(apiUpstream)
-	if err != nil {
-		return nil, err
-	}
-	if target.Scheme == "" || target.Host == "" {
-		return nil, url.InvalidHostError(apiUpstream)
-	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
@@ -168,7 +167,6 @@ func newMux(apiBase, apiUpstream, apiKey, apiKeys, adminAPIKeys string) (*http.S
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	})
 	platformMode := normalizedPlatformMode()
-	publicCatalog := platformMode == "public"
 	defaultNamespace := strings.TrimSpace(os.Getenv("UI_DEFAULT_NAMESPACE"))
 	if defaultNamespace == "" {
 		defaultNamespace = defaultCatalogNamespaceForMode(platformMode)
@@ -208,10 +206,6 @@ func newMux(apiBase, apiUpstream, apiKey, apiKeys, adminAPIKeys string) (*http.S
 	parsedAdminAPIKeys := parseAPIKeyList(adminAPIKeys)
 	mux.HandleFunc("/auth/admin-check", handleAdminCheck(sessions, parsedAPIKeys, parsedAdminAPIKeys, legacyAdminAPIKeyFallbackEnabled()))
 
-	apiProxy := newAPIProxy(target, apiBase, upstreamAPIKey, parsedAPIKeys, sessions, publicCatalog)
-	mux.Handle(apiBase+"/", apiProxy)
-	mux.Handle(apiBase, apiProxy)
-
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/")
 		if path == "" {
@@ -250,114 +244,6 @@ func newMux(apiBase, apiUpstream, apiKey, apiKeys, adminAPIKeys string) (*http.S
 	})
 
 	return mux, nil
-}
-
-func newAPIProxy(target *url.URL, apiBase, upstreamAPIKey string, apiKeys []string, store *uiSessionStore, publicCatalog bool) http.Handler {
-	return newAPIProxyWithTransport(target, apiBase, upstreamAPIKey, apiKeys, store, publicCatalog, nil)
-}
-
-func newAPIProxyWithTransport(target *url.URL, apiBase, upstreamAPIKey string, apiKeys []string, store *uiSessionStore, publicCatalog bool, transport http.RoundTripper) http.Handler {
-	proxy := httputil.NewSingleHostReverseProxy(target)
-	if transport != nil {
-		proxy.Transport = transport
-	}
-	originalDirector := proxy.Director
-	proxy.Director = func(req *http.Request) {
-		forwardedHost := strings.TrimSpace(req.Header.Get("X-Forwarded-Host"))
-		if forwardedHost == "" {
-			forwardedHost = req.Host
-		}
-		forwardedProto := strings.TrimSpace(req.Header.Get("X-Forwarded-Proto"))
-		if forwardedProto == "" {
-			forwardedProto = "http"
-			if req.TLS != nil {
-				forwardedProto = "https"
-			}
-		}
-		originalDirector(req)
-		req.Host = target.Host
-		req.Header.Del("Cookie")
-		if forwardedHost != "" {
-			req.Header.Set("X-Forwarded-Host", forwardedHost)
-		}
-		if forwardedProto != "" {
-			req.Header.Set("X-Forwarded-Proto", forwardedProto)
-		}
-		req.Header.Set("X-MCP-Source", "ui")
-		if strings.TrimSpace(req.Header.Get("authorization")) == "" && strings.TrimSpace(req.Header.Get("x-api-key")) == "" {
-			req.Header.Set("x-api-key", upstreamAPIKey)
-		}
-	}
-	proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, err error) {
-		log.Printf("api proxy error: %v", err)
-		serviceutil.WriteJSON(w, http.StatusBadGateway, map[string]string{"error": "api_unavailable"})
-	}
-
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if isUnauthenticatedPlatformAuthRequest(r, apiBase) {
-			proxy.ServeHTTP(w, r.Clone(r.Context()))
-			return
-		}
-
-		if validAPIKeyHeader(r, apiKeys) {
-			req := r.Clone(r.Context())
-			req.Header.Del("x-api-key")
-			req.Header.Del("authorization")
-			proxy.ServeHTTP(w, req)
-			return
-		}
-
-		if hasAPIAuthHeader(r) {
-			proxy.ServeHTTP(w, r.Clone(r.Context()))
-			return
-		}
-
-		if sess, ok := store.sessionFromRequest(r); ok {
-			req := r.Clone(r.Context())
-			req.Header.Del("x-api-key")
-			req.Header.Del("authorization")
-			if sess.UpstreamAuthHeader != "" {
-				req.Header.Set("authorization", sess.UpstreamAuthHeader)
-			} else if sess.UpstreamAPIKey != "" {
-				req.Header.Set("x-api-key", sess.UpstreamAPIKey)
-			}
-			proxy.ServeHTTP(w, req)
-			return
-		}
-
-		if publicCatalog && isPublicCatalogAPIRequest(r, apiBase) {
-			namespace := strings.TrimSpace(r.URL.Query().Get("namespace"))
-			if namespace != "" && !isPublicCatalogNamespace(namespace) {
-				serviceutil.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden namespace"})
-				return
-			}
-			req := r.Clone(r.Context())
-			req.Header.Del("x-api-key")
-			req.Header.Del("authorization")
-			if namespace == "" {
-				q := req.URL.Query()
-				q.Set("namespace", defaultPublicCatalogNamespace())
-				req.URL.RawQuery = q.Encode()
-			}
-			proxy.ServeHTTP(w, req)
-			return
-		}
-
-		serviceutil.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
-	})
-}
-
-func isUnauthenticatedPlatformAuthRequest(r *http.Request, apiBase string) bool {
-	if r == nil || r.URL == nil {
-		return false
-	}
-	path := strings.TrimRight(normalizePathPrefix(apiBase), "/") + "/auth/"
-	switch r.URL.Path {
-	case path + "login", path + "signup", path + "oidc":
-		return true
-	default:
-		return false
-	}
 }
 
 func handleLogin(apiKey, upstreamAPIKey, apiUpstream string, store *uiSessionStore) http.HandlerFunc {
@@ -504,7 +390,7 @@ func loginOIDCSession(ctx context.Context, apiUpstream, idToken string) (session
 }
 
 func loginPasswordWithAPI(ctx context.Context, apiUpstream, email, password string) (sessionPrincipal, string, error) {
-	loginURL, err := apiUpstreamURL(apiUpstream, "api", "auth", "login")
+	loginURL, err := apiUpstreamURL(apiUpstream, "api", "v1", "auth", "login")
 	if err != nil {
 		return sessionPrincipal{}, "", err
 	}
@@ -589,7 +475,7 @@ func (e *oidcLoginStatusError) Error() string {
 }
 
 func loginOIDCWithAPI(ctx context.Context, apiUpstream, idToken string) (sessionPrincipal, string, time.Time, error) {
-	oidcURL, err := apiUpstreamURL(apiUpstream, "api", "auth", "oidc")
+	oidcURL, err := apiUpstreamURL(apiUpstream, "api", "v1", "auth", "oidc")
 	if err != nil {
 		return sessionPrincipal{}, "", time.Time{}, err
 	}
@@ -650,7 +536,7 @@ func loginOIDCWithAPI(ctx context.Context, apiUpstream, idToken string) (session
 }
 
 func verifyOIDCTokenWithAPI(ctx context.Context, apiUpstream, idToken string) (sessionPrincipal, error) {
-	meURL, err := apiUpstreamURL(apiUpstream, "api", "auth", "me")
+	meURL, err := apiUpstreamURL(apiUpstream, "api", "v1", "auth", "me")
 	if err != nil {
 		return sessionPrincipal{}, err
 	}
@@ -716,17 +602,32 @@ func drainAndClose(body io.ReadCloser) {
 	_ = body.Close()
 }
 
+const loginClientUnknownIP = "unknown"
+
 func loginClientID(r *http.Request) string {
 	if forwardedFor := strings.TrimSpace(r.Header.Get("x-forwarded-for")); forwardedFor != "" {
-		client, _, _ := strings.Cut(forwardedFor, ",")
-		if client = strings.TrimSpace(client); client != "" {
+		if client := firstNonEmptyForwardedIP(forwardedFor); client != "" {
 			return client
 		}
 	}
-	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil && host != "" {
-		return host
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		if host = strings.TrimSpace(host); host != "" {
+			return host
+		}
 	}
-	return strings.TrimSpace(r.RemoteAddr)
+	if remote := strings.TrimSpace(r.RemoteAddr); remote != "" {
+		return remote
+	}
+	return loginClientUnknownIP
+}
+
+func firstNonEmptyForwardedIP(xff string) string {
+	for _, part := range strings.Split(xff, ",") {
+		if ip := strings.TrimSpace(part); ip != "" {
+			return ip
+		}
+	}
+	return ""
 }
 
 func newLoginAttemptTracker(now func() time.Time) *loginAttemptTracker {
@@ -737,8 +638,10 @@ func (t *loginAttemptTracker) allow(clientID string) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	state := t.stateForLocked(clientID)
 	now := t.now()
+	t.pruneIfDueLocked(now)
+	state := t.stateForLocked(clientID, now)
+	state.lastSeen = now
 	refillLoginTokens(state, now)
 	if now.Before(state.lockedUntil) {
 		return false
@@ -747,6 +650,7 @@ func (t *loginAttemptTracker) allow(clientID string) bool {
 		return false
 	}
 	state.tokens--
+	t.enforceMaxLocked(now)
 	return true
 }
 
@@ -754,8 +658,10 @@ func (t *loginAttemptTracker) recordFailure(clientID string) int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	state := t.stateForLocked(clientID)
 	now := t.now()
+	t.pruneIfDueLocked(now)
+	state := t.stateForLocked(clientID, now)
+	state.lastSeen = now
 	if now.After(state.failuresExpire) {
 		state.failures = 0
 	}
@@ -764,6 +670,7 @@ func (t *loginAttemptTracker) recordFailure(clientID string) int {
 	if state.failures >= loginFailureThreshold {
 		state.lockedUntil = now.Add(loginLockoutDuration)
 	}
+	t.enforceMaxLocked(now)
 	return state.failures
 }
 
@@ -771,7 +678,13 @@ func (t *loginAttemptTracker) recordSuccess(clientID string) int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	state := t.stateForLocked(clientID)
+	now := t.now()
+	t.pruneIfDueLocked(now)
+	state := t.clients[clientID]
+	if state == nil {
+		return 0
+	}
+	state.lastSeen = now
 	prior := state.failures
 	state.failures = 0
 	state.failuresExpire = time.Time{}
@@ -779,14 +692,62 @@ func (t *loginAttemptTracker) recordSuccess(clientID string) int {
 	return prior
 }
 
-func (t *loginAttemptTracker) stateForLocked(clientID string) *loginClientState {
+func (t *loginAttemptTracker) stateForLocked(clientID string, now time.Time) *loginClientState {
 	state := t.clients[clientID]
 	if state == nil {
-		now := t.now()
-		state = &loginClientState{tokens: loginRateLimitCapacity, lastRefill: now}
+		state = &loginClientState{tokens: loginRateLimitCapacity, lastRefill: now, lastSeen: now}
 		t.clients[clientID] = state
 	}
 	return state
+}
+
+func (t *loginAttemptTracker) pruneIfDueLocked(now time.Time) {
+	if !t.lastPrune.IsZero() && now.Sub(t.lastPrune) < loginAttemptPruneInterval {
+		return
+	}
+	t.lastPrune = now
+	for clientID, state := range t.clients {
+		if now.Sub(state.lastSeen) > loginAttemptIdleTTL && !now.Before(state.lockedUntil) {
+			delete(t.clients, clientID)
+		}
+	}
+}
+
+func (t *loginAttemptTracker) enforceMaxLocked(now time.Time) {
+	if len(t.clients) <= loginAttemptMaxClients {
+		return
+	}
+	target := loginAttemptMaxClients - loginAttemptEvictionBatch
+	if target < 0 {
+		target = 0
+	}
+	type candidate struct {
+		clientID string
+		lastSeen time.Time
+		failures int
+		locked   bool
+	}
+	candidates := make([]candidate, 0, len(t.clients))
+	for clientID, state := range t.clients {
+		candidates = append(candidates, candidate{
+			clientID: clientID,
+			lastSeen: state.lastSeen,
+			failures: state.failures,
+			locked:   now.Before(state.lockedUntil),
+		})
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].locked != candidates[j].locked {
+			return !candidates[i].locked
+		}
+		if (candidates[i].failures > 0) != (candidates[j].failures > 0) {
+			return candidates[i].failures == 0
+		}
+		return candidates[i].lastSeen.Before(candidates[j].lastSeen)
+	})
+	for _, entry := range candidates[:len(t.clients)-target] {
+		delete(t.clients, entry.clientID)
+	}
 }
 
 func refillLoginTokens(state *loginClientState, now time.Time) {
@@ -995,13 +956,6 @@ func validAPIKeyHeader(r *http.Request, keys []string) bool {
 	return matchAPIKey(presented, keys)
 }
 
-func hasAPIAuthHeader(r *http.Request) bool {
-	if r == nil {
-		return false
-	}
-	return strings.TrimSpace(r.Header.Get("authorization")) != "" || strings.TrimSpace(r.Header.Get("x-api-key")) != ""
-}
-
 func firstAPIKey(apiKeys string) string {
 	for _, key := range strings.Split(apiKeys, ",") {
 		if trimmed := strings.TrimSpace(key); trimmed != "" {
@@ -1114,14 +1068,6 @@ func isPublicCatalogNamespace(namespace string) bool {
 	return false
 }
 
-func isPublicCatalogAPIRequest(r *http.Request, apiBase string) bool {
-	if r.Method != http.MethodGet {
-		return false
-	}
-	expected := strings.TrimRight(normalizePathPrefix(apiBase), "/") + "/runtime/servers"
-	return strings.TrimRight(r.URL.Path, "/") == expected
-}
-
 func secureCookie(r *http.Request) bool {
 	if forceSecureCookie {
 		return true
@@ -1135,14 +1081,14 @@ func secureCookie(r *http.Request) bool {
 func normalizePathPrefix(value string) string {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
-		return "/api"
+		return "/api/v1"
 	}
 	if parsed, err := url.Parse(trimmed); err == nil && parsed.Path != "" && parsed.Path != trimmed {
 		trimmed = parsed.Path
 	}
 	trimmed = "/" + strings.Trim(trimmed, "/")
 	if trimmed == "/" {
-		return "/api"
+		return "/api/v1"
 	}
 	return trimmed
 }

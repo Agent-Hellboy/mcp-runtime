@@ -82,6 +82,7 @@ func GenerateCRD(server *ServerMetadata, outputPath string) error {
 				Description:   tool.Description,
 				RequiredTrust: mcpv1alpha1.TrustLevel(tool.RequiredTrust),
 				SideEffect:    mcpv1alpha1.ToolSideEffect(tool.SideEffect),
+				RiskLevel:     mcpv1alpha1.ToolRiskLevel(tool.RiskLevel),
 			}
 			if len(tool.Labels) > 0 {
 				mcpTool.Labels = make(map[string]string, len(tool.Labels))
@@ -106,6 +107,7 @@ func GenerateCRD(server *ServerMetadata, outputPath string) error {
 			TokenHeader:     server.Auth.TokenHeader,
 			IssuerURL:       server.Auth.IssuerURL,
 			Audience:        server.Auth.Audience,
+			TrustDomain:     server.Auth.TrustDomain,
 		}
 	}
 

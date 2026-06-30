@@ -124,11 +124,16 @@ Package v1alpha1 contains API Schema definitions for the MCP server resource.
 - [`func (in *MCPServer) DeepCopyInto(out *MCPServer)`](#api-types-func-in-mcpserver-deepcopyinto-out-mcpserver)
 - [`func (in *MCPServer) DeepCopyObject() runtime.Object`](#api-types-func-in-mcpserver-deepcopyobject-runtime-object)
 - [`func (r *MCPServer) Default()`](#api-types-func-r-mcpserver-default)
+- [`func (r *MCPServer) DefaultWithOptions(options MCPServerDefaultOptions)`](#api-types-func-r-mcpserver-defaultwithoptions-options-mcpserverdefaultoptions)
 - [`func (r *MCPServer) SetupWebhookWithManager(mgr ctrl.Manager) error`](#api-types-func-r-mcpserver-setupwebhookwithmanager-mgr-ctrl-manager-error)
+- [`func (r *MCPServer) SetupWebhookWithManagerWithOptions(mgr ctrl.Manager, options MCPServerDefaultOptions) error`](#api-types-func-r-mcpserver-setupwebhookwithmanagerwithoptions-mgr-ctrl-manager-options-mcpserverdefaultoptions-error)
 - [`func (r *MCPServer) String() string`](#api-types-func-r-mcpserver-string-string)
 - [`func (r *MCPServer) ValidateCreate() (admission.Warnings, error)`](#api-types-func-r-mcpserver-validatecreate-admission-warnings-error)
 - [`func (r *MCPServer) ValidateDelete() (admission.Warnings, error)`](#api-types-func-r-mcpserver-validatedelete-admission-warnings-error)
 - [`func (r *MCPServer) ValidateUpdate(_ runtime.Object) (admission.Warnings, error)`](#api-types-func-r-mcpserver-validateupdate-runtime-object-admission-warnings-error)
+- [`type MCPServerDefaultOptions struct`](#api-types-type-mcpserverdefaultoptions-struct)
+- [`func (in *MCPServerDefaultOptions) DeepCopy() *MCPServerDefaultOptions`](#api-types-func-in-mcpserverdefaultoptions-deepcopy-mcpserverdefaultoptions)
+- [`func (in *MCPServerDefaultOptions) DeepCopyInto(out *MCPServerDefaultOptions)`](#api-types-func-in-mcpserverdefaultoptions-deepcopyinto-out-mcpserverdefaultoptions)
 - [`type MCPServerList struct`](#api-types-type-mcpserverlist-struct)
 - [`func (in *MCPServerList) DeepCopy() *MCPServerList`](#api-types-func-in-mcpserverlist-deepcopy-mcpserverlist)
 - [`func (in *MCPServerList) DeepCopyInto(out *MCPServerList)`](#api-types-func-in-mcpserverlist-deepcopyinto-out-mcpserverlist)
@@ -172,6 +177,7 @@ Package v1alpha1 contains API Schema definitions for the MCP server resource.
 - [`type ToolConfig struct`](#api-types-type-toolconfig-struct)
 - [`func (in *ToolConfig) DeepCopy() *ToolConfig`](#api-types-func-in-toolconfig-deepcopy-toolconfig)
 - [`func (in *ToolConfig) DeepCopyInto(out *ToolConfig)`](#api-types-func-in-toolconfig-deepcopyinto-out-toolconfig)
+- [`type ToolRiskLevel string`](#api-types-type-toolrisklevel-string)
 - [`type ToolRule struct`](#api-types-type-toolrule-struct)
 - [`func (in *ToolRule) DeepCopy() *ToolRule`](#api-types-func-in-toolrule-deepcopy-toolrule)
 - [`func (in *ToolRule) DeepCopyInto(out *ToolRule)`](#api-types-func-in-toolrule-deepcopyinto-out-toolrule)
@@ -220,12 +226,11 @@ var (
 ```text
 type AnalyticsConfig struct {
 	// Disabled suppresses analytics emission from the gateway sidecar for this
-	// server. Analytics is on by default whenever the operator has an analytics
-	// ingest URL configured (via Spec.Analytics.IngestURL or the operator's
-	// MCP_SENTINEL_INGEST_URL env). Set Disabled to true to opt out per server.
+	// server.
 	Disabled bool `json:"disabled,omitempty"`
 
-	// IngestURL is the analytics ingest endpoint.
+	// IngestURL is the analytics ingest endpoint. If empty, the operator may
+	// supply its configured default ingest URL.
 	IngestURL string `json:"ingestURL,omitempty"`
 
 	// Source is the event source label attached to emitted analytics events.
@@ -269,6 +274,9 @@ type AuthConfig struct {
 	TokenHeader     string   `json:"tokenHeader,omitempty"`
 	IssuerURL       string   `json:"issuerURL,omitempty"`
 	Audience        string   `json:"audience,omitempty"`
+	// TrustDomain is the SPIFFE trust domain accepted from verified client
+	// certificate URI SANs when mode is mtls.
+	TrustDomain string `json:"trustDomain,omitempty"`
 }
     AuthConfig configures how identities are extracted at the gateway.
     +kubebuilder:object:generate=true
@@ -294,12 +302,13 @@ func (in *AuthConfig) DeepCopyInto(out *AuthConfig)
 <a id="api-types-type-authmode-string"></a>
 ```text
 type AuthMode string
-    +kubebuilder:validation:Enum=none;header;oauth
+    +kubebuilder:validation:Enum=none;header;oauth;mtls
 
 const (
 	AuthModeNone   AuthMode = "none"
 	AuthModeHeader AuthMode = "header"
 	AuthModeOAuth  AuthMode = "oauth"
+	AuthModeMTLS   AuthMode = "mtls"
 )
 ```
 
@@ -441,7 +450,6 @@ func (in *MCPAccessGrant) DeepCopyObject() runtime.Object
 <a id="api-types-func-r-mcpaccessgrant-setupwebhookwithmanager-mgr-ctrl-manager-error"></a>
 ```text
 func (r *MCPAccessGrant) SetupWebhookWithManager(mgr ctrl.Manager) error
-    +kubebuilder:webhook:path=/validate-mcpruntime-org-v1alpha1-mcpaccessgrant,mutating=false,failurePolicy=fail,sideEffects=None,groups=mcpruntime.org,resources=mcpaccessgrants,verbs=create;update,versions=v1alpha1,name=vmcpaccessgrant.kb.io,admissionReviewVersions=v1
 
 ```
 
@@ -599,7 +607,6 @@ func (in *MCPAgentSession) DeepCopyObject() runtime.Object
 <a id="api-types-func-r-mcpagentsession-setupwebhookwithmanager-mgr-ctrl-manager-error"></a>
 ```text
 func (r *MCPAgentSession) SetupWebhookWithManager(mgr ctrl.Manager) error
-    +kubebuilder:webhook:path=/validate-mcpruntime-org-v1alpha1-mcpagentsession,mutating=false,failurePolicy=fail,sideEffects=None,groups=mcpruntime.org,resources=mcpagentsessions,verbs=create;update,versions=v1alpha1,name=vmcpagentsession.kb.io,admissionReviewVersions=v1
 
 ```
 
@@ -756,14 +763,26 @@ func (in *MCPServer) DeepCopyObject() runtime.Object
 <a id="api-types-func-r-mcpserver-default"></a>
 ```text
 func (r *MCPServer) Default()
-    +kubebuilder:webhook:path=/mutate-mcpruntime-org-v1alpha1-mcpserver,mutating=true,failurePolicy=fail,sideEffects=None,groups=mcpruntime.org,resources=mcpservers,verbs=create;update,versions=v1alpha1,name=mmcpserver.kb.io,admissionReviewVersions=v1
+
+```
+
+<a id="api-types-func-r-mcpserver-defaultwithoptions-options-mcpserverdefaultoptions"></a>
+```text
+func (r *MCPServer) DefaultWithOptions(options MCPServerDefaultOptions)
+    DefaultWithOptions applies MCPServer defaults, including operator-configured
+    fallbacks when the webhook is registered by the operator manager.
 
 ```
 
 <a id="api-types-func-r-mcpserver-setupwebhookwithmanager-mgr-ctrl-manager-error"></a>
 ```text
 func (r *MCPServer) SetupWebhookWithManager(mgr ctrl.Manager) error
-    +kubebuilder:webhook:path=/validate-mcpruntime-org-v1alpha1-mcpserver,mutating=false,failurePolicy=fail,sideEffects=None,groups=mcpruntime.org,resources=mcpservers,verbs=create;update,versions=v1alpha1,name=vmcpserver.kb.io,admissionReviewVersions=v1
+
+```
+
+<a id="api-types-func-r-mcpserver-setupwebhookwithmanagerwithoptions-mgr-ctrl-manager-options-mcpserverdefaultoptions-error"></a>
+```text
+func (r *MCPServer) SetupWebhookWithManagerWithOptions(mgr ctrl.Manager, options MCPServerDefaultOptions) error
 
 ```
 
@@ -788,6 +807,33 @@ func (r *MCPServer) ValidateDelete() (admission.Warnings, error)
 <a id="api-types-func-r-mcpserver-validateupdate-runtime-object-admission-warnings-error"></a>
 ```text
 func (r *MCPServer) ValidateUpdate(_ runtime.Object) (admission.Warnings, error)
+
+```
+
+<a id="api-types-type-mcpserverdefaultoptions-struct"></a>
+```text
+type MCPServerDefaultOptions struct {
+	DefaultIngressHost        string
+	DefaultAnalyticsIngestURL string
+}
+    MCPServerDefaultOptions holds operator-scoped values that the admission
+    webhook can use while defaulting MCPServer objects.
+
+```
+
+<a id="api-types-func-in-mcpserverdefaultoptions-deepcopy-mcpserverdefaultoptions"></a>
+```text
+func (in *MCPServerDefaultOptions) DeepCopy() *MCPServerDefaultOptions
+    DeepCopy is an autogenerated deepcopy function, copying the receiver,
+    creating a new MCPServerDefaultOptions.
+
+```
+
+<a id="api-types-func-in-mcpserverdefaultoptions-deepcopyinto-out-mcpserverdefaultoptions"></a>
+```text
+func (in *MCPServerDefaultOptions) DeepCopyInto(out *MCPServerDefaultOptions)
+    DeepCopyInto is an autogenerated deepcopy function, copying the receiver,
+    writing into out. in must be non-nil.
 
 ```
 
@@ -910,9 +956,9 @@ type MCPServerSpec struct {
 	Gateway *GatewayConfig `json:"gateway,omitempty"`
 
 	// Analytics configures audit/analytics emission for the gateway sidecar.
-	// Analytics is only applied when Gateway is enabled. Emission is on by
-	// default whenever the operator has an analytics ingest URL configured;
-	// set Analytics.Disabled to true to opt this server out.
+	// Analytics is only applied when Gateway is enabled and this field is set.
+	// If set without an ingest URL, the operator may supply its configured
+	// default ingest URL.
 	Analytics *AnalyticsConfig `json:"analytics,omitempty"`
 
 	// Rollout configures deployment rollout behavior for this server.
@@ -1284,6 +1330,7 @@ type ToolConfig struct {
 	Description   string            `json:"description,omitempty"`
 	RequiredTrust TrustLevel        `json:"requiredTrust,omitempty"`
 	SideEffect    ToolSideEffect    `json:"sideEffect"`
+	RiskLevel     ToolRiskLevel     `json:"riskLevel,omitempty"`
 	Labels        map[string]string `json:"labels,omitempty"`
 }
     ToolConfig describes one MCP tool exposed by a server.
@@ -1305,6 +1352,18 @@ func (in *ToolConfig) DeepCopyInto(out *ToolConfig)
     DeepCopyInto is an autogenerated deepcopy function, copying the receiver,
     writing into out. in must be non-nil.
 
+```
+
+<a id="api-types-type-toolrisklevel-string"></a>
+```text
+type ToolRiskLevel string
+    +kubebuilder:validation:Enum=low;medium;high
+
+const (
+	ToolRiskLevelLow    ToolRiskLevel = "low"
+	ToolRiskLevelMedium ToolRiskLevel = "medium"
+	ToolRiskLevelHigh   ToolRiskLevel = "high"
+)
 ```
 
 <a id="api-types-type-toolrule-struct"></a>
@@ -1420,6 +1479,7 @@ _No package overview is documented._
 - [`type ServerMetadata struct`](#metadata-helpers-type-servermetadata-struct)
 - [`type SessionConfig struct`](#metadata-helpers-type-sessionconfig-struct)
 - [`type ToolConfig struct`](#metadata-helpers-type-toolconfig-struct)
+- [`type ToolRiskLevel string`](#metadata-helpers-type-toolrisklevel-string)
 - [`type ToolSideEffect string`](#metadata-helpers-type-toolsideeffect-string)
 - [`type TrustLevel string`](#metadata-helpers-type-trustlevel-string)
 
@@ -1554,6 +1614,7 @@ type AuthConfig struct {
 	TokenHeader     string   `yaml:"tokenHeader,omitempty" json:"tokenHeader,omitempty"`
 	IssuerURL       string   `yaml:"issuerURL,omitempty" json:"issuerURL,omitempty"`
 	Audience        string   `yaml:"audience,omitempty" json:"audience,omitempty"`
+	TrustDomain     string   `yaml:"trustDomain,omitempty" json:"trustDomain,omitempty"`
 }
     AuthConfig configures how identities are extracted at the gateway.
 
@@ -1568,6 +1629,7 @@ const (
 	AuthModeNone   AuthMode = "none"
 	AuthModeHeader AuthMode = "header"
 	AuthModeOAuth  AuthMode = "oauth"
+	AuthModeMTLS   AuthMode = "mtls"
 )
 ```
 
@@ -1848,10 +1910,22 @@ type ToolConfig struct {
 	Description   string            `yaml:"description,omitempty" json:"description,omitempty"`
 	RequiredTrust TrustLevel        `yaml:"requiredTrust,omitempty" json:"requiredTrust,omitempty"`
 	SideEffect    ToolSideEffect    `yaml:"sideEffect" json:"sideEffect"`
+	RiskLevel     ToolRiskLevel     `yaml:"riskLevel,omitempty" json:"riskLevel,omitempty"`
 	Labels        map[string]string `yaml:"labels,omitempty" json:"labels,omitempty"`
 }
     ToolConfig describes one MCP tool exposed by a server.
 
+```
+
+<a id="metadata-helpers-type-toolrisklevel-string"></a>
+```text
+type ToolRiskLevel string
+
+const (
+	ToolRiskLevelLow    ToolRiskLevel = "low"
+	ToolRiskLevelMedium ToolRiskLevel = "medium"
+	ToolRiskLevelHigh   ToolRiskLevel = "high"
+)
 ```
 
 <a id="metadata-helpers-type-toolsideeffect-string"></a>
@@ -2382,6 +2456,8 @@ const (
 	DefaultPort = 8088
 	// DefaultGatewayPort is the default container port for the MCP proxy sidecar.
 	DefaultGatewayPort = 8091
+	// DefaultGatewayMetricsPort is the default Prometheus scrape port for the MCP gateway sidecar.
+	DefaultGatewayMetricsPort = 9103
 	// DefaultServicePort is the default service port.
 	DefaultServicePort = 80
 )
@@ -2479,6 +2555,19 @@ type MCPServerReconciler struct {
 	// DefaultIngressTLS enables Traefik TLS routing for MCP server ingresses by default.
 	DefaultIngressTLS bool
 
+	// DefaultIngressTLSSecret is the Kubernetes TLS Secret holding the
+	// caller-facing (user->Traefik) host certificate for mtls servers. Path-based
+	// mtls servers share one host, so this single platform host certificate is
+	// published as Traefik's default certificate via a TLSStore named "default"
+	// (see reconcileDefaultTLSStore) rather than a per-IngressRoute secretName.
+	// Empty falls back to Traefik's built-in default certificate.
+	DefaultIngressTLSSecret string
+
+	// DefaultIngressTLSSecretNamespace is the Traefik-watched namespace that holds
+	// the DefaultIngressTLSSecret and the single "default" TLSStore. Must be one
+	// of the namespaces Traefik's kubernetescrd provider watches.
+	DefaultIngressTLSSecretNamespace string
+
 	// IngressReadinessMode controls how ingress readiness is evaluated.
 	IngressReadinessMode string
 
@@ -2497,6 +2586,10 @@ type MCPServerReconciler struct {
 
 	// ClusterName is the cluster label attached to policy and audit events.
 	ClusterName string
+
+	// MTLSClusterIssuer is the pre-existing cert-manager ClusterIssuer used for
+	// gateway and adapter workload certificates.
+	MTLSClusterIssuer string
 }
     MCPServerReconciler reconciles a MCPServer object
 
@@ -4761,6 +4854,8 @@ _No package overview is documented._
 - [`func AuthRequiredError(err error) error`](#cli-platform-api-func-authrequirederror-err-error-error)
 - [`func HasPlatformClient() bool`](#cli-platform-api-func-hasplatformclient-bool)
 - [`func NormalizeBaseURL(raw string) string`](#cli-platform-api-func-normalizebaseurl-raw-string-string)
+- [`type AdapterCertificate struct`](#cli-platform-api-type-adaptercertificate-struct)
+- [`type AdapterCertificateRequest struct`](#cli-platform-api-type-adaptercertificaterequest-struct)
 - [`type AdapterSession struct`](#cli-platform-api-type-adaptersession-struct)
 - [`type AdapterSessionRequest struct`](#cli-platform-api-type-adaptersessionrequest-struct)
 - [`type ImagePublishRecord struct`](#cli-platform-api-type-imagepublishrecord-struct)
@@ -4783,9 +4878,11 @@ _No package overview is documented._
 - [`func (c *PlatformClient) GetRuntimePolicy(ctx context.Context, namespace, server string) ([]byte, error)`](#cli-platform-api-func-c-platformclient-getruntimepolicy-ctx-context-context-namespace-server-string-byte-error)
 - [`func (c *PlatformClient) GetSession(ctx context.Context, namespace, name string) (sentinelaccess.SessionSummary, error)`](#cli-platform-api-func-c-platformclient-getsession-ctx-context-context-namespace-name-string-sentinelaccess-sessionsummary-error)
 - [`func (c *PlatformClient) GetTeam(ctx context.Context, slug string) (Team, error)`](#cli-platform-api-func-c-platformclient-getteam-ctx-context-context-slug-string-team-error)
+- [`func (c *PlatformClient) IssueAdapterCertificate(ctx context.Context, req AdapterCertificateRequest) (AdapterCertificate, error)`](#cli-platform-api-func-c-platformclient-issueadaptercertificate-ctx-context-context-req-adaptercertificaterequest-adaptercertificate-error)
 - [`func (c *PlatformClient) ListGrants(ctx context.Context, namespace string) ([]sentinelaccess.GrantSummary, error)`](#cli-platform-api-func-c-platformclient-listgrants-ctx-context-context-namespace-string-sentinelaccess-grantsummary-error)
 - [`func (c *PlatformClient) ListNamespaces(ctx context.Context) ([]namespaceListItem, error)`](#cli-platform-api-func-c-platformclient-listnamespaces-ctx-context-context-namespacelistitem-error)
 - [`func (c *PlatformClient) ListRuntimeServers(ctx context.Context, namespace string) ([]ServerListItem, error)`](#cli-platform-api-func-c-platformclient-listruntimeservers-ctx-context-context-namespace-string-serverlistitem-error)
+- [`func (c *PlatformClient) ListRuntimeTools(ctx context.Context, filters map[string]string) ([]RuntimeToolRow, error)`](#cli-platform-api-func-c-platformclient-listruntimetools-ctx-context-context-filters-map-string-string-runtimetoolrow-error)
 - [`func (c *PlatformClient) ListSessions(ctx context.Context, namespace string) ([]sentinelaccess.SessionSummary, error)`](#cli-platform-api-func-c-platformclient-listsessions-ctx-context-context-namespace-string-sentinelaccess-sessionsummary-error)
 - [`func (c *PlatformClient) ListTeamMembers(ctx context.Context, slug string) ([]TeamMembership, error)`](#cli-platform-api-func-c-platformclient-listteammembers-ctx-context-context-slug-string-teammembership-error)
 - [`func (c *PlatformClient) ListTeams(ctx context.Context) ([]Team, error)`](#cli-platform-api-func-c-platformclient-listteams-ctx-context-context-team-error)
@@ -4797,9 +4894,11 @@ _No package overview is documented._
 - [`func (c *PlatformClient) ValidateCredentials(ctx context.Context) error`](#cli-platform-api-func-c-platformclient-validatecredentials-ctx-context-context-error)
 - [`type PlatformUser struct`](#cli-platform-api-type-platformuser-struct)
 - [`type Principal struct`](#cli-platform-api-type-principal-struct)
+- [`type RuntimeToolRow struct`](#cli-platform-api-type-runtimetoolrow-struct)
 - [`type ServerListItem struct`](#cli-platform-api-type-serverlistitem-struct)
 - [`type Team struct`](#cli-platform-api-type-team-struct)
 - [`type TeamMembership = platform.TeamMembership`](#cli-platform-api-type-teammembership-platform-teammembership)
+- [`type ToolConfig struct`](#cli-platform-api-type-toolconfig-struct)
 
 <a id="cli-platform-api-constants"></a>
 ### Constants
@@ -4836,6 +4935,27 @@ func NormalizeBaseURL(raw string) string
 <a id="cli-platform-api-types"></a>
 ### Types
 
+<a id="cli-platform-api-type-adaptercertificate-struct"></a>
+```text
+type AdapterCertificate struct {
+	Certificate string    `json:"certificate"`
+	CABundle    string    `json:"caBundle"`
+	SPIFFEID    string    `json:"spiffeID"`
+	ExpiresAt   time.Time `json:"expiresAt"`
+}
+
+```
+
+<a id="cli-platform-api-type-adaptercertificaterequest-struct"></a>
+```text
+type AdapterCertificateRequest struct {
+	Namespace string `json:"namespace"`
+	Session   string `json:"session"`
+	CSR       string `json:"csr"`
+}
+
+```
+
 <a id="cli-platform-api-type-adaptersession-struct"></a>
 ```text
 type AdapterSession struct {
@@ -4866,7 +4986,7 @@ type AdapterSessionRequest struct {
 	RequestedTTL   string `json:"requestedTTL,omitempty"`
 }
     AdapterSessionRequest is the input contract for the platform API endpoint
-    POST /api/runtime/adapter/sessions. RequestedTTL/Trust are optional;
+    POST /api/v1/runtime/adapter/sessions. RequestedTTL/Trust are optional;
     empty values fall back to platform-side defaults.
 
 ```
@@ -5007,6 +5127,12 @@ func (c *PlatformClient) GetTeam(ctx context.Context, slug string) (Team, error)
 
 ```
 
+<a id="cli-platform-api-func-c-platformclient-issueadaptercertificate-ctx-context-context-req-adaptercertificaterequest-adaptercertificate-error"></a>
+```text
+func (c *PlatformClient) IssueAdapterCertificate(ctx context.Context, req AdapterCertificateRequest) (AdapterCertificate, error)
+
+```
+
 <a id="cli-platform-api-func-c-platformclient-listgrants-ctx-context-context-namespace-string-sentinelaccess-grantsummary-error"></a>
 ```text
 func (c *PlatformClient) ListGrants(ctx context.Context, namespace string) ([]sentinelaccess.GrantSummary, error)
@@ -5022,6 +5148,12 @@ func (c *PlatformClient) ListNamespaces(ctx context.Context) ([]namespaceListIte
 <a id="cli-platform-api-func-c-platformclient-listruntimeservers-ctx-context-context-namespace-string-serverlistitem-error"></a>
 ```text
 func (c *PlatformClient) ListRuntimeServers(ctx context.Context, namespace string) ([]ServerListItem, error)
+
+```
+
+<a id="cli-platform-api-func-c-platformclient-listruntimetools-ctx-context-context-filters-map-string-string-runtimetoolrow-error"></a>
+```text
+func (c *PlatformClient) ListRuntimeTools(ctx context.Context, filters map[string]string) ([]RuntimeToolRow, error)
 
 ```
 
@@ -5105,11 +5237,33 @@ type Principal struct {
 
 ```
 
+<a id="cli-platform-api-type-runtimetoolrow-struct"></a>
+```text
+type RuntimeToolRow struct {
+	ToolName      string            `json:"tool_name"`
+	Description   string            `json:"description,omitempty"`
+	ServerName    string            `json:"server_name"`
+	Namespace     string            `json:"namespace"`
+	TeamID        string            `json:"team_id,omitempty"`
+	EndpointURL   string            `json:"endpoint_url,omitempty"`
+	Declared      bool              `json:"declared"`
+	Live          bool              `json:"live"`
+	DriftStatus   string            `json:"drift_status"`
+	RequiredTrust string            `json:"required_trust,omitempty"`
+	SideEffect    string            `json:"side_effect,omitempty"`
+	RiskLevel     string            `json:"risk_level,omitempty"`
+	Labels        map[string]string `json:"labels,omitempty"`
+	ConnectConfig map[string]any    `json:"connect_config,omitempty"`
+}
+
+```
+
 <a id="cli-platform-api-type-serverlistitem-struct"></a>
 ```text
 type ServerListItem struct {
 	Name        string            `json:"name"`
 	Namespace   string            `json:"namespace"`
+	TeamID      string            `json:"team_id,omitempty"`
 	Image       string            `json:"image,omitempty"`
 	ImageTag    string            `json:"imageTag,omitempty"`
 	Description string            `json:"description,omitempty"`
@@ -5117,6 +5271,9 @@ type ServerListItem struct {
 	Status      string            `json:"status"`
 	Labels      map[string]string `json:"labels"`
 	Age         string            `json:"age"`
+	Endpoint    string            `json:"endpoint,omitempty"`
+	Tools       []ToolConfig      `json:"tools,omitempty"`
+	AccessJSON  map[string]any    `json:"access_json,omitempty"`
 }
     ServerListItem is one row from the platform API runtime servers list.
 
@@ -5137,6 +5294,19 @@ type Team struct {
 <a id="cli-platform-api-type-teammembership-platform-teammembership"></a>
 ```text
 type TeamMembership = platform.TeamMembership
+
+```
+
+<a id="cli-platform-api-type-toolconfig-struct"></a>
+```text
+type ToolConfig struct {
+	Name          string            `json:"name"`
+	Description   string            `json:"description,omitempty"`
+	RequiredTrust string            `json:"requiredTrust,omitempty"`
+	SideEffect    string            `json:"sideEffect,omitempty"`
+	RiskLevel     string            `json:"riskLevel,omitempty"`
+	Labels        map[string]string `json:"labels,omitempty"`
+}
 ```
 
 <a id="cli-platform-status"></a>
@@ -5180,11 +5350,12 @@ _No package overview is documented._
 ```text
 var DefaultPlatformStatusWorkloads = []PlatformWorkload{
 	{Component: "ClickHouse", Namespace: core.DefaultAnalyticsNamespace, Kind: "statefulset", Name: "clickhouse"},
-	{Component: "Zookeeper", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "zookeeper"},
 	{Component: "Kafka", Namespace: core.DefaultAnalyticsNamespace, Kind: "statefulset", Name: "kafka"},
 	{Component: "Ingest", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-sentinel-ingest"},
 	{Component: "Processor", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-sentinel-processor"},
-	{Component: "API", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-sentinel-api"},
+	{Component: "Platform API", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-platform-api"},
+	{Component: "Runtime Control", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-runtime-api"},
+	{Component: "Analytics API", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-analytics-api"},
 	{Component: "UI", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-sentinel-ui"},
 	{Component: "Gateway", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-sentinel-gateway"},
 	{Component: "Prometheus", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "prometheus"},
@@ -5703,6 +5874,7 @@ Package server owns routing for the server top-level command.
 <a id="cli-server-index"></a>
 ### Index
 
+- [`func BuildConnectConfig(server platformapi.ServerListItem, clientName string) (map[string]any, error)`](#cli-server-func-buildconnectconfig-server-platformapi-serverlistitem-clientname-string-map-string-any-error)
 - [`func BuildImage(ctx context.Context, logger *zap.Logger, serverName, dockerfile, metadataFile, metadataDir, registryURL, tag, platform, contextDir string) error`](#cli-server-func-buildimage-ctx-context-context-logger-zap-logger-servername-dockerfile-metadatafile-metadatadir-registryurl-tag-platform-contextdir-string-error)
 - [`func DiscoverToolsFromServer(serverURL string) ([]string, error)`](#cli-server-func-discovertoolsfromserver-serverurl-string-string-error)
 - [`func New(runtime *core.Runtime) *cobra.Command`](#cli-server-func-new-runtime-core-runtime-cobra-command)
@@ -5712,6 +5884,7 @@ Package server owns routing for the server top-level command.
 - [`func NewServerManager(kubectl *core.KubectlClient, logger *zap.Logger) *ServerManager`](#cli-server-func-newservermanager-kubectl-core-kubectlclient-logger-zap-logger-servermanager)
 - [`func (m *ServerManager) ApplyServerFromFile(file string) error`](#cli-server-func-m-servermanager-applyserverfromfile-file-string-error)
 - [`func (m *ServerManager) BindUseKubeFlag(cmd *cobra.Command)`](#cli-server-func-m-servermanager-bindusekubeflag-cmd-cobra-command)
+- [`func (m *ServerManager) ConnectConfig(name, namespace, clientName, output string) error`](#cli-server-func-m-servermanager-connectconfig-name-namespace-clientname-output-string-error)
 - [`func (m *ServerManager) CreateServer(name, namespace, image, imageTag string) error`](#cli-server-func-m-servermanager-createserver-name-namespace-image-imagetag-string-error)
 - [`func (m *ServerManager) CreateServerFromFile(file string) error`](#cli-server-func-m-servermanager-createserverfromfile-file-string-error)
 - [`func (m *ServerManager) DeleteServer(name, namespace string) error`](#cli-server-func-m-servermanager-deleteserver-name-namespace-string-error)
@@ -5719,7 +5892,7 @@ Package server owns routing for the server top-level command.
 - [`func (m *ServerManager) ExportServer(name, namespace, file string) error`](#cli-server-func-m-servermanager-exportserver-name-namespace-file-string-error)
 - [`func (m *ServerManager) GenerateManifests(metadataFile, metadataDir, outputDir string) error`](#cli-server-func-m-servermanager-generatemanifests-metadatafile-metadatadir-outputdir-string-error)
 - [`func (m *ServerManager) GetServer(name, namespace string) error`](#cli-server-func-m-servermanager-getserver-name-namespace-string-error)
-- [`func (m *ServerManager) InitServer(name, metadataDir, image, imageTag, scope, policyMode, defaultDecision string, sessionRequired bool, port int32, tools, toolSpecs []string, force bool) error`](#cli-server-func-m-servermanager-initserver-name-metadatadir-image-imagetag-scope-policymode-defaultdecision-string-sessionrequired-bool-port-int32-tools-toolspecs-string-force-bool-error)
+- [`func (m *ServerManager) InitServer(name, metadataDir, image, imageTag, scope, policyMode, defaultDecision string, sessionRequired bool, port int32, tools, toolSpecs []string, toolRisk string, force bool) error`](#cli-server-func-m-servermanager-initserver-name-metadatadir-image-imagetag-scope-policymode-defaultdecision-string-sessionrequired-bool-port-int32-tools-toolspecs-string-toolrisk-string-force-bool-error)
 - [`func (m *ServerManager) InspectServerPolicy(name, namespace string) error`](#cli-server-func-m-servermanager-inspectserverpolicy-name-namespace-string-error)
 - [`func (m *ServerManager) ListServers(namespace, team string) error`](#cli-server-func-m-servermanager-listservers-namespace-team-string-error)
 - [`func (m *ServerManager) Logger() *zap.Logger`](#cli-server-func-m-servermanager-logger-zap-logger)
@@ -5729,6 +5902,11 @@ Package server owns routing for the server top-level command.
 
 <a id="cli-server-functions"></a>
 ### Functions
+
+<a id="cli-server-func-buildconnectconfig-server-platformapi-serverlistitem-clientname-string-map-string-any-error"></a>
+```text
+func BuildConnectConfig(server platformapi.ServerListItem, clientName string) (map[string]any, error)
+```
 
 <a id="cli-server-func-buildimage-ctx-context-context-logger-zap-logger-servername-dockerfile-metadatafile-metadatadir-registryurl-tag-platform-contextdir-string-error"></a>
 ```text
@@ -5803,6 +5981,14 @@ func (m *ServerManager) BindUseKubeFlag(cmd *cobra.Command)
 
 ```
 
+<a id="cli-server-func-m-servermanager-connectconfig-name-namespace-clientname-output-string-error"></a>
+```text
+func (m *ServerManager) ConnectConfig(name, namespace, clientName, output string) error
+    ConnectConfig prints client connection config for a platform-visible MCP
+    server.
+
+```
+
 <a id="cli-server-func-m-servermanager-createserver-name-namespace-image-imagetag-string-error"></a>
 ```text
 func (m *ServerManager) CreateServer(name, namespace, image, imageTag string) error
@@ -5852,9 +6038,9 @@ func (m *ServerManager) GetServer(name, namespace string) error
 
 ```
 
-<a id="cli-server-func-m-servermanager-initserver-name-metadatadir-image-imagetag-scope-policymode-defaultdecision-string-sessionrequired-bool-port-int32-tools-toolspecs-string-force-bool-error"></a>
+<a id="cli-server-func-m-servermanager-initserver-name-metadatadir-image-imagetag-scope-policymode-defaultdecision-string-sessionrequired-bool-port-int32-tools-toolspecs-string-toolrisk-string-force-bool-error"></a>
 ```text
-func (m *ServerManager) InitServer(name, metadataDir, image, imageTag, scope, policyMode, defaultDecision string, sessionRequired bool, port int32, tools, toolSpecs []string, force bool) error
+func (m *ServerManager) InitServer(name, metadataDir, image, imageTag, scope, policyMode, defaultDecision string, sessionRequired bool, port int32, tools, toolSpecs []string, toolRisk string, force bool) error
 
 ```
 
@@ -5982,12 +6168,15 @@ Ingress.
 - [Index](#cli-setup-ingress-manifests-index)
 - [Constants](#cli-setup-ingress-manifests-constants)
 - [Functions](#cli-setup-ingress-manifests-functions)
+- [Types](#cli-setup-ingress-manifests-types)
 
 <a id="cli-setup-ingress-manifests-index"></a>
 ### Index
 
 - [`Constants`](#cli-setup-ingress-manifests-constants)
 - [`func RenderPlatformUIIngress(host, issuerName, analyticsNamespace string) string`](#cli-setup-ingress-manifests-func-renderplatformuiingress-host-issuername-analyticsnamespace-string-string)
+- [`type APIPath struct`](#cli-setup-ingress-manifests-type-apipath-struct)
+- [`func PlatformAPIPaths() []APIPath`](#cli-setup-ingress-manifests-func-platformapipaths-apipath)
 
 <a id="cli-setup-ingress-manifests-constants"></a>
 ### Constants
@@ -6011,9 +6200,9 @@ const (
 <a id="cli-setup-ingress-manifests-func-renderplatformuiingress-host-issuername-analyticsnamespace-string-string"></a>
 ```text
 func RenderPlatformUIIngress(host, issuerName, analyticsNamespace string) string
-    RenderPlatformUIIngress emits an Ingress that maps platform.<domain> to
-    the dashboard UI and /api on the same UI service (which reverse-proxies to
-    mcp-sentinel-api via API_UPSTREAM). It also emits a separate admin-gated
+    RenderPlatformUIIngress emits an Ingress that maps platform.<domain> to the
+    dashboard UI and /api/v1/* to the split API services. Server-side UI auth
+    still uses API_UPSTREAM against platform-api. A separate admin-gated Ingress
     Ingress on the same host for /grafana. The observability Ingress uses the
     repo-managed sentinel-admin-auth@file Traefik middleware so Grafana is
     reachable from admin UI links without exposing it raw on the public platform
@@ -6029,6 +6218,28 @@ func RenderPlatformUIIngress(host, issuerName, analyticsNamespace string) string
     requests to the same host hit the UI service, which redirects to HTTPS.
     (We can't rely on Traefik's entrypoint-level redirect because the prod
     overlay disables it to keep HTTP-01 ACME challenges working on first issue.)
+```
+
+<a id="cli-setup-ingress-manifests-types"></a>
+### Types
+
+<a id="cli-setup-ingress-manifests-type-apipath-struct"></a>
+```text
+type APIPath struct {
+	Path     string
+	PathType string
+	Service  string
+	Port     int
+}
+    APIPath describes a Traefik/Kubernetes ingress route for /api/v1 split
+    services.
+
+```
+
+<a id="cli-setup-ingress-manifests-func-platformapipaths-apipath"></a>
+```text
+func PlatformAPIPaths() []APIPath
+    PlatformAPIPaths returns ingress rules ordered most-specific first.
 ```
 
 <a id="cli-setup-plan"></a>
@@ -6089,6 +6300,7 @@ const (
 const (
 	DefaultOrgCatalogNamespace    = "mcp-servers-org"
 	DefaultPublicCatalogNamespace = "mcp-servers-public"
+	DefaultTestMTLSClusterIssuer  = "mcp-runtime-ca"
 )
 ```
 
@@ -6140,7 +6352,12 @@ type Input struct {
 	ACMEmail    string
 	ACMEStaging bool
 	// TLSClusterIssuer is a pre-existing cert-manager.io ClusterIssuer (e.g. org internal CA / Vault / ADCS). Mutually exclusive with ACMEmail.
-	TLSClusterIssuer   string
+	TLSClusterIssuer string
+	// MTLSClusterIssuer enables the mTLS auth path by naming the workload issuer
+	// for gateway server and adapter client certificates. Name an enterprise
+	// ClusterIssuer, or the bundled mcp-runtime-ca to have setup provision it.
+	// Test mode defaults this to mcp-runtime-ca automatically.
+	MTLSClusterIssuer  string
 	InstallCertManager bool
 }
     Input captures the raw CLI inputs for setup.
@@ -6171,6 +6388,7 @@ type Plan struct {
 	ACMEmail             string
 	ACMEStaging          bool
 	TLSClusterIssuer     string
+	MTLSClusterIssuer    string
 	InstallCertManager   bool
 }
     Plan captures the resolved setup decisions.
@@ -6213,6 +6431,7 @@ components.
 
 - [`func BuildOperatorArgs(metricsAddr, probeAddr string, leaderElect, leaderElectChanged bool) []string`](#cli-setup-platform-func-buildoperatorargs-metricsaddr-probeaddr-string-leaderelect-leaderelectchanged-bool-string)
 - [`func SetupPlatform(logger *zap.Logger, plan setupplan.Plan, clusterMgr ClusterManagerAPI) error`](#cli-setup-platform-func-setupplatform-logger-zap-logger-plan-setupplan-plan-clustermgr-clustermanagerapi-error)
+- [`func ValidateMTLSSetupCLIFlags(testMode, tlsEnabled bool, mtlsClusterIssuer string) error`](#cli-setup-platform-func-validatemtlssetupcliflags-testmode-tlsenabled-bool-mtlsclusterissuer-string-error)
 - [`func ValidatePlatformMode(mode string) error`](#cli-setup-platform-func-validateplatformmode-mode-string-error)
 - [`func ValidatePublicPlatformAuthConfig(platformMode string, tlsEnabled, testMode bool, existingData map[string]string) error`](#cli-setup-platform-func-validatepublicplatformauthconfig-platformmode-string-tlsenabled-testmode-bool-existingdata-map-string-string-error)
 - [`func ValidatePublicPlatformAuthEnv(platformMode string, tlsEnabled, testMode bool) error`](#cli-setup-platform-func-validatepublicplatformauthenv-platformmode-string-tlsenabled-testmode-bool-error)
@@ -6246,6 +6465,18 @@ func BuildOperatorArgs(metricsAddr, probeAddr string, leaderElect, leaderElectCh
 <a id="cli-setup-platform-func-setupplatform-logger-zap-logger-plan-setupplan-plan-clustermgr-clustermanagerapi-error"></a>
 ```text
 func SetupPlatform(logger *zap.Logger, plan setupplan.Plan, clusterMgr ClusterManagerAPI) error
+```
+
+<a id="cli-setup-platform-func-validatemtlssetupcliflags-testmode-tlsenabled-bool-mtlsclusterissuer-string-error"></a>
+```text
+func ValidateMTLSSetupCLIFlags(testMode, tlsEnabled bool, mtlsClusterIssuer string) error
+    ValidateMTLSSetupCLIFlags enforces the mTLS setup flag contract. The mTLS
+    auth path is enabled by naming a workload issuer with --mtls-cluster-issuer
+    (test mode defaults it to the bundled mcp-runtime-ca). It requires
+    --with-tls because Traefik terminates the caller's mTLS on the websecure
+    (TLS) entrypoint; test mode is exempt (it serves the bundled self-signed
+    default certificate there).
+
 ```
 
 <a id="cli-setup-platform-func-validateplatformmode-mode-string-error"></a>
@@ -6297,12 +6528,13 @@ func ValidateTLSSetupCLIFlags(
 ```text
 type AnalyticsImageSet struct {
 	Ingest        string
-	API           string
+	PlatformAPI   string
+	RuntimeAPI    string
+	AnalyticsAPI  string
 	Processor     string
 	UI            string
 	Traefik       string
 	ClickHouse    string
-	Zookeeper     string
 	Kafka         string
 	Prometheus    string
 	OTelCollector string

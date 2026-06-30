@@ -7,6 +7,11 @@ metadata:
     pod-security.kubernetes.io/audit: restricted
     pod-security.kubernetes.io/warn: restricted
 ---
+# Traefik CRDs (IngressRoute, IngressRouteTCP, Middleware, TLSOption,
+# ServersTransport, ...) are vendored from the official v2.10 bundle in
+# traefik-crds.yaml so the mtls terminate+re-encrypt path has the kinds the
+# operator generates.
+---
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -68,6 +73,10 @@ metadata:
 rules:
   - apiGroups: ["networking.k8s.io"]
     resources: ["ingressclasses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["traefik.io"]
+    resources:
+      ["ingressroutes", "ingressroutetcps", "middlewares", "tlsoptions", "tlsstores", "serverstransports", "traefikservices"]
     verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -270,6 +279,8 @@ spec:
         args:
           - --providers.kubernetesingress=true
           - --providers.kubernetesingress.namespaces=registry,mcp-sentinel,mcp-servers,mcp-servers-org,mcp-servers-public
+          - --providers.kubernetescrd=true
+          - --providers.kubernetescrd.namespaces=mcp-servers,mcp-servers-org,mcp-servers-public
           - --entrypoints.web.address=:8000
           - --entrypoints.web.forwardedHeaders.insecure=false
           - --entrypoints.web.http.redirections.entryPoint.to=websecure
@@ -282,6 +293,8 @@ spec:
           - --ping.entryPoint=traefik
           - --providers.file.filename=/etc/traefik/dynamic/dynamic.yml
           - --providers.file.watch=true
+          # Local middleware that injects the verified SPIFFE identity for mtls servers.
+          - --experimental.localPlugins.spiffe-identity.moduleName=github.com/Agent-Hellboy/mcp-runtime/traefik-plugins/spiffe-identity
         ports:
           - name: web
             containerPort: 8000
@@ -292,6 +305,9 @@ spec:
         volumeMounts:
           - name: traefik-dynamic
             mountPath: /etc/traefik/dynamic
+            readOnly: true
+          - name: spiffe-identity-plugin
+            mountPath: /plugins-local/src/github.com/Agent-Hellboy/mcp-runtime/traefik-plugins/spiffe-identity
             readOnly: true
         resources:
           requests:
@@ -319,6 +335,16 @@ spec:
             items:
               - key: dynamic.yml
                 path: dynamic.yml
+        - name: spiffe-identity-plugin
+          configMap:
+            name: traefik-plugin-spiffe-identity
+            items:
+              - key: go.mod
+                path: go.mod
+              - key: .traefik.yml
+                path: .traefik.yml
+              - key: spiffe_identity.go
+                path: spiffe_identity.go
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget

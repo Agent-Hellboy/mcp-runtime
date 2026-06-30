@@ -20,11 +20,12 @@ type PlatformWorkload struct {
 // DefaultPlatformStatusWorkloads lists bundled analytics stack workloads for status output.
 var DefaultPlatformStatusWorkloads = []PlatformWorkload{
 	{Component: "ClickHouse", Namespace: core.DefaultAnalyticsNamespace, Kind: "statefulset", Name: "clickhouse"},
-	{Component: "Zookeeper", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "zookeeper"},
 	{Component: "Kafka", Namespace: core.DefaultAnalyticsNamespace, Kind: "statefulset", Name: "kafka"},
 	{Component: "Ingest", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-sentinel-ingest"},
 	{Component: "Processor", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-sentinel-processor"},
-	{Component: "API", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-sentinel-api"},
+	{Component: "Platform API", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-platform-api"},
+	{Component: "Runtime Control", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-runtime-api"},
+	{Component: "Analytics API", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-analytics-api"},
 	{Component: "UI", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-sentinel-ui"},
 	{Component: "Gateway", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-sentinel-gateway"},
 	{Component: "Prometheus", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "prometheus"},

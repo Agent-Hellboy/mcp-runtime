@@ -7,7 +7,7 @@ RUN npm ci
 COPY services/ui/frontend/ ./
 RUN npm run build
 
-FROM golang:1.26.0 AS build
+FROM golang:1.26.4 AS build
 WORKDIR /src
 
 COPY go.mod go.sum ./

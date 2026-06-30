@@ -67,22 +67,35 @@ func (s *gatewayServer) emitIfEnabled(ctx context.Context, event events.Envelope
 	if s.analyticsURL == "" {
 		return
 	}
+	s.analyticsMu.Lock()
+	if s.analyticsClosed {
+		s.analyticsMu.Unlock()
+		dropped := s.analyticsDropped.Add(1)
+		if shouldLogAnalyticsDrop(dropped) {
+			log.Printf("gateway analytics dispatcher closed; dropped event total=%d source=%q event_type=%q", dropped, event.Source, event.EventType)
+		}
+		return
+	}
+	s.analyticsMu.Unlock()
+
 	queue := s.analyticsEventQueue()
 	if queue == nil {
 		return
 	}
 	s.analyticsMu.Lock()
-	defer s.analyticsMu.Unlock()
-	if s.analyticsClosed {
-		return
-	}
 	item := analyticsEvent{
 		Envelope:     event,
 		TraceContext: serviceutil.CaptureTraceContext(ctx),
 	}
 	select {
 	case queue <- item:
+		s.analyticsMu.Unlock()
 	default:
+		s.analyticsMu.Unlock()
+		dropped := s.analyticsDropped.Add(1)
+		if shouldLogAnalyticsDrop(dropped) {
+			log.Printf("gateway analytics queue full; dropped event total=%d source=%q event_type=%q", dropped, event.Source, event.EventType)
+		}
 	}
 }
 
@@ -103,6 +116,13 @@ func (s *gatewayServer) analyticsEventQueue() chan analyticsEvent {
 		return nil
 	}
 	return s.analyticsQueue
+}
+
+func shouldLogAnalyticsDrop(dropped uint64) bool {
+	if dropped == 1 {
+		return true
+	}
+	return dropped != 0 && dropped&(dropped-1) == 0
 }
 
 // emit sends analytics events to the ingest service.

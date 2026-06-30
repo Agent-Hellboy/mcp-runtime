@@ -31,7 +31,7 @@ func TestSentinelManager_ViewSentinelLogs(t *testing.T) {
 	if cmd.Name != "kubectl" {
 		t.Fatalf("expected kubectl, got %q", cmd.Name)
 	}
-	for _, want := range []string{"logs", "-n", core.DefaultAnalyticsNamespace, "-l", "app=mcp-sentinel-api", "--all-containers=true", "--prefix=true", "--tail", "50", "--since", "5m", "-f"} {
+	for _, want := range []string{"logs", "-n", core.DefaultAnalyticsNamespace, "-l", "app=mcp-platform-api", "--all-containers=true", "--prefix=true", "--tail", "50", "--since", "5m", "-f"} {
 		if !contains(cmd.Args, want) {
 			t.Fatalf("expected %q in args, got %v", want, cmd.Args)
 		}

@@ -131,22 +131,23 @@ Added: 2026-05-24
 
 ---
 
-### Events API (`/api/events/filter`) requires Sentinel static key; server-events uses platform JWT
+### Events API (`GET /api/v1/events`) is admin-only; server-events uses platform JWT
 
 Two analytics query paths exist with different auth requirements:
 
-- `GET /api/events/filter` — legacy Sentinel ingest endpoint; requires the
-  static `UI_API_KEY` from `mcp-sentinel-secrets`, NOT a platform JWT.
-- `GET /api/runtime/server-events` — platform-layer events proxy; accepts
+- `GET /api/v1/events` — ClickHouse event log on analytics-api; requires an
+  admin `x-api-key` or admin platform JWT.
+- `GET /api/v1/runtime/server-events` — platform-layer events proxy; accepts
   the platform JWT (`Authorization: Bearer <token>`).
 
 For scripts and tests that need to verify tool-call events, prefer
-`/api/runtime/server-events` so the caller only needs a platform login,
+`/api/v1/runtime/server-events` so the caller only needs a platform login,
 not direct access to cluster secrets.
 
 References:
-- `services/api/internal/runtimeapi/server_events.go` (`HandleRuntimeServerEvents`)
-- `services/api/main.go` route `/api/runtime/server-events`
+- `services/analytics-api/internal/analytics/handlers.go` (`Events`)
+- `services/runtime-api/internal/runtimeapi/server_events.go` (`HandleRuntimeServerEvents`)
+- `services/runtime-api/routes.go` route `/api/v1/runtime/server-events`
 
 Added: 2026-05-24
 
@@ -157,7 +158,7 @@ Added: 2026-05-24
 Using `registry.mcpruntime.org` (the auth-gated public ingress) as the
 platform pod image pull URL causes a circular bootstrap deadlock on fresh
 installs: kubelet can't pull the Sentinel API pod image because the
-`registry-admin-auth@file` Traefik middleware calls `/api/registry/authz`
+`registry-admin-auth@file` Traefik middleware calls `/api/v1/registry/authz`
 on Sentinel API — which isn't running yet.
 
 **Fix:** `resolveInternalPlatformRegistryURLClientGo` returns the ClusterIP
@@ -186,3 +187,21 @@ References:
 - `AGENTS.md` → **MCP server pod / sidecar checks**
 
 Added: 2026-05-12
+
+---
+
+### Admin forward-auth probes need platform auth headers
+
+When `/grafana` or `/prometheus` are protected by Traefik admin
+forward-auth, E2E requests through the Sentinel gateway need the
+platform `x-api-key` header even if the upstream service also has its
+own auth, such as Grafana Basic auth. The UI `/auth/admin-check`
+forward-auth endpoint must also skip HTTP-to-HTTPS redirects because
+Traefik calls it by internal service DNS.
+
+References:
+- `services/ui/main.go:1156`
+- `test/e2e/kind.sh:5213`
+- `test/e2e/kind.sh:5256`
+
+Added: 2026-05-15

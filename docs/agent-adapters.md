@@ -13,7 +13,7 @@ Both adapters only **present** issued identity values. They do not create
 grants, evaluate policy, or bypass the gateway. Platform admins author
 `MCPAccessGrant` resources first — scaffold with `mcp-runtime access grant init`
 when helpful — and the platform API issues `MCPAgentSession` values through
-`POST /api/runtime/adapter/sessions` when the adapter starts with `--server`
+`POST /api/v1/runtime/adapter/sessions` when the adapter starts with `--server`
 and `--agent`. The gateway is the enforcement point.
 
 The adapter surface is intentionally limited to stdio and Streamable HTTP, the
@@ -25,7 +25,7 @@ There are three supported ways to give an adapter its `humanID`, `agentID`,
 `teamID`, and `sessionID`:
 
 1. **Platform-issued session (recommended).** The adapter calls
-   `POST /api/runtime/adapter/sessions`. The platform derives the principal
+   `POST /api/v1/runtime/adapter/sessions`. The platform derives the principal
    from your `mcp-runtime auth login` token, picks a matching enabled
    `MCPAccessGrant`, writes (or reuses) an `MCPAgentSession`, and returns the
    identity values. Optional `--auto-refresh` renews the session before
@@ -56,7 +56,7 @@ mcp-runtime adapter stdio \
 
 What this does on each invocation:
 
-1. The CLI calls `POST /api/runtime/adapter/sessions` with `{serverName,
+1. The CLI calls `POST /api/v1/runtime/adapter/sessions` with `{serverName,
    namespace?, agentID}`. `namespace` defaults to the principal's primary
    namespace.
 2. The platform derives `humanID` from `Principal.Subject` (fallback to
@@ -210,7 +210,7 @@ async def main() -> None:
     async with httpx.AsyncClient() as http:
         resp = await http.post(
             os.environ["MCP_PLATFORM_API_URL"].rstrip("/")
-            + "/api/runtime/adapter/sessions",
+            + "/api/v1/runtime/adapter/sessions",
             json={
                 "serverName": "workspace-assistant-mcp",
                 "agentID": "ticket-triage-agent",
@@ -352,3 +352,142 @@ Behaviour worth knowing:
 - Restarting the adapter against a revoked or expired session yields a
   fresh `MCPAgentSession` automatically, since the reuse predicate excludes
   revoked/near-expiry sessions.
+
+## Enterprise mTLS and SPIFFE
+
+For mTLS-authenticated adapters, install cert-manager and an internal
+`ClusterIssuer` backed by your company CA, Vault, ADCS, or another workload
+PKI. Do not use Let's Encrypt for client certificates.
+
+Local `setup --test-mode` installs cert-manager and provisions the bundled
+`mcp-runtime-ca` ClusterIssuer automatically so this flow can be validated on
+Kind without public DNS or a production CA.
+
+```bash
+mcp-runtime setup \
+  --with-tls \
+  --tls-cluster-issuer letsencrypt-prod \
+  --mtls-cluster-issuer company-workload-ca
+```
+
+`--mtls-cluster-issuer` is the single switch for the mTLS auth path outside test
+mode: naming a workload issuer enables it. It requires `--with-tls` because
+Traefik terminates the caller's mTLS on the websecure entrypoint. Name your
+enterprise issuer, or name the bundled `mcp-runtime-ca` to have setup provision
+a managed CA for you. `--tls-cluster-issuer` controls public ingress and
+registry certificates and is separate from `--mtls-cluster-issuer` (which
+controls gateway and adapter workload certificates). Environment equivalent:
+`MCP_SETUP_MTLS_CLUSTER_ISSUER=company-workload-ca`. Test mode
+(`setup --test-mode`) defaults the issuer to `mcp-runtime-ca` automatically — no
+mTLS flag needed.
+
+Configure the MCPServer for path-based routing under mtls:
+
+```yaml
+spec:
+  ingressHost: mcp.example.com
+  publicPathPrefix: workspace-assistant
+  ingressClass: traefik
+  gateway:
+    enabled: true
+  auth:
+    mode: mtls
+    trustDomain: mcpruntime.org
+```
+
+**How termination works.** Traefik terminates the caller's mTLS, verifies the
+client certificate against the identity CA, injects the verified SPIFFE identity
+as a trusted header (`X-MCP-Verified-SPIFFE-ID`), and re-encrypts to the gateway
+over a second mTLS hop. This is what allows **path-based routing** — a passthrough
+ingress could only route on SNI/host. The operator generates the Traefik
+`TLSOption` (`RequireAndVerifyClientCert`), the `spiffe-identity` middleware
+(strips client-supplied identity headers, then injects the verified one), a
+`ServersTransport` (the re-encrypted hop with a pinned ingress certificate), and
+a path-based `IngressRoute`. A `NetworkPolicy` restricts the gateway port to the
+ingress so the trusted header cannot be forged by another pod, and the gateway
+additionally requires the connection to be a verified mTLS hop before trusting
+the header.
+
+The caller-facing (user→Traefik) server certificate for the shared mtls host is
+published as Traefik's **default certificate** via a single `TLSStore` named
+`default`, not a per-IngressRoute `secretName` (Traefik resolves `secretName`
+only in the IngressRoute's own tenant namespace, where the shared platform host
+certificate does not exist). Configure the operator with
+`MCP_DEFAULT_INGRESS_TLS_SECRET` (the host certificate Secret) and
+`MCP_DEFAULT_INGRESS_TLS_SECRET_NAMESPACE` (a Traefik-watched namespace holding
+that Secret); the operator then reconciles the one `default` TLSStore there.
+When unset, Traefik falls back to its built-in default certificate.
+
+Enroll an external adapter after signing in to the platform:
+
+```bash
+mcp-runtime adapter enroll \
+  --platform-url https://platform.example.com/api \
+  --server workspace-assistant \
+  --namespace mcp-servers \
+  --agent cursor \
+  --trust-domain mcpruntime.org \
+  --output-dir ~/.config/mcp-runtime/workspace-assistant
+```
+
+The command generates `client.key` locally and submits only a CSR. The platform
+checks that the SPIFFE URI identifies a session owned by the signed-in
+principal, then returns short-lived `client.crt` and `ca.crt` files.
+
+```bash
+mcp-runtime adapter proxy \
+  --runtime-url https://mcp.example.com/workspace-assistant/mcp \
+  --tls-client-cert ~/.config/mcp-runtime/workspace-assistant/client.crt \
+  --tls-client-key ~/.config/mcp-runtime/workspace-assistant/client.key \
+  --tls-ca-bundle ~/.config/mcp-runtime/workspace-assistant/ca.crt
+```
+
+### One-command mode: `--auth mtls`
+
+`--auth mtls` collapses the enroll-then-run steps into a single command. The
+adapter enrolls a session-bound certificate in memory at startup (nothing is
+written to disk) and feeds it straight to the runtime transport:
+
+```bash
+mcp-runtime adapter proxy \
+  --auth mtls \
+  --runtime-url https://mcp.example.com/workspace-assistant/mcp \
+  --platform-url https://platform.example.com/api \
+  --server workspace-assistant \
+  --namespace mcp-servers \
+  --agent cursor \
+  --trust-domain mcpruntime.org \
+  --auto-refresh
+```
+
+`--auth mtls` requires an `https` `--runtime-url` and the same
+`--server`/`--agent` inputs as `enroll` (the certificate's SPIFFE URI encodes
+the issued session). With `--auto-refresh`, the adapter re-enrolls a fresh
+certificate a few minutes before the session expires and drains idle
+connections so subsequent requests renegotiate with it — long-running adapters
+keep working without restarts. Governance identity headers are suppressed in
+this mode. To reuse `enroll` output instead of in-memory enrollment, pass
+`--auth mtls` together with the `--tls-client-cert`/`-key`/`-ca-bundle` files.
+
+### Migrating a server from `header` to `mtls`
+
+`auth.mode` is per-MCPServer, so migrate one server at a time:
+
+1. Ensure the operator has `MCP_MTLS_CLUSTER_ISSUER` set and cert-manager is
+   installed (test-mode provisions `mcp-runtime-ca` automatically).
+2. Flip the MCPServer to `auth.mode: mtls` with a `trustDomain` (see the spec
+   above). The operator swaps the ingress to the terminate+re-encrypt path,
+   issues the gateway and Traefik certificates, writes the trust bundle, and
+   applies the gateway NetworkPolicy.
+3. Switch each adapter to `--auth mtls` (or distribute `enroll` output). In mtls
+   mode the gateway **ignores** `X-MCP-*` identity headers entirely — it derives
+   human, agent, team, and session identity from the verified SPIFFE URI mapped
+   to the rendered session binding — so header-mode and mtls-mode callers cannot
+   be mixed against the same server.
+
+Grants and sessions are unchanged: the same `MCPAccessGrant`/`MCPAgentSession`
+model applies; only how the caller's identity reaches the gateway changes.
+
+The gateway ignores `X-MCP-*` identity headers in mTLS mode. It derives human,
+agent, team, and session identity from the verified SPIFFE URI and the
+operator-rendered session binding.

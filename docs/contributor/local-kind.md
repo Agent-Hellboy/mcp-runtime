@@ -66,7 +66,7 @@ Local URLs:
 | Surface | URL |
 |---|---|
 | Platform UI | `http://localhost:18080/` |
-| Platform API | `http://localhost:18080/api` |
+| Platform API | `http://localhost:18080/api/v1` |
 | MCP route shape | `http://localhost:18080/<server-name>/mcp` |
 
 Keep the Traefik port-forward running while using the browser or `curl`.
@@ -99,7 +99,7 @@ tenant teams and users yourself.
 Anonymous users must not see the MCP catalog:
 
 ```bash
-curl -i http://localhost:18080/api/runtime/servers
+curl -i http://localhost:18080/api/v1/runtime/servers
 ```
 
 Expected status: `401 Unauthorized`.
@@ -114,7 +114,7 @@ curl -sS -c /tmp/mcp-test-user-cookie.txt \
   http://localhost:18080/auth/login
 
 curl -sS -b /tmp/mcp-test-user-cookie.txt \
-  http://localhost:18080/api/runtime/servers |
+  http://localhost:18080/api/v1/runtime/servers |
   jq '{count: (.servers|length), names: [.servers[] | (.namespace + "/" + .name)]}'
 ```
 
@@ -133,12 +133,12 @@ curl -sS -c /tmp/mcp-tenant-a-cookie.txt \
   http://localhost:18080/auth/login
 
 curl -sS -b /tmp/mcp-tenant-a-cookie.txt \
-  http://localhost:18080/api/runtime/servers |
+  http://localhost:18080/api/v1/runtime/servers |
   jq '{count: (.servers|length), names: [.servers[] | (.namespace + "/" + .name)]}'
 
 curl -sS -o /tmp/mcp-tenant-a-cross.txt -w '%{http_code}\n' \
   -b /tmp/mcp-tenant-a-cookie.txt \
-  'http://localhost:18080/api/runtime/servers?namespace=mcp-team-tenant-b'
+  'http://localhost:18080/api/v1/runtime/servers?namespace=mcp-team-tenant-b'
 ```
 
 Tenant A should see `mcp-team-tenant-a`, and the explicit Tenant B namespace

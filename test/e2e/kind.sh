@@ -664,6 +664,9 @@ run_cli_help_sweep() {
     "cluster cert status"
     "cluster cert apply"
     "cluster cert wait"
+    "catalog"
+    "catalog tools"
+    "catalog tool"
     "registry"
     "registry status"
     "registry info"
@@ -680,6 +683,7 @@ run_cli_help_sweep() {
     "server delete"
     "server logs"
     "server status"
+    "server connect-config"
     "server policy"
     "server policy inspect"
     "server build"
@@ -820,26 +824,32 @@ port_forward_resource_bg() {
 }
 
 recover_traefik_port_forward_if_needed() {
-  if [[ -z "${TRAEFIK_PORT_FORWARD_PID:-}" ]]; then
-    return 0
-  fi
   if port_is_listening "${TRAEFIK_PORT}"; then
     return 0
   fi
 
-  if kill -0 "${TRAEFIK_PORT_FORWARD_PID}" >/dev/null 2>&1; then
+  if [[ -n "${TRAEFIK_PORT_FORWARD_PID:-}" ]] && kill -0 "${TRAEFIK_PORT_FORWARD_PID}" >/dev/null 2>&1; then
     kill "${TRAEFIK_PORT_FORWARD_PID}" >/dev/null 2>&1 || true
     wait "${TRAEFIK_PORT_FORWARD_PID}" >/dev/null 2>&1 || true
   fi
+  TRAEFIK_PORT_FORWARD_PID=""
 
   TRAEFIK_PORT_FORWARD_RESTARTS=$((TRAEFIK_PORT_FORWARD_RESTARTS + 1))
   local log_file="${WORKDIR}/traefik-port-forward-restart-${TRAEFIK_PORT_FORWARD_RESTARTS}.log"
   echo "[port-forward] restarting Traefik port-forward on localhost:${TRAEFIK_PORT}" >&2
-  port_forward_bg traefik traefik "${TRAEFIK_PORT}" 8000 "${log_file}"
+  port_forward_bg traefik traefik "${TRAEFIK_PORT}" 8000 "${log_file}" || return 1
   TRAEFIK_PORT_FORWARD_PID="${LAST_MANAGED_PID}"
+  wait_port "${TRAEFIK_PORT}" 30
 }
 
 ensure_traefik_port_forward() {
+  if [[ -n "${TRAEFIK_PORT_FORWARD_PID:-}" ]] && ! port_is_listening "${TRAEFIK_PORT}"; then
+    if kill -0 "${TRAEFIK_PORT_FORWARD_PID}" >/dev/null 2>&1; then
+      kill "${TRAEFIK_PORT_FORWARD_PID}" >/dev/null 2>&1 || true
+      wait "${TRAEFIK_PORT_FORWARD_PID}" >/dev/null 2>&1 || true
+    fi
+    TRAEFIK_PORT_FORWARD_PID=""
+  fi
   if [[ -z "${TRAEFIK_PORT_FORWARD_PID:-}" ]]; then
     echo "[port-forward] exposing traefik on localhost:${TRAEFIK_PORT}"
     port_forward_bg traefik traefik "${TRAEFIK_PORT}" 8000 "${WORKDIR}/traefik-port-forward.log"
@@ -934,8 +944,8 @@ ensure_ui_port_forward() {
 
 ensure_api_port_forward() {
   if [[ -z "${API_SERVICE_PORT_FORWARD_PID:-}" ]]; then
-    echo "[port-forward] exposing mcp-sentinel-api on localhost:${API_SERVICE_PORT}"
-    port_forward_bg mcp-sentinel mcp-sentinel-api "${API_SERVICE_PORT}" 8080 "${WORKDIR}/api-port-forward.log"
+    echo "[port-forward] exposing mcp-platform-api on localhost:${API_SERVICE_PORT}"
+    port_forward_bg mcp-sentinel mcp-platform-api "${API_SERVICE_PORT}" 8080 "${WORKDIR}/api-port-forward.log"
     API_SERVICE_PORT_FORWARD_PID="${LAST_MANAGED_PID}"
   fi
   wait_port "${API_SERVICE_PORT}"
@@ -1025,6 +1035,46 @@ prepare_ingress_mcp_path_after_trust() {
   recover_ingress_mcp_path
   log_line ingress "warming session-backed ingress route after trust checks"
   wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 200 "pong" 20 "" "" "ingress-warmup"
+}
+
+ensure_adapter_proxy_prerequisites() {
+  if api_service_paths_selected; then
+    ensure_api_port_forward
+  fi
+  ensure_gateway_port_forward
+  ensure_traefik_port_forward
+  refresh_mcp_proxy_urls
+}
+
+start_e2e_adapter_proxy() {
+  local adapter_agent_id="$1"
+  local platform_token="$2"
+  local adapter_runtime_url
+
+  ensure_adapter_proxy_prerequisites
+  # Adapter proxy only needs the governed MCP gateway path. Route through the
+  # server Service port-forward instead of Traefik so policy-checkpoint runs do
+  # not depend on ingress sync timing (or stale Traefik namespace watches in
+  # E2E_CACHE_MODE clusters).
+  ensure_server_proxy_port_forward
+  adapter_runtime_url="http://127.0.0.1:${SERVER_PROXY_PORT}${MCP_INGRESS_PATH}"
+  stop_listener_on_port "${ADAPTER_PROXY_PORT}"
+  ADAPTER_PROXY_LOG="${WORKDIR}/adapter-proxy.log"
+  require_port_available "${ADAPTER_PROXY_PORT}" "adapter proxy"
+  MCP_PLATFORM_API_URL="http://127.0.0.1:${SENTINEL_PORT}" \
+    MCP_PLATFORM_API_TOKEN="${platform_token}" \
+    ./bin/mcp-runtime adapter proxy \
+      --listen "127.0.0.1:${ADAPTER_PROXY_PORT}" \
+      --runtime-url "${adapter_runtime_url}" \
+      --host-header "${SERVER_HOST}" \
+      --server "${SERVER_NAME}" \
+      --namespace mcp-servers \
+      --agent "${adapter_agent_id}" \
+      --request-timeout 20s \
+      --log-level info >"${ADAPTER_PROXY_LOG}" 2>&1 &
+  ADAPTER_PROXY_PID="$!"
+  PIDS+=("${ADAPTER_PROXY_PID}")
+  wait_managed_port "${ADAPTER_PROXY_PORT}" "${ADAPTER_PROXY_PID}" "${ADAPTER_PROXY_LOG}" "adapter proxy"
 }
 
 ensure_trust_session_proxy() {
@@ -1607,7 +1657,7 @@ wait_for_gateway_rpc_methods() {
   local server_name="$1"
   local label="$2"
 
-  API_BASE="http://127.0.0.1:${SENTINEL_PORT}/api" \
+  API_BASE="http://127.0.0.1:${SENTINEL_PORT}/api/v1" \
   API_KEY="${API_KEY}" \
   SERVER_NAME="${server_name}" \
   AUDIT_LABEL="${label}" \
@@ -1637,7 +1687,7 @@ expected = {
     "tools/call",
 }
 headers = {"x-api-key": api_key}
-url = f"{api_base}/events/filter?{urllib.parse.urlencode({'server': server_name, 'limit': '1000'})}"
+url = f"{api_base}/events?{urllib.parse.urlencode({'server': server_name, 'limit': '1000'})}"
 last = {}
 last_error = None
 
@@ -2038,7 +2088,7 @@ PY
     fi
     if [[ -f "${last_result_file}" ]]; then
       last_init_status="$(mcp_result_initialize_status "${last_result_file}" 2>/dev/null || true)"
-      if [[ "${last_init_status}" == "504" || "${last_init_status}" == "502" || "${last_init_status}" == "503" ]]; then
+      if [[ "${last_init_status}" == "504" || "${last_init_status}" == "502" || "${last_init_status}" == "503" || "${last_init_status}" == "404" ]]; then
         recover_ingress_mcp_path
         sleep 2
         continue
@@ -2115,8 +2165,8 @@ run_api_platform_http_flows() {
   log_line policy "validating targeted platform API request paths"
   ensure_api_port_forward
   ensure_gateway_port_forward
-  API_BASE="http://127.0.0.1:${API_SERVICE_PORT}" \
-  GATEWAY_API_BASE="http://127.0.0.1:${SENTINEL_PORT}/api" \
+  API_BASE="http://127.0.0.1:${SENTINEL_PORT}/api/v1" \
+  GATEWAY_API_BASE="http://127.0.0.1:${SENTINEL_PORT}/api/v1" \
   API_KEY="${API_KEY}" \
   SERVER_NAME="${SERVER_NAME}" \
   SESSION_ID="${SESSION_ID}" \
@@ -2943,8 +2993,14 @@ image_build_label() {
     docker.io/library/mcp-sentinel-ingest:*)
       echo "build Sentinel ingest image (${image})"
       ;;
-    docker.io/library/mcp-sentinel-api:*)
-      echo "build Sentinel API image (${image})"
+    docker.io/library/mcp-platform-api:*)
+      echo "build platform-api image (${image})"
+      ;;
+    docker.io/library/mcp-runtime-api:*)
+      echo "build runtime-api image (${image})"
+      ;;
+    docker.io/library/mcp-analytics-api:*)
+      echo "build analytics-api image (${image})"
       ;;
     docker.io/library/mcp-sentinel-processor:*)
       echo "build Sentinel processor image (${image})"
@@ -3031,7 +3087,9 @@ wait_core_platform_rollouts() {
   run_logged_stage "verify registry rollout" rollout_status_with_logs registry deploy registry 180s
   run_logged_stage "verify operator rollout" rollout_status_with_logs mcp-runtime deploy mcp-runtime-operator-controller-manager 180s
   run_logged_stage "verify traefik rollout" rollout_status_with_logs traefik deploy traefik 180s
-  run_logged_stage "verify sentinel api rollout" rollout_status_with_logs mcp-sentinel deploy mcp-sentinel-api 180s
+  run_logged_stage "verify platform-api rollout" rollout_status_with_logs mcp-sentinel deploy mcp-platform-api 180s
+  run_logged_stage "verify runtime-api rollout" rollout_status_with_logs mcp-sentinel deploy mcp-runtime-api 180s
+  run_logged_stage "verify analytics-api rollout" rollout_status_with_logs mcp-sentinel deploy mcp-analytics-api 180s
   run_logged_stage "verify sentinel gateway rollout" rollout_status_with_logs mcp-sentinel deploy mcp-sentinel-gateway 180s
   run_logged_stage "verify tempo rollout" rollout_status_with_logs mcp-sentinel statefulset tempo 180s
   run_logged_stage "verify loki rollout" rollout_status_with_logs mcp-sentinel statefulset loki 300s
@@ -3106,16 +3164,34 @@ platform_cache_ready() {
   kubectl rollout status deploy/registry -n registry --timeout=5s >/dev/null 2>&1 || return 1
   kubectl rollout status deploy/mcp-runtime-operator-controller-manager -n mcp-runtime --timeout=5s >/dev/null 2>&1 || return 1
   kubectl rollout status deploy/traefik -n traefik --timeout=5s >/dev/null 2>&1 || return 1
-  kubectl rollout status deploy/mcp-sentinel-api -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
+  kubectl rollout status deploy/mcp-platform-api -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
+  kubectl rollout status deploy/mcp-runtime-api -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
+  kubectl rollout status deploy/mcp-analytics-api -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
   kubectl rollout status deploy/mcp-sentinel-gateway -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
   kubectl rollout status statefulset/clickhouse -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
   kubectl rollout status statefulset/kafka -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
-  kubectl rollout status deploy/zookeeper -n mcp-sentinel --timeout=5s >/dev/null 2>&1 \
-    || kubectl rollout status statefulset/zookeeper -n mcp-sentinel --timeout=5s >/dev/null 2>&1 \
-    || return 1
+  kubectl wait --for=condition=complete job/kafka-topic-init -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
   kubectl rollout status daemonset/promtail -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
   kubectl rollout status statefulset/loki -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
   kubectl rollout status statefulset/tempo -n mcp-sentinel --timeout=5s >/dev/null 2>&1 || return 1
+}
+
+refresh_cached_platform_ingress_contract() {
+  local traefik_base_namespaces="registry,mcp-sentinel,mcp-servers,mcp-servers-org,mcp-servers-public"
+
+  echo "[cache] refreshing registry ingress and Traefik forward-auth contract"
+  kubectl apply -f "${PROJECT_ROOT}/config/registry/base/ingress.yaml"
+  kubectl apply -f "${PROJECT_ROOT}/config/ingress/overlays/http/dynamic-config.yaml"
+
+  if kubectl get deploy traefik -n traefik >/dev/null 2>&1; then
+    # Reset Traefik to the bundled namespace watch list so stale per-team namespaces
+    # from prior cache-mode runs cannot break MCP ingress routing.
+    kubectl patch deployment traefik -n traefik --type='json' \
+      -p="[{\"op\":\"replace\",\"path\":\"/spec/template/spec/containers/0/args/1\",\"value\":\"--providers.kubernetesingress.namespaces=${traefik_base_namespaces}\"}]" \
+      >/dev/null 2>&1 || true
+    kubectl rollout restart deploy/traefik -n traefik >/dev/null 2>&1 || true
+    kubectl rollout status deploy/traefik -n traefik --timeout=180s >/dev/null 2>&1 || true
+  fi
 }
 
 cat > "${KIND_CONFIG}" <<EOF
@@ -3207,7 +3283,6 @@ else
     "traefik:v2.10" \
     "traefik:v3.0" \
     "clickhouse/clickhouse-server:23.8" \
-    "confluentinc/cp-zookeeper:7.5.1" \
     "confluentinc/cp-kafka:7.5.1" \
     "prom/prometheus:v2.49.1" \
     "otel/opentelemetry-collector:0.92.0" \
@@ -3221,7 +3296,9 @@ else
     "${TEST_MODE_REGISTRY_IMAGE}" "test/e2e/registry.Dockerfile" "." \
     "docker.io/library/mcp-sentinel-mcp-gateway:latest" "${SENTINEL_ROOT}/services/mcp-gateway/Dockerfile" "${SENTINEL_ROOT}" \
     "docker.io/library/mcp-sentinel-ingest:latest" "${SENTINEL_ROOT}/services/ingest/Dockerfile" "${SENTINEL_ROOT}" \
-    "docker.io/library/mcp-sentinel-api:latest" "${SENTINEL_ROOT}/services/api/Dockerfile" "${SENTINEL_ROOT}" \
+    "docker.io/library/mcp-platform-api:latest" "${SENTINEL_ROOT}/services/platform-api/Dockerfile" "${SENTINEL_ROOT}" \
+    "docker.io/library/mcp-runtime-api:latest" "${SENTINEL_ROOT}/services/runtime-api/Dockerfile" "${SENTINEL_ROOT}" \
+    "docker.io/library/mcp-analytics-api:latest" "${SENTINEL_ROOT}/services/analytics-api/Dockerfile" "${SENTINEL_ROOT}" \
     "docker.io/library/mcp-sentinel-processor:latest" "${SENTINEL_ROOT}/services/processor/Dockerfile" "${SENTINEL_ROOT}" \
     "docker.io/library/mcp-sentinel-ui:latest" "${SENTINEL_ROOT}/services/ui/Dockerfile" "${SENTINEL_ROOT}"
 fi
@@ -3232,6 +3309,7 @@ export MCP_REGISTRY_ENDPOINT="${MCP_REGISTRY_ENDPOINT:-registry.registry.svc.clu
 export MCP_INGRESS_READINESS_MODE="${MCP_INGRESS_READINESS_MODE:-permissive}"
 export MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT="${MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector.mcp-sentinel.svc.cluster.local:4318}"
 if [[ "${PLATFORM_CACHE_READY}" == "1" ]]; then
+  refresh_cached_platform_ingress_contract
   echo "[setup] skipping platform setup because E2E_CACHE_MODE=1 found a ready platform"
 else
   echo "[setup] running platform setup in test mode (platform mode: ${E2E_PLATFORM_MODE})"
@@ -3705,10 +3783,7 @@ EOF
     # reuse semantics (reused=true on the *second* call within this run).
     ADAPTER_AGENT_ID="e2e-adapter-agent-$(date +%s)"
 
-    if api_service_paths_selected; then
-      ensure_api_port_forward
-    fi
-    ensure_gateway_port_forward
+    ensure_adapter_proxy_prerequisites
 
     log_line policy "applying agent-scoped grant for adapter-session test"
     cat >"${WORKDIR}/adapter-session-grant.yaml" <<EOF
@@ -3739,7 +3814,7 @@ print(json.dumps({"email": os.environ["PLATFORM_ADMIN_EMAIL"], "password": os.en
 ' | curl -fsS -X POST \
       -H "content-type: application/json" \
       --data-binary @- \
-      "http://127.0.0.1:${API_SERVICE_PORT}/api/auth/login" | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')"
+      "http://127.0.0.1:${API_SERVICE_PORT}/api/v1/auth/login" | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')"
 
     log_line policy "adapter-session endpoint should issue a session for the wildcard grant"
     ADAPTER_SESSION_BODY="$(printf '{"serverName":"%s","namespace":"mcp-servers","agentID":"%s"}' "${SERVER_NAME}" "${ADAPTER_AGENT_ID}")"
@@ -3747,7 +3822,7 @@ print(json.dumps({"email": os.environ["PLATFORM_ADMIN_EMAIL"], "password": os.en
       -H "Authorization: Bearer ${ADAPTER_PLATFORM_TOKEN}" \
       -H "content-type: application/json" \
       --data "${ADAPTER_SESSION_BODY}" \
-      "http://127.0.0.1:${SENTINEL_PORT}/api/runtime/adapter/sessions")"
+      "http://127.0.0.1:${SENTINEL_PORT}/api/v1/runtime/adapter/sessions")"
     echo "${ADAPTER_SESSION_RESP}" | ADAPTER_AGENT_ID="${ADAPTER_AGENT_ID}" python3 -c "
 import json, os, sys
 resp = json.load(sys.stdin)
@@ -3775,7 +3850,7 @@ print('adapter-session issued:', resp['name'], 'reused=', resp['reused'])
       -H "Authorization: Bearer ${ADAPTER_PLATFORM_TOKEN}" \
       -H "content-type: application/json" \
       --data "${ADAPTER_SESSION_BODY}" \
-      "http://127.0.0.1:${SENTINEL_PORT}/api/runtime/adapter/sessions")"
+      "http://127.0.0.1:${SENTINEL_PORT}/api/v1/runtime/adapter/sessions")"
     echo "${ADAPTER_SESSION_RESP2}" | python3 -c "
 import json, sys
 resp = json.load(sys.stdin)
@@ -3789,7 +3864,7 @@ print('adapter-session reused:', resp['name'])
       -H "Authorization: Bearer ${ADAPTER_PLATFORM_TOKEN}" \
       -H "content-type: application/json" \
       --data '{"serverName":"definitely-missing","namespace":"mcp-servers","agentID":"ops-agent"}' \
-      "http://127.0.0.1:${SENTINEL_PORT}/api/runtime/adapter/sessions")"
+      "http://127.0.0.1:${SENTINEL_PORT}/api/v1/runtime/adapter/sessions")"
     if [[ "${ADAPTER_SESSION_REJECT_STATUS}" != "403" ]]; then
       echo "expected 403 when no grant matches, got ${ADAPTER_SESSION_REJECT_STATUS}" >&2
       exit 1
@@ -3797,26 +3872,7 @@ print('adapter-session reused:', resp['name'])
 
     if deep_request_flows_enabled || scenario_selected "adapter-proxy"; then
       log_line policy "running local adapter proxy with platform-issued session"
-      ADAPTER_PROXY_LOG="${WORKDIR}/adapter-proxy.log"
-      if port_is_listening "${ADAPTER_PROXY_PORT}"; then
-        echo "[proxy] reusing existing adapter proxy on localhost:${ADAPTER_PROXY_PORT}"
-      else
-        require_port_available "${ADAPTER_PROXY_PORT}" "adapter proxy"
-        MCP_PLATFORM_API_URL="http://127.0.0.1:${API_SERVICE_PORT}" \
-          MCP_PLATFORM_API_TOKEN="${ADAPTER_PLATFORM_TOKEN}" \
-          ./bin/mcp-runtime adapter proxy \
-            --listen "127.0.0.1:${ADAPTER_PROXY_PORT}" \
-            --runtime-url "${MCP_DIRECT_URL}" \
-            --host-header "${SERVER_HOST}" \
-            --server "${SERVER_NAME}" \
-            --namespace mcp-servers \
-            --agent "${ADAPTER_AGENT_ID}" \
-            --request-timeout 20s \
-            --log-level info >"${ADAPTER_PROXY_LOG}" 2>&1 &
-        ADAPTER_PROXY_PID="$!"
-        PIDS+=("${ADAPTER_PROXY_PID}")
-        wait_managed_port "${ADAPTER_PROXY_PORT}" "${ADAPTER_PROXY_PID}" "${ADAPTER_PROXY_LOG}" "adapter proxy"
-      fi
+      start_e2e_adapter_proxy "${ADAPTER_AGENT_ID}" "${ADAPTER_PLATFORM_TOKEN}"
       # The adapter session is rendered through the policy ConfigMap, then the
       # gateway observes the mounted file on its next kubelet/poll interval.
       # Reuse the normal policy wait budget here; CI can take longer than a
@@ -3829,6 +3885,7 @@ print('adapter-session reused:', resp['name'])
   if deep_request_flows_enabled || scenario_selected "cli-platform"; then
     log_line policy "running platform CLI request-flow sweep"
     ensure_api_port_forward
+    ensure_gateway_port_forward
     if [[ -z "${ADAPTER_PLATFORM_TOKEN:-}" ]]; then
       ADAPTER_PLATFORM_TOKEN="$(PLATFORM_ADMIN_EMAIL="${PLATFORM_ADMIN_EMAIL}" PLATFORM_ADMIN_PASSWORD="${PLATFORM_ADMIN_PASSWORD}" python3 -c '
 import json, os
@@ -3836,12 +3893,12 @@ print(json.dumps({"email": os.environ["PLATFORM_ADMIN_EMAIL"], "password": os.en
 ' | curl -fsS -X POST \
         -H "content-type: application/json" \
         --data-binary @- \
-        "http://127.0.0.1:${API_SERVICE_PORT}/api/auth/login" | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')"
+        "http://127.0.0.1:${API_SERVICE_PORT}/api/v1/auth/login" | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')"
     fi
     DEEP_CLI_TEAM_SLUG="e2e-cli-$(date +%s)"
     DEEP_CLI_USER_EMAIL="${DEEP_CLI_TEAM_SLUG}@mcpruntime.org"
     DEEP_PLATFORM_ENV=(
-      MCP_PLATFORM_API_URL="http://127.0.0.1:${API_SERVICE_PORT}"
+      MCP_PLATFORM_API_URL="http://127.0.0.1:${SENTINEL_PORT}"
       MCP_PLATFORM_API_TOKEN="${ADAPTER_PLATFORM_TOKEN}"
     )
 
@@ -3979,7 +4036,7 @@ if checkpoint_enabled "oauth"; then
     ensure_api_port_forward
   fi
   if scenario_selected "observability"; then
-    port_forward_bg mcp-sentinel mcp-sentinel-api "${API_METRICS_PORT}" 9090 "${WORKDIR}/api-metrics-port-forward.log"
+    port_forward_bg mcp-sentinel mcp-platform-api "${API_METRICS_PORT}" 9090 "${WORKDIR}/api-metrics-port-forward.log"
     port_forward_bg mcp-sentinel mcp-sentinel-ingest "${INGEST_SERVICE_PORT}" 8081 "${WORKDIR}/ingest-port-forward.log"
     port_forward_bg mcp-sentinel mcp-sentinel-ingest "${INGEST_METRICS_PORT}" 9091 "${WORKDIR}/ingest-metrics-port-forward.log"
     port_forward_bg mcp-sentinel mcp-sentinel-processor "${PROCESSOR_METRICS_PORT}" 9102 "${WORKDIR}/processor-metrics-port-forward.log"
@@ -4013,7 +4070,7 @@ if checkpoint_enabled "oauth"; then
   if ui_service_paths_selected; then
     wait_port "${UI_SERVICE_PORT}"
   fi
-  wait_http "http://127.0.0.1:${SENTINEL_PORT}/api/stats" "x-api-key: ${API_KEY}"
+  wait_http "http://127.0.0.1:${SENTINEL_PORT}/api/v1/stats" "x-api-key: ${API_KEY}"
   wait_http "http://127.0.0.1:${TEMPO_PORT}/ready"
   wait_http "http://127.0.0.1:${LOKI_PORT}/ready"
   if scenario_selected "observability"; then
@@ -4025,6 +4082,7 @@ if checkpoint_enabled "oauth"; then
   REGISTRY_PUBLIC_URL="http://127.0.0.1:${TRAEFIK_PORT}/v2/_catalog"
   REGISTRY_UNAUTH_STATUS=""
   for attempt in $(seq 1 12); do
+    recover_traefik_port_forward_if_needed || true
     REGISTRY_UNAUTH_STATUS="$(curl -sS -o /dev/null -w '%{http_code}' -H "Host: registry.local" "${REGISTRY_PUBLIC_URL}" || true)"
     if [[ "${REGISTRY_UNAUTH_STATUS}" == "401" || "${REGISTRY_UNAUTH_STATUS}" == "403" ]]; then
       break
@@ -4038,6 +4096,7 @@ if checkpoint_enabled "oauth"; then
   fi
   REGISTRY_ADMIN_STATUS=""
   for attempt in $(seq 1 12); do
+    recover_traefik_port_forward_if_needed || true
     REGISTRY_ADMIN_STATUS="$(curl -sS -o /dev/null -w '%{http_code}' -H "Host: registry.local" -H "x-api-key: ${API_KEY}" "${REGISTRY_PUBLIC_URL}" || true)"
     if [[ "${REGISTRY_ADMIN_STATUS}" == "200" ]]; then
       break
@@ -4519,7 +4578,7 @@ PY
 
   echo "[oauth] validating valid bearer token MCP flow"
   wait_for_mcp_tool_result "${MCP_OAUTH_VALID_URL}" "add" '{"a":7,"b":5}' 200 "12"
-  API_BASE="http://127.0.0.1:${SENTINEL_PORT}/api" \
+  API_BASE="http://127.0.0.1:${SENTINEL_PORT}/api/v1" \
   API_KEY="${API_KEY}" \
   OAUTH_SERVER_NAME="${OAUTH_SERVER_NAME}" \
   OAUTH_HUMAN_ID="${OAUTH_HUMAN_ID}" \
@@ -4555,7 +4614,7 @@ params = urllib.parse.urlencode(
         "limit": "20",
     }
 )
-url = f"{api_base}/events/filter?{params}"
+url = f"{api_base}/events?{params}"
 headers = {"x-api-key": api_key}
 last_doc = {}
 
@@ -4686,6 +4745,8 @@ if scenario_selected "governance" || scenario_selected "adapter-proxy"; then
   # reuse semantics (reused=true on the *second* call within this run).
   ADAPTER_AGENT_ID="e2e-adapter-agent-$(date +%s)"
 
+  ensure_adapter_proxy_prerequisites
+
   log_line policy "applying agent-scoped grant for adapter-session test"
   cat >"${WORKDIR}/adapter-session-grant.yaml" <<EOF
 apiVersion: mcpruntime.org/v1alpha1
@@ -4715,7 +4776,7 @@ print(json.dumps({"email": os.environ["PLATFORM_ADMIN_EMAIL"], "password": os.en
 ' | curl -fsS -X POST \
     -H "content-type: application/json" \
     --data-binary @- \
-    "http://127.0.0.1:${API_SERVICE_PORT}/api/auth/login" | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')"
+    "http://127.0.0.1:${API_SERVICE_PORT}/api/v1/auth/login" | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')"
 
   log_line policy "adapter-session endpoint should issue a session for the wildcard grant"
   ADAPTER_SESSION_BODY="$(printf '{"serverName":"%s","namespace":"mcp-servers","agentID":"%s"}' "${SERVER_NAME}" "${ADAPTER_AGENT_ID}")"
@@ -4723,7 +4784,7 @@ print(json.dumps({"email": os.environ["PLATFORM_ADMIN_EMAIL"], "password": os.en
     -H "Authorization: Bearer ${ADAPTER_PLATFORM_TOKEN}" \
     -H "content-type: application/json" \
     --data "${ADAPTER_SESSION_BODY}" \
-    "http://127.0.0.1:${SENTINEL_PORT}/api/runtime/adapter/sessions")"
+    "http://127.0.0.1:${SENTINEL_PORT}/api/v1/runtime/adapter/sessions")"
   echo "${ADAPTER_SESSION_RESP}" | ADAPTER_AGENT_ID="${ADAPTER_AGENT_ID}" python3 -c "
 import json, os, sys
 resp = json.load(sys.stdin)
@@ -4751,7 +4812,7 @@ print('adapter-session issued:', resp['name'], 'reused=', resp['reused'])
     -H "Authorization: Bearer ${ADAPTER_PLATFORM_TOKEN}" \
     -H "content-type: application/json" \
     --data "${ADAPTER_SESSION_BODY}" \
-    "http://127.0.0.1:${SENTINEL_PORT}/api/runtime/adapter/sessions")"
+    "http://127.0.0.1:${SENTINEL_PORT}/api/v1/runtime/adapter/sessions")"
   echo "${ADAPTER_SESSION_RESP2}" | python3 -c "
 import json, sys
 resp = json.load(sys.stdin)
@@ -4765,7 +4826,7 @@ print('adapter-session reused:', resp['name'])
     -H "Authorization: Bearer ${ADAPTER_PLATFORM_TOKEN}" \
     -H "content-type: application/json" \
     --data '{"serverName":"definitely-missing","namespace":"mcp-servers","agentID":"ops-agent"}' \
-    "http://127.0.0.1:${SENTINEL_PORT}/api/runtime/adapter/sessions")"
+    "http://127.0.0.1:${SENTINEL_PORT}/api/v1/runtime/adapter/sessions")"
   if [[ "${ADAPTER_SESSION_REJECT_STATUS}" != "403" ]]; then
     echo "expected 403 when no grant matches, got ${ADAPTER_SESSION_REJECT_STATUS}" >&2
     exit 1
@@ -4773,37 +4834,19 @@ print('adapter-session reused:', resp['name'])
 
   if deep_request_flows_enabled || scenario_selected "adapter-proxy"; then
     log_line policy "running local adapter proxy with platform-issued session"
-    ADAPTER_PROXY_LOG="${WORKDIR}/adapter-proxy.log"
-    if port_is_listening "${ADAPTER_PROXY_PORT}"; then
-      echo "[proxy] reusing existing adapter proxy on localhost:${ADAPTER_PROXY_PORT}"
-    else
-      require_port_available "${ADAPTER_PROXY_PORT}" "adapter proxy"
-      MCP_PLATFORM_API_URL="http://127.0.0.1:${API_SERVICE_PORT}" \
-        MCP_PLATFORM_API_TOKEN="${ADAPTER_PLATFORM_TOKEN}" \
-        ./bin/mcp-runtime adapter proxy \
-          --listen "127.0.0.1:${ADAPTER_PROXY_PORT}" \
-          --runtime-url "${MCP_DIRECT_URL}" \
-          --host-header "${SERVER_HOST}" \
-          --server "${SERVER_NAME}" \
-          --namespace mcp-servers \
-          --agent "${ADAPTER_AGENT_ID}" \
-          --request-timeout 20s \
-          --log-level info >"${ADAPTER_PROXY_LOG}" 2>&1 &
-      ADAPTER_PROXY_PID="$!"
-      PIDS+=("${ADAPTER_PROXY_PID}")
-      wait_managed_port "${ADAPTER_PROXY_PORT}" "${ADAPTER_PROXY_PID}" "${ADAPTER_PROXY_LOG}" "adapter proxy"
-    fi
+    start_e2e_adapter_proxy "${ADAPTER_AGENT_ID}" "${ADAPTER_PLATFORM_TOKEN}"
     # The adapter session is rendered through the policy ConfigMap, then the
     # gateway observes the mounted file on its next kubelet/poll interval.
     # Reuse the normal policy wait budget here; CI can take longer than a
     # short smoke retry after the ConfigMap has already been updated.
     wait_for_mcp_tool_result "http://127.0.0.1:${ADAPTER_PROXY_PORT}/mcp" "aaa-ping" '{}' 200 "pong"
     wait_for_mcp_tool_result "http://127.0.0.1:${ADAPTER_PROXY_PORT}/mcp" "add" '{"a":1,"b":2}' 403 "tool_not_granted"
-fi
+  fi
 
 if deep_request_flows_enabled || scenario_selected "cli-platform"; then
   log_line policy "running platform CLI request-flow sweep"
   ensure_api_port_forward
+  ensure_gateway_port_forward
   if [[ -z "${ADAPTER_PLATFORM_TOKEN:-}" ]]; then
     ADAPTER_PLATFORM_TOKEN="$(PLATFORM_ADMIN_EMAIL="${PLATFORM_ADMIN_EMAIL}" PLATFORM_ADMIN_PASSWORD="${PLATFORM_ADMIN_PASSWORD}" python3 -c '
 import json, os
@@ -4811,12 +4854,12 @@ print(json.dumps({"email": os.environ["PLATFORM_ADMIN_EMAIL"], "password": os.en
 ' | curl -fsS -X POST \
       -H "content-type: application/json" \
       --data-binary @- \
-      "http://127.0.0.1:${API_SERVICE_PORT}/api/auth/login" | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')"
+      "http://127.0.0.1:${API_SERVICE_PORT}/api/v1/auth/login" | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')"
   fi
   DEEP_CLI_TEAM_SLUG="e2e-cli-$(date +%s)"
   DEEP_CLI_USER_EMAIL="${DEEP_CLI_TEAM_SLUG}@mcpruntime.org"
   DEEP_PLATFORM_ENV=(
-    MCP_PLATFORM_API_URL="http://127.0.0.1:${API_SERVICE_PORT}"
+    MCP_PLATFORM_API_URL="http://127.0.0.1:${SENTINEL_PORT}"
     MCP_PLATFORM_API_TOKEN="${ADAPTER_PLATFORM_TOKEN}"
   )
 
@@ -4830,6 +4873,52 @@ print(json.dumps({"email": os.environ["PLATFORM_ADMIN_EMAIL"], "password": os.en
   env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime team user list "${DEEP_CLI_TEAM_SLUG}" >/dev/null
   env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime server list --namespace mcp-servers >/dev/null
   env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime server get "${SERVER_NAME}" --namespace mcp-servers >/dev/null
+  env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime catalog tools \
+    --namespace mcp-servers \
+    --risk low >"${WORKDIR}/catalog-tools.txt"
+  grep -q "${SERVER_NAME}" "${WORKDIR}/catalog-tools.txt"
+  grep -q "aaa-ping" "${WORKDIR}/catalog-tools.txt"
+  env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime catalog tool aaa-ping \
+    --server "${SERVER_NAME}" \
+    --namespace mcp-servers \
+    --output json >"${WORKDIR}/catalog-tool.json"
+  python3 - "${WORKDIR}/catalog-tool.json" <<'PY'
+import json
+import sys
+
+payload = json.load(open(sys.argv[1], encoding="utf-8"))
+matches = [
+    tool for tool in payload.get("tools", [])
+    if tool.get("tool_name") == "aaa-ping"
+]
+if not matches:
+    raise SystemExit("catalog tool output did not include aaa-ping")
+tool = matches[0]
+if tool.get("risk_level") != "low":
+    raise SystemExit(f"expected aaa-ping low risk, got {tool.get('risk_level')!r}")
+config = tool.get("connect_config") or {}
+if not config.get("mcpServers"):
+    raise SystemExit("catalog tool output did not include connect_config.mcpServers")
+PY
+  env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime server connect-config "${SERVER_NAME}" \
+    --namespace mcp-servers \
+    --client claude \
+    --output json >"${WORKDIR}/server-connect-config.json"
+  python3 - "${WORKDIR}/server-connect-config.json" "${SERVER_NAME}" <<'PY'
+import json
+import sys
+
+payload = json.load(open(sys.argv[1], encoding="utf-8"))
+server_name = sys.argv[2]
+servers = payload.get("mcpServers") or {}
+server = servers.get(server_name)
+if not server:
+    raise SystemExit(f"connect config missing {server_name}")
+if server.get("type") != "http":
+    raise SystemExit(f"expected http connect config, got {server.get('type')!r}")
+if not server.get("url"):
+    raise SystemExit("connect config missing url")
+PY
   env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime access grant list --namespace mcp-servers >/dev/null
   env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime access grant get "${SERVER_NAME}-grant" --namespace mcp-servers >/dev/null
   env "${DEEP_PLATFORM_ENV[@]}" ./bin/mcp-runtime access session list --namespace mcp-servers >/dev/null
@@ -4842,7 +4931,7 @@ fi
 
 if scenario_selected "observability" && checkpoint_enabled "observability"; then
   echo "[observe] validating audit, traces, and logs"
-  API_BASE="http://127.0.0.1:${SENTINEL_PORT}/api" \
+  API_BASE="http://127.0.0.1:${SENTINEL_PORT}/api/v1" \
   API_KEY="${API_KEY}" \
   INGEST_API_KEY="${INGEST_API_KEY}" \
   SERVER_NAME="${SERVER_NAME}" \
@@ -5080,7 +5169,7 @@ def wait_for_prometheus_up(base_url, *, headers=None, description):
         value = result.get("value", [])
         if len(value) >= 2 and metric.get("job"):
             jobs[metric["job"]] = str(value[1])
-    for job in ("mcp-sentinel-api", "mcp-sentinel-ingest", "mcp-sentinel-processor", "clickhouse"):
+    for job in ("mcp-platform-api", "mcp-runtime-api", "mcp-analytics-api", "mcp-sentinel-ingest", "mcp-sentinel-processor", "clickhouse"):
         check(
             jobs.get(job) == "1",
             f"{description} reports {job}=1",
@@ -5172,7 +5261,7 @@ check(
 )
 
 pii_events = wait_for_json(
-    f"{api_base}/events/filter?source={urllib.parse.quote(pii_source)}&event_type=pii.check&limit=1",
+    f"{api_base}/events?source={urllib.parse.quote(pii_source)}&event_type=pii.check&limit=1",
     lambda doc: bool(doc.get("events", [])),
     headers=headers,
     description="pii redaction event",
@@ -5208,55 +5297,55 @@ check(
 
 
 allow_aaa_ping = wait_for_json(
-    f"{api_base}/events/filter?server={server_name}&decision=allow&tool_name=aaa-ping&limit=20",
+    f"{api_base}/events?server={server_name}&decision=allow&tool_name=aaa-ping&limit=20",
     lambda doc: bool(doc.get("events", [])),
     headers=headers,
     description="allow audit event for aaa-ping",
 ).get("events", [])
 allow_echo = wait_for_json(
-    f"{api_base}/events/filter?server={server_name}&decision=allow&tool_name=echo&limit=20",
+    f"{api_base}/events?server={server_name}&decision=allow&tool_name=echo&limit=20",
     lambda doc: bool(doc.get("events", [])),
     headers=headers,
     description="allow audit event for echo",
 ).get("events", [])
 deny_upper = wait_for_json(
-    f"{api_base}/events/filter?server={server_name}&decision=deny&tool_name=upper&limit=20",
+    f"{api_base}/events?server={server_name}&decision=deny&tool_name=upper&limit=20",
     lambda doc: bool(doc.get("events", [])),
     headers=headers,
     description="deny audit event for upper",
 ).get("events", [])
 deny_echo = wait_for_json(
-    f"{api_base}/events/filter?server={server_name}&decision=deny&tool_name=echo&limit=20",
+    f"{api_base}/events?server={server_name}&decision=deny&tool_name=echo&limit=20",
     lambda doc: bool(doc.get("events", [])),
     headers=headers,
     description="deny audit event for echo",
 ).get("events", [])
 deny_aaa_ping = wait_for_json(
-    f"{api_base}/events/filter?server={server_name}&decision=deny&tool_name=aaa-ping&limit=50",
+    f"{api_base}/events?server={server_name}&decision=deny&tool_name=aaa-ping&limit=50",
     lambda doc: bool(doc.get("events", [])),
     headers=headers,
     description="deny audit event for aaa-ping",
 ).get("events", [])
 oauth_allow_aaa_ping = wait_for_json(
-    f"{api_base}/events/filter?server={oauth_server_name}&decision=allow&tool_name=aaa-ping&limit=20",
+    f"{api_base}/events?server={oauth_server_name}&decision=allow&tool_name=aaa-ping&limit=20",
     lambda doc: bool(doc.get("events", [])),
     headers=headers,
     description="oauth allow audit event for aaa-ping",
 ).get("events", [])
 oauth_deny_events = wait_for_json(
-    f"{api_base}/events/filter?server={oauth_server_name}&decision=deny&limit=50",
+    f"{api_base}/events?server={oauth_server_name}&decision=deny&limit=50",
     lambda doc: bool(doc.get("events", [])),
     headers=headers,
     description="oauth deny audit events",
 ).get("events", [])
 all_oauth_events = wait_for_json(
-    f"{api_base}/events/filter?server={oauth_server_name}&limit=1000",
+    f"{api_base}/events?server={oauth_server_name}&limit=1000",
     lambda doc: rpc_methods_from_events_doc(doc) >= expected_gateway_rpc_method_set,
     headers=headers,
     description="oauth server audit events",
 ).get("events", [])
 allow_upper = wait_for_json(
-    f"{api_base}/events/filter?server={server_name}&decision=allow&tool_name=upper&limit=20",
+    f"{api_base}/events?server={server_name}&decision=allow&tool_name=upper&limit=20",
     lambda doc: bool(doc.get("events", [])),
     headers=headers,
     description="allow audit event for upper",
@@ -5275,14 +5364,14 @@ _required_deny_reasons = [
 all_server_denies = []
 for _deny_reason in _required_deny_reasons:
     _reason_events = wait_for_json(
-        f"{api_base}/events/filter?server={server_name}&decision=deny&reason={_deny_reason}&limit=5",
+        f"{api_base}/events?server={server_name}&decision=deny&reason={_deny_reason}&limit=5",
         lambda doc: bool(doc.get("events", [])),
         headers=headers,
         description=f"server deny audit event for reason {_deny_reason}",
     ).get("events", [])
     all_server_denies.extend(_reason_events)
 all_server_events = wait_for_json(
-    f"{api_base}/events/filter?server={server_name}&limit=1000",
+    f"{api_base}/events?server={server_name}&limit=1000",
     lambda doc: rpc_methods_from_events_doc(doc) >= expected_recent_gateway_rpc_method_set,
     headers=headers,
     description="server audit events",
@@ -5971,9 +6060,9 @@ fi
 echo "[cli] checking sentinel restart command"
 # The full E2E stack packs single-node Kind tightly, so avoid requiring surge CPU for this restart smoke.
 refresh_kind_kubeconfig
-kubectl patch deployment mcp-sentinel-api -n mcp-sentinel --type merge -p '{"spec":{"strategy":{"type":"RollingUpdate","rollingUpdate":{"maxSurge":0,"maxUnavailable":1}}}}' >/dev/null
+kubectl patch deployment mcp-platform-api -n mcp-sentinel --type merge -p '{"spec":{"strategy":{"type":"RollingUpdate","rollingUpdate":{"maxSurge":0,"maxUnavailable":1}}}}' >/dev/null
 KUBECONFIG="${KUBECONFIG_FILE}" ./bin/mcp-runtime sentinel restart api
-rollout_status_with_logs mcp-sentinel deploy mcp-sentinel-api 180s
+rollout_status_with_logs mcp-sentinel deploy mcp-platform-api 180s
 
 echo "[cli] deleting deployed MCP servers"
 if scenario_selected "oauth"; then

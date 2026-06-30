@@ -7,6 +7,7 @@ const (
 	AuthModeNone   AuthMode = "none"
 	AuthModeHeader AuthMode = "header"
 	AuthModeOAuth  AuthMode = "oauth"
+	AuthModeMTLS   AuthMode = "mtls"
 )
 
 // +kubebuilder:validation:Enum=allow-list;observe
@@ -41,6 +42,14 @@ const (
 	ToolSideEffectRead        ToolSideEffect = "read"
 	ToolSideEffectWrite       ToolSideEffect = "write"
 	ToolSideEffectDestructive ToolSideEffect = "destructive"
+)
+
+type ToolRiskLevel string
+
+const (
+	ToolRiskLevelLow    ToolRiskLevel = "low"
+	ToolRiskLevelMedium ToolRiskLevel = "medium"
+	ToolRiskLevelHigh   ToolRiskLevel = "high"
 )
 
 // +kubebuilder:validation:Enum=RollingUpdate;Recreate;Canary
@@ -169,6 +178,7 @@ type ToolConfig struct {
 	Description   string            `yaml:"description,omitempty" json:"description,omitempty"`
 	RequiredTrust TrustLevel        `yaml:"requiredTrust,omitempty" json:"requiredTrust,omitempty"`
 	SideEffect    ToolSideEffect    `yaml:"sideEffect" json:"sideEffect"`
+	RiskLevel     ToolRiskLevel     `yaml:"riskLevel,omitempty" json:"riskLevel,omitempty"`
 	Labels        map[string]string `yaml:"labels,omitempty" json:"labels,omitempty"`
 }
 
@@ -189,6 +199,7 @@ type AuthConfig struct {
 	TokenHeader     string   `yaml:"tokenHeader,omitempty" json:"tokenHeader,omitempty"`
 	IssuerURL       string   `yaml:"issuerURL,omitempty" json:"issuerURL,omitempty"`
 	Audience        string   `yaml:"audience,omitempty" json:"audience,omitempty"`
+	TrustDomain     string   `yaml:"trustDomain,omitempty" json:"trustDomain,omitempty"`
 }
 
 // PolicyConfig configures authorization behavior at the gateway.

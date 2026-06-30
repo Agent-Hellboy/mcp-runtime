@@ -79,6 +79,9 @@ Important setup contracts:
 - Registry info is resolved before runtime images are named.
 - Internal registry pushes validate platform credentials, then use an
   in-cluster helper when direct host pushes are not appropriate.
+- Operator setup prepares admission webhook TLS, enables webhook serving on the
+  manager deployment, and applies the generated webhook service/configuration
+  with the matching CA bundle.
 - Sentinel rollouts use `MCP_DEPLOYMENT_TIMEOUT`.
 - Setup verification should fail with diagnostic context instead of reporting
   success after partial deployment.
@@ -175,9 +178,9 @@ Tests: `access/manager_test.go` and `access/validation_test.go`.
 
 ## Adapter
 
-`internal/cli/adapter/` provides the `adapter proxy` and `adapter stdio`
+`internal/cli/adapter/` provides `adapter enroll`, `adapter proxy`, and `adapter stdio`
 commands. The CLI layer resolves shared flags, optional platform-issued adapter
-sessions from `POST /api/runtime/adapter/sessions`, and explicit
+sessions from `POST /api/v1/runtime/adapter/sessions`, and explicit
 `MCP_RUNTIME_*` identity values, then delegates HTTP proxy and stdio transport
 behavior to `internal/agentadapter`.
 
@@ -196,19 +199,19 @@ and `team user` call the platform API through `internal/cli/platformapi`.
 `team init` is deprecated and rejects at runtime; use `team create`.
 
 Team behavior spans CLI and API code: platform-backed team creation and
-membership routes live in `services/api/internal/runtimeapi`, durable identity
-state lives in `services/api/internal/platformstore`, and user-facing guidance
+membership routes live in `services/runtime-api/internal/runtimeapi`, durable identity
+state lives in `services/platform-api/internal/platformstore`, and user-facing guidance
 lives in `docs/multi-team.md`.
 
 Tests: `team/manager_test.go`; for platform team API changes, run focused tests
-inside `services/api`.
+inside `services/platform-api` and `services/runtime-api`.
 
 ## Auth, Sentinel, and Platform API
 
 `internal/cli/auth/` handles platform API login, logout, and credential profiles.
 `internal/cli/sentinel/` and `internal/cli/platformapi/` provide CLI access to
-Sentinel APIs and platform API URL normalization. These commands should stay
-aligned with `services/api` routes and the public docs.
+the split Sentinel APIs and platform API URL normalization. These commands should stay
+aligned with split API service routes (`/api/v1/*`) and the public docs.
 
 Tests: `sentinel/*_test.go`, `auth/*_test.go`, and `platformapi/*_test.go`.
 

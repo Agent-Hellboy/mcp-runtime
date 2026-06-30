@@ -1,0 +1,72 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kafka-topic-init
+  namespace: mcp-sentinel
+spec:
+  backoffLimit: 12
+  template:
+    metadata:
+      labels:
+        app: kafka-topic-init
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: kafka-topic-init
+          image: confluentinc/cp-kafka:7.5.1
+          command:
+            - /bin/bash
+            - -ec
+            - |
+              echo "Waiting for Kafka to be ready..."
+              ready=false
+              for i in {1..60}; do
+                if kafka-topics --bootstrap-server kafka:9092 --list >/dev/null 2>&1; then
+                  ready=true
+                  break
+                fi
+                sleep 2
+              done
+              if [ "$ready" != "true" ]; then
+                echo "Timed out waiting for Kafka"
+                exit 1
+              fi
+              kafka-topics \
+                --bootstrap-server kafka:9092 \
+                --create \
+                --if-not-exists \
+                --topic mcp.events \
+                --partitions 3 \
+                --replication-factor 3 \
+                --config min.insync.replicas=2
+              kafka-topics \
+                --bootstrap-server kafka:9092 \
+                --describe \
+                --topic mcp.events
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

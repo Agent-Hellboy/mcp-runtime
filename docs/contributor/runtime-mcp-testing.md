@@ -16,7 +16,7 @@ Expected UI/API behavior:
 
 | Principal | Expected catalog |
 |---|---|
-| Anonymous | `401` for `/api/runtime/servers`, except public mode can read `mcp-servers-public` |
+| Anonymous | `401` for `/api/v1/runtime/servers`, except public mode can read `mcp-servers-public` |
 | Normal user in tenant mode | MCPs from team namespaces they belong to |
 | Tenant user in tenant mode | MCPs from their own team namespace |
 | User in org mode | MCPs from `mcp-servers-org` |
@@ -36,10 +36,10 @@ version: v1
 servers:
   - name: workspace-assistant-mcp
     description: Workspace assistant MCP server for task cards, release notes, and text cleanup.
+    namespace: mcp-servers
     route: /workspace-assistant-mcp/mcp
     publicPathPrefix: workspace-assistant-mcp
     port: 8088
-    namespace: mcp-servers
     envVars:
       - name: MCP_PATH
         value: /workspace-assistant-mcp/mcp
@@ -73,17 +73,13 @@ servers:
       required: true
     gateway:
       enabled: true
-    analytics:
-      ingestURL: http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events
-      apiKeySecretRef:
-        name: workspace-assistant-mcp-analytics-creds
-        key: api-key
 EOF
 ```
 
-Create the analytics Secret when you apply raw YAML with `kubectl`. The
-platform-backed `mcp-runtime server deploy` path creates this per-server Secret
-automatically.
+If you add an `analytics.ingestURL` block and apply raw YAML with `kubectl`,
+create the analytics Secret yourself. The platform-backed
+`mcp-runtime server deploy` path creates the per-server Secret automatically
+when analytics is configured and `analytics.apiKeySecretRef` is empty.
 
 ```bash
 API_KEY="$(
@@ -108,20 +104,44 @@ Build, push, and deploy:
 
 ./bin/mcp-runtime auth login --api-url http://localhost:18080
 
+# `server build image` updates the metadata with the resolved registry image
+# and tags that exact image locally. Push that image ref, not a guessed short
+# name, so the push command and deploy metadata stay in sync.
+IMAGE_REF="$(python3 - <<'PY'
+image = tag = ""
+with open('/tmp/workspace-assistant-mcp.yaml') as f:
+    for line in f:
+        stripped = line.strip()
+        if stripped.startswith("image: "):
+            image = stripped.split(":", 1)[1].strip()
+        elif stripped.startswith("imageTag: "):
+            tag = stripped.split(":", 1)[1].strip()
+if not image or not tag:
+    raise SystemExit("metadata missing image/imageTag; rerun server build image")
+print(f"{image}:{tag}")
+PY
+)"
 ./bin/mcp-runtime registry push \
-  --image workspace-assistant-mcp:dev
+  --image "$IMAGE_REF"
 
 ./bin/mcp-runtime server deploy workspace-assistant-mcp \
   --scope tenant \
   --metadata-file /tmp/workspace-assistant-mcp.yaml
-kubectl rollout status deploy/workspace-assistant-mcp -n mcp-servers --timeout=180s
+SERVER_NAMESPACE="$(
+  kubectl get deploy -A -l app=workspace-assistant-mcp \
+    -o jsonpath='{.items[0].metadata.namespace}'
+)"
+kubectl rollout status deploy/workspace-assistant-mcp -n "$SERVER_NAMESPACE" --timeout=180s
 ```
 
 ## Inspect Runtime Outputs
 
 ```bash
 SERVER=workspace-assistant-mcp
-NAMESPACE=mcp-servers
+NAMESPACE="$(
+  kubectl get deploy -A -l app="$SERVER" \
+    -o jsonpath='{.items[0].metadata.namespace}'
+)"
 
 kubectl get mcpserver "$SERVER" -n "$NAMESPACE" -o yaml
 kubectl get deploy/"$SERVER" svc/"$SERVER" ingress/"$SERVER" -n "$NAMESPACE" -o wide
@@ -251,6 +271,6 @@ Confirm the catalog through the UI/API after cleanup:
 
 ```bash
 curl -sS -b /tmp/mcp-test-user-cookie.txt \
-  http://localhost:18080/api/runtime/servers |
+  http://localhost:18080/api/v1/runtime/servers |
   jq '{count: (.servers|length), names: [.servers[] | (.namespace + "/" + .name)]}'
 ```

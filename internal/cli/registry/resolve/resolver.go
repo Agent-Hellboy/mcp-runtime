@@ -54,11 +54,7 @@ func PlatformURL(logger *zap.Logger, kubectl KubectlCommand, cfg Config) string 
 		return ingressHost
 	}
 
-	ip, ipErr := serviceClusterIP(kubectl)
 	portValue, portErr := servicePort(kubectl)
-	if ipErr == nil && ip != "" && portErr == nil && portValue != "" {
-		return fmt.Sprintf("%s:%s", ip, portValue)
-	}
 	if portErr == nil && portValue != "" {
 		return fmt.Sprintf("%s:%s", registryServiceDNS, portValue)
 	}

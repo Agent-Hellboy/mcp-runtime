@@ -55,27 +55,37 @@ func main() {
 	}
 
 	if err = (&operator.MCPServerReconciler{
-		Client:                    mgr.GetClient(),
-		Scheme:                    mgr.GetScheme(),
-		DefaultIngressHost:        os.Getenv("MCP_DEFAULT_INGRESS_HOST"),
-		DefaultIngressEntryPoints: strings.TrimSpace(os.Getenv("MCP_DEFAULT_INGRESS_ENTRYPOINTS")),
-		DefaultIngressTLS:         boolFromEnv(os.Getenv("MCP_DEFAULT_INGRESS_TLS")),
-		IngressReadinessMode:      ingressReadinessMode,
-		ProvisionedRegistry:       registryConfig,
-		GatewayProxyImage:         gatewayProxyImageFromEnv(os.Getenv),
-		GatewayOTLPEndpoint:       gatewayOTLPEndpointFromEnv(os.Getenv),
-		DefaultAnalyticsIngestURL: analyticsIngestURLFromEnv(os.Getenv),
-		ClusterName:               clusterNameFromEnv(os.Getenv),
+		Client:                           mgr.GetClient(),
+		Scheme:                           mgr.GetScheme(),
+		DefaultIngressHost:               os.Getenv("MCP_DEFAULT_INGRESS_HOST"),
+		DefaultIngressEntryPoints:        strings.TrimSpace(os.Getenv("MCP_DEFAULT_INGRESS_ENTRYPOINTS")),
+		DefaultIngressTLS:                boolFromEnv(os.Getenv("MCP_DEFAULT_INGRESS_TLS")),
+		DefaultIngressTLSSecret:          strings.TrimSpace(os.Getenv("MCP_DEFAULT_INGRESS_TLS_SECRET")),
+		DefaultIngressTLSSecretNamespace: strings.TrimSpace(os.Getenv("MCP_DEFAULT_INGRESS_TLS_SECRET_NAMESPACE")),
+		IngressReadinessMode:             ingressReadinessMode,
+		ProvisionedRegistry:              registryConfig,
+		GatewayProxyImage:                gatewayProxyImageFromEnv(os.Getenv),
+		GatewayOTLPEndpoint:              gatewayOTLPEndpointFromEnv(os.Getenv),
+		DefaultAnalyticsIngestURL:        analyticsIngestURLFromEnv(os.Getenv),
+		ClusterName:                      clusterNameFromEnv(os.Getenv),
+		MTLSClusterIssuer:                strings.TrimSpace(os.Getenv("MCP_MTLS_CLUSTER_ISSUER")),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "MCPServer")
 		os.Exit(1)
 	}
 
 	if webhooksEnabledFromEnv(os.Getenv) {
+		mcpServerWebhookOptions := mcpv1alpha1.MCPServerDefaultOptions{
+			DefaultIngressHost:        os.Getenv("MCP_DEFAULT_INGRESS_HOST"),
+			DefaultAnalyticsIngestURL: analyticsIngestURLFromEnv(os.Getenv),
+		}
+		if err := (&mcpv1alpha1.MCPServer{}).SetupWebhookWithManagerWithOptions(mgr, mcpServerWebhookOptions); err != nil {
+			setupLog.Error(err, "unable to create webhook")
+			os.Exit(1)
+		}
 		for _, resource := range []interface {
 			SetupWebhookWithManager(ctrl.Manager) error
 		}{
-			&mcpv1alpha1.MCPServer{},
 			&mcpv1alpha1.MCPAccessGrant{},
 			&mcpv1alpha1.MCPAgentSession{},
 		} {

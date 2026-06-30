@@ -13,6 +13,7 @@ Usage:
 Flags:
       --agent string              Agent identifier to associate with the issued session (default: $MCP_RUNTIME_ADAPTER_AGENT)
       --agent-id string           Issued agent identity (default: $MCP_RUNTIME_AGENT_ID)
+      --auth string               Adapter auth mode: header (forward issued governance headers) or mtls (auto-enroll a session-bound client certificate and let the gateway derive identity from it); default: $MCP_RUNTIME_AUTH_MODE or header (default "header")
       --auth-header string        Static Authorization header value for runtime requests, e.g. "Bearer <token>" (default: $MCP_RUNTIME_AUTH_HEADER)
       --auto-refresh              Refresh the issued adapter session a few minutes before expiry (default: $MCP_RUNTIME_ADAPTER_AUTO_REFRESH)
   -h, --help                      help for proxy
@@ -33,6 +34,7 @@ Flags:
       --tls-ca-bundle string      Path to PEM CA bundle to verify the runtime's TLS certificate (default: $MCP_RUNTIME_TLS_CA_BUNDLE)
       --tls-client-cert string    Path to PEM client certificate for mTLS to the runtime (default: $MCP_RUNTIME_TLS_CLIENT_CERT)
       --tls-client-key string     Path to PEM client key for mTLS to the runtime (default: $MCP_RUNTIME_TLS_CLIENT_KEY)
+      --trust-domain string       SPIFFE trust domain for --auth mtls; must match spec.auth.trustDomain on the target MCPServer (default: $MCP_MTLS_TRUST_DOMAIN or mcpruntime.org) (default "mcpruntime.org")
 
 Global Flags:
       --debug   Enable debug mode with structured error logging

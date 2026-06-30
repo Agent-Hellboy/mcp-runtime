@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <section class="wrap broadsheet" aria-labelledby="articles-title">
+    <div class="issue-label">Systems, infrastructure, and protocol notes</div>
+    <h1 id="articles-title">Articles</h1>
+    <p>
+      Notes from building MCP Runtime: my understanding of the platform topics,
+      the tradeoffs involved, and the pain behind request traces, Kubernetes,
+      networking, infrastructure, identity, and policy.
+    </p>
+  </section>
+
+  <section id="newsletter" class="wrap newsletter" aria-labelledby="newsletter-title">
+    <div>
+      <div class="latest-kicker">Newsletter</div>
+      <h2 id="newsletter-title">Get new notes by email</h2>
+      <p>I will send article updates manually for now. No automated campaign tooling yet.</p>
+    </div>
+    <form class="newsletter-form" method="post" action="{{ url_for('newsletter_subscribe') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+      <input type="hidden" name="next" value="{{ request.path }}" />
+      <label for="newsletter-email">Email</label>
+      <div>
+        <input id="newsletter-email" name="email" type="email" autocomplete="email" required placeholder="you@example.com" />
+        <button type="submit">Subscribe</button>
+      </div>
+    </form>
+  </section>
+
+  {% if latest %}
+    <section class="wrap latest" aria-labelledby="latest-title">
+      <div class="latest-kicker">Latest Article</div>
+      <div class="latest-grid">
+        <div>
+          <span class="meta">{{ latest.category_name }} / {{ latest.published }} / {{ latest.reading_time }}</span>
+          <h2 id="latest-title"><a href="{{ latest.url }}">{{ latest.title }}</a></h2>
+        </div>
+        <p>{{ latest.description }}</p>
+      </div>
+    </section>
+  {% endif %}
+
+  <section class="wrap departments" aria-labelledby="departments-title">
+    <div class="section-rule">
+      <span>Departments</span>
+      <h2 id="departments-title">Browse by subject</h2>
+    </div>
+    <div class="department-grid">
+      {% for category in categories %}
+        <a class="department-card" href="{{ category.url }}">
+          <span class="department-count">{{ category_counts.get(category.slug, 0) }} articles</span>
+          <h3>{{ category.name }}</h3>
+          <p>{{ category.deck }}</p>
+        </a>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="wrap archive" aria-labelledby="archive-title">
+    <div class="section-rule">
+      <span>Archive</span>
+      <h2 id="archive-title">All articles</h2>
+    </div>
+    <ol class="archive-list">
+      {% for article in articles %}
+        <li>
+          <a href="{{ article.url }}">{{ article.title }}</a>
+          <span>{{ article.category_name }} / {{ article.published }}</span>
+        </li>
+      {% endfor %}
+    </ol>
+  </section>
+{% endblock %}

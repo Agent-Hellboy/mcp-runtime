@@ -142,6 +142,67 @@ func TestApplyManifestYAMLRejectsInvalidManifest(t *testing.T) {
 	}
 }
 
+func TestApplyManifestYAMLRecreatesStatefulSetOnImmutableUpdate(t *testing.T) {
+	existing := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "apps/v1",
+		"kind":       "StatefulSet",
+		"metadata": map[string]any{
+			"name":            "kafka",
+			"namespace":       "mcp-sentinel",
+			"resourceVersion": "1",
+		},
+		"spec": map[string]any{
+			"serviceName": "kafka",
+			"replicas":    int64(1),
+		},
+	}}
+	clients := newApplyTestClientsWithApps(existing)
+	dynamicClient := clients.Dynamic.(*dynamicfake.FakeDynamicClient)
+	deleted := false
+	dynamicClient.PrependReactor("update", "statefulsets", func(action clienttesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewInvalid(schema.GroupKind{Group: "apps", Kind: "StatefulSet"}, "kafka", nil)
+	})
+	dynamicClient.PrependReactor("delete", "statefulsets", func(action clienttesting.Action) (bool, runtime.Object, error) {
+		deleted = true
+		return false, nil, nil
+	})
+	dynamicClient.PrependReactor("create", "statefulsets", func(action clienttesting.Action) (bool, runtime.Object, error) {
+		obj := action.(clienttesting.CreateAction).GetObject().(*unstructured.Unstructured)
+		return true, obj, nil
+	})
+
+	results, err := ApplyManifestYAML(context.Background(), clients, []byte(`apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kafka
+  namespace: mcp-sentinel
+spec:
+  serviceName: kafka-headless
+  podManagementPolicy: Parallel
+  replicas: 3
+  selector:
+    matchLabels:
+      app: kafka
+  template:
+    metadata:
+      labels:
+        app: kafka
+    spec:
+      containers:
+        - name: kafka
+          image: example/kafka:latest
+`), "mcp-sentinel")
+	if err != nil {
+		t.Fatalf("ApplyManifestYAML() error = %v", err)
+	}
+	if !deleted {
+		t.Fatal("expected StatefulSet delete before recreate")
+	}
+	if len(results) != 1 || results[0].Action != "recreated" {
+		t.Fatalf("results = %#v, want one recreated result", results)
+	}
+}
+
 func newApplyTestClients(objects ...runtime.Object) *Clients {
 	resources := []*metav1.APIResourceList{{
 		GroupVersion: "v1",
@@ -150,6 +211,30 @@ func newApplyTestClients(objects ...runtime.Object) *Clients {
 			{Name: "namespaces", Namespaced: false, Kind: "Namespace", Verbs: []string{"get", "create", "update"}},
 		},
 	}}
+
+	return &Clients{
+		Dynamic:   dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), objects...),
+		Discovery: &discoveryfake.FakeDiscovery{Fake: &clienttesting.Fake{Resources: resources}},
+		Namespace: metav1.NamespaceDefault,
+	}
+}
+
+func newApplyTestClientsWithApps(objects ...runtime.Object) *Clients {
+	resources := []*metav1.APIResourceList{
+		{
+			GroupVersion: "v1",
+			APIResources: []metav1.APIResource{
+				{Name: "configmaps", Namespaced: true, Kind: "ConfigMap", Verbs: []string{"get", "create", "update", "delete"}},
+				{Name: "namespaces", Namespaced: false, Kind: "Namespace", Verbs: []string{"get", "create", "update", "delete"}},
+			},
+		},
+		{
+			GroupVersion: "apps/v1",
+			APIResources: []metav1.APIResource{
+				{Name: "statefulsets", Namespaced: true, Kind: "StatefulSet", Verbs: []string{"get", "create", "update", "delete"}},
+			},
+		},
+	}
 
 	return &Clients{
 		Dynamic:   dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), objects...),

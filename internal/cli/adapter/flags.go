@@ -30,6 +30,8 @@ type identityFlags struct {
 	logLevel        string
 	disableXFF      bool
 	// upstream auth / TLS
+	authMode      string
+	trustDomain   string
 	authHeader    string
 	tlsClientCert string
 	tlsClientKey  string
@@ -40,6 +42,11 @@ type identityFlags struct {
 	anonymous        bool
 	anonymousMethods string
 	toolsCacheTTL    string
+}
+
+// mtlsEnabled reports whether --auth selected certificate-based identity.
+func (f identityFlags) mtlsEnabled() bool {
+	return strings.EqualFold(strings.TrimSpace(f.authMode), "mtls")
 }
 
 func bindIdentityFlags(cmd *cobra.Command, f *identityFlags) {
@@ -63,6 +70,13 @@ func bindIdentityFlags(cmd *cobra.Command, f *identityFlags) {
 		"Do not set X-Forwarded-* headers when forwarding to the runtime")
 	cmd.Flags().StringVar(&f.requestTimeout, "request-timeout", os.Getenv(agentadapter.EnvRequestTimeout),
 		"HTTP request timeout for adapter→runtime calls, e.g. 30s (default: $"+agentadapter.EnvRequestTimeout+")")
+	cmd.Flags().StringVar(&f.authMode, "auth", envOrDefault(EnvAdapterAuthMode, "header"),
+		"Adapter auth mode: header (forward issued governance headers) or mtls "+
+			"(auto-enroll a session-bound client certificate and let the gateway derive identity from it); "+
+			"default: $"+EnvAdapterAuthMode+" or header")
+	cmd.Flags().StringVar(&f.trustDomain, "trust-domain", envOrDefault(EnvMTLSTrustDomain, DefaultMTLSTrustDomain),
+		"SPIFFE trust domain for --auth mtls; must match spec.auth.trustDomain on the target MCPServer "+
+			"(default: $"+EnvMTLSTrustDomain+" or "+DefaultMTLSTrustDomain+")")
 	cmd.Flags().StringVar(&f.authHeader, "auth-header", os.Getenv(agentadapter.EnvAuthHeader),
 		"Static Authorization header value for runtime requests, e.g. \"Bearer <token>\" (default: $"+agentadapter.EnvAuthHeader+")")
 	cmd.Flags().StringVar(&f.tlsClientCert, "tls-client-cert", os.Getenv(agentadapter.EnvTLSClientCert),

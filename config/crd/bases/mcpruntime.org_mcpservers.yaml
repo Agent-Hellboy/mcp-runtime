@@ -61,9 +61,9 @@ spec:
               analytics:
                 description: |-
                   Analytics configures audit/analytics emission for the gateway sidecar.
-                  Analytics is only applied when Gateway is enabled. Emission is on by
-                  default whenever the operator has an analytics ingest URL configured;
-                  set Analytics.Disabled to true to opt this server out.
+                  Analytics is only applied when Gateway is enabled and this field is set.
+                  If set without an ingest URL, the operator may supply its configured
+                  default ingest URL.
                 properties:
                   apiKeySecretRef:
                     description: APIKeySecretRef points to a secret key containing
@@ -80,16 +80,16 @@ spec:
                   disabled:
                     description: |-
                       Disabled suppresses analytics emission from the gateway sidecar for this
-                      server. Analytics is on by default whenever the operator has an analytics
-                      ingest URL configured (via Spec.Analytics.IngestURL or the operator's
-                      MCP_SENTINEL_INGEST_URL env). Set Disabled to true to opt out per server.
+                      server.
                     type: boolean
                   eventType:
                     description: EventType is the event type label attached to emitted
                       analytics events.
                     type: string
                   ingestURL:
-                    description: IngestURL is the analytics ingest endpoint.
+                    description: |-
+                      IngestURL is the analytics ingest endpoint. If empty, the operator may
+                      supply its configured default ingest URL.
                     type: string
                   source:
                     description: Source is the event source label attached to emitted
@@ -113,12 +113,18 @@ spec:
                     - none
                     - header
                     - oauth
+                    - mtls
                     type: string
                   sessionIDHeader:
                     type: string
                   teamIDHeader:
                     type: string
                   tokenHeader:
+                    type: string
+                  trustDomain:
+                    description: |-
+                      TrustDomain is the SPIFFE trust domain accepted from verified client
+                      certificate URI SANs when mode is mtls.
                     type: string
                 type: object
               description:
@@ -416,6 +422,12 @@ spec:
                     name:
                       type: string
                     requiredTrust:
+                      enum:
+                      - low
+                      - medium
+                      - high
+                      type: string
+                    riskLevel:
                       enum:
                       - low
                       - medium

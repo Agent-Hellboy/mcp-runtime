@@ -31,9 +31,13 @@ flowchart LR
     Gateway --> Ingest[Analytics ingest]
     Ingest --> Processor[Processor]
     Processor --> Store[(ClickHouse/Postgres)]
-    UI[Sentinel UI] --> API[Sentinel API]
-    API --> K8s
-    API --> Store
+    UI[Sentinel UI] --> Ingress[Traefik /api/v1]
+    Ingress --> PlatAPI[platform-api]
+    Ingress --> RunAPI[runtime-api]
+    Ingress --> AnaAPI[analytics-api]
+    RunAPI --> K8s
+    PlatAPI --> Store
+    AnaAPI --> Store
 ```
 
 ## Repository map
@@ -44,13 +48,14 @@ flowchart LR
 | CLI implementation | [`internal-cli.md`](internal-cli.md) | Covers the `internal/cli/root` routing layer plus setup, bootstrap, registry, server, access, adapter, auth, team, status, and sentinel behavior. |
 | Kubernetes API types | [`api-types.md`](api-types.md) | Defines the public CRD shapes consumed by users, tests, and the operator. |
 | Request flows | [`request-flows.md`](request-flows.md) | Maps CLI, UI/API, registry, adapter, MCP runtime, policy, analytics, tenancy, and pre-release paths to components and E2E scenarios. |
+| Sentinel API services | [`../sentinel.md`](../sentinel.md) | Three-service split (platform-api, runtime-api, analytics-api): Traefik `/api/v1` routing, RBAC, `/internal/*` contracts, OpenAPI per service. |
 | Generated Go reference | [`go-package-reference.md`](go-package-reference.md) | Captures `go doc` output for the main contributor-facing packages. |
 | Agent adapters | `internal/agentadapter/`, `internal/cli/adapter/` | HTTP proxy and stdio shim behavior for forwarding agent MCP traffic with issued governance headers; exposed via `mcp-runtime adapter proxy/stdio`. |
 | Operator | [`cmd-operator.md`](cmd-operator.md) | Explains manager startup and reconciliation from desired state to Kubernetes resources. |
 | Control-plane helpers | `pkg/controlplane/` | Shared MCPServer Kubernetes operations and status projection used outside HTTP/CLI glue. |
 | Shared policy and events | `pkg/policy/`, `pkg/events/`, `pkg/clickhouse/` | Gateway policy contracts/evaluation plus Sentinel event envelopes and ClickHouse query/insert helpers. |
 | Service and workload helpers | `pkg/serviceutil/`, `pkg/kubeworkload/` | Shared service HTTP/env/OTel helpers and restricted Kubernetes workload defaults. |
-| API service internals | `services/api/internal/runtimeapi/`, `services/api/internal/platformstore/`, `services/api/internal/apiauth/`, `services/api/internal/apihttp/` | API-owned runtime HTTP/Kubernetes orchestration, platform Postgres persistence, principal context helpers, and API-specific HTTP decode helpers. |
+| API service internals | `services/runtime-api/internal/runtimeapi/`, `services/platform-api/internal/platformstore/`, `pkg/apihttp/`, `pkg/platformauth/`, `pkg/internalapi/` | Split API modules: runtime HTTP/Kubernetes orchestration, platform Postgres persistence, shared HTTP contract helpers. |
 | Metadata helpers | [`pkg-metadata.md`](pkg-metadata.md) | Covers `.mcp` metadata loading, host resolution, and CRD generation helpers. |
 | Manifests and examples | [`config-and-examples.md`](config-and-examples.md) | Explains Kustomize overlays, registry/ingress config, and example MCP servers. |
 | Tests | [`tests.md`](tests.md) | Maps unit, golden, integration, and Kind e2e coverage. |
@@ -97,13 +102,13 @@ flowchart TD
     Events --> Ingest[services/ingest]
     Ingest --> Processor[services/processor]
     Processor --> Analytics[(analytics store)]
-    API[services/api] --> Grants[MCPAccessGrant]
+    PlatformAPI[platform-api] --> Grants[MCPAccessGrant]
     API --> Sessions[MCPAgentSession]
     Grants --> Authz
     Sessions --> Authz
 ```
 
-Governance-related changes usually span `api/v1alpha1/access_types.go`, `pkg/access/`, `pkg/policy/`, `services/api`, `services/mcp-gateway`, `services/ingest`, and the e2e policy scenarios.
+Governance-related changes usually span `api/v1alpha1/access_types.go`, `pkg/access/`, `pkg/policy/`, `services/runtime-api`, `services/mcp-gateway`, `services/ingest`, and the e2e policy scenarios.
 
 ## Package dependency guide
 
@@ -132,17 +137,17 @@ flowchart TB
     Services --> ClickHouse[pkg/clickhouse]
     Services --> Events[pkg/events]
     Gateway[services/mcp-gateway] --> Policy
-    APIService[services/api] --> Workload
-    APIService --> RuntimeAPI[services/api/internal/runtimeapi]
-    APIService --> PlatformStore[services/api/internal/platformstore]
-    APIService --> APIAuth[services/api/internal/apiauth]
+    PlatformAPI[services/platform-api] --> Workload
+    RuntimeAPI[services/runtime-api] --> RuntimeAPIPkg[services/runtime-api/internal/runtimeapi]
+    PlatformAPI --> PlatformStore[services/platform-api/internal/platformstore]
+    PlatformAPI --> APIAuth[services/platform-api/internal/apiauth]
     ClickHouse --> Events
     ControlPlane --> API
     ControlPlane --> K8sClient
     Metadata --> API
 ```
 
-Keep shared behavior in `pkg/` only when multiple binaries or services need it. CLI top-level command routing belongs in `internal/cli/root` and `internal/cli/<command>`; CLI-only shared infrastructure belongs in `internal/cli/core`; reconciliation behavior belongs in `internal/operator`; Kubernetes-facing MCPServer operations that are reused outside the operator belong in `pkg/controlplane`; rendered gateway policy evaluation belongs in `pkg/policy`; reusable Sentinel event and storage contracts belong in `pkg/events` and `pkg/clickhouse`; shared pod hardening defaults belong in `pkg/kubeworkload`; API-owned runtime orchestration belongs in `services/api/internal/runtimeapi`; API-owned platform identity, team, key, and audit persistence belongs in `services/api/internal/platformstore`; API principal context helpers belong in `services/api/internal/apiauth`; HTTP service glue belongs near the service that owns the endpoint unless it is repeated across services.
+Keep shared behavior in `pkg/` only when multiple binaries or services need it. CLI top-level command routing belongs in `internal/cli/root` and `internal/cli/<command>`; CLI-only shared infrastructure belongs in `internal/cli/core`; reconciliation behavior belongs in `internal/operator`; Kubernetes-facing MCPServer operations that are reused outside the operator belong in `pkg/controlplane`; rendered gateway policy evaluation belongs in `pkg/policy`; reusable Sentinel event and storage contracts belong in `pkg/events` and `pkg/clickhouse`; shared pod hardening defaults belong in `pkg/kubeworkload`; runtime orchestration belongs in `services/runtime-api/internal/runtimeapi`; platform identity, team, key, and audit persistence belongs in `services/platform-api/internal/platformstore`; API principal context helpers belong in `services/platform-api/internal/apiauth`; HTTP service glue belongs near the service that owns the endpoint unless it is repeated across services.
 
 ## Learning path
 
@@ -177,10 +182,10 @@ workflows.
 | Change a CRD field | `api/v1alpha1`, CRD YAML, operator reconciliation, docs/API reference | `go test ./api/v1alpha1/... ./internal/operator/... -count=1` |
 | Change generated manifests | `pkg/metadata`, `pkg/manifest`, `config/`, examples | targeted package tests plus manifest diff review |
 | Change reconciliation behavior | `internal/operator`, API types, k8s helpers | `go test ./internal/operator/... -race -count=1` |
-| Change governance policy | `pkg/access`, `pkg/policy`, `services/api`, `services/mcp-gateway`, access CRDs | targeted package/service tests plus e2e policy scenario |
+| Change governance policy | `pkg/access`, `pkg/policy`, `services/runtime-api`, `services/mcp-gateway`, access CRDs | targeted package/service tests plus e2e policy scenario |
 | Change agent adapters | `internal/agentadapter`, `internal/cli/adapter`, `docs/agent-adapters.md` | `go test ./internal/agentadapter ./internal/cli/adapter -count=1` |
-| Change team provisioning or membership | `internal/cli/team`, `services/api/internal/runtimeapi`, `services/api/internal/platformstore`, `docs/multi-team.md` | `go test ./internal/cli/team -count=1` plus service API tests inside `services/api` |
-| Change Sentinel event storage | `pkg/events`, `pkg/clickhouse`, `services/ingest`, `services/processor`, `services/api`, `services/mcp-gateway` | package tests plus touched service tests |
+| Change team provisioning or membership | `internal/cli/team`, `services/runtime-api/internal/runtimeapi`, `services/platform-api/internal/platformstore`, `docs/multi-team.md` | `go test ./internal/cli/team -count=1` plus service API tests inside `services/platform-api` and `services/runtime-api` |
+| Change Sentinel event storage | `pkg/events`, `pkg/clickhouse`, `services/ingest`, `services/processor`, `services/analytics-api`, `services/mcp-gateway` | package tests plus touched service tests |
 | Change docs site behavior | `docs/mkdocs.yml`, `docs/nginx.conf`, Markdown pages | MkDocs build or docs container build |
 
 ## Contributor checklist

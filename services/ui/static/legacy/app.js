@@ -1,4 +1,4 @@
-const apiBase = window.MCP_API_BASE || "/api";
+const apiBase = window.MCP_API_BASE || "/api/v1";
 const defaults = Object.assign(
   { namespace: "", policyVersion: "v1" },
   window.MCP_DEFAULTS || {}
@@ -13,6 +13,7 @@ let userAPIKeysCache = [];
 let teamsCache = [];
 let teamMembersCache = [];
 let serversCache = [];
+let toolsCatalogCache = [];
 let publishPolicyCache = null;
 let selectedServerKey = "";
 let selectedServerEventsCache = [];
@@ -27,6 +28,7 @@ let operationsDeploymentsCache = [];
 let userAPIKeyClearTimer = null;
 let serverSearchQuery = "";
 let serverStatusFilter = "all";
+let toolRiskFilter = "";
 let selectedOperationsServerKey = "";
 let selectedUserAnalyticsServerKey = "";
 let selectedTeamSlug = "";
@@ -1287,6 +1289,24 @@ function createUserServerActionsCell(server) {
   });
   actions.appendChild(analyticsButton);
 
+  if (server.observability?.prometheus?.queries?.length) {
+    const metricsButton = document.createElement("button");
+    metricsButton.type = "button";
+    metricsButton.className = "ghost action-btn";
+    metricsButton.textContent = "Prometheus";
+    metricsButton.addEventListener("click", () => openScopedObservability(server, "prometheus"));
+    actions.appendChild(metricsButton);
+  }
+
+  if (server.observability?.grafana?.available && server.observability?.grafana?.url) {
+    const grafanaButton = document.createElement("button");
+    grafanaButton.type = "button";
+    grafanaButton.className = "ghost action-btn";
+    grafanaButton.textContent = "Grafana";
+    grafanaButton.addEventListener("click", () => openScopedObservability(server, "grafana"));
+    actions.appendChild(grafanaButton);
+  }
+
   if (server.endpoint) {
     const copyButton = document.createElement("button");
     copyButton.type = "button";
@@ -1307,6 +1327,35 @@ function createUserServerActionsCell(server) {
 
   cell.appendChild(actions);
   return cell;
+}
+
+async function openScopedObservability(server, target) {
+  if (!server?.namespace || !server?.name) return;
+  try {
+    const links = server.observability || await fetchJSON(
+      `/runtime/observability/links?namespace=${encodeURIComponent(server.namespace)}&server=${encodeURIComponent(server.name)}`
+    );
+    if (target === "grafana") {
+      if (links?.grafana?.available && links.grafana.url) {
+        window.open(links.grafana.url, "_blank", "noopener");
+        return;
+      }
+      showToast(links?.grafana?.reason || "Grafana is not available for this server", "error");
+      return;
+    }
+    const queries = links?.prometheus?.queries || [];
+    const requestRate = queries.find((query) => query.id === "request_rate");
+    const query = requestRate || queries[0];
+    if (!query?.url) {
+      showToast("Prometheus metrics are not available for this server", "error");
+      return;
+    }
+    window.open(query.url, "_blank", "noopener");
+  } catch (err) {
+    if (isUnauthorizedError(err)) return;
+    console.error("Failed to open observability link:", err);
+    showToast(readErrorMessage(err, "Observability is unavailable"), "error");
+  }
 }
 
 function renderUserDashboardAnalytics(data) {
@@ -1413,6 +1462,9 @@ async function loadServers() {
     serversCache = Array.isArray(data.servers) ? data.servers : [];
     publishPolicyCache = data.publish_policy || null;
     renderServers();
+    loadToolCatalog()
+      .then(() => renderToolCatalog())
+      .catch(() => renderToolCatalog("Error loading tools."));
     scheduleServerLiveInventoryRefresh();
   } catch (err) {
     if (isUnauthorizedError(err)) return;
@@ -1423,6 +1475,19 @@ async function loadServers() {
     if (grid) {
       grid.innerHTML = '<div class="component-card error">Error loading MCP servers.</div>';
     }
+    renderToolCatalog("Error loading tools.");
+  }
+}
+
+async function loadToolCatalog() {
+  try {
+    const data = await fetchJSON(scopedPath("/runtime/tools"));
+    toolsCatalogCache = Array.isArray(data.tools) ? data.tools : [];
+  } catch (err) {
+    if (isUnauthorizedError(err)) return;
+    console.error("Failed to load tool catalog:", err);
+    toolsCatalogCache = [];
+    throw err;
   }
 }
 
@@ -1575,6 +1640,7 @@ function renderServers() {
   const grid = document.getElementById("servers-grid");
   if (!grid) return;
   renderServerCatalogSummary();
+  renderToolCatalog();
 
   if (serversCache.length === 0) {
     grid.innerHTML = '<div class="server-empty-state">No MCP servers found.</div>';
@@ -1657,7 +1723,7 @@ function serverSearchText(server) {
     server.ready,
     server.endpoint,
     metadataSearchText(server.labels),
-    ...(inventory.tools || []).map((tool) => `${tool.name || ""} ${tool.requiredTrust || ""} ${tool.sideEffect || ""} ${tool.description || ""} ${tool.drift || ""}`),
+    ...(inventory.tools || []).map((tool) => `${tool.name || ""} ${tool.requiredTrust || ""} ${tool.sideEffect || ""} ${tool.riskLevel || ""} ${tool.description || ""} ${tool.drift || ""}`),
     ...(inventory.prompts || []).map(inventorySearchText),
     ...(inventory.resources || []).map(inventorySearchText),
     ...(inventory.tasks || []).map(inventorySearchText),
@@ -1711,6 +1777,7 @@ function mergeToolInventory(liveItems, declaredItems) {
       description: item.description || governance?.description || "",
       requiredTrust: governance?.requiredTrust || "",
       sideEffect: governance?.sideEffect || "",
+      riskLevel: governance?.riskLevel || computedToolRisk(governance || item),
       labels: governance?.labels || item.labels || {},
       drift: governance ? "" : "ungoverned",
     });
@@ -1778,6 +1845,100 @@ function inventorySearchText(item) {
   if (typeof item === "string") return item;
   const labels = metadataSearchText(item?.labels);
   return `${item?.name || ""} ${item?.uri || ""} ${item?.description || ""} ${item?.drift || ""} ${labels}`;
+}
+
+function renderToolCatalog(errorMessage = "") {
+  const tbody = document.getElementById("tool-catalog-body");
+  if (!tbody) return;
+  const rows = filteredToolCatalogRows();
+  setText("tool-catalog-count", `${formatNumber(rows.length)} tools`);
+  if (errorMessage) {
+    tbody.innerHTML = `<tr><td colspan="7" class="empty">${escapeHtml(errorMessage)}</td></tr>`;
+    return;
+  }
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="empty">No tools match this search.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = "";
+  const fragment = document.createDocumentFragment();
+  rows.forEach((tool) => {
+    const row = document.createElement("tr");
+    row.appendChild(createIdentityCell(tool.tool_name || "-", tool.description || ""));
+    row.appendChild(createIdentityCell(tool.server_name || "-", tool.namespace || ""));
+    row.appendChild(createBadgeCell(tool.required_trust || "-", "badge-muted"));
+    row.appendChild(createBadgeCell(tool.side_effect || "-", "badge-muted"));
+    row.appendChild(createBadgeCell(tool.risk_level || computedToolRisk(tool), riskBadgeClass(tool.risk_level || computedToolRisk(tool))));
+    row.appendChild(createBadgeCell(tool.drift_status || "-", driftBadgeClass(tool.drift_status)));
+    const action = document.createElement("td");
+    const btn = document.createElement("button");
+    btn.className = "ghost compact-action";
+    btn.type = "button";
+    btn.textContent = "Copy";
+    btn.addEventListener("click", () => {
+      copyTextToClipboard(JSON.stringify(tool.connect_config || {}, null, 2), "Connect config copied");
+    });
+    action.appendChild(btn);
+    row.appendChild(action);
+    fragment.appendChild(row);
+  });
+  tbody.appendChild(fragment);
+}
+
+function filteredToolCatalogRows() {
+  const query = serverSearchQuery.trim().toLowerCase();
+  return toolsCatalogCache.filter((tool) => {
+    if (toolRiskFilter && String(tool.risk_level || computedToolRisk(tool)).toLowerCase() !== toolRiskFilter) {
+      return false;
+    }
+    if (!query) return true;
+    return [
+      tool.tool_name,
+      tool.description,
+      tool.server_name,
+      tool.namespace,
+      tool.team_id,
+      tool.required_trust,
+      tool.side_effect,
+      tool.risk_level,
+      tool.drift_status,
+    ].filter(Boolean).join(" ").toLowerCase().includes(query);
+  });
+}
+
+function computedToolRisk(tool) {
+  const explicit = String(tool?.riskLevel || tool?.risk_level || "").trim().toLowerCase();
+  if (["low", "medium", "high"].includes(explicit)) return explicit;
+  const trust = String(tool?.requiredTrust || tool?.required_trust || "low").trim().toLowerCase();
+  const sideEffect = String(tool?.sideEffect || tool?.side_effect || "").trim().toLowerCase();
+  if (sideEffect === "destructive" || trust === "high") return "high";
+  if (sideEffect === "write" || trust === "medium") return "medium";
+  if (sideEffect === "read" && trust === "low") return "low";
+  return "";
+}
+
+function riskBadgeClass(risk) {
+  switch (String(risk || "").toLowerCase()) {
+    case "high":
+      return "badge-error";
+    case "medium":
+      return "badge-warning";
+    case "low":
+      return "badge-success";
+    default:
+      return "badge-muted";
+  }
+}
+
+function driftBadgeClass(drift) {
+  switch (String(drift || "").toLowerCase()) {
+    case "ungoverned":
+      return "badge-error";
+    case "missing":
+      return "badge-warning";
+    default:
+      return "badge-muted";
+  }
 }
 
 function renderServerCatalogSummary() {
@@ -2021,6 +2182,18 @@ function renderServerMeta(server) {
     actions.appendChild(copyURL);
   }
   if (server.access_json && Object.keys(server.access_json).length) {
+    const copyConfig = document.createElement("button");
+    copyConfig.className = "ghost server-action";
+    copyConfig.type = "button";
+    copyConfig.textContent = "Copy config";
+    copyConfig.addEventListener("click", (event) => {
+      const details = event.currentTarget.closest(".server-meta-wrap")?.parentElement?.querySelector("details.server-connect");
+      if (details) {
+        details.open = true;
+        details.scrollIntoView({ block: "nearest" });
+      }
+    });
+    actions.appendChild(copyConfig);
     const jsonText = JSON.stringify(server.access_json || {}, null, 2);
     const copyJSON = document.createElement("button");
     copyJSON.className = "ghost server-action";
@@ -2230,11 +2403,13 @@ function renderInventoryBlock(label, items, itemRenderer) {
 function renderToolItem(tool) {
   const trust = tool.requiredTrust ? `<span class="trust-chip">${escapeHtml(tool.requiredTrust)}</span>` : "";
   const sideEffect = tool.sideEffect ? `<span class="trust-chip">${escapeHtml(tool.sideEffect)}</span>` : "";
+  const riskValue = computedToolRisk(tool);
+  const risk = riskValue ? `<span class="risk-chip risk-${escapeHtml(riskValue)}">${escapeHtml(riskValue)} risk</span>` : "";
   const drift = renderDriftBadge(tool);
   const labels = renderInventoryLabels(tool.labels);
   return renderExpandableInventoryItem({
     name: tool.name || "-",
-    summaryMeta: [trust, sideEffect, drift].filter(Boolean).join(" "),
+    summaryMeta: [trust, sideEffect, risk, drift].filter(Boolean).join(" "),
     description: tool.description,
     labels,
   });
@@ -2358,6 +2533,10 @@ function initDashboard() {
   document.getElementById("server-search")?.addEventListener("input", (event) => {
     serverSearchQuery = event.target.value || "";
     renderServers();
+  });
+  document.getElementById("tool-risk-filter")?.addEventListener("change", (event) => {
+    toolRiskFilter = event.target.value || "";
+    renderToolCatalog();
   });
   document.querySelectorAll("[data-server-status]").forEach((button) => {
     button.addEventListener("click", () => {

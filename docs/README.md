@@ -90,10 +90,13 @@ company environment.
 | Popularity or metadata signals | Trust, grants, sessions, policy decisions, audit, and compliance evidence |
 | Hosted directory or client-specific UX | Self-hosted, vendor-neutral Kubernetes control plane |
 
-As of April 2026, we have not found another open-source MCP product that
-combines a deployable Kubernetes operator, registry workflow, brokered request
-path, access/session model, audit pipeline, and operational control surface in
-one system.
+Several open-source MCP projects now overlap with parts of that surface:
+gateway/proxy control planes, Kubernetes-aware deployment APIs, registries,
+catalog UIs, auth, audit, and agent governance. MCP Runtime's narrower
+distinction is that Kubernetes desired state is the product boundary:
+`MCPServer`, `MCPAccessGrant`, and `MCPAgentSession` are CRDs, the operator
+reconciles workloads and policy materialization, and the Sentinel stack records
+gateway decisions, usage, and operational state for the running platform.
 
 ## Governance, audit, and compliance
 

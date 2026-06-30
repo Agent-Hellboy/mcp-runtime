@@ -245,7 +245,9 @@ When `MCP_PLATFORM_DOMAIN=example.com` is set, setup derives these public names:
 
 - `registry.example.com` for registry ingress.
 - `mcp.example.com` for MCP server traffic.
-- `platform.example.com` for the dashboard, API, and Grafana paths. Prometheus remains an internal metrics backend.
+- `platform.example.com` for the dashboard, API, and admin-gated Grafana paths.
+  Prometheus remains an internal metrics backend; tenant users reach it only
+  through server-scoped API queries.
 
 All configured public names must resolve to the cluster ingress address before
 certificate issuance. For Let's Encrypt HTTP-01, port 80 must reach the ingress
@@ -297,7 +299,7 @@ are outside the bundled cert-manager flow.
 The bundled registry ingress expects the repo-managed Traefik dynamic
 middleware `registry-admin-auth@file`. If you bring your own ingress controller
 or reuse an external Traefik install, configure an equivalent forward-auth guard
-to `/api/registry/authz` before exposing `registry.<domain>` publicly.
+to `/api/v1/registry/authz` before exposing `registry.<domain>` publicly.
 
 If the cluster already has a live external Traefik install, `setup` reuses it
 and refuses to install a second repo-managed Traefik stack. In that shape, use:
@@ -318,10 +320,10 @@ Quick public endpoint checks after DNS and TLS are live:
   Without admin credentials, the public registry ingress should return `401`
   or `403`.
 - `curl -k -I https://platform.<domain>/` should return `200`.
-- `curl -k -i https://platform.<domain>/api/health` should normally return
+- `curl -k -i https://platform.<domain>/api/v1/health` should normally return
   `401` without platform credentials; that still proves the platform host is
   routing API traffic correctly.
-- `curl -k -i -H "x-api-key: $ADMIN_API_KEY" https://platform.<domain>/grafana/api/health`
+- `curl -k -i -H "x-api-key: $ADMIN_API_KEY" https://platform.<domain>/grafana/api/v1/health`
   should reach the admin-gated observability route. Without admin credentials,
   the `sentinel-admin-auth@file` guard should return `401`. Prometheus is not
   exposed directly on the platform host; validate it through Grafana's
@@ -360,7 +362,7 @@ Before assuming a database or auth bug, inspect the deployment and the managed
 secret:
 
 ```bash
-kubectl get deploy mcp-sentinel-api -n mcp-sentinel -o yaml
+kubectl get deploy mcp-platform-api mcp-runtime-api mcp-analytics-api -n mcp-sentinel -o yaml
 kubectl get secret mcp-sentinel-secrets -n mcp-sentinel -o yaml
 ```
 
@@ -383,6 +385,8 @@ kubectl scale statefulset clickhouse kafka loki tempo mcp-sentinel-postgres \
 kubectl delete pvc \
   data-clickhouse-0 \
   kafka-data-kafka-0 \
+  kafka-data-kafka-1 \
+  kafka-data-kafka-2 \
   data-loki-0 \
   data-tempo-0 \
   data-mcp-sentinel-postgres-0 \
@@ -397,6 +401,8 @@ Important distinctions:
   certificate.
 - Preserve `registry/registry-storage` unless you intentionally want to wipe the
   image registry too.
+- Kafka KRaft metadata, topic data, and consumer offsets all live in the three
+  `kafka-data-kafka-*` PVCs. Delete all three together for a clean reset.
 - A PVC stuck in `Terminating` is often still referenced by stale pods from an
   old ReplicaSet. Remove the stale pods first, then recreate the workload.
 
@@ -505,9 +511,9 @@ again.
 
 kind's nodes are containers, so the registry NodePort needs an `extraPortMappings` entry to be reachable, and containerd inside the node container needs the same mirror.
 For `setup --test-mode`, MCP Runtime emits image refs such as
-`registry.registry.svc.cluster.local:5000/mcp-sentinel-api:latest` so Kind
-nodes use one stable service-DNS host instead of a mutable registry
-`ClusterIP:port`.
+`registry.registry.svc.cluster.local:5000/mcp-platform-api:latest` (and sibling
+split API images) so Kind nodes use one stable service-DNS host instead of a
+mutable registry `ClusterIP:port`.
 
 1. **Cluster config.** Pass this to `kind create cluster --config`:
 

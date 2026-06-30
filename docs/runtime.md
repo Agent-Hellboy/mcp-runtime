@@ -108,6 +108,40 @@ X-MCP-Team-ID:     7d0a0b8f-7c25-4761-a632-3cf0108e31d6
 X-MCP-Agent-Session: sess-8f1b9d
 ```
 
+### Gateway policy snapshots
+
+The operator renders `MCPServer` + `MCPAccessGrant` + `MCPAgentSession` state
+into a JSON policy ConfigMap that the gateway sidecar mounts and reloads. The
+rendered document carries document-level metadata distinct from the
+authorization `policyVersion`:
+
+| Field | Meaning |
+|---|---|
+| `schema_version` | Compatibility of the rendered JSON contract. The gateway rejects any version it does not support. |
+| `revision` | Deterministic `sha256:` digest of the canonical policy content. Identical content always yields the same revision; it is computed with `generated_at` excluded so timestamps never change it. |
+| `generated_at` | Informational only; set at write time and never affects `revision`. |
+
+Both sides share `pkg/policy.Validate`: the operator validates a rendered
+document **before** replacing the ConfigMap, and the gateway validates a decoded
+document **before** activating it. Validation fails closed — unknown trust,
+side-effect, decision, auth-mode, or policy-mode values, duplicate names, and
+OAuth without an issuer are all rejected.
+
+Activation is **last-known-good**: a malformed, unsupported, or invalid update
+never replaces the active snapshot. The gateway keeps serving the previous valid
+policy and records the failure, and snapshot swaps are atomic so concurrent
+requests always observe a complete old or new policy, never a partial one.
+
+Operators can confirm what is applied via the gateway endpoints:
+
+- `GET /health` — liveness (always OK while serving).
+- `GET /ready` — readiness; fails until the first valid policy snapshot loads.
+- `GET /config/status` — sanitized `schema_version`, `revision`, `loaded_at`,
+  and `last_reload_error` (no policy body).
+- `GET /metrics` — `mcp_gateway_policy_reload_total{result}`,
+  `mcp_gateway_policy_active_revision_info{revision,schema_version}`, and
+  `mcp_gateway_policy_last_success_timestamp_seconds`.
+
 ### Agent adapters
 
 Agent-side adapters are helper processes for frameworks and IDEs that cannot
@@ -118,7 +152,7 @@ identity/session headers.
 
 The recommended path is **platform-issued sessions**: passing `--server
 <MCPServer name> --agent <id>` makes the adapter call `POST
-/api/runtime/adapter/sessions` at startup. The platform derives `humanID` and
+/api/v1/runtime/adapter/sessions` at startup. The platform derives `humanID` and
 `teamID` from the logged-in principal, picks a matching enabled
 `MCPAccessGrant` (highest `MaxTrust`, oldest creation as the tiebreak), and
 writes (or reuses) an `MCPAgentSession` with a deterministic name —
@@ -156,7 +190,7 @@ integration examples.
 The operator is a single-controller `controller-runtime` manager:
 
 1. Watches `MCPServer` (and owns Deployment / Service / Ingress).
-2. On reconcile, fills defaults via `setDefaults`, persists spec changes if defaults were added.
+2. Defaults and validates new API writes through admission webhooks; on reconcile, applies the same defaults to an in-memory copy for legacy objects without patching the stored spec.
 3. Resolves the image string (respecting `imageTag`, `registryOverride`, and `PROVISIONED_REGISTRY_URL`).
 4. Builds image-pull secrets, including auto-creating a docker-config secret from provisioned-registry env vars.
 5. Reconciles Deployment → Service → Ingress in order.

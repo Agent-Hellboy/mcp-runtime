@@ -44,7 +44,7 @@ Mode dispatch by changed paths:
 | `internal/operator/**`, `api/v1alpha1/**`, `config/crd/**` | Operator, CRD reconciliation, ingress, generated-file drift |
 | `cmd/operator/**`, `cmd/mcp-runtime/**`, `internal/cli/**` | CLI smoke, generated-file drift |
 | `internal/cli/setup/**`, `pkg/k8sclient/**`, `pkg/manifest/**`, `pkg/metadata/**` | Setup re-run, registry pulls, ingress, rollout |
-| `services/api/**`, `services/ui/**`, `services/ingest/**`, `services/processor/**`, `services/mcp-gateway/**` | Service rollout matrix, gateway sidecar refresh |
+| `services/platform-api/**`, `services/runtime-api/**`, `services/analytics-api/**`, `services/ui/**`, `services/ingest/**`, `services/processor/**`, `services/mcp-gateway/**` | Service rollout matrix, gateway sidecar refresh |
 | `k8s/**`, `config/**` | Manifest re-apply + rollout |
 | `docs/**` only | Skip — not an operations regression surface |
 
@@ -66,7 +66,7 @@ go vet ./...
 staticcheck ./...
 go test -race -count=1 $(go list ./... | grep -v '/test/integration$')
 
-for d in services/api services/ingest services/processor services/mcp-gateway services/ui; do
+for d in services/platform-api services/runtime-api services/analytics-api services/ingest services/processor services/mcp-gateway services/ui; do
   (cd "$d" && go test -race -count=1 ./...)
 done
 
@@ -165,6 +165,41 @@ finding; route the report back to `internal/cli/core/errors.go` and
 
 ## Step 7 — Setup / registry / ingress regression (only when those areas changed)
 
+For user MCP server validation, follow
+`docs/contributor/runtime-mcp-testing.md` instead of hand-writing an
+`MCPServer` with placeholder images. Build the sample server with
+`server build image`, then push the exact image ref written back into metadata:
+
+```bash
+./bin/mcp-runtime server build image workspace-assistant-mcp \
+  --metadata-file /tmp/workspace-assistant-mcp.yaml \
+  --dockerfile examples/workspace-assistant-mcp/Dockerfile \
+  --context examples/workspace-assistant-mcp \
+  --tag dev
+IMAGE_REF="$(python3 - <<'PY'
+image = tag = ""
+with open('/tmp/workspace-assistant-mcp.yaml') as f:
+    for line in f:
+        stripped = line.strip()
+        if stripped.startswith("image: "):
+            image = stripped.split(":", 1)[1].strip()
+        elif stripped.startswith("imageTag: "):
+            tag = stripped.split(":", 1)[1].strip()
+if not image or not tag:
+    raise SystemExit("metadata missing image/imageTag; rerun server build image")
+print(f"{image}:{tag}")
+PY
+)"
+./bin/mcp-runtime registry push --image "$IMAGE_REF"
+./bin/mcp-runtime server deploy workspace-assistant-mcp \
+  --scope tenant \
+  --metadata-file /tmp/workspace-assistant-mcp.yaml
+```
+
+If `registry push` returns `504 Gateway Timeout`, treat that as a platform
+registry-push failure and inspect runtime-api / Traefik logs; do not replace
+the server with an unrelated image just to get a pod.
+
 ```bash
 # Re-run setup in place (test-mode is idempotent; this catches drift).
 MCP_SETUP_WAIT_TIMEOUT=900 \
@@ -174,7 +209,9 @@ MCP_SETUP_WAIT_TIMEOUT=900 \
 ./bin/mcp-runtime cluster doctor
 kubectl get ingress -A
 curl -fsS -o /dev/null -w "%{http_code}\n" http://localhost:18080/    # 200
-curl -fsS -o /dev/null -w "%{http_code}\n" http://localhost:18080/api/health  # 200
+ADMIN_KEY=$(kubectl get secret mcp-sentinel-secrets -n mcp-sentinel -o jsonpath='{.data.ADMIN_API_KEYS}' | base64 -d | cut -d, -f1)
+curl -fsS -o /dev/null -w "%{http_code}\n" \
+  -H "x-api-key: $ADMIN_KEY" http://localhost:18080/api/v1/dashboard/summary  # 200
 curl -fsS -o /dev/null -w "%{http_code}\n" http://localhost:18080/go-example-mcp/mcp # 405/406 expected (POST-only)
 ```
 
@@ -185,15 +222,17 @@ setup output, not a host issue.
 ## Step 8 — Service rollout matrix (when services/**/ changed)
 
 For each touched Sentinel service, follow the contributor iterate-on-one
-loop from `docs/getting-started.md#iterate-on-one-sentinel-service`:
+loop from `docs/contributor/service-iteration.md` (split API table for
+`platform-api`, `runtime-api`, and `analytics-api`):
 
 ```bash
-SERVICE=api          # or ui, ingest, processor
-IMAGE_REPO=mcp-sentinel-$SERVICE
-DOCKERFILE=services/$SERVICE/Dockerfile
-BUILD_CONTEXT=$([ "$SERVICE" = api ] && echo "." || echo "services/$SERVICE")
-DEPLOYMENT=mcp-sentinel-$SERVICE
-CONTAINER=$SERVICE
+# Example: platform-api (see service-iteration.md for runtime-api / analytics-api)
+SERVICE=platform-api
+IMAGE_REPO=mcp-platform-api
+DOCKERFILE=services/platform-api/Dockerfile
+BUILD_CONTEXT=.
+DEPLOYMENT=mcp-platform-api
+CONTAINER=platform-api
 TAG="$SERVICE-qa-$(date +%s)"
 LOCAL_IMAGE="$IMAGE_REPO:$TAG"
 REGISTRY=registry.registry.svc.cluster.local:5000
@@ -231,11 +270,11 @@ kubectl -n mcp-runtime delete pod -l control-plane=controller-manager
 kubectl -n mcp-runtime rollout status \
   deploy/mcp-runtime-operator-controller-manager --timeout=120s
 
-# Bounce API mid grant-apply.
-kubectl -n mcp-sentinel scale deploy/mcp-sentinel-api --replicas=0
+# Bounce runtime-api mid grant-apply.
+kubectl -n mcp-sentinel scale deploy/mcp-runtime-api --replicas=0
 kubectl apply -f /tmp/go-example-access.yaml
-kubectl -n mcp-sentinel scale deploy/mcp-sentinel-api --replicas=1
-kubectl -n mcp-sentinel rollout status deploy/mcp-sentinel-api --timeout=90s
+kubectl -n mcp-sentinel scale deploy/mcp-runtime-api --replicas=1
+kubectl -n mcp-sentinel rollout status deploy/mcp-runtime-api --timeout=90s
 ./bin/mcp-runtime server policy inspect go-example-mcp --namespace mcp-servers \
   | grep -q local-session
 ```

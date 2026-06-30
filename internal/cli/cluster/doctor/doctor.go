@@ -61,7 +61,12 @@ const (
 	doctorTraefikWebPort      = 8000
 	doctorK3sTraefikWebPort   = 80
 	doctorSentinelNamespace   = "mcp-sentinel"
-	doctorSentinelAPIService  = "mcp-sentinel-api"
+	doctorPlatformAPIService  = "mcp-platform-api"
+	doctorPlatformAPIPort     = 8080
+	doctorRuntimeAPIService   = "mcp-runtime-api"
+	doctorRuntimeAPIPort      = 8084
+	doctorAnalyticsAPIService = "mcp-analytics-api"
+	doctorAnalyticsAPIPort    = 8085
 	doctorRestrictedRunAsUser = int64(65532)
 	doctorProbePodRunTimeout  = "90s"
 
@@ -231,6 +236,7 @@ func doctorCheckSpecs(kubectl core.KubectlRunner, distro Distribution) []doctorC
 		},
 		{Name: "MCPServer CRD", Detail: "checking that the MCPServer API type is installed", Run: func() DoctorCheck { return checkMCPServerCRD(kubectl) }},
 		{Name: "operator readiness", Detail: "reading ready and desired replicas for the operator deployment", Run: func() DoctorCheck { return checkOperatorReady(kubectl) }},
+		{Name: "operator webhook TLS expiry", Detail: "checking operator admission webhook serving certificate expiry", Run: func() DoctorCheck { return checkOperatorWebhookCertExpiry(kubectl) }},
 		{Name: "operator registry endpoint", Detail: "checking the operator uses a node-pullable registry endpoint", Run: func() DoctorCheck { return checkOperatorRegistryEndpoint(kubectl) }},
 		{Name: "operator reconcile errors (last 10m)", Detail: "scanning recent operator logs for reconcile failure patterns", Run: func() DoctorCheck { return checkOperatorRecentReconcileErrors(kubectl) }},
 		{Name: "operator ClusterRole rules", Detail: "verifying mcp-runtime-operator-role grants get/list/watch on the resources the informer cache needs", Run: func() DoctorCheck { return checkOperatorClusterRoleRules(kubectl) }},
@@ -266,10 +272,12 @@ func doctorCheckSpecs(kubectl core.KubectlRunner, distro Distribution) []doctorC
 		{Name: "registry image pull diagnostics", Detail: "inspecting image-pull failures for registry TLS, auth, DNS, or corrupt-manifest errors", Run: func() DoctorCheck { return checkRegistryImagePullDiagnostics(kubectl) }},
 		{Name: "sentinel Kafka readiness", Detail: "checking the bundled Kafka StatefulSet is ready so analytics ingestion can function", Run: func() DoctorCheck { return checkSentinelKafkaReadiness(kubectl) }},
 		{Name: "sentinel ingest readiness", Detail: "checking the analytics ingest deployment is ready", Run: func() DoctorCheck { return checkSentinelIngestReadiness(kubectl) }},
+		{Name: "sentinel platform API readiness", Detail: "checking the platform-api deployment and /health + /ready endpoints", Run: func() DoctorCheck { return checkSentinelPlatformAPIReadiness(kubectl) }},
+		{Name: "sentinel analytics API readiness", Detail: "checking the analytics-api deployment and /health + /ready endpoints", Run: func() DoctorCheck { return checkSentinelAnalyticsAPIReadiness(kubectl) }},
 		{Name: "sentinel session-local deployment scaling", Detail: "checking UI and gateway stay at one replica until shared session storage exists", Run: func() DoctorCheck { return checkSessionLocalDeploymentScaling(kubectl) }},
 		{Name: "sentinel secrets", Detail: "reading Sentinel API, admin, UI, and ingest keys from mcp-sentinel-secrets", Run: func() DoctorCheck { return checkSentinelSecrets(kubectl) }},
 		{Name: "gateway analytics credentials", Detail: "checking gateway sidecars have ingest credentials when analytics is enabled", Run: func() DoctorCheck { return checkGatewayAnalyticsCredentials(kubectl) }},
-		{Name: "sentinel API auth probe", Detail: "launching a temporary curl pod with UI_API_KEY against the Sentinel API", Run: func() DoctorCheck { return checkSentinelAPIAuthProbe(kubectl) }},
+		{Name: "sentinel API auth probe", Detail: "launching a temporary curl pod with UI_API_KEY against runtime-api", Run: func() DoctorCheck { return checkSentinelAPIAuthProbe(kubectl) }},
 		{Name: "runtime API image display refs", Detail: "checking runtime API server listings do not leak internal registry pull hosts", Run: func() DoctorCheck { return checkRuntimeAPIImageDisplayRefs(kubectl) }},
 		{Name: "node capacity", Detail: "checking node metrics, then falling back to allocatable resources if metrics-server is absent", Run: func() DoctorCheck { return checkNodeCapacity(kubectl) }},
 		{Name: "pending pods", Detail: "listing Pending pods across all namespaces", Run: func() DoctorCheck { return checkPendingPodsByNamespace(kubectl) }},
