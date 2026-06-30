@@ -21,10 +21,13 @@ run_e2e_mtls_scenario() {
     exit 1
   fi
 
-  runtime_issuer="$(kubectl get deploy/mcp-runtime-api -n mcp-sentinel \
-    -o jsonpath='{.spec.template.spec.containers[?(@.name=="runtime-api")].env[?(@.name=="MCP_MTLS_CLUSTER_ISSUER")].value}' 2>/dev/null || true)"
-  if [[ -n "${runtime_issuer}" && "${runtime_issuer}" != "mcp-runtime-ca" ]]; then
-    echo "runtime-api MCP_MTLS_CLUSTER_ISSUER = ${runtime_issuer}, want mcp-runtime-ca" >&2
+  # runtime-api issues adapter/session certificates and reads the issuer from the
+  # mcp-sentinel-config ConfigMap (via envFrom), so assert it there rather than on
+  # an inline env var. An empty value makes `adapter enroll` fail with a 503.
+  runtime_issuer="$(kubectl get configmap mcp-sentinel-config -n mcp-sentinel \
+    -o jsonpath='{.data.MCP_MTLS_CLUSTER_ISSUER}' 2>/dev/null || true)"
+  if [[ "${runtime_issuer}" != "mcp-runtime-ca" ]]; then
+    echo "mcp-sentinel-config MCP_MTLS_CLUSTER_ISSUER = ${runtime_issuer:-<empty>}, want mcp-runtime-ca" >&2
     exit 1
   fi
 

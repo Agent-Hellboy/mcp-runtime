@@ -1485,6 +1485,39 @@ func TestRenderAnalyticsSecretManifestDisablesExistingDevLoginsOutsideTestMode(t
 	}
 }
 
+func TestRenderAnalyticsConfigManifestInjectsMTLSClusterIssuer(t *testing.T) {
+	t.Setenv("MCP_MTLS_CLUSTER_ISSUER", "mcp-runtime-ca")
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			return &core.MockCommand{Args: spec.Args}
+		},
+	}
+	kubectl := core.NewTestKubectlClient(mock)
+
+	rendered, err := renderAnalyticsConfigManifest(kubectl, `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mcp-sentinel-config
+  namespace: mcp-sentinel
+data:
+  MCP_MTLS_CLUSTER_ISSUER: ""
+  PLATFORM_MODE: "tenant"
+`, setupplan.PlatformModeTenant, AnalyticsImageSet{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var payload struct {
+		Data map[string]string `yaml:"data"`
+	}
+	if err := yaml.Unmarshal([]byte(rendered), &payload); err != nil {
+		t.Fatalf("unmarshal rendered config: %v", err)
+	}
+	if got := payload.Data["MCP_MTLS_CLUSTER_ISSUER"]; got != "mcp-runtime-ca" {
+		t.Fatalf("expected MCP_MTLS_CLUSTER_ISSUER to be injected into the sentinel ConfigMap, got %q", got)
+	}
+}
+
 func TestRenderAnalyticsConfigManifestPreservesExistingPublicOAuthConfig(t *testing.T) {
 	mock := &core.MockExecutor{
 		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
