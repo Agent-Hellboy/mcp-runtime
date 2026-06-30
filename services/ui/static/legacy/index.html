@@ -155,12 +155,42 @@
             </div>
             <div class="server-catalog-controls">
               <select id="scope-namespace" aria-label="Active namespace scope"></select>
+              <select id="tool-risk-filter" aria-label="Filter tools by risk">
+                <option value="">All risk</option>
+                <option value="low">Low risk</option>
+                <option value="medium">Medium risk</option>
+                <option value="high">High risk</option>
+              </select>
               <input
                 type="search"
                 id="server-search"
-                placeholder="Search servers"
-                aria-label="Search MCP servers"
+                placeholder="Search servers and tools"
+                aria-label="Search MCP servers and tools"
               />
+            </div>
+          </div>
+          <div class="tool-catalog" id="tool-catalog">
+            <div class="tool-catalog-head">
+              <h3>Tools</h3>
+              <span id="tool-catalog-count">-</span>
+            </div>
+            <div class="table-wrap compact">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Tool</th>
+                    <th>Server</th>
+                    <th>Trust</th>
+                    <th>Side effect</th>
+                    <th>Risk</th>
+                    <th>Drift</th>
+                    <th>Connect</th>
+                  </tr>
+                </thead>
+                <tbody id="tool-catalog-body">
+                  <tr><td colspan="7" class="empty">Loading tools...</td></tr>
+                </tbody>
+              </table>
             </div>
           </div>
           <div class="server-inspector hidden" id="server-detail-panel"></div>
