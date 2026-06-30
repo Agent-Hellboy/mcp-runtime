@@ -112,7 +112,8 @@ EOF
     exit 1
   fi
 
-  ensure_traefik_port_forward
+  # The mtls datapath only needs Traefik's websecure (TLS) entrypoint; it never
+  # uses the plaintext web port-forward, so don't gate the scenario on it.
   if [[ -z "${TRAEFIK_TLS_PORT_FORWARD_PID:-}" ]]; then
     echo "[port-forward] exposing traefik websecure on localhost:${TRAEFIK_TLS_PORT}"
     port_forward_bg traefik traefik "${TRAEFIK_TLS_PORT}" 8443 "${WORKDIR}/traefik-tls-port-forward.log"
