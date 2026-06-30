@@ -106,8 +106,9 @@ EOF
     fi
     sleep 2
   done
-  if ! kubectl get secret "${MTLS_SERVER_NAME}-gateway-mtls" -n mcp-servers >/dev/null 2>&1; then
-    echo "timed out waiting for gateway TLS secret ${MTLS_SERVER_NAME}-gateway-mtls" >&2
+  if ! kubectl get secret "${MTLS_SERVER_NAME}-gateway-mtls" -n mcp-servers >/dev/null 2>&1 \
+    || ! kubectl get secret "${MTLS_SERVER_NAME}-mtls-ca" -n mcp-servers >/dev/null 2>&1; then
+    echo "timed out waiting for gateway TLS secrets (${MTLS_SERVER_NAME}-gateway-mtls and/or ${MTLS_SERVER_NAME}-mtls-ca)" >&2
     exit 1
   fi
 
@@ -215,7 +216,10 @@ print("mtls initialize ok")
 '
 
   log_line mtls "ignoring spoofed governance headers on mtls path"
-  spoof_body="$(curl -fsS \
+  # Intentionally omit curl -f: the gateway is expected to reject the spoofed
+  # headers with a 4xx/5xx, and we still need to capture the response body so the
+  # Python check below can validate the error instead of being skipped.
+  spoof_body="$(curl -sS \
     --cert "${MTLS_CLIENT_CERT}" \
     --key "${MTLS_CLIENT_KEY}" \
     --cacert "${MTLS_CLIENT_CA}" \
