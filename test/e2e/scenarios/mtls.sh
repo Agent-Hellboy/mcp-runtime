@@ -17,18 +17,53 @@ MTLS_INGRESS_HOST="${MTLS_INGRESS_HOST:-mtls-mcp-server.e2e.local}"
 mtls_dump_diagnostics() {
   local rc=$?
   local out="${WORKDIR}/mtls-diagnostics"
+  local traefik_ns="${TRAEFIK_NAMESPACE:-traefik}"
   mkdir -p "${out}"
   echo "[mtls] capturing failure diagnostics (exit=${rc}) to ${out}" >&2
-  {
-    kubectl get mcpserver "${MTLS_SERVER_NAME}" -n mcp-servers -o yaml
-  } >"${out}/mcpserver.yaml" 2>&1 || true
+
+  # --- MCPServer / workload state ---
+  kubectl get mcpserver "${MTLS_SERVER_NAME}" -n mcp-servers -o yaml >"${out}/mcpserver.yaml" 2>&1 || true
+  kubectl get all -n mcp-servers >"${out}/mcp-servers-all.txt" 2>&1 || true
+  kubectl describe pods -n mcp-servers -l "app=${MTLS_SERVER_NAME}" >"${out}/mtls-server-pods-describe.txt" 2>&1 || true
+  kubectl get events -n mcp-servers --sort-by=.lastTimestamp >"${out}/mcp-servers-events.txt" 2>&1 || true
+
+  # --- Certificates / issuance ---
   kubectl get certificaterequests -n mcp-servers -o yaml >"${out}/certificaterequests.yaml" 2>&1 || true
   kubectl get certificates,secrets -n mcp-servers >"${out}/certs-and-secrets.txt" 2>&1 || true
   kubectl get configmap mcp-sentinel-config -n mcp-sentinel -o yaml >"${out}/sentinel-config.yaml" 2>&1 || true
+
+  # --- Traefik routing layer (why a request 404s / 502s) ---
+  # The mtls datapath depends on Traefik CRDs (IngressRoute + Middleware +
+  # TLSOption + ServersTransport) being provisioned AND picked up by Traefik's
+  # CRD provider. Dump the CRs and the controller so we can tell an operator
+  # provisioning gap from a Traefik provider/namespace-scope gap.
+  kubectl get ingressroutes,ingressroutetcps,middlewares,tlsoptions,serverstransports,tlsstores \
+    -A -o yaml >"${out}/traefik-crs.yaml" 2>&1 || true
+  kubectl get deploy -n "${traefik_ns}" traefik -o yaml >"${out}/traefik-deploy.yaml" 2>&1 || true
+  kubectl logs -n "${traefik_ns}" deploy/traefik --tail=400 >"${out}/traefik.log" 2>&1 || true
+
+  # --- Sentinel APIs (adapter cert issuance path) ---
   kubectl logs -n mcp-sentinel deploy/mcp-runtime-api --tail=400 >"${out}/runtime-api.log" 2>&1 || true
   kubectl logs -n mcp-sentinel deploy/mcp-platform-api --tail=200 >"${out}/platform-api.log" 2>&1 || true
   kubectl logs -n mcp-servers -l "app=${MTLS_SERVER_NAME}" --all-containers=true --tail=200 >"${out}/mtls-server.log" 2>&1 || true
-  kubectl get events -n mcp-servers --sort-by=.lastTimestamp >"${out}/mcp-servers-events.txt" 2>&1 || true
+
+  # --- Replay the datapath request verbosely so the exact HTTP status,
+  # response headers and body (Traefik 404 vs gateway error vs deny) are in the
+  # artifact even when the assertion curl ran quietly. ---
+  if [[ -n "${MTLS_URL:-}" && -n "${MTLS_RESOLVE:-}" ]]; then
+    local -a replay=(curl -sS -k -v -o "${out}/datapath-replay-body.txt"
+      -w 'HTTP %{http_code}\n' --resolve "${MTLS_RESOLVE}"
+      -H "content-type: application/json"
+      -H "accept: application/json, text/event-stream"
+      -H "Mcp-Protocol-Version: ${MCP_PROTOCOL_VERSION}"
+      --data '{"jsonrpc":"2.0","id":99,"method":"initialize","params":{"protocolVersion":"'"${MCP_PROTOCOL_VERSION}"'","capabilities":{},"clientInfo":{"name":"diag","version":"1"}}}')
+    if [[ -s "${MTLS_CLIENT_CERT:-}" && -s "${MTLS_CLIENT_KEY:-}" ]]; then
+      replay+=(--cert "${MTLS_CLIENT_CERT}" --key "${MTLS_CLIENT_KEY}")
+    fi
+    replay+=("${MTLS_URL}")
+    "${replay[@]}" >"${out}/datapath-replay-status.txt" 2>"${out}/datapath-replay-trace.txt" || true
+  fi
+
   return "${rc}"
 }
 
