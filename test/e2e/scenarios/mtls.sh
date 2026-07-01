@@ -5,6 +5,10 @@ MTLS_SERVER_NAME="${MTLS_SERVER_NAME:-mtls-mcp-server}"
 MTLS_TRUST_DOMAIN="${MTLS_TRUST_DOMAIN:-cluster.local}"
 TRAEFIK_TLS_PORT="${TRAEFIK_TLS_PORT:-18443}"
 MTLS_AGENT_ID="${MTLS_AGENT_ID:-e2e-mtls-agent}"
+# A dedicated ingress host so the operator generates a Host()-scoped IngressRoute.
+# Traefik binds the client-cert TLS options to that SNI, so the mtls handshake is
+# only enforced when the caller's SNI matches (curl reaches it via --resolve).
+MTLS_INGRESS_HOST="${MTLS_INGRESS_HOST:-mtls-mcp-server.e2e.local}"
 
 # mtls_dump_diagnostics captures the control-plane state needed to debug an mtls
 # datapath failure into WORKDIR, which the EXIT trap archives to the CI artifact
@@ -77,6 +81,7 @@ servers:
     imageTag: ${MTLS_IMAGE##*:}
     route: /${MTLS_SERVER_NAME}/mcp
     publicPathPrefix: ${MTLS_SERVER_NAME}
+    ingressHost: ${MTLS_INGRESS_HOST}
     port: 8090
     namespace: mcp-servers
     resources:
@@ -154,13 +159,17 @@ EOF
   wait_port "${TRAEFIK_TLS_PORT}"
 
   MTLS_INGRESS_PATH="/${MTLS_SERVER_NAME}/mcp"
-  MTLS_URL="https://127.0.0.1:${TRAEFIK_TLS_PORT}${MTLS_INGRESS_PATH}"
-  MTLS_CA_FILE="${WORKDIR}/mtls-ca.crt"
-  kubectl get secret "${MTLS_SERVER_NAME}-mtls-ca" -n mcp-servers -o jsonpath='{.data.ca\.crt}' | decode_base64 >"${MTLS_CA_FILE}"
+  # Reach the websecure entrypoint over the ingress host so the SNI selects the
+  # Host()-scoped mtls IngressRoute (and its client-cert TLS options). --resolve
+  # maps the host to the port-forwarded Traefik on localhost. The caller-facing
+  # server certificate is Traefik's default (self-signed in test-mode, no default
+  # TLSStore), so use -k: this scenario verifies the *client* cert mTLS
+  # enforcement, not the server certificate.
+  MTLS_URL="https://${MTLS_INGRESS_HOST}:${TRAEFIK_TLS_PORT}${MTLS_INGRESS_PATH}"
+  MTLS_RESOLVE="${MTLS_INGRESS_HOST}:${TRAEFIK_TLS_PORT}:127.0.0.1"
 
   log_line mtls "rejecting initialize without a client certificate"
-  if curl -fsS --cacert "${MTLS_CA_FILE}" \
-    -H "Host: ${SERVER_HOST}" \
+  if curl -fsS -k --resolve "${MTLS_RESOLVE}" \
     -H "content-type: application/json" \
     -H "accept: application/json, text/event-stream" \
     -H "Mcp-Protocol-Version: ${MCP_PROTOCOL_VERSION}" \
@@ -228,11 +237,9 @@ EOF
   done
 
   log_line mtls "accepting initialize with session-bound client certificate"
-  init_body="$(curl -fsS \
+  init_body="$(curl -fsS -k --resolve "${MTLS_RESOLVE}" \
     --cert "${MTLS_CLIENT_CERT}" \
     --key "${MTLS_CLIENT_KEY}" \
-    --cacert "${MTLS_CLIENT_CA}" \
-    -H "Host: ${SERVER_HOST}" \
     -H "content-type: application/json" \
     -H "accept: application/json, text/event-stream" \
     -H "Mcp-Protocol-Version: ${MCP_PROTOCOL_VERSION}" \
@@ -252,11 +259,9 @@ print("mtls initialize ok")
   # Intentionally omit curl -f: the gateway is expected to reject the spoofed
   # headers with a 4xx/5xx, and we still need to capture the response body so the
   # Python check below can validate the error instead of being skipped.
-  spoof_body="$(curl -sS \
+  spoof_body="$(curl -sS -k --resolve "${MTLS_RESOLVE}" \
     --cert "${MTLS_CLIENT_CERT}" \
     --key "${MTLS_CLIENT_KEY}" \
-    --cacert "${MTLS_CLIENT_CA}" \
-    -H "Host: ${SERVER_HOST}" \
     -H "content-type: application/json" \
     -H "accept: application/json, text/event-stream" \
     -H "Mcp-Protocol-Version: ${MCP_PROTOCOL_VERSION}" \
