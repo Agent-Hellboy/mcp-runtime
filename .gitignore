@@ -22,6 +22,7 @@ FUTURE_PLAN.md
 *ARCHITECTURE.md
 f.go
 inspirations/
+/plan/
 
 c.go
 r.go 
@@ -32,6 +33,10 @@ tags
 /mcp-sentinel/
 /services/mcp-server/mcp-sentinel-mcp-server
 /services/ui/mcp-sentinel-ui
+/services/ui/frontend/node_modules/
+/services/ui/frontend/dist/
+/services/ui/frontend/.vite/
+/services/ui/frontend/*.tsbuildinfo
 /services/ingest/mcp-sentinel-ingest
 /services/processor/mcp-sentinel-processor
 /services/mcp-gateway/mcp-sentinel-mcp-gateway

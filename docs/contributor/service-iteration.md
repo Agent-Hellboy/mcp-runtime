@@ -15,7 +15,7 @@ go test ./internal/agentadapter -count=1
 (cd services/runtime-api && go test ./... -count=1)
 (cd services/analytics-api && go test ./... -count=1)
 (cd services/ui && go test ./... -count=1)
-node --check services/ui/static/app.js
+(cd services/ui/frontend && npm run build && npm run test)
 ```
 
 Run wider checks before handing off a broad change:
@@ -32,6 +32,13 @@ git diff --check
 API and UI changes often need coordinated rollout when browser flows depend on
 new `/api/v1/*` behavior. Traefik routes API traffic directly; the UI serves
 static assets and auth session cookies only.
+
+The UI service remains a Go backend for `/config.js`, `/auth/*`, API proxying,
+security headers, and static asset embedding. React, Vite, and TypeScript source
+lives under `services/ui/frontend`; Vite writes the browser bundle into
+`services/ui/static` for the Go embed step. During the migration, the current
+dashboard is shipped from `frontend/public/legacy` and mounted by the React
+shell, so migrate tabs into React one at a time.
 
 Build and roll the UI:
 

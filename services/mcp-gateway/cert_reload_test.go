@@ -111,7 +111,9 @@ func TestCertReloaderWatchReloadsOnChange(t *testing.T) {
 	future := time.Now().Add(2 * time.Second)
 	_ = os.Chtimes(certPath, future, future)
 
-	deadline := time.Now().Add(3 * time.Second)
+	// Generous deadline so the 20ms poll is detected even when CI runs the
+	// service test suites in parallel under a constrained CPU quota.
+	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		if string(servedLeaf(t, r)) == string(second) {
 			return

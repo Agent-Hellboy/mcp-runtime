@@ -53,11 +53,46 @@ func TestConfigExposesPlatformMode(t *testing.T) {
 	}
 }
 
-func TestStaticAppPreservesOneTimeAPIKeyAfterCreate(t *testing.T) {
-	body, err := os.ReadFile("static/app.js")
+func readStaticAsset(t *testing.T, path string) []byte {
+	t.Helper()
+	body, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("read static app: %v", err)
+		if os.IsNotExist(err) {
+			t.Skipf("static asset %s not found; run the frontend build first", path)
+		}
+		t.Fatalf("read %s: %v", path, err)
 	}
+	return body
+}
+
+func TestStaticShellLoadsReactBundle(t *testing.T) {
+	htmlBody := readStaticAsset(t, "static/index.html")
+	html := string(htmlBody)
+	for _, want := range []string{
+		`<div id="root"></div>`,
+		`type="module"`,
+		`/assets/`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("react shell missing %q", want)
+		}
+	}
+
+	legacyBody := readStaticAsset(t, "static/legacy/index.html")
+	legacy := string(legacyBody)
+	for _, want := range []string{
+		`href="styles.css"`,
+		`src="app.js"`,
+		`src="/config.js"`,
+	} {
+		if !strings.Contains(legacy, want) {
+			t.Fatalf("legacy dashboard missing %q", want)
+		}
+	}
+}
+
+func TestStaticAppPreservesOneTimeAPIKeyAfterCreate(t *testing.T) {
+	body := readStaticAsset(t, "static/legacy/app.js")
 	source := string(body)
 	if !strings.Contains(source, "async function loadUserAPIKeys(options = {})") {
 		t.Fatal("loadUserAPIKeys should accept options so callers can preserve one-time key display")
@@ -71,10 +106,7 @@ func TestStaticAppPreservesOneTimeAPIKeyAfterCreate(t *testing.T) {
 }
 
 func TestStaticAppKeepsOrgCatalogBehindLogin(t *testing.T) {
-	body, err := os.ReadFile("static/app.js")
-	if err != nil {
-		t.Fatalf("read static app: %v", err)
-	}
+	body := readStaticAsset(t, "static/legacy/app.js")
 	source := string(body)
 	if !strings.Contains(source, `const publicCatalogEnabled = platformMode === "public";`) {
 		t.Fatal("anonymous catalog browsing should only be enabled for public mode")
@@ -85,10 +117,7 @@ func TestStaticAppKeepsOrgCatalogBehindLogin(t *testing.T) {
 }
 
 func TestStaticAppHidesPersonalActivityForAdmins(t *testing.T) {
-	index, err := os.ReadFile("static/index.html")
-	if err != nil {
-		t.Fatalf("read static index: %v", err)
-	}
+	index := readStaticAsset(t, "static/legacy/index.html")
 	html := string(index)
 	if !strings.Contains(html, "Activity") {
 		t.Fatal("personal user dashboard tab should be named Activity")
@@ -103,10 +132,7 @@ func TestStaticAppHidesPersonalActivityForAdmins(t *testing.T) {
 		t.Fatalf("expected tab button and panel to be marked user-only, got %d markers", got)
 	}
 
-	body, err := os.ReadFile("static/app.js")
-	if err != nil {
-		t.Fatalf("read static app: %v", err)
-	}
+	body := readStaticAsset(t, "static/legacy/app.js")
 	source := string(body)
 	if !strings.Contains(source, `querySelectorAll('[data-user-only="true"]')`) {
 		t.Fatal("app should apply user-only visibility rules")
@@ -120,19 +146,13 @@ func TestStaticAppHidesPersonalActivityForAdmins(t *testing.T) {
 }
 
 func TestStaticAppHidesProtectedTabsWhenSignedOut(t *testing.T) {
-	index, err := os.ReadFile("static/index.html")
-	if err != nil {
-		t.Fatalf("read static index: %v", err)
-	}
+	index := readStaticAsset(t, "static/legacy/index.html")
 	html := string(index)
 	if got := strings.Count(html, `data-auth-required="true"`); got < 4 {
 		t.Fatalf("expected API Keys and Governance tabs/panels to require auth, got %d markers", got)
 	}
 
-	body, err := os.ReadFile("static/app.js")
-	if err != nil {
-		t.Fatalf("read static app: %v", err)
-	}
+	body := readStaticAsset(t, "static/legacy/app.js")
 	source := string(body)
 	for _, want := range []string{
 		`querySelectorAll('[data-auth-required="true"]')`,
@@ -145,10 +165,7 @@ func TestStaticAppHidesProtectedTabsWhenSignedOut(t *testing.T) {
 }
 
 func TestStaticAppDefaultsAdminsToAllNamespaceGovernance(t *testing.T) {
-	body, err := os.ReadFile("static/app.js")
-	if err != nil {
-		t.Fatalf("read static app: %v", err)
-	}
+	body := readStaticAsset(t, "static/legacy/app.js")
 	source := string(body)
 	for _, want := range []string{
 		`function adminAllNamespaceScope()`,
@@ -164,10 +181,7 @@ func TestStaticAppDefaultsAdminsToAllNamespaceGovernance(t *testing.T) {
 }
 
 func TestStaticAppIncludesAdminTeamsView(t *testing.T) {
-	index, err := os.ReadFile("static/index.html")
-	if err != nil {
-		t.Fatalf("read static index: %v", err)
-	}
+	index := readStaticAsset(t, "static/legacy/index.html")
 	html := string(index)
 	for _, want := range []string{
 		`id="tab-button-teams"`,
@@ -181,10 +195,7 @@ func TestStaticAppIncludesAdminTeamsView(t *testing.T) {
 		}
 	}
 
-	body, err := os.ReadFile("static/app.js")
-	if err != nil {
-		t.Fatalf("read static app: %v", err)
-	}
+	body := readStaticAsset(t, "static/legacy/app.js")
 	source := string(body)
 	for _, want := range []string{
 		`loadTeams()`,
@@ -201,19 +212,13 @@ func TestStaticAppIncludesAdminTeamsView(t *testing.T) {
 }
 
 func TestStaticAppHidesUserAPIKeysWithoutUserIdentity(t *testing.T) {
-	index, err := os.ReadFile("static/index.html")
-	if err != nil {
-		t.Fatalf("read static index: %v", err)
-	}
+	index := readStaticAsset(t, "static/legacy/index.html")
 	html := string(index)
 	if got := strings.Count(html, `data-user-identity-required="true"`); got < 2 {
 		t.Fatalf("expected API key tab and panel to require a user identity, got %d markers", got)
 	}
 
-	body, err := os.ReadFile("static/app.js")
-	if err != nil {
-		t.Fatalf("read static app: %v", err)
-	}
+	body := readStaticAsset(t, "static/legacy/app.js")
 	source := string(body)
 	for _, want := range []string{
 		`function hasUserIdentity()`,
@@ -228,10 +233,7 @@ func TestStaticAppHidesUserAPIKeysWithoutUserIdentity(t *testing.T) {
 }
 
 func TestStaticAppShowsInlineUserAPIKeyLoadFailures(t *testing.T) {
-	body, err := os.ReadFile("static/app.js")
-	if err != nil {
-		t.Fatalf("read static app: %v", err)
-	}
+	body := readStaticAsset(t, "static/legacy/app.js")
 	source := string(body)
 	for _, want := range []string{
 		"const message = `Failed to load API keys: ${readErrorMessage(err, \"request failed\")}`",
@@ -245,10 +247,7 @@ func TestStaticAppShowsInlineUserAPIKeyLoadFailures(t *testing.T) {
 }
 
 func TestStaticAppSearchesServerMetadataLabels(t *testing.T) {
-	body, err := os.ReadFile("static/app.js")
-	if err != nil {
-		t.Fatalf("read static app: %v", err)
-	}
+	body := readStaticAsset(t, "static/legacy/app.js")
 	source := string(body)
 	for _, want := range []string{
 		`metadataSearchText(server.labels)`,
@@ -261,10 +260,7 @@ func TestStaticAppSearchesServerMetadataLabels(t *testing.T) {
 }
 
 func TestStaticAppUsesLiveInventoryWithDriftBadges(t *testing.T) {
-	body, err := os.ReadFile("static/app.js")
-	if err != nil {
-		t.Fatalf("read static app: %v", err)
-	}
+	body := readStaticAsset(t, "static/legacy/app.js")
 	source := string(body)
 	for _, want := range []string{
 		`function serverDisplayInventory(server)`,
@@ -281,10 +277,7 @@ func TestStaticAppUsesLiveInventoryWithDriftBadges(t *testing.T) {
 		}
 	}
 
-	styles, err := os.ReadFile("static/styles.css")
-	if err != nil {
-		t.Fatalf("read static styles: %v", err)
-	}
+	styles := readStaticAsset(t, "static/legacy/styles.css")
 	css := string(styles)
 	for _, want := range []string{
 		`.drift-ungoverned`,
@@ -298,10 +291,7 @@ func TestStaticAppUsesLiveInventoryWithDriftBadges(t *testing.T) {
 }
 
 func TestStaticAppRequiresGrantSideEffects(t *testing.T) {
-	body, err := os.ReadFile("static/app.js")
-	if err != nil {
-		t.Fatalf("read static app: %v", err)
-	}
+	body := readStaticAsset(t, "static/legacy/app.js")
 	source := string(body)
 	for _, want := range []string{
 		`const sideEffects = selectedGrantSideEffects()`,
@@ -315,10 +305,7 @@ func TestStaticAppRequiresGrantSideEffects(t *testing.T) {
 }
 
 func TestStaticAppKeepsServerEventAuthFailuresLocal(t *testing.T) {
-	body, err := os.ReadFile("static/app.js")
-	if err != nil {
-		t.Fatalf("read static app: %v", err)
-	}
+	body := readStaticAsset(t, "static/legacy/app.js")
 	source := string(body)
 	for _, want := range []string{
 		`function fetchJSONNoAuthSideEffects`,
@@ -332,10 +319,7 @@ func TestStaticAppKeepsServerEventAuthFailuresLocal(t *testing.T) {
 }
 
 func TestStaticAppShowsInlineValidationFeedback(t *testing.T) {
-	index, err := os.ReadFile("static/index.html")
-	if err != nil {
-		t.Fatalf("read static index: %v", err)
-	}
+	index := readStaticAsset(t, "static/legacy/index.html")
 	html := string(index)
 	for _, want := range []string{
 		`id="grant-form-error" class="form-error hidden" role="alert"`,
@@ -348,10 +332,7 @@ func TestStaticAppShowsInlineValidationFeedback(t *testing.T) {
 		}
 	}
 
-	body, err := os.ReadFile("static/app.js")
-	if err != nil {
-		t.Fatalf("read static app: %v", err)
-	}
+	body := readStaticAsset(t, "static/legacy/app.js")
 	source := string(body)
 	for _, want := range []string{
 		`function setInlineError(id, message = "")`,
@@ -366,10 +347,7 @@ func TestStaticAppShowsInlineValidationFeedback(t *testing.T) {
 }
 
 func TestStaticStylesAvoidTextGeneratedChevrons(t *testing.T) {
-	body, err := os.ReadFile("static/styles.css")
-	if err != nil {
-		t.Fatalf("read static styles: %v", err)
-	}
+	body := readStaticAsset(t, "static/legacy/styles.css")
 	source := string(body)
 	if strings.Contains(source, `content: ">"`) {
 		t.Fatal("inventory chevrons should not use generated text that leaks into the accessibility tree")
@@ -380,10 +358,7 @@ func TestStaticStylesAvoidTextGeneratedChevrons(t *testing.T) {
 }
 
 func TestStaticMarkupIncludesPlatformRestartAndDialogReviewFixes(t *testing.T) {
-	index, err := os.ReadFile("static/index.html")
-	if err != nil {
-		t.Fatalf("read static index: %v", err)
-	}
+	index := readStaticAsset(t, "static/legacy/index.html")
 	html := string(index)
 	for _, want := range []string{
 		`<option value="prometheus">Prometheus</option>`,
@@ -400,10 +375,7 @@ func TestStaticMarkupIncludesPlatformRestartAndDialogReviewFixes(t *testing.T) {
 }
 
 func TestStaticAppMovesTenantRetireActionToMyActivity(t *testing.T) {
-	body, err := os.ReadFile("static/app.js")
-	if err != nil {
-		t.Fatalf("read static app: %v", err)
-	}
+	body := readStaticAsset(t, "static/legacy/app.js")
 	source := string(body)
 	for _, want := range []string{
 		`function isTenantUser()`,
@@ -423,10 +395,7 @@ func TestStaticAppMovesTenantRetireActionToMyActivity(t *testing.T) {
 }
 
 func TestStaticAppRemovesCatalogDetailsAction(t *testing.T) {
-	body, err := os.ReadFile("static/app.js")
-	if err != nil {
-		t.Fatalf("read static app: %v", err)
-	}
+	body := readStaticAsset(t, "static/legacy/app.js")
 	source := string(body)
 	for _, unwanted := range []string{
 		`detailsButton`,
@@ -440,10 +409,7 @@ func TestStaticAppRemovesCatalogDetailsAction(t *testing.T) {
 }
 
 func TestStaticAppUsesInAppConfirmForRetire(t *testing.T) {
-	body, err := os.ReadFile("static/app.js")
-	if err != nil {
-		t.Fatalf("read static app: %v", err)
-	}
+	body := readStaticAsset(t, "static/legacy/app.js")
 	source := string(body)
 	if strings.Contains(source, "window.confirm") {
 		t.Fatal("retire flow should use the in-app confirmation modal, not native window.confirm")
@@ -454,10 +420,7 @@ func TestStaticAppUsesInAppConfirmForRetire(t *testing.T) {
 }
 
 func TestStaticAppKeepsAdminFleetCatalogAndCreatedGovernanceNamespaceVisible(t *testing.T) {
-	body, err := os.ReadFile("static/app.js")
-	if err != nil {
-		t.Fatalf("read static app: %v", err)
-	}
+	body := readStaticAsset(t, "static/legacy/app.js")
 	source := string(body)
 	for _, want := range []string{
 		`fetchJSON("/runtime/servers").then`,
@@ -474,10 +437,7 @@ func TestStaticAppKeepsAdminFleetCatalogAndCreatedGovernanceNamespaceVisible(t *
 }
 
 func TestStaticAppExposesGovernanceToTenantUsers(t *testing.T) {
-	index, err := os.ReadFile("static/index.html")
-	if err != nil {
-		t.Fatalf("read static index: %v", err)
-	}
+	index := readStaticAsset(t, "static/legacy/index.html")
 	html := string(index)
 	if strings.Contains(html, `id="tab-button-governance"`+`
           class="tab"
@@ -496,10 +456,7 @@ func TestStaticAppExposesGovernanceToTenantUsers(t *testing.T) {
 		}
 	}
 
-	body, err := os.ReadFile("static/app.js")
-	if err != nil {
-		t.Fatalf("read static app: %v", err)
-	}
+	body := readStaticAsset(t, "static/legacy/app.js")
 	source := string(body)
 	for _, want := range []string{
 		`subject.teamID`,
@@ -534,13 +491,13 @@ func TestSecurityHeadersAllowConfiguredExternalAssets(t *testing.T) {
 	if !strings.Contains(csp, "https://fonts.gstatic.com") {
 		t.Fatalf("CSP should allow font file origin, got %q", csp)
 	}
+	if !strings.Contains(csp, "frame-src 'self' https://accounts.google.com") {
+		t.Fatalf("CSP should allow same-origin dashboard iframe, got %q", csp)
+	}
 }
 
 func TestStaticAppUsesCompactCatalogInventorySections(t *testing.T) {
-	body, err := os.ReadFile("static/app.js")
-	if err != nil {
-		t.Fatalf("read static app: %v", err)
-	}
+	body := readStaticAsset(t, "static/legacy/app.js")
 	source := string(body)
 	for _, want := range []string{
 		`function serverVisibleInventorySections(inventory)`,
@@ -557,10 +514,7 @@ func TestStaticAppUsesCompactCatalogInventorySections(t *testing.T) {
 }
 
 func TestStaticMarkupBoundsLongActivityTables(t *testing.T) {
-	index, err := os.ReadFile("static/index.html")
-	if err != nil {
-		t.Fatalf("read static index: %v", err)
-	}
+	index := readStaticAsset(t, "static/legacy/index.html")
 	html := string(index)
 	if got := strings.Count(html, `class="table-wrap scroll-table"`); got < 4 {
 		t.Fatalf("expected long dashboard tables to use scroll-table, got %d", got)
@@ -591,10 +545,7 @@ func TestStaticMarkupBoundsLongActivityTables(t *testing.T) {
 		}
 	}
 
-	styles, err := os.ReadFile("static/styles.css")
-	if err != nil {
-		t.Fatalf("read static styles: %v", err)
-	}
+	styles := readStaticAsset(t, "static/legacy/styles.css")
 	css := string(styles)
 	for _, want := range []string{
 		`.table-wrap.scroll-table`,
@@ -616,10 +567,7 @@ func TestStaticMarkupBoundsLongActivityTables(t *testing.T) {
 }
 
 func TestStaticAppRoutesDecisionAuditThroughGovernance(t *testing.T) {
-	body, err := os.ReadFile("static/app.js")
-	if err != nil {
-		t.Fatalf("read static app: %v", err)
-	}
+	body := readStaticAsset(t, "static/legacy/app.js")
 	source := string(body)
 	for _, want := range []string{
 		`function initAnalyticsTabsets()`,

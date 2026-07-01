@@ -1,6 +1,7 @@
 import base64
 import json
 import os
+import re
 import time
 import urllib.error
 import urllib.parse
@@ -91,6 +92,18 @@ def expect_json(url, status=200, *, method="GET", headers=None, body=None):
     return json.loads(payload)
 
 
+def check_vite_assets(base, label, index_html):
+    scripts = re.findall(r'<script[^>]+src="([^"]+)"', index_html)
+    styles = re.findall(r'<link[^>]+rel="stylesheet"[^>]+href="([^"]+)"', index_html)
+    script_path = next((path for path in scripts if path.startswith("/assets/")), "")
+    style_path = next((path for path in styles if path.startswith("/assets/")), "")
+    check(script_path, f"{label} index references Vite JS asset", f"{label} index missing Vite JS asset: {index_html}")
+    check(style_path, f"{label} index references Vite CSS asset", f"{label} index missing Vite CSS asset: {index_html}")
+    expect_status(f"{base}{script_path}", 200, contains="/config.js")
+    expect_status(f"{base}{style_path}", 200, contains="legacy-dashboard")
+    return script_path, style_path
+
+
 def wait_for_json(
     url, predicate, *, headers=None, retries=60, delay=2, description="response"
 ):
@@ -167,7 +180,9 @@ for key in ("total_events", "active_servers", "active_grants", "active_sessions"
         f"gateway dashboard summary missing {key}: {gateway_summary}",
     )
 expect_status(f"{gateway_base}/ping", 200, contains="OK")
-expect_status(f"{gateway_base}/", 200, contains="MCP Sentinel Control Plane")
+gateway_index = expect_status(
+    f"{gateway_base}/", 200, contains="MCP Sentinel Control Plane"
+)
 gateway_config = expect_status(
     f"{gateway_base}/config.js", 200, contains="window.MCP_API_BASE"
 )
@@ -176,8 +191,7 @@ check(
     f"gateway config.js exposes platform mode {platform_mode}",
     f"gateway config.js missing platform mode {platform_mode}: {gateway_config}",
 )
-expect_status(f"{gateway_base}/app.js", 200, contains="const apiBase")
-expect_status(f"{gateway_base}/styles.css", 200, contains=".canvas")
+gateway_script_path, gateway_style_path = check_vite_assets(gateway_base, "gateway", gateway_index)
 expect_status(f"{gateway_base}/grafana/api/health", 401)
 expect_status(f"{gateway_base}/prometheus/-/healthy", 404)
 expect_status(
@@ -187,15 +201,14 @@ expect_status(f"{gateway_base}/prometheus/-/healthy", 404, headers=auth_headers)
 
 # Direct UI service.
 expect_status(f"{ui_base}/health", 200, contains='"ok":true')
-expect_status(f"{ui_base}/", 200, contains="MCP Sentinel Control Plane")
+ui_index = expect_status(f"{ui_base}/", 200, contains="MCP Sentinel Control Plane")
 ui_config = expect_status(f"{ui_base}/config.js", 200, contains="window.MCP_API_BASE")
 check(
     f'window.MCP_PLATFORM_MODE = "{platform_mode}"' in ui_config,
     f"ui config.js exposes platform mode {platform_mode}",
     f"ui config.js missing platform mode {platform_mode}: {ui_config}",
 )
-expect_status(f"{ui_base}/app.js", 200, contains="const apiBase")
-expect_status(f"{ui_base}/styles.css", 200, contains=".canvas")
+ui_script_path, ui_style_path = check_vite_assets(ui_base, "ui", ui_index)
 
 # Direct MCP proxy and upstream server surfaces.
 expect_status(f"{server_proxy_base}/health", 200, contains="ok")
@@ -1130,8 +1143,8 @@ for route in (
     "gateway:/api/dashboard/summary",
     "gateway:/ping",
     "gateway:/config.js",
-    "gateway:/app.js",
-    "gateway:/styles.css",
+    f"gateway:{gateway_script_path}",
+    f"gateway:{gateway_style_path}",
     "gateway:/grafana/api/health",
     "gateway:/prometheus/-/healthy (hidden)",
     "ingress:{server-host}:/{server}/mcp",
@@ -1140,8 +1153,8 @@ for route in (
     "ui:/health",
     "ui:/",
     "ui:/config.js",
-    "ui:/app.js",
-    "ui:/styles.css",
+    f"ui:{ui_script_path}",
+    f"ui:{ui_style_path}",
     "mcp-gateway:/health",
     "mcp-gateway:/",
     "mcp-server:/health",

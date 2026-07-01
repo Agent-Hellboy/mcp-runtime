@@ -48,7 +48,7 @@ on the day-to-day loop for contributors.
 | CLI commands | `cmd/mcp-runtime/`, `internal/cli/` | `go test ./internal/cli/... -count=1`, golden help tests when help text changes |
 | Operator reconciliation | `cmd/operator/`, `internal/operator/`, `api/v1alpha1/` | `go test ./internal/operator/... -count=1`, integration tests for CRD behavior |
 | Platform API | `services/platform-api`, `services/runtime-api`, `services/analytics-api` | `(cd services/platform-api && go test ./... -count=1)` plus runtime/analytics when touched |
-| Platform UI | `services/ui` | `(cd services/ui && go test ./... -count=1)`, `node --check services/ui/static/app.js` |
+| Platform UI | `services/ui` | `(cd services/ui && go test ./... -count=1)`, `(cd services/ui/frontend && npm run build && npm run test)` |
 | MCP gateway | `services/mcp-gateway`, `pkg/policy`, `pkg/access` | service tests plus `E2E_SCENARIOS=governance` or `smoke-auth` when request behavior changes |
 | Agent adapters | `internal/agentadapter/`, `internal/cli/adapter/`, `services/runtime-api/internal/runtimeapi/adapter.go` | `go test ./internal/agentadapter ./internal/cli/adapter -count=1` plus `(cd services/runtime-api && go test ./internal/runtimeapi -run TestAdapter -count=1)` when touching the platform-issued session endpoint |
 | Docs only | `docs/`, `README.md`, `AGENTS.md` | docs build if available, `rg` for stale terms, `git diff --check` |
