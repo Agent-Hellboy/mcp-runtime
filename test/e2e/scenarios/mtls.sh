@@ -214,7 +214,7 @@ EOF
       --agent "${MTLS_AGENT_ID}" \
       --trust-domain "${MTLS_TRUST_DOMAIN}" \
       --output-dir "${MTLS_CERT_DIR}")"
-  MTLS_SESSION_NAME="$(printf '%s\n' "${MTLS_ENROLL_OUT}" | python3 -c 'import re,sys; m=re.search(r"/session/([^\\s]+)", sys.stdin.read()); print(m.group(1) if m else ""); sys.exit(0 if m else 1)')"
+  MTLS_SESSION_NAME="$(printf '%s\n' "${MTLS_ENROLL_OUT}" | python3 -c 'import re,sys; m=re.search(r"/session/([A-Za-z0-9._-]+)", sys.stdin.read()); print(m.group(1) if m else ""); sys.exit(0 if m else 1)')"
   wait_for_policy_text "\"name\": \"${MTLS_SESSION_NAME}\"" "${MTLS_SERVER_NAME}"
 
   MTLS_CLIENT_CERT="${MTLS_CERT_DIR}/client.crt"
