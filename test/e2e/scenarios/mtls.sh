@@ -6,7 +6,36 @@ MTLS_TRUST_DOMAIN="${MTLS_TRUST_DOMAIN:-cluster.local}"
 TRAEFIK_TLS_PORT="${TRAEFIK_TLS_PORT:-18443}"
 MTLS_AGENT_ID="${MTLS_AGENT_ID:-e2e-mtls-agent}"
 
+# mtls_dump_diagnostics captures the control-plane state needed to debug an mtls
+# datapath failure into WORKDIR, which the EXIT trap archives to the CI artifact
+# bundle. Without this, an mtls failure (e.g. adapter cert issuance) leaves no
+# server-side evidence in the artifacts and can only be diagnosed by local repro.
+mtls_dump_diagnostics() {
+  local rc=$?
+  local out="${WORKDIR}/mtls-diagnostics"
+  mkdir -p "${out}"
+  echo "[mtls] capturing failure diagnostics (exit=${rc}) to ${out}" >&2
+  {
+    kubectl get mcpserver "${MTLS_SERVER_NAME}" -n mcp-servers -o yaml
+  } >"${out}/mcpserver.yaml" 2>&1 || true
+  kubectl get certificaterequests -n mcp-servers -o yaml >"${out}/certificaterequests.yaml" 2>&1 || true
+  kubectl get certificates,secrets -n mcp-servers >"${out}/certs-and-secrets.txt" 2>&1 || true
+  kubectl get configmap mcp-sentinel-config -n mcp-sentinel -o yaml >"${out}/sentinel-config.yaml" 2>&1 || true
+  kubectl logs -n mcp-sentinel deploy/mcp-runtime-api --tail=400 >"${out}/runtime-api.log" 2>&1 || true
+  kubectl logs -n mcp-sentinel deploy/mcp-platform-api --tail=200 >"${out}/platform-api.log" 2>&1 || true
+  kubectl logs -n mcp-servers -l "app=${MTLS_SERVER_NAME}" --all-containers=true --tail=200 >"${out}/mtls-server.log" 2>&1 || true
+  kubectl get events -n mcp-servers --sort-by=.lastTimestamp >"${out}/mcp-servers-events.txt" 2>&1 || true
+  return "${rc}"
+}
+
 run_e2e_mtls_scenario() {
+  # Surface server-side diagnostics on any unexpected failure in this scenario.
+  # errtrace (set -E) propagates the ERR trap into functions and command
+  # substitutions (e.g. the `$(... adapter enroll ...)` capture) so those
+  # failures are archived too. This scenario runs last, so scoping is moot.
+  set -E
+  trap 'mtls_dump_diagnostics' ERR
+
   log_line mtls "verifying test-mode workload PKI"
   if ! kubectl get clusterissuer mcp-runtime-ca >/dev/null 2>&1; then
     echo "expected ClusterIssuer mcp-runtime-ca from test-mode setup" >&2
