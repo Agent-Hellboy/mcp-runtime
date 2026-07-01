@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"net/http"
 	"os"
@@ -196,7 +197,10 @@ func (s *AccessService) issueSessionCertificateDER(
 			},
 		},
 		"spec": map[string]any{
-			"request":  base64.StdEncoding.EncodeToString(csrDER),
+			// cert-manager's CertificateRequest.spec.request must be a PEM-encoded
+			// CSR; sending raw DER makes the admission webhook reject it with
+			// "error decoding certificate request PEM block".
+			"request":  base64.StdEncoding.EncodeToString(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrDER})),
 			"duration": duration.Round(time.Second).String(),
 			"usages":   []any{"digital signature", "client auth"},
 			"issuerRef": map[string]any{
