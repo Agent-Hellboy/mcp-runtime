@@ -19,9 +19,10 @@ func mtlsServer() *mcpv1alpha1.MCPServer {
 	return &mcpv1alpha1.MCPServer{
 		ObjectMeta: metav1.ObjectMeta{Name: "secure-server", Namespace: "mcp-servers"},
 		Spec: mcpv1alpha1.MCPServerSpec{
-			Image:   "example.com/secure-server",
-			Gateway: &mcpv1alpha1.GatewayConfig{Enabled: true, Port: 8091, Image: "example.com/gw:latest"},
-			Auth:    &mcpv1alpha1.AuthConfig{Mode: mcpv1alpha1.AuthModeMTLS, TrustDomain: "example.org"},
+			Image:       "example.com/secure-server",
+			ServicePort: 80,
+			Gateway:     &mcpv1alpha1.GatewayConfig{Enabled: true, Port: 8091, Image: "example.com/gw:latest"},
+			Auth:        &mcpv1alpha1.AuthConfig{Mode: mcpv1alpha1.AuthModeMTLS, TrustDomain: "example.org"},
 		},
 	}
 }

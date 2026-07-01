@@ -414,9 +414,15 @@ func (r *MCPServerReconciler) reconcileMTLSIngress(ctx context.Context, mcpServe
 			"match":       match,
 			"kind":        "Rule",
 			"middlewares": []any{map[string]any{"name": mtlsMiddlewareName(mcpServer)}},
+			// The IngressRoute references the Kubernetes Service port (ServicePort,
+			// typically 80), not the gateway container port. Traefik resolves
+			// endpoints via the Service and connects to each pod at the targetPort
+			// (Gateway.Port, e.g. 8091) automatically. Using the container port
+			// directly causes "service port not found" because that port number does
+			// not appear in the Service's spec.ports.
 			"services": []any{map[string]any{
 				"name":             mcpServer.Name,
-				"port":             int64(mcpServer.Spec.Gateway.Port),
+				"port":             int64(mcpServer.Spec.ServicePort),
 				"serversTransport": mtlsServersTransportName(mcpServer),
 			}},
 		}},
