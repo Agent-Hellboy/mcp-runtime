@@ -283,14 +283,35 @@ EOF
   recover_traefik_tls_port_forward_if_needed
 
   log_line mtls "accepting initialize with session-bound client certificate"
-  init_body="$(curl -fsS -k --resolve "${MTLS_RESOLVE}" \
-    --cert "${MTLS_CLIENT_CERT}" \
-    --key "${MTLS_CLIENT_KEY}" \
-    -H "content-type: application/json" \
-    -H "accept: application/json, text/event-stream" \
-    -H "Mcp-Protocol-Version: ${MCP_PROTOCOL_VERSION}" \
-    --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"'"${MCP_PROTOCOL_VERSION}"'","capabilities":{},"clientInfo":{"name":"e2e-mtls","version":"1"}}}' \
-    "${MTLS_URL}")"
+  # The gateway reloads its policy from the volume-mounted ConfigMap every 5s.
+  # wait_for_policy_text confirmed the ConfigMap was updated, but the kubelet may
+  # not have propagated the change to the pod volume mount yet, so the gateway's
+  # next reload may still see the old policy. Retry until the session appears in
+  # the gateway's active policy (up to 30s). Each 401 means session not yet
+  # loaded; each iteration recovers the port-forward in case Traefik sent a
+  # TLS alert during a prior retry.
+  local _mtls_init_try
+  local init_body=""
+  for _mtls_init_try in $(seq 1 15); do
+    init_body="$(curl -sS -k --resolve "${MTLS_RESOLVE}" \
+      --cert "${MTLS_CLIENT_CERT}" \
+      --key "${MTLS_CLIENT_KEY}" \
+      -H "content-type: application/json" \
+      -H "accept: application/json, text/event-stream" \
+      -H "Mcp-Protocol-Version: ${MCP_PROTOCOL_VERSION}" \
+      --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"'"${MCP_PROTOCOL_VERSION}"'","capabilities":{},"clientInfo":{"name":"e2e-mtls","version":"1"}}}' \
+      "${MTLS_URL}" 2>/dev/null || true)"
+    if [[ "${init_body}" == *'"result"'* ]]; then
+      break
+    fi
+    echo "[mtls] initialize attempt ${_mtls_init_try}/15 failed: ${init_body:0:120}" >&2
+    if [[ ${_mtls_init_try} -eq 15 ]]; then
+      echo "[mtls] timed out: gateway did not materialize session in policy after 15 attempts" >&2
+      false  # triggers ERR trap → mtls_dump_diagnostics
+    fi
+    recover_traefik_tls_port_forward_if_needed
+    sleep 2
+  done
   echo "${init_body}" | python3 -c '
 import json, sys
 doc = json.load(sys.stdin)
