@@ -421,8 +421,13 @@ func (r *MCPServerReconciler) reconcileMTLSIngress(ctx context.Context, mcpServe
 			// directly causes "service port not found" because that port number does
 			// not appear in the Service's spec.ports.
 			"services": []any{map[string]any{
-				"name":             mcpServer.Name,
-				"port":             int64(mcpServer.Spec.ServicePort),
+				"name": mcpServer.Name,
+				"port": int64(mcpServer.Spec.ServicePort),
+				// scheme: https tells Traefik to connect to the backend over TLS.
+				// Without it, Traefik defaults to HTTP (port 80 is not 443), and
+				// the ServersTransport TLS config is ignored, causing the gateway to
+				// return 400 "Client sent an HTTP request to an HTTPS server".
+				"scheme":           "https",
 				"serversTransport": mtlsServersTransportName(mcpServer),
 			}},
 		}},
