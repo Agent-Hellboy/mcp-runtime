@@ -842,6 +842,31 @@ recover_traefik_port_forward_if_needed() {
   wait_port "${TRAEFIK_PORT}" 30
 }
 
+# recover_traefik_tls_port_forward_if_needed mirrors recover_traefik_port_forward_if_needed
+# for the websecure (TLS) entrypoint. The TLS port-forward can die when Traefik
+# reloads its mTLS config (TLSOption / ServersTransport) after cert-manager issues
+# the CA bundle secrets — a watch-event-driven reload briefly closes the listener,
+# which breaks the port-forward with "broken pipe". Call this before any mTLS curl
+# that runs after the cert-issuance wait.
+recover_traefik_tls_port_forward_if_needed() {
+  if port_is_listening "${TRAEFIK_TLS_PORT}"; then
+    return 0
+  fi
+
+  if [[ -n "${TRAEFIK_TLS_PORT_FORWARD_PID:-}" ]] && kill -0 "${TRAEFIK_TLS_PORT_FORWARD_PID}" >/dev/null 2>&1; then
+    kill "${TRAEFIK_TLS_PORT_FORWARD_PID}" >/dev/null 2>&1 || true
+    wait "${TRAEFIK_TLS_PORT_FORWARD_PID}" >/dev/null 2>&1 || true
+  fi
+  TRAEFIK_TLS_PORT_FORWARD_PID=""
+
+  TRAEFIK_TLS_PORT_FORWARD_RESTARTS=$((TRAEFIK_TLS_PORT_FORWARD_RESTARTS + 1))
+  local log_file="${WORKDIR}/traefik-tls-port-forward-restart-${TRAEFIK_TLS_PORT_FORWARD_RESTARTS}.log"
+  echo "[port-forward] restarting Traefik TLS port-forward on localhost:${TRAEFIK_TLS_PORT}" >&2
+  port_forward_bg traefik traefik "${TRAEFIK_TLS_PORT}" 8443 "${log_file}" || return 1
+  TRAEFIK_TLS_PORT_FORWARD_PID="${LAST_MANAGED_PID}"
+  wait_port "${TRAEFIK_TLS_PORT}" 30
+}
+
 ensure_traefik_port_forward() {
   if [[ -n "${TRAEFIK_PORT_FORWARD_PID:-}" ]] && ! port_is_listening "${TRAEFIK_PORT}"; then
     if kill -0 "${TRAEFIK_PORT_FORWARD_PID}" >/dev/null 2>&1; then

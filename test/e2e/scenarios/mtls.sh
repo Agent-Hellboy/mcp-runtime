@@ -190,6 +190,7 @@ EOF
     echo "[port-forward] exposing traefik websecure on localhost:${TRAEFIK_TLS_PORT}"
     port_forward_bg traefik traefik "${TRAEFIK_TLS_PORT}" 8443 "${WORKDIR}/traefik-tls-port-forward.log"
     TRAEFIK_TLS_PORT_FORWARD_PID="${LAST_MANAGED_PID}"
+    TRAEFIK_TLS_PORT_FORWARD_RESTARTS=0
   fi
   wait_port "${TRAEFIK_TLS_PORT}"
 
@@ -270,6 +271,11 @@ EOF
       exit 1
     fi
   done
+
+  # Traefik reloads TLS config (TLSOption/ServersTransport) once the CA bundle
+  # secrets appear, briefly closing the websecure listener and breaking the
+  # port-forward. Recover before the authenticated curl so the connection is live.
+  recover_traefik_tls_port_forward_if_needed
 
   log_line mtls "accepting initialize with session-bound client certificate"
   init_body="$(curl -fsS -k --resolve "${MTLS_RESOLVE}" \
