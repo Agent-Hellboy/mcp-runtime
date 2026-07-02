@@ -867,6 +867,39 @@ recover_traefik_tls_port_forward_if_needed() {
   wait_port "${TRAEFIK_TLS_PORT}" 30
 }
 
+# wait_for_mtls_traefik_ready polls until Traefik's mTLS router is fully active.
+# The signal: a no-cert curl exits 35 (TLS handshake failure — server sent a
+# certificate_required alert). When TLSOption has not yet loaded its CAFiles,
+# Traefik omits RequireAndVerifyClientCert; the TLS handshake succeeds, the
+# request reaches the TLS-only gateway, and the gateway returns HTTP 400 (curl
+# exits 22). Exit 35 therefore proves TLSOption is enforcing client-cert
+# requirements. Because Traefik applies TLSOption and ServersTransport atomically
+# in the same config reload, exit 35 also implies ServersTransport is using TLS
+# to the backend — so a subsequent accept-cert curl will not get the 400.
+wait_for_mtls_traefik_ready() {
+  local url="$1"
+  local resolve="$2"
+  local deadline=$((SECONDS + 60))
+  local code=0
+  echo "[mtls] waiting for Traefik mTLS router to enforce client cert" >&2
+  while [[ $SECONDS -lt $deadline ]]; do
+    recover_traefik_tls_port_forward_if_needed || true
+    code=0
+    curl -sS -k --connect-timeout 3 --max-time 5 \
+      --resolve "${resolve}" \
+      -H "content-type: application/json" \
+      --data '{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"probe","version":"1"}}}' \
+      "${url}" >/dev/null 2>&1 || code=$?
+    if [[ "$code" -eq 35 ]]; then
+      echo "[mtls] Traefik mTLS router active (exit 35 on no-cert probe)" >&2
+      return 0
+    fi
+    sleep 2
+  done
+  echo "[mtls] timed out waiting for Traefik mTLS router (last exit=${code})" >&2
+  return 1
+}
+
 ensure_traefik_port_forward() {
   if [[ -n "${TRAEFIK_PORT_FORWARD_PID:-}" ]] && ! port_is_listening "${TRAEFIK_PORT}"; then
     if kill -0 "${TRAEFIK_PORT_FORWARD_PID}" >/dev/null 2>&1; then

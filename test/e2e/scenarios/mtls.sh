@@ -204,6 +204,8 @@ EOF
   MTLS_URL="https://${MTLS_INGRESS_HOST}:${TRAEFIK_TLS_PORT}${MTLS_INGRESS_PATH}"
   MTLS_RESOLVE="${MTLS_INGRESS_HOST}:${TRAEFIK_TLS_PORT}:127.0.0.1"
 
+  wait_for_mtls_traefik_ready "${MTLS_URL}" "${MTLS_RESOLVE}"
+
   log_line mtls "rejecting initialize without a client certificate"
   if curl -fsS -k --resolve "${MTLS_RESOLVE}" \
     -H "content-type: application/json" \
