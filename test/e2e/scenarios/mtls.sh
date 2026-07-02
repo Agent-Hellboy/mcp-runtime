@@ -204,7 +204,10 @@ EOF
   MTLS_URL="https://${MTLS_INGRESS_HOST}:${TRAEFIK_TLS_PORT}${MTLS_INGRESS_PATH}"
   MTLS_RESOLVE="${MTLS_INGRESS_HOST}:${TRAEFIK_TLS_PORT}:127.0.0.1"
 
-  wait_for_mtls_traefik_ready "${MTLS_URL}" "${MTLS_RESOLVE}"
+  wait_for_mtls_traefik_stable "${MTLS_SERVER_NAME}"
+  # Initial Traefik config reloads (secret-loading retries) may have killed the
+  # port-forward via broken-pipe. Recover before the first mTLS curl.
+  recover_traefik_tls_port_forward_if_needed
 
   log_line mtls "rejecting initialize without a client certificate"
   if curl -fsS -k --resolve "${MTLS_RESOLVE}" \
