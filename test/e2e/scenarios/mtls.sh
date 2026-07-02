@@ -37,8 +37,13 @@ mtls_dump_diagnostics() {
   # TLSOption + ServersTransport) being provisioned AND picked up by Traefik's
   # CRD provider. Dump the CRs and the controller so we can tell an operator
   # provisioning gap from a Traefik provider/namespace-scope gap.
-  kubectl get ingressroutes,ingressroutetcps,middlewares,tlsoptions,serverstransports,tlsstores \
+  # Fully-qualified resource names: the cluster registers both traefik.io and
+  # traefik.containo.us API groups, so bare names are ambiguous and kubectl
+  # returns an empty list instead of the CRs.
+  kubectl get ingressroutes.traefik.io,ingressroutetcps.traefik.io,middlewares.traefik.io,tlsoptions.traefik.io,serverstransports.traefik.io,tlsstores.traefik.io \
     -A -o yaml >"${out}/traefik-crs.yaml" 2>&1 || true
+  kubectl get ingressroutes.traefik.containo.us,middlewares.traefik.containo.us,tlsoptions.traefik.containo.us,serverstransports.traefik.containo.us \
+    -A -o yaml >"${out}/traefik-crs-containous.yaml" 2>&1 || true
   kubectl get deploy -n "${traefik_ns}" traefik -o yaml >"${out}/traefik-deploy.yaml" 2>&1 || true
   kubectl logs -n "${traefik_ns}" deploy/traefik --tail=400 >"${out}/traefik.log" 2>&1 || true
 
@@ -46,6 +51,20 @@ mtls_dump_diagnostics() {
   kubectl logs -n mcp-sentinel deploy/mcp-runtime-api --tail=400 >"${out}/runtime-api.log" 2>&1 || true
   kubectl logs -n mcp-sentinel deploy/mcp-platform-api --tail=200 >"${out}/platform-api.log" 2>&1 || true
   kubectl logs -n mcp-servers -l "app=${MTLS_SERVER_NAME}" --all-containers=true --tail=200 >"${out}/mtls-server.log" 2>&1 || true
+
+  # --- Gateway policy: the ConfigMap (API view) vs the file the gateway
+  # actually reads (kubelet-propagated volume). A session present in the
+  # ConfigMap but missing from the file means kubelet volume propagation lag,
+  # not an operator or gateway bug. ---
+  kubectl get configmap "${MTLS_SERVER_NAME}-gateway-policy" -n mcp-servers -o yaml \
+    >"${out}/gateway-policy-configmap.yaml" 2>&1 || true
+  local diag_pod
+  diag_pod="$(kubectl get pod -n mcp-servers -l "app=${MTLS_SERVER_NAME}" \
+    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+  if [[ -n "${diag_pod}" ]]; then
+    kubectl exec -n mcp-servers "${diag_pod}" -c mcp-gateway -- \
+      cat /var/run/mcp-runtime/policy/policy.json >"${out}/gateway-policy-file-in-pod.json" 2>&1 || true
+  fi
 
   # --- Replay the datapath request verbosely so the exact HTTP status,
   # response headers and body (Traefik 404 vs gateway error vs deny) are in the
@@ -65,6 +84,37 @@ mtls_dump_diagnostics() {
   fi
 
   return "${rc}"
+}
+
+# wait_for_gateway_policy_file blocks until the policy file mounted INSIDE the
+# gateway pod contains the given text. wait_for_policy_text only checks the
+# ConfigMap via the API server; the kubelet propagates ConfigMap updates to
+# volume mounts on its own sync period, which can exceed 60s on a loaded Kind
+# CI node. The gateway reloads from the mounted FILE (every 5s), so the file —
+# not the ConfigMap — is what gates the datapath. Deadline is generous because
+# kubelet sync jitter dominates; failure trips the ERR trap for diagnostics.
+wait_for_gateway_policy_file() {
+  local text="$1"
+  local deadline=$((SECONDS + 180))
+  local pod file_content
+  pod="$(kubectl get pod -n mcp-servers -l "app=${MTLS_SERVER_NAME}" \
+    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+  if [[ -z "${pod}" ]]; then
+    echo "[mtls] no gateway pod found for app=${MTLS_SERVER_NAME}" >&2
+    return 1
+  fi
+  echo "[mtls] waiting for gateway policy file in ${pod} to contain ${text}" >&2
+  while ((SECONDS < deadline)); do
+    file_content="$(kubectl exec -n mcp-servers "${pod}" -c mcp-gateway -- \
+      cat /var/run/mcp-runtime/policy/policy.json 2>/dev/null || true)"
+    if [[ "${file_content}" == *"${text}"* ]]; then
+      echo "[mtls] gateway policy file contains ${text}" >&2
+      return 0
+    fi
+    sleep 3
+  done
+  echo "[mtls] timed out waiting for gateway policy file to contain ${text}" >&2
+  return 1
 }
 
 run_e2e_mtls_scenario() {
@@ -266,6 +316,7 @@ EOF
       --output-dir "${MTLS_CERT_DIR}")"
   MTLS_SESSION_NAME="$(printf '%s\n' "${MTLS_ENROLL_OUT}" | python3 -c 'import re,sys; m=re.search(r"/session/([A-Za-z0-9._-]+)", sys.stdin.read()); print(m.group(1) if m else ""); sys.exit(0 if m else 1)')"
   wait_for_policy_text "\"name\": \"${MTLS_SESSION_NAME}\"" "${MTLS_SERVER_NAME}"
+  wait_for_gateway_policy_file "${MTLS_SESSION_NAME}"
 
   MTLS_CLIENT_CERT="${MTLS_CERT_DIR}/client.crt"
   MTLS_CLIENT_KEY="${MTLS_CERT_DIR}/client.key"
@@ -283,13 +334,11 @@ EOF
   recover_traefik_tls_port_forward_if_needed
 
   log_line mtls "accepting initialize with session-bound client certificate"
-  # The gateway reloads its policy from the volume-mounted ConfigMap every 5s.
-  # wait_for_policy_text confirmed the ConfigMap was updated, but the kubelet may
-  # not have propagated the change to the pod volume mount yet, so the gateway's
-  # next reload may still see the old policy. Retry until the session appears in
-  # the gateway's active policy (up to 30s). Each 401 means session not yet
-  # loaded; each iteration recovers the port-forward in case Traefik sent a
-  # TLS alert during a prior retry.
+  # wait_for_gateway_policy_file confirmed the session reached the file the
+  # gateway reads, but the gateway's 5s reload tick may not have fired yet, and
+  # Traefik may still be settling its TLS config after the CA secrets appeared.
+  # Retry for up to 30s; each iteration recovers the port-forward in case
+  # Traefik sent a TLS alert during a prior attempt.
   local _mtls_init_try
   local init_body=""
   for _mtls_init_try in $(seq 1 15); do
