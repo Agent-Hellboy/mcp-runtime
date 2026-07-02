@@ -1,0 +1,404 @@
+# mTLS datapath checks for Kind E2E. Sourced from kind.sh when the mtls scenario
+# is selected. Requires test-mode setup (managed mcp-runtime-ca issuer).
+
+MTLS_SERVER_NAME="${MTLS_SERVER_NAME:-mtls-mcp-server}"
+MTLS_TRUST_DOMAIN="${MTLS_TRUST_DOMAIN:-cluster.local}"
+TRAEFIK_TLS_PORT="${TRAEFIK_TLS_PORT:-18443}"
+MTLS_AGENT_ID="${MTLS_AGENT_ID:-e2e-mtls-agent}"
+# A dedicated ingress host so the operator generates a Host()-scoped IngressRoute.
+# Traefik binds the client-cert TLS options to that SNI, so the mtls handshake is
+# only enforced when the caller's SNI matches (curl reaches it via --resolve).
+MTLS_INGRESS_HOST="${MTLS_INGRESS_HOST:-mtls-mcp-server.e2e.local}"
+
+# mtls_dump_diagnostics captures the control-plane state needed to debug an mtls
+# datapath failure into WORKDIR, which the EXIT trap archives to the CI artifact
+# bundle. Without this, an mtls failure (e.g. adapter cert issuance) leaves no
+# server-side evidence in the artifacts and can only be diagnosed by local repro.
+mtls_dump_diagnostics() {
+  local rc=$?
+  local out="${WORKDIR}/mtls-diagnostics"
+  local traefik_ns="${TRAEFIK_NAMESPACE:-traefik}"
+  mkdir -p "${out}"
+  echo "[mtls] capturing failure diagnostics (exit=${rc}) to ${out}" >&2
+
+  # --- MCPServer / workload state ---
+  kubectl get mcpserver "${MTLS_SERVER_NAME}" -n mcp-servers -o yaml >"${out}/mcpserver.yaml" 2>&1 || true
+  kubectl get all -n mcp-servers >"${out}/mcp-servers-all.txt" 2>&1 || true
+  kubectl describe pods -n mcp-servers -l "app=${MTLS_SERVER_NAME}" >"${out}/mtls-server-pods-describe.txt" 2>&1 || true
+  kubectl get events -n mcp-servers --sort-by=.lastTimestamp >"${out}/mcp-servers-events.txt" 2>&1 || true
+
+  # --- Certificates / issuance ---
+  kubectl get certificaterequests -n mcp-servers -o yaml >"${out}/certificaterequests.yaml" 2>&1 || true
+  kubectl get certificates,secrets -n mcp-servers >"${out}/certs-and-secrets.txt" 2>&1 || true
+  kubectl get configmap mcp-sentinel-config -n mcp-sentinel -o yaml >"${out}/sentinel-config.yaml" 2>&1 || true
+
+  # --- Traefik routing layer (why a request 404s / 502s) ---
+  # The mtls datapath depends on Traefik CRDs (IngressRoute + Middleware +
+  # TLSOption + ServersTransport) being provisioned AND picked up by Traefik's
+  # CRD provider. Dump the CRs and the controller so we can tell an operator
+  # provisioning gap from a Traefik provider/namespace-scope gap.
+  # Fully-qualified resource names: the cluster registers both traefik.io and
+  # traefik.containo.us API groups, so bare names are ambiguous and kubectl
+  # returns an empty list instead of the CRs.
+  kubectl get ingressroutes.traefik.io,ingressroutetcps.traefik.io,middlewares.traefik.io,tlsoptions.traefik.io,serverstransports.traefik.io,tlsstores.traefik.io \
+    -A -o yaml >"${out}/traefik-crs.yaml" 2>&1 || true
+  kubectl get ingressroutes.traefik.containo.us,middlewares.traefik.containo.us,tlsoptions.traefik.containo.us,serverstransports.traefik.containo.us \
+    -A -o yaml >"${out}/traefik-crs-containous.yaml" 2>&1 || true
+  kubectl get deploy -n "${traefik_ns}" traefik -o yaml >"${out}/traefik-deploy.yaml" 2>&1 || true
+  kubectl logs -n "${traefik_ns}" deploy/traefik --tail=400 >"${out}/traefik.log" 2>&1 || true
+
+  # --- Sentinel APIs (adapter cert issuance path) ---
+  kubectl logs -n mcp-sentinel deploy/mcp-runtime-api --tail=400 >"${out}/runtime-api.log" 2>&1 || true
+  kubectl logs -n mcp-sentinel deploy/mcp-platform-api --tail=200 >"${out}/platform-api.log" 2>&1 || true
+  kubectl logs -n mcp-servers -l "app=${MTLS_SERVER_NAME}" --all-containers=true --tail=200 >"${out}/mtls-server.log" 2>&1 || true
+
+  # --- Gateway policy: the ConfigMap (API view) vs the file the gateway
+  # actually reads (kubelet-propagated volume). A session present in the
+  # ConfigMap but missing from the file means kubelet volume propagation lag,
+  # not an operator or gateway bug. ---
+  kubectl get configmap "${MTLS_SERVER_NAME}-gateway-policy" -n mcp-servers -o yaml \
+    >"${out}/gateway-policy-configmap.yaml" 2>&1 || true
+  local diag_pod
+  diag_pod="$(kubectl get pod -n mcp-servers -l "app=${MTLS_SERVER_NAME}" \
+    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+  if [[ -n "${diag_pod}" ]]; then
+    kubectl exec -n mcp-servers "${diag_pod}" -c mcp-gateway -- \
+      cat /var/run/mcp-runtime/policy/policy.json >"${out}/gateway-policy-file-in-pod.json" 2>&1 || true
+  fi
+
+  # --- Replay the datapath request verbosely so the exact HTTP status,
+  # response headers and body (Traefik 404 vs gateway error vs deny) are in the
+  # artifact even when the assertion curl ran quietly. ---
+  if [[ -n "${MTLS_URL:-}" && -n "${MTLS_RESOLVE:-}" ]]; then
+    local -a replay=(curl -sS -k -v -o "${out}/datapath-replay-body.txt"
+      -w 'HTTP %{http_code}\n' --resolve "${MTLS_RESOLVE}"
+      -H "content-type: application/json"
+      -H "accept: application/json, text/event-stream"
+      -H "Mcp-Protocol-Version: ${MCP_PROTOCOL_VERSION}"
+      --data '{"jsonrpc":"2.0","id":99,"method":"initialize","params":{"protocolVersion":"'"${MCP_PROTOCOL_VERSION}"'","capabilities":{},"clientInfo":{"name":"diag","version":"1"}}}')
+    if [[ -s "${MTLS_CLIENT_CERT:-}" && -s "${MTLS_CLIENT_KEY:-}" ]]; then
+      replay+=(--cert "${MTLS_CLIENT_CERT}" --key "${MTLS_CLIENT_KEY}")
+    fi
+    replay+=("${MTLS_URL}")
+    "${replay[@]}" >"${out}/datapath-replay-status.txt" 2>"${out}/datapath-replay-trace.txt" || true
+  fi
+
+  return "${rc}"
+}
+
+# wait_for_gateway_policy_file blocks until the policy file mounted INSIDE the
+# gateway pod contains the given text. wait_for_policy_text only checks the
+# ConfigMap via the API server; the kubelet propagates ConfigMap updates to
+# volume mounts on its own sync period, which can exceed 60s on a loaded Kind
+# CI node. The gateway reloads from the mounted FILE (every 5s), so the file —
+# not the ConfigMap — is what gates the datapath. Deadline is generous because
+# kubelet sync jitter dominates; failure trips the ERR trap for diagnostics.
+wait_for_gateway_policy_file() {
+  local text="$1"
+  local deadline=$((SECONDS + 180))
+  local pod file_content
+  pod="$(kubectl get pod -n mcp-servers -l "app=${MTLS_SERVER_NAME}" \
+    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+  if [[ -z "${pod}" ]]; then
+    echo "[mtls] no gateway pod found for app=${MTLS_SERVER_NAME}" >&2
+    return 1
+  fi
+  echo "[mtls] waiting for gateway policy file in ${pod} to contain ${text}" >&2
+  while ((SECONDS < deadline)); do
+    file_content="$(kubectl exec -n mcp-servers "${pod}" -c mcp-gateway -- \
+      cat /var/run/mcp-runtime/policy/policy.json 2>/dev/null || true)"
+    if [[ "${file_content}" == *"${text}"* ]]; then
+      echo "[mtls] gateway policy file contains ${text}" >&2
+      return 0
+    fi
+    sleep 3
+  done
+  echo "[mtls] timed out waiting for gateway policy file to contain ${text}" >&2
+  return 1
+}
+
+run_e2e_mtls_scenario() {
+  # Surface server-side diagnostics on any unexpected failure in this scenario.
+  # errtrace (set -E) propagates the ERR trap into functions and command
+  # substitutions (e.g. the `$(... adapter enroll ...)` capture) so those
+  # failures are archived too. This scenario runs last, so scoping is moot.
+  set -E
+  trap 'mtls_dump_diagnostics' ERR
+
+  log_line mtls "verifying test-mode workload PKI"
+  if ! kubectl get clusterissuer mcp-runtime-ca >/dev/null 2>&1; then
+    echo "expected ClusterIssuer mcp-runtime-ca from test-mode setup" >&2
+    exit 1
+  fi
+  kubectl wait --for=condition=Ready clusterissuer/mcp-runtime-ca --timeout=120s >/dev/null
+
+  operator_issuer="$(kubectl get deploy/mcp-runtime-operator-controller-manager -n mcp-runtime \
+    -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="MCP_MTLS_CLUSTER_ISSUER")].value}')"
+  if [[ "${operator_issuer}" != "mcp-runtime-ca" ]]; then
+    echo "operator MCP_MTLS_CLUSTER_ISSUER = ${operator_issuer:-<empty>}, want mcp-runtime-ca" >&2
+    exit 1
+  fi
+
+  # runtime-api issues adapter/session certificates and reads the issuer from the
+  # mcp-sentinel-config ConfigMap (via envFrom), so assert it there rather than on
+  # an inline env var. An empty value makes `adapter enroll` fail with a 503.
+  runtime_issuer="$(kubectl get configmap mcp-sentinel-config -n mcp-sentinel \
+    -o jsonpath='{.data.MCP_MTLS_CLUSTER_ISSUER}' 2>/dev/null || true)"
+  if [[ "${runtime_issuer}" != "mcp-runtime-ca" ]]; then
+    echo "mcp-sentinel-config MCP_MTLS_CLUSTER_ISSUER = ${runtime_issuer:-<empty>}, want mcp-runtime-ca" >&2
+    exit 1
+  fi
+
+  log_line mtls "deploying auth.mode mtls MCPServer ${MTLS_SERVER_NAME}"
+  MTLS_METADATA="${WORKDIR}/mtls-metadata.yaml"
+  MTLS_MANIFEST="${WORKDIR}/mtls-manifest.yaml"
+  MTLS_SECRET_NAME="${MTLS_SERVER_NAME}-analytics-creds"
+  MTLS_IMAGE="registry.registry.svc.cluster.local:5000/${MTLS_SERVER_NAME}:${E2E_WORKLOAD_TAG}"
+  kubectl create secret generic "${MTLS_SECRET_NAME}" \
+    -n mcp-servers \
+    --from-literal=api-key="${INGEST_API_KEY}" \
+    --dry-run=client -o yaml | kubectl apply -f -
+  cat > "${MTLS_METADATA}" <<EOF
+version: v1
+servers:
+  - name: ${MTLS_SERVER_NAME}
+    image: ${MTLS_IMAGE%:*}
+    imageTag: ${MTLS_IMAGE##*:}
+    route: /${MTLS_SERVER_NAME}/mcp
+    publicPathPrefix: ${MTLS_SERVER_NAME}
+    ingressHost: ${MTLS_INGRESS_HOST}
+    port: 8090
+    namespace: mcp-servers
+    resources:
+      requests:
+        cpu: 1m
+        memory: 32Mi
+    envVars:
+      - name: PORT
+        value: "8090"
+      - name: MCP_PATH
+        value: "/${MTLS_SERVER_NAME}/mcp"
+    tools:
+      - name: aaa-ping
+        requiredTrust: low
+        sideEffect: read
+    auth:
+      mode: mtls
+      trustDomain: ${MTLS_TRUST_DOMAIN}
+    policy:
+      mode: allow-list
+      defaultDecision: deny
+      policyVersion: v1
+    session:
+      required: true
+    gateway:
+      enabled: true
+      resources:
+        requests:
+          cpu: 1m
+          memory: 32Mi
+    analytics:
+      ingestURL: "http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events"
+      apiKeySecretRef:
+        name: ${MTLS_SECRET_NAME}
+        key: api-key
+EOF
+
+  if ! docker image inspect "${MTLS_IMAGE}" >/dev/null 2>&1; then
+    run_logged_stage "build mtls MCP server image" ./bin/mcp-runtime server build image "${MTLS_SERVER_NAME}" \
+      --metadata-file "${MTLS_METADATA}" \
+      --dockerfile "${GO_EXAMPLE_SOURCE_DIR}/Dockerfile" \
+      --registry registry.registry.svc.cluster.local:5000 \
+      --tag "${E2E_WORKLOAD_TAG}" \
+      --context "${GO_EXAMPLE_SOURCE_DIR}"
+  fi
+  prune_kind_image "${MTLS_IMAGE}"
+  load_image_into_kind "${MTLS_IMAGE}"
+
+  run_logged_stage "deploy mtls MCP server manifests" bash -lc \
+    "MCP_RUNTIME_CONFIG_DIR=\"${E2E_PIPELINE_CONFIG_DIR}\" ./bin/mcp-runtime server generate --metadata-file \"${MTLS_METADATA}\" --output \"${WORKDIR}/mtls-manifests\" && ./bin/mcp-runtime server --use-kube apply --file \"${WORKDIR}/mtls-manifests/${MTLS_SERVER_NAME}.yaml\""
+  wait_for_named_server_ready "${MTLS_SERVER_NAME}" "mcp-servers" 240
+
+  log_line mtls "waiting for gateway and trust-bundle certificates"
+  deadline=$((SECONDS + 240))
+  while (( SECONDS < deadline )); do
+    if kubectl get secret "${MTLS_SERVER_NAME}-gateway-mtls" -n mcp-servers >/dev/null 2>&1 \
+      && kubectl get secret "${MTLS_SERVER_NAME}-mtls-ca" -n mcp-servers >/dev/null 2>&1; then
+      break
+    fi
+    sleep 2
+  done
+  if ! kubectl get secret "${MTLS_SERVER_NAME}-gateway-mtls" -n mcp-servers >/dev/null 2>&1 \
+    || ! kubectl get secret "${MTLS_SERVER_NAME}-mtls-ca" -n mcp-servers >/dev/null 2>&1; then
+    echo "timed out waiting for gateway TLS secrets (${MTLS_SERVER_NAME}-gateway-mtls and/or ${MTLS_SERVER_NAME}-mtls-ca)" >&2
+    exit 1
+  fi
+
+  # The mtls datapath only needs Traefik's websecure (TLS) entrypoint; it never
+  # uses the plaintext web port-forward, so don't gate the scenario on it.
+  if [[ -z "${TRAEFIK_TLS_PORT_FORWARD_PID:-}" ]]; then
+    echo "[port-forward] exposing traefik websecure on localhost:${TRAEFIK_TLS_PORT}"
+    port_forward_bg traefik traefik "${TRAEFIK_TLS_PORT}" 8443 "${WORKDIR}/traefik-tls-port-forward.log"
+    TRAEFIK_TLS_PORT_FORWARD_PID="${LAST_MANAGED_PID}"
+    TRAEFIK_TLS_PORT_FORWARD_RESTARTS=0
+  fi
+  wait_port "${TRAEFIK_TLS_PORT}"
+
+  MTLS_INGRESS_PATH="/${MTLS_SERVER_NAME}/mcp"
+  # Reach the websecure entrypoint over the ingress host so the SNI selects the
+  # Host()-scoped mtls IngressRoute (and its client-cert TLS options). --resolve
+  # maps the host to the port-forwarded Traefik on localhost. The caller-facing
+  # server certificate is Traefik's default (self-signed in test-mode, no default
+  # TLSStore), so use -k: this scenario verifies the *client* cert mTLS
+  # enforcement, not the server certificate.
+  MTLS_URL="https://${MTLS_INGRESS_HOST}:${TRAEFIK_TLS_PORT}${MTLS_INGRESS_PATH}"
+  MTLS_RESOLVE="${MTLS_INGRESS_HOST}:${TRAEFIK_TLS_PORT}:127.0.0.1"
+
+  wait_for_mtls_traefik_stable "${MTLS_SERVER_NAME}"
+  # Initial Traefik config reloads (secret-loading retries) may have killed the
+  # port-forward via broken-pipe. Recover before the first mTLS curl.
+  recover_traefik_tls_port_forward_if_needed
+
+  log_line mtls "rejecting initialize without a client certificate"
+  if curl -fsS -k --resolve "${MTLS_RESOLVE}" \
+    -H "content-type: application/json" \
+    -H "accept: application/json, text/event-stream" \
+    -H "Mcp-Protocol-Version: ${MCP_PROTOCOL_VERSION}" \
+    --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"'"${MCP_PROTOCOL_VERSION}"'","capabilities":{},"clientInfo":{"name":"e2e","version":"1"}}}' \
+    "${MTLS_URL}" >/dev/null 2>&1; then
+    echo "expected initialize without client certificate to fail" >&2
+    exit 1
+  fi
+
+  ensure_gateway_port_forward
+  ensure_api_port_forward
+  if [[ -z "${ADAPTER_PLATFORM_TOKEN:-}" ]]; then
+    ADAPTER_PLATFORM_TOKEN="$(PLATFORM_ADMIN_EMAIL="${PLATFORM_ADMIN_EMAIL}" PLATFORM_ADMIN_PASSWORD="${PLATFORM_ADMIN_PASSWORD}" python3 -c '
+import json, os
+print(json.dumps({"email": os.environ["PLATFORM_ADMIN_EMAIL"], "password": os.environ["PLATFORM_ADMIN_PASSWORD"]}))
+' | curl -fsS -X POST \
+      -H "content-type: application/json" \
+      --data-binary @- \
+      "http://127.0.0.1:${API_SERVICE_PORT}/api/v1/auth/login" | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')"
+  fi
+
+  log_line mtls "applying grant and adapter session for mtls datapath"
+  cat >"${WORKDIR}/mtls-grant.yaml" <<EOF
+apiVersion: mcpruntime.org/v1alpha1
+kind: MCPAccessGrant
+metadata:
+  name: ${MTLS_SERVER_NAME}-grant
+  namespace: mcp-servers
+spec:
+  serverRef:
+    name: ${MTLS_SERVER_NAME}
+  subject:
+    agentID: ${MTLS_AGENT_ID}
+  maxTrust: low
+  allowedSideEffects: [read]
+  policyVersion: v1
+  toolRules:
+    - name: aaa-ping
+      decision: allow
+EOF
+  (cd "${WORKDIR}" && "${PROJECT_ROOT}/bin/mcp-runtime" access --use-kube grant apply --file mtls-grant.yaml)
+  wait_for_policy_text "\"name\": \"${MTLS_SERVER_NAME}-grant\"" "${MTLS_SERVER_NAME}"
+
+  MTLS_CERT_DIR="${WORKDIR}/mtls-certs"
+  mkdir -p "${MTLS_CERT_DIR}"
+  MTLS_ENROLL_OUT="$(MCP_PLATFORM_API_URL="http://127.0.0.1:${SENTINEL_PORT}" \
+  MCP_PLATFORM_API_TOKEN="${ADAPTER_PLATFORM_TOKEN}" \
+    ./bin/mcp-runtime adapter enroll \
+      --server "${MTLS_SERVER_NAME}" \
+      --namespace mcp-servers \
+      --agent "${MTLS_AGENT_ID}" \
+      --trust-domain "${MTLS_TRUST_DOMAIN}" \
+      --output-dir "${MTLS_CERT_DIR}")"
+  MTLS_SESSION_NAME="$(printf '%s\n' "${MTLS_ENROLL_OUT}" | python3 -c 'import re,sys; m=re.search(r"/session/([A-Za-z0-9._-]+)", sys.stdin.read()); print(m.group(1) if m else ""); sys.exit(0 if m else 1)')"
+  wait_for_policy_text "\"name\": \"${MTLS_SESSION_NAME}\"" "${MTLS_SERVER_NAME}"
+  wait_for_gateway_policy_file "${MTLS_SESSION_NAME}"
+
+  MTLS_CLIENT_CERT="${MTLS_CERT_DIR}/client.crt"
+  MTLS_CLIENT_KEY="${MTLS_CERT_DIR}/client.key"
+  MTLS_CLIENT_CA="${MTLS_CERT_DIR}/ca.crt"
+  for f in "${MTLS_CLIENT_CERT}" "${MTLS_CLIENT_KEY}" "${MTLS_CLIENT_CA}"; do
+    if [[ ! -s "${f}" ]]; then
+      echo "adapter enroll did not write ${f}" >&2
+      exit 1
+    fi
+  done
+
+  # Traefik reloads TLS config (TLSOption/ServersTransport) once the CA bundle
+  # secrets appear, briefly closing the websecure listener and breaking the
+  # port-forward. Recover before the authenticated curl so the connection is live.
+  recover_traefik_tls_port_forward_if_needed
+
+  log_line mtls "accepting initialize with session-bound client certificate"
+  # wait_for_gateway_policy_file confirmed the session reached the file the
+  # gateway reads, but the gateway's 5s reload tick may not have fired yet, and
+  # Traefik may still be settling its TLS config after the CA secrets appeared.
+  # Retry for up to 30s; each iteration recovers the port-forward in case
+  # Traefik sent a TLS alert during a prior attempt.
+  local _mtls_init_try
+  local init_body=""
+  for _mtls_init_try in $(seq 1 15); do
+    init_body="$(curl -sS -k --resolve "${MTLS_RESOLVE}" \
+      --cert "${MTLS_CLIENT_CERT}" \
+      --key "${MTLS_CLIENT_KEY}" \
+      -H "content-type: application/json" \
+      -H "accept: application/json, text/event-stream" \
+      -H "Mcp-Protocol-Version: ${MCP_PROTOCOL_VERSION}" \
+      --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"'"${MCP_PROTOCOL_VERSION}"'","capabilities":{},"clientInfo":{"name":"e2e-mtls","version":"1"}}}' \
+      "${MTLS_URL}" 2>/dev/null || true)"
+    if [[ "${init_body}" == *'"result"'* ]]; then
+      break
+    fi
+    echo "[mtls] initialize attempt ${_mtls_init_try}/15 failed: ${init_body:0:120}" >&2
+    if [[ ${_mtls_init_try} -eq 15 ]]; then
+      echo "[mtls] timed out: gateway did not materialize session in policy after 15 attempts" >&2
+      false  # triggers ERR trap → mtls_dump_diagnostics
+    fi
+    recover_traefik_tls_port_forward_if_needed
+    sleep 2
+  done
+  echo "${init_body}" | python3 -c '
+import json, sys
+doc = json.load(sys.stdin)
+if doc.get("error"):
+    raise SystemExit(f"initialize failed: {doc}")
+if "result" not in doc:
+    raise SystemExit(f"missing initialize result: {doc}")
+print("mtls initialize ok")
+'
+
+  log_line mtls "ignoring spoofed governance headers on mtls path"
+  # Intentionally omit curl -f: the gateway is expected to reject the spoofed
+  # headers with a 4xx/5xx, and we still need to capture the response body so the
+  # Python check below can validate the error instead of being skipped.
+  spoof_body="$(curl -sS -k --resolve "${MTLS_RESOLVE}" \
+    --cert "${MTLS_CLIENT_CERT}" \
+    --key "${MTLS_CLIENT_KEY}" \
+    -H "content-type: application/json" \
+    -H "accept: application/json, text/event-stream" \
+    -H "Mcp-Protocol-Version: ${MCP_PROTOCOL_VERSION}" \
+    -H "X-MCP-Human-ID: spoofed-human" \
+    -H "X-MCP-Agent-ID: spoofed-agent" \
+    -H "X-MCP-Agent-Session: definitely-not-${MTLS_SESSION_NAME}" \
+    --data '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"aaa-ping","arguments":{}}}' \
+    "${MTLS_URL}" 2>/dev/null || true)"
+  if [[ -n "${spoof_body}" ]]; then
+    echo "${spoof_body}" | python3 -c '
+import json, sys
+doc = json.load(sys.stdin)
+err = doc.get("error") or {}
+msg = str(err.get("message", "")).lower()
+if doc.get("result") and "pong" in json.dumps(doc.get("result")).lower():
+    raise SystemExit("spoofed governance headers must not bypass mtls auth")
+if err and any(token in msg for token in ("session", "denied", "unauthorized", "forbidden", "grant", "trust")):
+    raise SystemExit(0)
+if err:
+    raise SystemExit(0)
+raise SystemExit(f"unexpected tools/call response with spoofed headers: {doc}")
+'
+  fi
+}

@@ -3,15 +3,27 @@
   value:
     - --providers.kubernetesingress=true
     - --providers.kubernetesingress.namespaces=registry,mcp-sentinel,mcp-servers,mcp-servers-org,mcp-servers-public
+    # The mtls terminate+re-encrypt path is delivered entirely through Traefik
+    # CRDs (IngressRoute + Middleware + TLSOption + ServersTransport). Without the
+    # CRD provider Traefik ignores them and the mtls host 404s, so enable it for
+    # the same server namespaces. web stays plaintext (no redirect) for the HTTP
+    # test flows.
+    - --providers.kubernetescrd=true
+    - --providers.kubernetescrd.namespaces=mcp-servers,mcp-servers-org,mcp-servers-public
     - --entrypoints.web.address=:8000
     - --entrypoints.web.forwardedHeaders.insecure=false
     - --entrypoints.websecure.address=:8443
     - --entrypoints.websecure.forwardedHeaders.insecure=false
+    - --entrypoints.websecure.http.tls=true
     - --entrypoints.traefik.address=:8080
     - --ping=true
     - --ping.entryPoint=traefik
     - --providers.file.filename=/etc/traefik/dynamic/dynamic.yml
     - --providers.file.watch=true
+    # The mtls Middleware injects the verified SPIFFE identity via this local
+    # plugin (source is mounted by the base Deployment); register it so the
+    # middleware resolves instead of failing the route.
+    - --experimental.localPlugins.spiffe-identity.moduleName=github.com/Agent-Hellboy/mcp-runtime/traefik-plugins/spiffe-identity
 - op: replace
   path: /spec/template/spec/containers/0/ports
   value:

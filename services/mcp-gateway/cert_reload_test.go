@@ -106,15 +106,18 @@ func TestCertReloaderWatchReloadsOnChange(t *testing.T) {
 	defer cancel()
 	go r.watch(ctx, 20*time.Millisecond)
 
-	// Bump modtime into the future so the poll reliably detects the change.
 	second := writeKeyPair(t, certPath, keyPath, "cert-2")
-	future := time.Now().Add(2 * time.Second)
-	_ = os.Chtimes(certPath, future, future)
 
-	// Generous deadline so the 20ms poll is detected even when CI runs the
-	// service test suites in parallel under a constrained CPU quota.
+	// watch() captures its baseline modtime asynchronously, so under CI load it
+	// may start after this rewrite and baseline on cert-2's modtime — then it
+	// would never observe a "change" and never reload. Push the modtime strictly
+	// forward on every poll so the watcher sees a fresh change regardless of when
+	// its goroutine started; that makes the reload deterministic rather than
+	// racing the goroutine start.
 	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
+	for i := 1; time.Now().Before(deadline); i++ {
+		future := time.Now().Add(time.Duration(i) * time.Second)
+		_ = os.Chtimes(certPath, future, future)
 		if string(servedLeaf(t, r)) == string(second) {
 			return
 		}
