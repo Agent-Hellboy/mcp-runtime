@@ -54,6 +54,11 @@ classify_path() {
       add_scenario "mtls"
       return
       ;;
+    traefik-plugins/pii-redactor/*)
+      # PII redaction is asserted in the observability pass.
+      add_observability
+      return
+      ;;
     api/*|cmd/operator/*|internal/operator/*|config/*|k8s/*|pkg/controlplane/*|pkg/k8sclient/*|pkg/kubeworkload/*|pkg/manifest/*|pkg/metadata/*)
       mark_all
       return

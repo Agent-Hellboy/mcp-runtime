@@ -34,7 +34,7 @@ Produce a STRIDE table per component. Components to cover:
   writes.
 - **registry** (`k8s/`, `config/`): Distribution v2 registry (HTTP dev or
   HTTPS prod).
-- **traefik plugins** (`services/traefik-plugins/`): PII redactor, dev-only
+- **traefik plugins** (`traefik-plugins/`): PII redactor, dev-only
   middleware.
 - **CRD types** (`api/v1alpha1/`): trust source for resource shapes.
 - **CI** (`.github/workflows/`): build, sign, test, release pathways.
