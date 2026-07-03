@@ -87,12 +87,22 @@ updates:
           - "*"
 
   - package-ecosystem: gomod
-    directory: /services/traefik-plugins/pii-redactor
+    directory: /traefik-plugins/pii-redactor
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
     groups:
       pii-redactor-go-modules:
+        patterns:
+          - "*"
+
+  - package-ecosystem: gomod
+    directory: /traefik-plugins/spiffe-identity
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      spiffe-identity-go-modules:
         patterns:
           - "*"
 

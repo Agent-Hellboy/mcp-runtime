@@ -42,7 +42,8 @@ cmd_go_modules() {
 		"services/mcp-gateway"
 		"services/processor"
 		"services/ui"
-		"services/traefik-plugins/pii-redactor"
+		"traefik-plugins/pii-redactor"
+		"traefik-plugins/spiffe-identity"
 	)
 	for mod in "${mods[@]}"; do
 		if [[ -f "$mod/go.mod" ]]; then

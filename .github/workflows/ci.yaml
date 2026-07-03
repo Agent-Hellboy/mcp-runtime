@@ -136,6 +136,14 @@ jobs:
         env:
           SENTINEL_SERVICE_TEST_LOG_DIR: ${{ runner.temp }}/sentinel-service-test-logs
 
+      - name: Test Traefik plugin modules
+        run: |
+          set -euo pipefail
+          for plugin in traefik-plugins/*/; do
+            echo "[plugin-test] ${plugin}"
+            (cd "${plugin}" && go test -v -race -count=1 ./...)
+          done
+
       - name: Upload Sentinel service test logs
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

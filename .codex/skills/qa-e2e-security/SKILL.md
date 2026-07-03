@@ -59,7 +59,7 @@ Sub-suites by changed paths:
 | `services/platform-api/**`, `services/runtime-api/**`, `services/analytics-api/**`, `pkg/access/**` | A. Backend auth, B. Grants/sessions, C. Audit |
 | `services/mcp-gateway/**`, `internal/operator/**` (policy/render) | B. Grants/sessions, D. Trust escalation, C. Audit |
 | `services/ui/**` (middleware, login, proxy) | E. UI security headers, F. Login + lockout, G. UI→API proxy |
-| `config/ingress/**`, `services/traefik-plugins/**` | H. Ingress + PII redactor, E (re-run) |
+| `config/ingress/**`, `traefik-plugins/**` | H. Ingress + PII redactor, E (re-run) |
 | `k8s/**` Secrets / SA / RBAC | Hand off to `k8s-hardening-audit` |
 
 Always run **I. Live-log secret scan** regardless of diff.
