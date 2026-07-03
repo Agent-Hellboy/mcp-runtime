@@ -74,9 +74,23 @@ rules:
   - apiGroups: ["networking.k8s.io"]
     resources: ["ingressclasses"]
     verbs: ["get", "list", "watch"]
-  - apiGroups: ["traefik.io"]
+  # Traefik v2.10 starts informers for every CRD kind in BOTH the traefik.io and
+  # legacy traefik.containo.us groups when those CRDs are installed. A forbidden
+  # list/watch on any one of them stalls the CRD provider so no IngressRoute is
+  # loaded and mtls hosts 404. Grant the full kind set in both groups.
+  - apiGroups: ["traefik.io", "traefik.containo.us"]
     resources:
-      ["ingressroutes", "ingressroutetcps", "middlewares", "tlsoptions", "tlsstores", "serverstransports", "traefikservices"]
+      [
+        "ingressroutes",
+        "ingressroutetcps",
+        "ingressrouteudps",
+        "middlewares",
+        "middlewaretcps",
+        "tlsoptions",
+        "tlsstores",
+        "serverstransports",
+        "traefikservices",
+      ]
     verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

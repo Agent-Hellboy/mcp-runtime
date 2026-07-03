@@ -102,12 +102,26 @@ func TestReconcileMTLSIngressGeneratesTraefikResources(t *testing.T) {
 	if len(routes) != 1 {
 		t.Fatalf("routes = %d, want 1", len(routes))
 	}
-	match, _ := routes[0].(map[string]any)["match"].(string)
+	route0 := routes[0].(map[string]any)
+	match, _ := route0["match"].(string)
 	if !strings.Contains(match, "Host(`mcp.example.com`)") || !strings.Contains(match, "PathPrefix(`/secure-server/mcp`)") {
 		t.Fatalf("match = %q, want host + path prefix", match)
 	}
 	if tlsName, _, _ := unstructured.NestedString(ir.Object, "spec", "tls", "options", "name"); tlsName != mtlsTLSOptionName(server) {
 		t.Fatalf("tls.options.name = %q", tlsName)
+	}
+	// The IngressRoute must reference the Kubernetes Service port (80), not the
+	// gateway container port (8091). Traefik resolves endpoints from the Service
+	// and then connects to pod:targetPort — using the container port causes
+	// "service port not found" because it never appears in Service.spec.ports.
+	services, _, _ := unstructured.NestedSlice(route0, "services")
+	if len(services) != 1 {
+		t.Fatalf("route services = %d, want 1", len(services))
+	}
+	svcPort, _, _ := unstructured.NestedFieldNoCopy(services[0].(map[string]any), "port")
+	if svcPort != int64(server.Spec.ServicePort) {
+		t.Fatalf("IngressRoute service port = %v, want ServicePort (%d) not Gateway.Port (%d)",
+			svcPort, server.Spec.ServicePort, server.Spec.Gateway.Port)
 	}
 }
 

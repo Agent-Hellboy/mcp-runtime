@@ -1089,6 +1089,34 @@ func TestCheckIngressReady(t *testing.T) {
 		assertEqual(t, "ready", ready, false)
 	})
 
+	t.Run("mtls server is ready when its IngressRoute exists", func(t *testing.T) {
+		mtlsScheme := traefikScheme(t)
+		server := mtlsServer()
+		route := crFixture(ingressRouteGVK, server.Name, server.Namespace)
+		client := fake.NewClientBuilder().WithScheme(mtlsScheme).WithObjects(server, route).Build()
+		r := MCPServerReconciler{Client: client, Scheme: mtlsScheme}
+		ready, err := r.checkIngressReady(context.Background(), server)
+		if err != nil {
+			t.Fatalf("failed to check ingress readiness: %v", err)
+		}
+		assertEqual(t, "ready", ready, true)
+	})
+
+	t.Run("mtls server is not ready without an IngressRoute", func(t *testing.T) {
+		mtlsScheme := traefikScheme(t)
+		server := mtlsServer()
+		// Only the legacy passthrough IngressRouteTCP exists; the terminate-and-
+		// re-encrypt model no longer uses it, so the server must not read ready.
+		legacy := crFixture(ingressRouteTCPGVK, server.Name, server.Namespace)
+		client := fake.NewClientBuilder().WithScheme(mtlsScheme).WithObjects(server, legacy).Build()
+		r := MCPServerReconciler{Client: client, Scheme: mtlsScheme}
+		ready, err := r.checkIngressReady(context.Background(), server)
+		if err != nil {
+			t.Fatalf("failed to check ingress readiness: %v", err)
+		}
+		assertEqual(t, "ready", ready, false)
+	})
+
 	t.Run("returns true when ingress has load balancer status", func(t *testing.T) {
 		mcpServer := &mcpv1alpha1.MCPServer{
 			ObjectMeta: metav1.ObjectMeta{Name: "test-server", Namespace: "default"},
