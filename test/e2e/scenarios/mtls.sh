@@ -86,34 +86,64 @@ mtls_dump_diagnostics() {
   return "${rc}"
 }
 
-# wait_for_gateway_policy_file blocks until the policy file mounted INSIDE the
-# gateway pod contains the given text. wait_for_policy_text only checks the
-# ConfigMap via the API server; the kubelet propagates ConfigMap updates to
-# volume mounts on its own sync period, which can exceed 60s on a loaded Kind
-# CI node. The gateway reloads from the mounted FILE (every 5s), so the file —
-# not the ConfigMap — is what gates the datapath. Deadline is generous because
-# kubelet sync jitter dominates; failure trips the ERR trap for diagnostics.
-wait_for_gateway_policy_file() {
-  local text="$1"
-  local deadline=$((SECONDS + 180))
-  local pod file_content
+# wait_for_gateway_policy_reload waits until the gateway has loaded the policy
+# revision recorded in the ConfigMap. The gateway runs in a scratch container
+# (no shell / cat), so we cannot read the mounted file with kubectl exec.
+# Instead we port-forward to the gateway's metrics port and poll
+# mcp_gateway_policy_active_revision_info until its "revision" label matches
+# the sha256 in the ConfigMap. This confirms:
+#   1. kubelet propagated the ConfigMap update to the volume mount, AND
+#   2. the gateway's 5-second reload ticker fired and loaded the new policy.
+# Deadline is generous because kubelet volume sync jitter dominates on a loaded
+# Kind CI node; failure trips the ERR trap → mtls_dump_diagnostics.
+wait_for_gateway_policy_reload() {
+  local deadline=$((SECONDS + 240))
+  local pod metrics_port metrics_pf_pid
+  metrics_port="${MTLS_METRICS_PF_PORT:-19103}"
+
   pod="$(kubectl get pod -n mcp-servers -l "app=${MTLS_SERVER_NAME}" \
     -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
   if [[ -z "${pod}" ]]; then
     echo "[mtls] no gateway pod found for app=${MTLS_SERVER_NAME}" >&2
     return 1
   fi
-  echo "[mtls] waiting for gateway policy file in ${pod} to contain ${text}" >&2
+
+  # Grab the expected revision from the ConfigMap (the value the gateway must
+  # load). The revision field is the sha256 of the policy document.
+  local want_rev
+  want_rev="$(kubectl get configmap "${MTLS_SERVER_NAME}-gateway-policy" -n mcp-servers \
+    -o jsonpath='{.data.policy\.json}' 2>/dev/null \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin).get("revision",""))' 2>/dev/null || true)"
+  if [[ -z "${want_rev}" ]]; then
+    echo "[mtls] could not read policy revision from ConfigMap; falling back to curl-only sync" >&2
+    return 0
+  fi
+  echo "[mtls] waiting for gateway to load policy revision ${want_rev}" >&2
+
+  kubectl port-forward -n mcp-servers "pod/${pod}" "${metrics_port}:9103" \
+    >"${WORKDIR}/mtls-gateway-metrics-pf.log" 2>&1 &
+  metrics_pf_pid=$!
+  # Give the port-forward a moment to bind before polling.
+  local _pf_wait=0
+  until curl -sf "http://127.0.0.1:${metrics_port}/metrics" >/dev/null 2>&1 || (( _pf_wait++ >= 10 )); do
+    sleep 1
+  done
+
   while ((SECONDS < deadline)); do
-    file_content="$(kubectl exec -n mcp-servers "${pod}" -c mcp-gateway -- \
-      cat /var/run/mcp-runtime/policy/policy.json 2>/dev/null || true)"
-    if [[ "${file_content}" == *"${text}"* ]]; then
-      echo "[mtls] gateway policy file contains ${text}" >&2
+    local active_rev
+    active_rev="$(curl -sf "http://127.0.0.1:${metrics_port}/metrics" 2>/dev/null \
+      | grep '^mcp_gateway_policy_active_revision_info{' \
+      | grep -o 'revision="[^"]*"' | cut -d'"' -f2 || true)"
+    if [[ "${active_rev}" == "${want_rev}" ]]; then
+      echo "[mtls] gateway loaded policy revision ${want_rev}" >&2
+      kill "${metrics_pf_pid}" 2>/dev/null || true
       return 0
     fi
     sleep 3
   done
-  echo "[mtls] timed out waiting for gateway policy file to contain ${text}" >&2
+
+  kill "${metrics_pf_pid}" 2>/dev/null || true
+  echo "[mtls] timed out waiting for gateway to load revision ${want_rev}" >&2
   return 1
 }
 
@@ -316,7 +346,7 @@ EOF
       --output-dir "${MTLS_CERT_DIR}")"
   MTLS_SESSION_NAME="$(printf '%s\n' "${MTLS_ENROLL_OUT}" | python3 -c 'import re,sys; m=re.search(r"/session/([A-Za-z0-9._-]+)", sys.stdin.read()); print(m.group(1) if m else ""); sys.exit(0 if m else 1)')"
   wait_for_policy_text "\"name\": \"${MTLS_SESSION_NAME}\"" "${MTLS_SERVER_NAME}"
-  wait_for_gateway_policy_file "${MTLS_SESSION_NAME}"
+  wait_for_gateway_policy_reload
 
   MTLS_CLIENT_CERT="${MTLS_CERT_DIR}/client.crt"
   MTLS_CLIENT_KEY="${MTLS_CERT_DIR}/client.key"
@@ -334,11 +364,9 @@ EOF
   recover_traefik_tls_port_forward_if_needed
 
   log_line mtls "accepting initialize with session-bound client certificate"
-  # wait_for_gateway_policy_file confirmed the session reached the file the
-  # gateway reads, but the gateway's 5s reload tick may not have fired yet, and
-  # Traefik may still be settling its TLS config after the CA secrets appeared.
-  # Retry for up to 30s; each iteration recovers the port-forward in case
-  # Traefik sent a TLS alert during a prior attempt.
+  # wait_for_gateway_policy_reload confirmed the gateway loaded the new policy.
+  # Retry a few times as a safety net in case Traefik needs a moment to settle
+  # its TLS config, or the port-forward needs to be recovered after a TLS alert.
   local _mtls_init_try
   local init_body=""
   for _mtls_init_try in $(seq 1 15); do
