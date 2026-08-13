@@ -3,7 +3,9 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -12,19 +14,60 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+
 	"mcp-runtime/pkg/events"
 	policypkg "mcp-runtime/pkg/policy"
 )
 
+const upstreamResponseHeaderTimeout = 30 * time.Second
+
 func newUpstreamReverseProxy(target *url.URL) *httputil.ReverseProxy {
+	return newUpstreamReverseProxyWithTimeout(target, upstreamResponseHeaderTimeout)
+}
+
+func newUpstreamReverseProxyWithTimeout(target *url.URL, responseHeaderTimeout time.Duration) *httputil.ReverseProxy {
 	proxy := &httputil.ReverseProxy{
 		Rewrite: func(req *httputil.ProxyRequest) {
 			req.SetURL(target)
 			req.Out.Host = target.Host
 			req.SetXForwarded()
 		},
+		Transport: newUpstreamTransport(responseHeaderTimeout),
 	}
 	return proxy
+}
+
+func newUpstreamTransport(responseHeaderTimeout time.Duration) http.RoundTripper {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.ResponseHeaderTimeout = responseHeaderTimeout
+	return otelhttp.NewTransport(transport)
+}
+
+func handleUpstreamError(w http.ResponseWriter, _ *http.Request, err error) {
+	logMessage := "gateway upstream error"
+	status := http.StatusBadGateway
+	errorCode := "upstream_error"
+	message := "upstream error"
+	if isUpstreamTimeout(err) {
+		logMessage = "gateway upstream response timeout"
+		status = http.StatusGatewayTimeout
+		errorCode = "upstream_timeout"
+		message = "upstream response timeout"
+	}
+	log.Printf("%s: %v", logMessage, err)
+
+	w.Header().Set("content-type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"error":   errorCode,
+		"message": message,
+	})
+}
+
+func isUpstreamTimeout(err error) bool {
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
 }
 
 // handleGateway is the pipeline orchestrator for the gateway request path.

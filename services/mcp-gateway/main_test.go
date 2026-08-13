@@ -359,6 +359,39 @@ func TestHandleProxyRewritesUpstreamHostAndForwardedHeaders(t *testing.T) {
 	}
 }
 
+func TestUpstreamResponseHeaderTimeoutReturnsStructured504(t *testing.T) {
+	t.Parallel()
+
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-time.After(200 * time.Millisecond):
+		}
+	}))
+	t.Cleanup(upstreamServer.Close)
+
+	target, err := url.Parse(upstreamServer.URL)
+	if err != nil {
+		t.Fatalf("url.Parse() error = %v", err)
+	}
+
+	proxy := newUpstreamReverseProxyWithTimeout(target, 20*time.Millisecond)
+	proxy.ErrorHandler = handleUpstreamError
+	recorder := httptest.NewRecorder()
+	proxy.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "http://proxy.example.com/mcp", nil))
+
+	if recorder.Code != http.StatusGatewayTimeout {
+		t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusGatewayTimeout, recorder.Body.String())
+	}
+	var payload map[string]string
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode error response: %v; body=%s", err, recorder.Body.String())
+	}
+	if payload["error"] != "upstream_timeout" {
+		t.Fatalf("error code = %q, want upstream_timeout", payload["error"])
+	}
+}
+
 func TestInspectRPCRequestAcceptsChunkedBody(t *testing.T) {
 	t.Parallel()
 
