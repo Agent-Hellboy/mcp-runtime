@@ -43,11 +43,7 @@ func main() {
 	}
 
 	proxy := newUpstreamReverseProxy(target)
-	proxy.Transport = otelhttp.NewTransport(http.DefaultTransport)
-	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-		log.Printf("gateway error: %v", err)
-		http.Error(w, "upstream error", http.StatusBadGateway)
-	}
+	proxy.ErrorHandler = handleUpstreamError
 
 	analyticsTransport := otelhttp.NewTransport(&http.Transport{
 		MaxIdleConns:        100,
