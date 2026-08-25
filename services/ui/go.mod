@@ -1,6 +1,6 @@
 module mcp-sentinel-ui
 
-go 1.26.4
+go 1.26.6
 
 require (
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.70.0

@@ -1,6 +1,6 @@
 module mcp-platform-api
 
-go 1.26.4
+go 1.26.6
 
 require (
 	github.com/MicahParks/keyfunc v1.9.0
