@@ -273,6 +273,12 @@ which supports deprecated DCR clients for backward compatibility. CIMD failures
 must not be converted into implicit clients because redirect URIs must remain
 validated and bound to the registered client.
 
+The official MCP SDK remains the owner of MCP transport and client-side OAuth
+helpers. Runtime does not duplicate those client helpers in the gateway or
+authorization server: the gateway is the policy-aware protected resource, and
+the separate OAuth service is the token issuer and resource-owner login
+boundary.
+
 ## Governance UI walkthrough
 
 The UI's **Governance** tab creates and operates the same `MCPAccessGrant` and `MCPAgentSession` resources the CLI manages. The same flows are available via the Runtime Governance API ([API → Runtime Governance](api.md#runtime-governance-api)).

@@ -239,6 +239,18 @@ match and non-loopback redirects must use HTTPS. Access tokens are RS256 JWTs
 with the MCP `resource` as their audience; the gateway validates that audience
 and never forwards the bearer token to an upstream MCP server.
 
+### MCP SDK boundary
+
+Use the official MCP SDK in an application service for Streamable HTTP,
+JSON-RPC, tool/resource dispatch, and client-side OAuth flows. The SDK's
+server authorization middleware verifies tokens issued by an authorization
+server; it is not a replacement for the first-party authorization service
+described above. MCP Runtime terminates OAuth at the gateway so it can apply
+resource audience checks, grants, agent sessions, scopes, and token stripping
+before forwarding a request to the SDK-backed application. Do not add a
+second bearer-token gate to the upstream application unless that application
+is intentionally exposed outside the gateway.
+
 Configure `OAUTH_ISSUER_URL` and persist `OAUTH_PRIVATE_KEY` through the
 deployment secret. `mcp-runtime setup` generates and preserves that key. Do
 not enable insecure HTTP or ephemeral signing keys outside local development.
