@@ -50,7 +50,8 @@ func TestMetadataAndJWKS(t *testing.T) {
 	}
 	if metadata["issuer"] != "https://auth.example.com/oauth" ||
 		metadata["client_id_metadata_document_supported"] != true ||
-		metadata["registration_endpoint"] != "https://auth.example.com/oauth/register" {
+		metadata["registration_endpoint"] != "https://auth.example.com/oauth/register" ||
+		metadata["authorization_response_iss_parameter_supported"] != true {
 		t.Fatalf("unexpected metadata: %#v", metadata)
 	}
 
@@ -123,7 +124,7 @@ func TestPublicClientAuthorizationCodePKCEAndRefresh(t *testing.T) {
 		t.Fatalf("approval status = %d: %s", approval.Code, approval.Body.String())
 	}
 	redirect, err := url.Parse(approval.Header().Get("Location"))
-	if err != nil || redirect.Query().Get("state") != "state-1" {
+	if err != nil || redirect.Query().Get("state") != "state-1" || redirect.Query().Get("iss") != "https://auth.example.com/oauth" {
 		t.Fatalf("unexpected redirect: %s", approval.Header().Get("Location"))
 	}
 	tokenForm := url.Values{"grant_type": {"authorization_code"}, "client_id": {client.ID}, "code": {redirect.Query().Get("code")}, "redirect_uri": {"http://127.0.0.1:9000/callback"}, "code_verifier": {verifier}}

@@ -145,17 +145,18 @@ func (h *oauthHandler) discoveryPath(kind string) string {
 
 func (h *oauthHandler) metadata() map[string]any {
 	return map[string]any{
-		"issuer":                                h.issuerStr,
-		"authorization_endpoint":                h.endpoint("authorize"),
-		"token_endpoint":                        h.endpoint("token"),
-		"jwks_uri":                              h.endpoint("jwks.json"),
-		"registration_endpoint":                 h.endpoint("register"),
-		"response_types_supported":              []string{"code"},
-		"grant_types_supported":                 []string{"authorization_code", "refresh_token"},
-		"token_endpoint_auth_methods_supported": []string{"none", "client_secret_basic", "client_secret_post"},
-		"code_challenge_methods_supported":      []string{"S256"},
-		"scopes_supported":                      []string{"mcp"},
-		"client_id_metadata_document_supported": true,
+		"issuer":                                         h.issuerStr,
+		"authorization_endpoint":                         h.endpoint("authorize"),
+		"token_endpoint":                                 h.endpoint("token"),
+		"jwks_uri":                                       h.endpoint("jwks.json"),
+		"registration_endpoint":                          h.endpoint("register"),
+		"response_types_supported":                       []string{"code"},
+		"grant_types_supported":                          []string{"authorization_code", "refresh_token"},
+		"token_endpoint_auth_methods_supported":          []string{"none", "client_secret_basic", "client_secret_post"},
+		"code_challenge_methods_supported":               []string{"S256"},
+		"scopes_supported":                               []string{"mcp"},
+		"client_id_metadata_document_supported":          true,
+		"authorization_response_iss_parameter_supported": true,
 	}
 }
 
@@ -327,7 +328,7 @@ func (h *oauthHandler) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusInternalServerError, "server_error", "could not create authorization code")
 		return
 	}
-	redirect := addQuery(request.RedirectURI, map[string]string{"code": codeValue, "state": request.State})
+	redirect := addQuery(request.RedirectURI, map[string]string{"code": codeValue, "state": request.State, "iss": h.issuerStr})
 	h.redirect(w, redirect)
 }
 
@@ -433,7 +434,7 @@ func (h *oauthHandler) renderLoginPage(w http.ResponseWriter, request authorizeR
 }
 
 func (h *oauthHandler) redirectError(w http.ResponseWriter, request authorizeRequest, code, description string) {
-	params := map[string]string{"error": code, "error_description": description, "state": request.State}
+	params := map[string]string{"error": code, "error_description": description, "state": request.State, "iss": h.issuerStr}
 	h.redirect(w, addQuery(request.RedirectURI, params))
 }
 
