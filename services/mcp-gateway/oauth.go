@@ -206,16 +206,12 @@ func (s *gatewayServer) oauthProviderForIssuer(ctx context.Context, issuerURL st
 		return provider, nil
 	}
 
-	lookupIssuerURL := strings.TrimSpace(s.oauthInternalIssuerURL)
-	if lookupIssuerURL == "" {
-		lookupIssuerURL = issuerURL
-	}
-	metadata, err := s.fetchAuthServerMetadataForIssuer(ctx, lookupIssuerURL, issuerURL)
+	metadata, usingInternalIssuer, err := s.fetchAuthServerMetadataWithFallback(ctx, issuerURL)
 	if err != nil {
 		return nil, err
 	}
-	if lookupIssuerURL != issuerURL {
-		metadata.JWKSURI, err = rewriteOAuthEndpoint(metadata.JWKSURI, metadata.Issuer, lookupIssuerURL)
+	if usingInternalIssuer {
+		metadata.JWKSURI, err = rewriteOAuthEndpoint(metadata.JWKSURI, metadata.Issuer, s.oauthInternalIssuerURL)
 		if err != nil {
 			return nil, err
 		}
@@ -234,6 +230,27 @@ func (s *gatewayServer) oauthProviderForIssuer(ctx context.Context, issuerURL st
 	s.oauthProviders[issuerURL] = provider
 	s.oauthMu.Unlock()
 	return provider, nil
+}
+
+// fetchAuthServerMetadataWithFallback prefers the in-cluster first-party issuer
+// for local reachability, but still supports MCP servers configured with an
+// external or test authorization server. The metadata issuer is validated
+// against the configured issuer on every attempt.
+func (s *gatewayServer) fetchAuthServerMetadataWithFallback(ctx context.Context, issuerURL string) (*authServerMetadata, bool, error) {
+	internalIssuerURL := strings.TrimSpace(s.oauthInternalIssuerURL)
+	if internalIssuerURL == "" || internalIssuerURL == issuerURL {
+		metadata, err := s.fetchAuthServerMetadataForIssuer(ctx, issuerURL, issuerURL)
+		return metadata, false, err
+	}
+
+	if metadata, err := s.fetchAuthServerMetadataForIssuer(ctx, internalIssuerURL, issuerURL); err == nil {
+		return metadata, true, nil
+	}
+
+	// The internal issuer is only a transport optimization. It must not prevent
+	// external providers, including the E2E mock provider, from being used.
+	metadata, err := s.fetchAuthServerMetadataForIssuer(ctx, issuerURL, issuerURL)
+	return metadata, false, err
 }
 
 func (s *gatewayServer) fetchAuthServerMetadata(ctx context.Context, issuerURL string) (*authServerMetadata, error) {

@@ -232,6 +232,37 @@ func TestRewriteOAuthEndpointUsesInternalIssuer(t *testing.T) {
 	}
 }
 
+func TestFetchAuthServerMetadataFallsBackToConfiguredIssuer(t *testing.T) {
+	var publicIssuerURL string
+	publicIssuer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(authServerMetadata{Issuer: publicIssuerURL, JWKSURI: publicIssuerURL + "/keys"})
+	}))
+	t.Cleanup(publicIssuer.Close)
+	publicIssuerURL = publicIssuer.URL
+
+	internalIssuer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"issuer":"http://localhost:18080/oauth","jwks_uri":"http://localhost:18080/oauth/keys"}`)
+	}))
+	t.Cleanup(internalIssuer.Close)
+
+	server := &gatewayServer{
+		httpClient:             publicIssuer.Client(),
+		oauthInternalIssuerURL: internalIssuer.URL,
+	}
+	metadata, usingInternal, err := server.fetchAuthServerMetadataWithFallback(context.Background(), publicIssuer.URL)
+	if err != nil {
+		t.Fatalf("fetchAuthServerMetadataWithFallback() error = %v", err)
+	}
+	if usingInternal {
+		t.Fatal("fetchAuthServerMetadataWithFallback() used mismatched internal metadata")
+	}
+	if metadata.Issuer != publicIssuer.URL {
+		t.Fatalf("metadata issuer = %q, want %s", metadata.Issuer, publicIssuer.URL)
+	}
+}
+
 func TestHandleProxyOAuthValidatesJWTAndAppliesIdentityHeaders(t *testing.T) {
 	issuer := newTestJWTIssuer(t)
 
