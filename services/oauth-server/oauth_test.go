@@ -224,12 +224,30 @@ func TestCustomRedirectSchemesRequireExplicitAllowList(t *testing.T) {
 func TestDCRAcceptsAllowListedCursorRedirect(t *testing.T) {
 	h, _ := testOAuthHandler(t)
 	h.allowedRedirectSchemes = parseRedirectSchemes("cursor")
-	request := httptest.NewRequest(http.MethodPost, "https://auth.example.com/oauth/register", strings.NewReader(`{"redirect_uris":["cursor://anysphere.cursor-mcp/oauth/callback"]}`))
+	request := httptest.NewRequest(http.MethodPost, "https://auth.example.com/oauth/register", strings.NewReader(`{"redirect_uris":["cursor://anysphere.cursor-mcp/oauth/callback"],"application_type":"native"}`))
 	request.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
 	h.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusCreated {
 		t.Fatalf("Cursor registration status = %d: %s", recorder.Code, recorder.Body.String())
+	}
+	var response map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response["application_type"] != "native" {
+		t.Fatalf("application_type = %#v, want native", response["application_type"])
+	}
+}
+
+func TestDCRRejectsUnknownApplicationType(t *testing.T) {
+	h, _ := testOAuthHandler(t)
+	request := httptest.NewRequest(http.MethodPost, "https://auth.example.com/oauth/register", strings.NewReader(`{"redirect_uris":["http://127.0.0.1:9000/callback"],"application_type":"desktop"}`))
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	h.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusBadRequest || !strings.Contains(recorder.Body.String(), "application_type") {
+		t.Fatalf("unexpected application_type rejection: %d %s", recorder.Code, recorder.Body.String())
 	}
 }
 

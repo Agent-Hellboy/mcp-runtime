@@ -61,6 +61,7 @@ type registrationRequest struct {
 	GrantTypes              []string `json:"grant_types"`
 	ResponseTypes           []string `json:"response_types"`
 	TokenEndpointAuthMethod string   `json:"token_endpoint_auth_method"`
+	ApplicationType         string   `json:"application_type,omitempty"`
 	ClientURI               string   `json:"client_uri,omitempty"`
 	SoftwareID              string   `json:"software_id,omitempty"`
 }
@@ -249,6 +250,9 @@ func (h *oauthHandler) handleRegister(w http.ResponseWriter, r *http.Request) {
 		"token_endpoint_auth_method": req.TokenEndpointAuthMethod,
 		"client_id_issued_at":        time.Now().Unix(),
 	}
+	if req.ApplicationType != "" {
+		response["application_type"] = req.ApplicationType
+	}
 	if clientSecret != "" {
 		response["client_secret"] = clientSecret
 		response["client_secret_expires_at"] = int64(0)
@@ -281,6 +285,9 @@ func validateRegistrationWithRedirectSchemes(req registrationRequest, allowedSch
 	}
 	if !contains(req.GrantTypes, "authorization_code") {
 		return errors.New("authorization_code grant is required")
+	}
+	if req.ApplicationType != "" && req.ApplicationType != "native" && req.ApplicationType != "web" {
+		return fmt.Errorf("unsupported application_type %q", req.ApplicationType)
 	}
 	switch req.TokenEndpointAuthMethod {
 	case "none", "client_secret_basic", "client_secret_post":
@@ -632,6 +639,7 @@ func (h *oauthHandler) resolveCIMD(ctx context.Context, clientID string) (oauthC
 		GrantTypes            []string `json:"grant_types"`
 		ResponseTypes         []string `json:"response_types"`
 		TokenEndpointAuthMode string   `json:"token_endpoint_auth_method"`
+		ApplicationType       string   `json:"application_type"`
 	}
 	if err := json.Unmarshal(body, &metadata); err != nil || metadata.ClientID != clientID {
 		return oauthClient{}, errors.New("client metadata document has an invalid client_id")
@@ -648,7 +656,7 @@ func (h *oauthHandler) resolveCIMD(ctx context.Context, clientID string) (oauthC
 	if metadata.TokenEndpointAuthMode == "" {
 		metadata.TokenEndpointAuthMode = "none"
 	}
-	registration := registrationRequest{ClientName: metadata.ClientName, RedirectURIs: metadata.RedirectURIs, GrantTypes: metadata.GrantTypes, ResponseTypes: metadata.ResponseTypes, TokenEndpointAuthMethod: metadata.TokenEndpointAuthMode}
+	registration := registrationRequest{ClientName: metadata.ClientName, RedirectURIs: metadata.RedirectURIs, GrantTypes: metadata.GrantTypes, ResponseTypes: metadata.ResponseTypes, TokenEndpointAuthMethod: metadata.TokenEndpointAuthMode, ApplicationType: metadata.ApplicationType}
 	if err := h.validateRegistration(registration); err != nil {
 		return oauthClient{}, err
 	}
