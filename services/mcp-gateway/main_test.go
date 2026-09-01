@@ -253,8 +253,101 @@ func TestHandleProxyOAuthValidatesJWTAndAppliesIdentityHeaders(t *testing.T) {
 	if got := upstreamHeaders.Get(defaultSessionHeader); got != "session-1" {
 		t.Fatalf("%s = %q, want %q", defaultSessionHeader, got, "session-1")
 	}
-	if got := upstreamHeaders.Get("Authorization"); got != "Bearer "+token {
-		t.Fatalf("Authorization = %q, want bearer token", got)
+	if got := upstreamHeaders.Get("Authorization"); got != "" {
+		t.Fatalf("Authorization = %q, want inbound bearer token stripped", got)
+	}
+}
+
+func TestHandleProxyOAuthDerivesCanonicalAudience(t *testing.T) {
+	issuer := newTestJWTIssuer(t)
+	policy := oauthPolicy(issuer.url)
+	policy.Auth.Audience = ""
+	proxy := newTestGatewayServer(t, policy, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	token := issuer.sign(t, jwt.MapClaims{
+		"iss": issuer.url,
+		"aud": "http://proxy.example.com/mcp",
+		"sub": "human-1",
+		"azp": "client-1",
+		"sid": "session-1",
+		"exp": time.Now().Add(time.Hour).Unix(),
+	})
+	req := httptest.NewRequest(http.MethodPost, "http://proxy.example.com/mcp", strings.NewReader(`{"method":"tools/call","params":{"name":"echo"}}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	recorder := httptest.NewRecorder()
+
+	proxy.handleGateway(recorder, req)
+
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusNoContent)
+	}
+}
+
+func TestHandleProxyOAuthRejectsWrongDerivedAudience(t *testing.T) {
+	issuer := newTestJWTIssuer(t)
+	policy := oauthPolicy(issuer.url)
+	policy.Auth.Audience = ""
+	proxy := newTestGatewayServer(t, policy, func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("wrong-audience request reached upstream")
+	})
+
+	token := issuer.sign(t, jwt.MapClaims{
+		"iss": issuer.url,
+		"aud": "https://other.example.com/mcp",
+		"sub": "human-1",
+		"azp": "client-1",
+		"sid": "session-1",
+		"exp": time.Now().Add(time.Hour).Unix(),
+	})
+	req := httptest.NewRequest(http.MethodPost, "http://proxy.example.com/mcp", strings.NewReader(`{"method":"tools/call","params":{"name":"echo"}}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	recorder := httptest.NewRecorder()
+
+	proxy.handleGateway(recorder, req)
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnauthorized)
+	}
+	if got := recorder.Header().Get("Www-Authenticate"); !strings.Contains(got, `error="invalid_token"`) {
+		t.Fatalf("WWW-Authenticate = %q, missing invalid_token", got)
+	}
+}
+
+func TestHandleProxyOAuthPolicyDenialIncludesInsufficientScopeChallenge(t *testing.T) {
+	issuer := newTestJWTIssuer(t)
+	policy := oauthPolicy(issuer.url)
+	policy.Grants[0].ToolRules[0].Decision = "deny"
+	proxy := newTestGatewayServer(t, policy, func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("denied request reached upstream")
+	})
+
+	token := issuer.sign(t, jwt.MapClaims{
+		"iss": issuer.url,
+		"aud": "mcp-runtime",
+		"sub": "human-1",
+		"azp": "client-1",
+		"sid": "session-1",
+		"exp": time.Now().Add(time.Hour).Unix(),
+	})
+	req := httptest.NewRequest(http.MethodPost, "http://proxy.example.com/mcp", strings.NewReader(`{"method":"tools/call","params":{"name":"echo"}}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	recorder := httptest.NewRecorder()
+
+	proxy.handleGateway(recorder, req)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusForbidden)
+	}
+	challenge := recorder.Header().Get("Www-Authenticate")
+	for _, want := range []string{`error="insufficient_scope"`, `scope="mcp:tool:echo"`, `resource_metadata="http://proxy.example.com/.well-known/oauth-protected-resource/mcp"`} {
+		if !strings.Contains(challenge, want) {
+			t.Fatalf("WWW-Authenticate = %q, missing %q", challenge, want)
+		}
 	}
 }
 
@@ -303,6 +396,49 @@ func TestApplyUpstreamTokenClearsHeaderWhenTokenMissing(t *testing.T) {
 
 	if got := req.Header.Get("Authorization"); got != "" {
 		t.Fatalf("Authorization = %q, want empty", got)
+	}
+}
+
+func TestApplyUpstreamTokenNeverForwardsOAuthBearer(t *testing.T) {
+	t.Parallel()
+
+	proxy := &gatewayServer{}
+	policy := oauthPolicy("https://issuer.example.com")
+	policy.Session.UpstreamTokenHeader = "X-Upstream-Authorization"
+	req := httptest.NewRequest(http.MethodGet, "http://proxy.example.com/mcp", nil)
+	req.Header.Set("Authorization", "Bearer inbound-token")
+	req.Header.Set("X-Upstream-Authorization", "Bearer spoofed-upstream-token")
+
+	proxy.applyUpstreamToken(req, policy, "inbound-token")
+
+	if got := req.Header.Get("Authorization"); got != "" {
+		t.Fatalf("Authorization = %q, want empty", got)
+	}
+	if got := req.Header.Get("X-Upstream-Authorization"); got != "" {
+		t.Fatalf("X-Upstream-Authorization = %q, want empty", got)
+	}
+}
+
+func TestAuthServerMetadataCandidatesUseMCPPathOrder(t *testing.T) {
+	want := []string{
+		"https://auth.example.com/.well-known/oauth-authorization-server/tenant1",
+		"https://auth.example.com/.well-known/openid-configuration/tenant1",
+		"https://auth.example.com/tenant1/.well-known/openid-configuration",
+	}
+	got := authServerMetadataCandidates("https://auth.example.com/tenant1")
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("candidates = %#v, want %#v", got, want)
+	}
+}
+
+func TestAuthServerMetadataCandidatesUseRootOrder(t *testing.T) {
+	want := []string{
+		"https://auth.example.com/.well-known/oauth-authorization-server",
+		"https://auth.example.com/.well-known/openid-configuration",
+	}
+	got := authServerMetadataCandidates("https://auth.example.com")
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("candidates = %#v, want %#v", got, want)
 	}
 }
 
@@ -1246,6 +1382,7 @@ func newTestJWTIssuer(t *testing.T) *testJWTIssuer {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/oauth-authorization-server", func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]string{
+			"issuer":   issuer.url,
 			"jwks_uri": issuer.server.URL + "/keys",
 		})
 	})

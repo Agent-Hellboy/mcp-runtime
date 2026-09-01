@@ -115,6 +115,7 @@ jobs:
           - ingest
           - processor
           - mcp-gateway
+          - oauth-server
           - ui
     steps:
       - name: Checkout

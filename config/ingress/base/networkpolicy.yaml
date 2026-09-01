@@ -90,6 +90,8 @@ spec:
         - protocol: TCP
           port: 8085
         - protocol: TCP
+          port: 8086
+        - protocol: TCP
           port: 8088
         - protocol: TCP
           port: 8091

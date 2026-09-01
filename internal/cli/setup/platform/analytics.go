@@ -3,9 +3,12 @@ package platform
 import (
 	"context"
 	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -153,6 +156,7 @@ func deployAnalyticsManifestsClientGo(logger *zap.Logger, images AnalyticsImageS
 		"k8s/08-runtime-api-rbac.yaml",
 		"k8s/08-analytics-api.yaml",
 		"k8s/22-split-api-networkpolicy.yaml",
+		"k8s/14-oauth-server.yaml",
 		"k8s/09-ui.yaml",
 		"k8s/10-gateway.yaml",
 		"k8s/11-prometheus.yaml",
@@ -190,6 +194,7 @@ func deployAnalyticsManifestsClientGo(logger *zap.Logger, images AnalyticsImageS
 		{kind: "deployment", name: "mcp-platform-api"},
 		{kind: "deployment", name: "mcp-runtime-api"},
 		{kind: "deployment", name: "mcp-analytics-api"},
+		{kind: "deployment", name: "mcp-oauth-server"},
 		{kind: "deployment", name: "mcp-sentinel-ui"},
 		{kind: "deployment", name: "mcp-sentinel-gateway"},
 		{kind: "deployment", name: "prometheus"},
@@ -323,6 +328,7 @@ func deployAnalyticsManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap
 		"k8s/08-runtime-api-rbac.yaml",
 		"k8s/08-analytics-api.yaml",
 		"k8s/22-split-api-networkpolicy.yaml",
+		"k8s/14-oauth-server.yaml",
 		"k8s/09-ui.yaml",
 		"k8s/10-gateway.yaml",
 		"k8s/11-prometheus.yaml",
@@ -353,6 +359,7 @@ func deployAnalyticsManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap
 		{kind: "deployment", name: "mcp-platform-api"},
 		{kind: "deployment", name: "mcp-runtime-api"},
 		{kind: "deployment", name: "mcp-analytics-api"},
+		{kind: "deployment", name: "mcp-oauth-server"},
 		{kind: "deployment", name: "mcp-sentinel-ui"},
 		{kind: "deployment", name: "mcp-sentinel-gateway"},
 		{kind: "deployment", name: "prometheus"},
@@ -695,6 +702,9 @@ func renderAnalyticsManifest(content string, images AnalyticsImageSet, imagePull
 	if strings.TrimSpace(images.UI) != "" {
 		replacements["image: mcp-sentinel-ui:latest"] = "image: " + images.UI
 	}
+	if strings.TrimSpace(images.OAuthServer) != "" {
+		replacements["image: mcp-oauth-server:latest"] = "image: " + images.OAuthServer
+	}
 	if strings.TrimSpace(images.Traefik) != "" {
 		replacements["image: traefik:v3.0"] = "image: " + images.Traefik
 	}
@@ -791,6 +801,7 @@ func renderAnalyticsConfigManifestWithReaders(content, platformMode string, imag
 		"OIDC_AUDIENCE",
 		"OIDC_JWKS_URL",
 		"MCP_PLATFORM_DOMAIN",
+		"OAUTH_ISSUER_URL",
 		"MCP_MCP_INGRESS_HOST",
 		"MCP_REGISTRY_ENDPOINT",
 		"MCP_REGISTRY_INGRESS_HOST",
@@ -818,6 +829,17 @@ func renderAnalyticsConfigManifestWithReaders(content, platformMode string, imag
 	}
 	if registryHost := platformRegistryHostForConfig(images); registryHost != "" {
 		manifest.Data["PLATFORM_REGISTRY_URL"] = registryHost
+	}
+	if strings.TrimSpace(manifest.Data["OAUTH_ISSUER_URL"]) == "" {
+		if platformHost := strings.TrimSpace(core.GetPlatformIngressHost()); platformHost != "" {
+			scheme := "http"
+			if strings.TrimSpace(core.GetRegistryClusterIssuerName()) != "" {
+				scheme = "https"
+			}
+			manifest.Data["OAUTH_ISSUER_URL"] = scheme + "://" + platformHost + "/oauth"
+		} else {
+			manifest.Data["OAUTH_ISSUER_URL"] = "http://localhost:18080/oauth"
+		}
 	}
 	if strings.TrimSpace(manifest.Data["PLATFORM_TRAEFIK_NAMESPACE"]) == "" {
 		if namespace := resolveTraefikNamespace(); namespace != "" {
@@ -1002,6 +1024,19 @@ func renderAnalyticsSecretManifestWithReader(readSecret analyticsSecretValueRead
 	if err != nil {
 		return "", core.WrapWithSentinel(core.ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
 	}
+	oauthPrivateKey, err := readSecret(core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "OAUTH_PRIVATE_KEY")
+	if err != nil {
+		return "", core.WrapWithSentinel(core.ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
+	}
+	if override := setupSecretEnvValue("MCP_OAUTH_PRIVATE_KEY", "OAUTH_PRIVATE_KEY"); override != "" {
+		oauthPrivateKey = override
+	}
+	if strings.TrimSpace(oauthPrivateKey) == "" {
+		oauthPrivateKey, err = generateOAuthPrivateKey()
+		if err != nil {
+			return "", core.WrapWithSentinel(core.ErrRenderSecretManifestFailed, err, fmt.Sprintf("generate OAuth signing key: %v", err))
+		}
+	}
 	platformAdminEmail, err := readSecret(core.DefaultAnalyticsNamespace, "mcp-sentinel-secrets", "PLATFORM_ADMIN_EMAIL")
 	if err != nil {
 		return "", core.WrapWithSentinel(core.ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to read analytics secrets: %v", err))
@@ -1086,6 +1121,7 @@ func renderAnalyticsSecretManifestWithReader(readSecret analyticsSecretValueRead
 		"POSTGRES_DSN":            postgresDSN,
 		"JWT_SECRET":              jwtSecret,
 		"INTERNAL_AUTH_TOKEN":     internalAuthToken,
+		"OAUTH_PRIVATE_KEY":       oauthPrivateKey,
 		"GRAFANA_ADMIN_USER":      "admin",
 		"GRAFANA_ADMIN_PASSWORD":  grafanaPassword,
 	}
@@ -1115,6 +1151,18 @@ func renderAnalyticsSecretManifestWithReader(readSecret analyticsSecretValueRead
 		return "", core.WrapWithSentinel(core.ErrRenderSecretManifestFailed, err, fmt.Sprintf("failed to render analytics secrets: %v", err))
 	}
 	return string(rendered), nil
+}
+
+func generateOAuthPrivateKey() (string, error) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return "", err
+	}
+	der, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		return "", err
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})), nil
 }
 
 func ensureCSVIncludes(csv, value string) string {
@@ -1284,6 +1332,7 @@ func analyticsImagePullSecretCandidates(images AnalyticsImageSet) []string {
 		images.AnalyticsAPI,
 		images.Processor,
 		images.UI,
+		images.OAuthServer,
 	}
 }
 
@@ -1630,6 +1679,7 @@ func restartAnalyticsDeploymentsClientGo() error {
 		"mcp-platform-api",
 		"mcp-runtime-api",
 		"mcp-analytics-api",
+		"mcp-oauth-server",
 		"mcp-sentinel-ui",
 		"mcp-sentinel-ingest",
 		"mcp-sentinel-processor",

@@ -1,0 +1,103 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-oauth-server
+  namespace: mcp-sentinel
+spec:
+  selector:
+    app: mcp-oauth-server
+  ports:
+    - name: http
+      port: 8086
+      targetPort: 8086
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-oauth-server
+  namespace: mcp-sentinel
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcp-oauth-server
+  template:
+    metadata:
+      labels:
+        app: mcp-oauth-server
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: oauth-server
+          image: mcp-oauth-server:latest
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            readOnlyRootFilesystem: true
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop:
+                - ALL
+          ports:
+            - containerPort: 8086
+          envFrom:
+            - configMapRef:
+                name: mcp-sentinel-config
+          env:
+            - name: PORT
+              value: "8086"
+            - name: POSTGRES_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-sentinel-secrets
+                  key: POSTGRES_DSN
+            - name: OAUTH_PRIVATE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-sentinel-secrets
+                  key: OAUTH_PRIVATE_KEY
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8086
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /live
+              port: 8086
+            initialDelaySeconds: 15
+            periodSeconds: 20
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: mcp-oauth-server
+  namespace: mcp-sentinel
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web
+spec:
+  ingressClassName: traefik
+  rules:
+    - http:
+        paths:
+          - path: /oauth
+            pathType: Prefix
+            backend:
+              service:
+                name: mcp-oauth-server
+                port:
+                  number: 8086

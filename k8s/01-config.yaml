@@ -27,6 +27,9 @@ data:
   MCP_REGISTRY_ENDPOINT: ""
   MCP_REGISTRY_INGRESS_HOST: ""
   MCP_PLATFORM_DOMAIN: ""
+  # First-party MCP OAuth authorization server issuer. Setup derives this from
+  # the public platform host; keep the local value for path-based dev ingress.
+  OAUTH_ISSUER_URL: ""
   MCP_MCP_INGRESS_HOST: ""
   API_BASE: "/api/v1"
   OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"

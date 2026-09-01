@@ -56,6 +56,7 @@ type oauthProvider struct {
 }
 
 type authServerMetadata struct {
+	Issuer  string `json:"issuer"`
 	JWKSURI string `json:"jwks_uri"`
 }
 

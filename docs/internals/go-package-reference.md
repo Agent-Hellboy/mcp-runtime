@@ -5356,6 +5356,7 @@ var DefaultPlatformStatusWorkloads = []PlatformWorkload{
 	{Component: "Platform API", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-platform-api"},
 	{Component: "Runtime Control", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-runtime-api"},
 	{Component: "Analytics API", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-analytics-api"},
+	{Component: "OAuth Server", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-oauth-server"},
 	{Component: "UI", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-sentinel-ui"},
 	{Component: "Gateway", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-sentinel-gateway"},
 	{Component: "Prometheus", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "prometheus"},
@@ -6533,6 +6534,7 @@ type AnalyticsImageSet struct {
 	AnalyticsAPI  string
 	Processor     string
 	UI            string
+	OAuthServer   string
 	Traefik       string
 	ClickHouse    string
 	Kafka         string
