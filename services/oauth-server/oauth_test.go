@@ -193,6 +193,34 @@ func TestDCRReportsRejectedHTTPRedirect(t *testing.T) {
 	}
 }
 
+func TestCustomRedirectSchemesRequireExplicitAllowList(t *testing.T) {
+	redirect := "cursor://anysphere.cursor-mcp/oauth/callback"
+	if err := validateRedirectURI(redirect); err == nil {
+		t.Fatal("custom redirect scheme was accepted without an allow-list")
+	}
+	if err := validateRedirectURIWithSchemes(redirect, parseRedirectSchemes("cursor")); err != nil {
+		t.Fatalf("allow-listed Cursor redirect was rejected: %v", err)
+	}
+	if err := validateRedirectURIWithSchemes("vscode://anysphere.cursor-mcp/oauth/callback", parseRedirectSchemes("cursor")); err == nil {
+		t.Fatal("non-allow-listed custom redirect scheme was accepted")
+	}
+	if allowed := parseRedirectSchemes("cursor,http,https,not a scheme"); len(allowed) != 1 {
+		t.Fatalf("unexpected redirect scheme allow-list: %#v", allowed)
+	}
+}
+
+func TestDCRAcceptsAllowListedCursorRedirect(t *testing.T) {
+	h, _ := testOAuthHandler(t)
+	h.allowedRedirectSchemes = parseRedirectSchemes("cursor")
+	request := httptest.NewRequest(http.MethodPost, "https://auth.example.com/oauth/register", strings.NewReader(`{"redirect_uris":["cursor://anysphere.cursor-mcp/oauth/callback"]}`))
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	h.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("Cursor registration status = %d: %s", recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestLoopbackHTTPRedirectsAllowLocalhostNames(t *testing.T) {
 	for _, host := range []string{"localhost", "LOCALHOST", "localhost.", "app.localhost", "127.0.0.1", "[::1]"} {
 		if !isLoopbackHost(strings.Trim(host, "[]")) {

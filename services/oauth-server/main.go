@@ -44,7 +44,7 @@ func main() {
 	}
 	defer store.Close()
 
-	handler := newOAuthHandler(issuer, key, store)
+	handler := newOAuthHandlerWithRedirectSchemes(issuer, key, store, parseRedirectSchemes(os.Getenv("OAUTH_ALLOWED_REDIRECT_URI_SCHEMES")))
 	listenAddr := envOr("PORT", ":8086")
 	if !strings.Contains(listenAddr, ":") {
 		listenAddr = ":" + listenAddr
@@ -61,6 +61,27 @@ func main() {
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		fatal(err.Error())
 	}
+}
+
+func parseRedirectSchemes(value string) map[string]struct{} {
+	allowed := make(map[string]struct{})
+	for _, item := range strings.Split(value, ",") {
+		scheme := strings.ToLower(strings.TrimSpace(item))
+		if scheme != "" && scheme != "http" && scheme != "https" && validRedirectScheme(scheme) {
+			allowed[scheme] = struct{}{}
+		}
+	}
+	return allowed
+}
+
+func validRedirectScheme(value string) bool {
+	for index, character := range value {
+		if (character >= 'a' && character <= 'z') || (index > 0 && ((character >= '0' && character <= '9') || character == '+' || character == '-' || character == '.')) {
+			continue
+		}
+		return false
+	}
+	return value != ""
 }
 
 func loadSigningKey() (*rsa.PrivateKey, error) {

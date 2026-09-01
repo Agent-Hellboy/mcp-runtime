@@ -255,6 +255,11 @@ Configure `OAUTH_ISSUER_URL` and persist `OAUTH_PRIVATE_KEY` through the
 deployment secret. `mcp-runtime setup` generates and preserves that key. Do
 not enable insecure HTTP or ephemeral signing keys outside local development.
 
+For local Cursor testing, set `OAUTH_ALLOWED_REDIRECT_URI_SCHEMES=cursor`.
+This is an explicit interoperability allow-list for Cursor's native
+`cursor://anysphere.cursor-mcp/oauth/callback` redirect; arbitrary custom URI
+schemes remain rejected, and the setting should remain empty in production.
+
 ### Practical model
 
 - Use the **gateway** for human, agent, and session identity headers.

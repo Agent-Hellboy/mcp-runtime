@@ -30,6 +30,9 @@ data:
   # First-party MCP OAuth authorization server issuer. Setup derives this from
   # the public platform host; keep the local value for path-based dev ingress.
   OAUTH_ISSUER_URL: ""
+  # Optional local interoperability extension for native clients such as Cursor.
+  # Keep empty in production; MCP redirect URIs should be HTTPS or loopback HTTP.
+  OAUTH_ALLOWED_REDIRECT_URI_SCHEMES: ""
   MCP_MCP_INGRESS_HOST: ""
   API_BASE: "/api/v1"
   OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"

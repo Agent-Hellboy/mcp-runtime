@@ -802,6 +802,7 @@ func renderAnalyticsConfigManifestWithReaders(content, platformMode string, imag
 		"OIDC_JWKS_URL",
 		"MCP_PLATFORM_DOMAIN",
 		"OAUTH_ISSUER_URL",
+		"OAUTH_ALLOWED_REDIRECT_URI_SCHEMES",
 		"MCP_MCP_INGRESS_HOST",
 		"MCP_REGISTRY_ENDPOINT",
 		"MCP_REGISTRY_INGRESS_HOST",

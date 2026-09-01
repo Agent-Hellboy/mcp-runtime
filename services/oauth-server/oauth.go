@@ -34,12 +34,13 @@ const (
 )
 
 type oauthHandler struct {
-	issuer    *url.URL
-	issuerStr string
-	store     *oauthStore
-	private   *rsa.PrivateKey
-	keyID     string
-	client    *http.Client
+	issuer                 *url.URL
+	issuerStr              string
+	store                  *oauthStore
+	private                *rsa.PrivateKey
+	keyID                  string
+	client                 *http.Client
+	allowedRedirectSchemes map[string]struct{}
 }
 
 type authorizeRequest struct {
@@ -70,17 +71,22 @@ type tokenError struct {
 }
 
 func newOAuthHandler(issuer *url.URL, key *rsa.PrivateKey, store *oauthStore) *oauthHandler {
+	return newOAuthHandlerWithRedirectSchemes(issuer, key, store, nil)
+}
+
+func newOAuthHandlerWithRedirectSchemes(issuer *url.URL, key *rsa.PrivateKey, store *oauthStore, allowedSchemes map[string]struct{}) *oauthHandler {
 	issuerCopy := *issuer
 	issuerCopy.RawQuery = ""
 	issuerCopy.Fragment = ""
 	issuerCopy.Path = strings.TrimRight(issuerCopy.Path, "/")
 	issuerCopy.RawPath = ""
 	return &oauthHandler{
-		issuer:    &issuerCopy,
-		issuerStr: issuerCopy.String(),
-		store:     store,
-		private:   key,
-		keyID:     "mcp-runtime-oauth-1",
+		issuer:                 &issuerCopy,
+		issuerStr:              issuerCopy.String(),
+		store:                  store,
+		private:                key,
+		keyID:                  "mcp-runtime-oauth-1",
+		allowedRedirectSchemes: allowedSchemes,
 		client: &http.Client{
 			Timeout:   5 * time.Second,
 			Transport: &http.Transport{DialContext: safeCIMDDialContext},
@@ -211,7 +217,7 @@ func (h *oauthHandler) handleRegister(w http.ResponseWriter, r *http.Request) {
 	if req.TokenEndpointAuthMethod == "" {
 		req.TokenEndpointAuthMethod = "none"
 	}
-	if err := validateRegistration(req); err != nil {
+	if err := h.validateRegistration(req); err != nil {
 		h.writeError(w, http.StatusBadRequest, "invalid_client_metadata", err.Error())
 		return
 	}
@@ -250,8 +256,16 @@ func (h *oauthHandler) handleRegister(w http.ResponseWriter, r *http.Request) {
 }
 
 func validateRegistration(req registrationRequest) error {
+	return validateRegistrationWithRedirectSchemes(req, nil)
+}
+
+func (h *oauthHandler) validateRegistration(req registrationRequest) error {
+	return validateRegistrationWithRedirectSchemes(req, h.allowedRedirectSchemes)
+}
+
+func validateRegistrationWithRedirectSchemes(req registrationRequest, allowedSchemes map[string]struct{}) error {
 	for _, redirect := range req.RedirectURIs {
-		if err := validateRedirectURI(redirect); err != nil {
+		if err := validateRedirectURIWithSchemes(redirect, allowedSchemes); err != nil {
 			return err
 		}
 	}
@@ -275,9 +289,22 @@ func validateRegistration(req registrationRequest) error {
 }
 
 func validateRedirectURI(value string) error {
+	return validateRedirectURIWithSchemes(value, nil)
+}
+
+func validateRedirectURIWithSchemes(value string, allowedSchemes map[string]struct{}) error {
 	u, err := url.Parse(value)
 	if err != nil || !u.IsAbs() || u.Fragment != "" || u.User != nil {
 		return fmt.Errorf("redirect URI must be absolute and must not contain a fragment")
+	}
+	if u.Scheme == "https" || (u.Scheme == "http" && isLoopbackHost(u.Hostname())) {
+		return nil
+	}
+	if _, allowed := allowedSchemes[strings.ToLower(u.Scheme)]; allowed && u.Host != "" && u.Path != "" && u.Opaque == "" {
+		return nil
+	}
+	if _, allowed := allowedSchemes[strings.ToLower(u.Scheme)]; allowed {
+		return fmt.Errorf("redirect URI %q must include a host and path", value)
 	}
 	if u.Scheme != "https" && !(u.Scheme == "http" && isLoopbackHost(u.Hostname())) {
 		return fmt.Errorf("redirect URI %q must use HTTPS, except for loopback HTTP clients", value)
@@ -602,7 +629,7 @@ func (h *oauthHandler) resolveCIMD(ctx context.Context, clientID string) (oauthC
 		metadata.TokenEndpointAuthMode = "none"
 	}
 	registration := registrationRequest{ClientName: metadata.ClientName, RedirectURIs: metadata.RedirectURIs, GrantTypes: metadata.GrantTypes, ResponseTypes: metadata.ResponseTypes, TokenEndpointAuthMethod: metadata.TokenEndpointAuthMode}
-	if err := validateRegistration(registration); err != nil {
+	if err := h.validateRegistration(registration); err != nil {
 		return oauthClient{}, err
 	}
 	return oauthClient{ID: clientID, Name: metadata.ClientName, RedirectURIs: metadata.RedirectURIs, GrantTypes: metadata.GrantTypes, ResponseTypes: metadata.ResponseTypes, TokenEndpointAuthMode: "none"}, nil
