@@ -113,13 +113,13 @@ func (h *oauthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch r.URL.Path {
-	case h.endpointPath("authorize"):
+	case h.endpointPath("authorize"), "/authorize":
 		h.handleAuthorize(w, r)
-	case h.endpointPath("token"):
+	case h.endpointPath("token"), "/token":
 		h.handleToken(w, r)
-	case h.endpointPath("register"):
+	case h.endpointPath("register"), "/register":
 		h.handleRegister(w, r)
-	case h.endpointPath("jwks.json"):
+	case h.endpointPath("jwks.json"), "/jwks.json":
 		h.handleJWKS(w, r)
 	default:
 		h.writeError(w, http.StatusNotFound, "not_found", "endpoint not found")

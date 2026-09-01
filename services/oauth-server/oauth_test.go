@@ -103,6 +103,12 @@ func TestPublicClientAuthorizationCodePKCEAndRefresh(t *testing.T) {
 	if loginPage.Code != http.StatusOK || !strings.Contains(loginPage.Body.String(), "Authorize MCP client") {
 		t.Fatalf("login page status = %d: %s", loginPage.Code, loginPage.Body.String())
 	}
+	rootAlias := httptest.NewRequest(http.MethodGet, "https://auth.example.com/authorize?"+params.Encode(), nil)
+	rootLoginPage := httptest.NewRecorder()
+	h.ServeHTTP(rootLoginPage, rootAlias)
+	if rootLoginPage.Code != http.StatusOK || !strings.Contains(rootLoginPage.Body.String(), "Authorize MCP client") {
+		t.Fatalf("root authorize alias status = %d: %s", rootLoginPage.Code, rootLoginPage.Body.String())
+	}
 	cookies := loginPage.Result().Cookies()
 	if len(cookies) != 1 {
 		t.Fatalf("expected authorization transaction cookie, got %v", cookies)
