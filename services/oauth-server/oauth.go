@@ -41,6 +41,7 @@ type oauthHandler struct {
 	keyID                  string
 	client                 *http.Client
 	allowedRedirectSchemes map[string]struct{}
+	loginLimiter           *loginAttemptLimiter
 }
 
 type authorizeRequest struct {
@@ -87,6 +88,7 @@ func newOAuthHandlerWithRedirectSchemes(issuer *url.URL, key *rsa.PrivateKey, st
 		private:                key,
 		keyID:                  "mcp-runtime-oauth-1",
 		allowedRedirectSchemes: allowedSchemes,
+		loginLimiter:           newLoginAttemptLimiter(),
 		client: &http.Client{
 			Timeout:   5 * time.Second,
 			Transport: &http.Transport{DialContext: safeCIMDDialContext},
@@ -340,15 +342,23 @@ func (h *oauthHandler) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 		h.redirectError(w, request, "access_denied", "the resource owner denied the request")
 		return
 	}
-	user, ok, err := h.store.authenticatePassword(r.Context(), r.Form.Get("email"), r.Form.Get("password"))
+	email := r.Form.Get("email")
+	attemptKeys := loginAttemptKeys(r, email)
+	if !h.loginLimiter.allowed(attemptKeys...) {
+		h.renderLoginError(w, request, "Too many failed attempts. Try again later.")
+		return
+	}
+	user, ok, err := h.store.authenticatePassword(r.Context(), email, r.Form.Get("password"))
 	if err != nil {
 		h.writeError(w, http.StatusInternalServerError, "server_error", "authentication service unavailable")
 		return
 	}
 	if !ok {
+		h.loginLimiter.failure(attemptKeys...)
 		h.renderLoginError(w, request, "Invalid email or password")
 		return
 	}
+	h.loginLimiter.success(attemptKeys...)
 	codeValue := randomString(48)
 	code := authorizationCode{Hash: hashOpaque(codeValue), ClientID: client.ID, RedirectURI: request.RedirectURI, UserID: user.ID, CodeChallenge: request.CodeChallenge, CodeChallengeMode: request.CodeChallengeMethod, Resource: request.Resource, Scope: request.Scope, ExpiresAt: time.Now().Add(authorizationCodeTTL)}
 	if err := h.store.saveCode(r.Context(), code); err != nil {
@@ -558,7 +568,12 @@ func (h *oauthHandler) exchangeRefresh(w http.ResponseWriter, r *http.Request, c
 
 func (h *oauthHandler) issueTokens(w http.ResponseWriter, ctx context.Context, client oauthClient, userID, resource, scope string) {
 	now := time.Now()
-	access, err := h.signAccessToken(client.ID, userID, resource, scope, now)
+	teamIDs, err := h.store.teamIDsForUser(ctx, userID)
+	if err != nil {
+		h.writeTokenError(w, tokenError{"server_error", "could not resolve user teams", http.StatusInternalServerError})
+		return
+	}
+	access, err := h.signAccessToken(client.ID, userID, resource, scope, teamIDs, now)
 	if err != nil {
 		h.writeTokenError(w, tokenError{"server_error", "could not sign access token", http.StatusInternalServerError})
 		return
@@ -576,8 +591,13 @@ func (h *oauthHandler) issueTokens(w http.ResponseWriter, ctx context.Context, c
 	h.writeJSON(w, http.StatusOK, response)
 }
 
-func (h *oauthHandler) signAccessToken(clientID, userID, resource, scope string, now time.Time) (string, error) {
+func (h *oauthHandler) signAccessToken(clientID, userID, resource, scope string, teamIDs []string, now time.Time) (string, error) {
 	claims := jwt.MapClaims{"iss": h.issuerStr, "sub": userID, "aud": resource, "scope": scope, "client_id": clientID, "azp": clientID, "jti": uuid.NewString(), "iat": now.Unix(), "exp": now.Add(accessTokenTTL).Unix()}
+	if len(teamIDs) == 1 {
+		claims["team_id"] = teamIDs[0]
+	} else if len(teamIDs) > 1 {
+		claims["team_ids"] = teamIDs
+	}
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
 	token.Header["kid"] = h.keyID
 	return token.SignedString(h.private)

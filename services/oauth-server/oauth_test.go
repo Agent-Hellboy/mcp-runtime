@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v4"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -79,7 +80,8 @@ func TestMetadataDiscoveryPathOrderIsServed(t *testing.T) {
 }
 
 func TestPublicClientAuthorizationCodePKCEAndRefresh(t *testing.T) {
-	h, _ := testOAuthHandler(t)
+	h, store := testOAuthHandler(t)
+	store.teamIDs["user-1"] = []string{"team-acme"}
 	registerBody := `{"client_name":"Example","redirect_uris":["http://127.0.0.1:9000/callback"],"token_endpoint_auth_method":"none"}`
 	register := httptest.NewRequest(http.MethodPost, "https://auth.example.com/oauth/register", strings.NewReader(registerBody))
 	register.Header.Set("Content-Type", "application/json")
@@ -147,6 +149,10 @@ func TestPublicClientAuthorizationCodePKCEAndRefresh(t *testing.T) {
 	}
 	if tokens["token_type"] != "Bearer" || tokens["access_token"] == nil || tokens["refresh_token"] == nil {
 		t.Fatalf("unexpected token response: %#v", tokens)
+	}
+	parsed, _, err := new(jwt.Parser).ParseUnverified(tokens["access_token"].(string), jwt.MapClaims{})
+	if err != nil || parsed == nil || parsed.Claims.(jwt.MapClaims)["team_id"] != "team-acme" {
+		t.Fatalf("access token team claim = %#v, want team-acme", parsed)
 	}
 
 	refresh := url.Values{"grant_type": {"refresh_token"}, "client_id": {client.ID}, "refresh_token": {tokens["refresh_token"].(string)}}
@@ -237,6 +243,24 @@ func TestLoopbackHTTPRedirectsAllowLocalhostNames(t *testing.T) {
 		if isLoopbackHost(host) {
 			t.Errorf("isLoopbackHost(%q) = true", host)
 		}
+	}
+}
+
+func TestLoginAttemptLimiterBlocksAndResets(t *testing.T) {
+	limiter := newLoginAttemptLimiter()
+	keys := []string{"email:test@example.com", "ip:127.0.0.1"}
+	for i := 0; i < loginFailureLimit; i++ {
+		if !limiter.allowed(keys...) {
+			t.Fatalf("attempt %d was blocked before the limit", i+1)
+		}
+		limiter.failure(keys...)
+	}
+	if limiter.allowed(keys...) {
+		t.Fatal("attempt was not blocked after the failure limit")
+	}
+	limiter.success(keys...)
+	if !limiter.allowed(keys...) {
+		t.Fatal("successful authentication did not reset the limiter")
 	}
 }
 

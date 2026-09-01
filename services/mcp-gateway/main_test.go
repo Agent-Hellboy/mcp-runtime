@@ -208,6 +208,30 @@ func TestHandleProxyOAuthChallengeUsesExternalBaseURL(t *testing.T) {
 	}
 }
 
+func TestOAuthTeamIDSelectsPolicyTeamFromTeamIDsClaim(t *testing.T) {
+	claims := jwt.MapClaims{"team_ids": []any{"team-other", "team-acme"}}
+	policy := oauthPolicy("https://issuer.example.com")
+	policy.Server.TeamID = "team-acme"
+	if got := oauthTeamID(claims, policy); got != "team-acme" {
+		t.Fatalf("oauthTeamID() = %q, want team-acme", got)
+	}
+}
+
+func TestRewriteOAuthEndpointUsesInternalIssuer(t *testing.T) {
+	got, err := rewriteOAuthEndpoint(
+		"https://public.example.com/oauth/jwks.json",
+		"https://public.example.com/oauth",
+		"http://mcp-oauth-server.mcp-sentinel.svc.cluster.local:8086/oauth",
+	)
+	if err != nil {
+		t.Fatalf("rewriteOAuthEndpoint() error = %v", err)
+	}
+	want := "http://mcp-oauth-server.mcp-sentinel.svc.cluster.local:8086/oauth/jwks.json"
+	if got != want {
+		t.Fatalf("rewriteOAuthEndpoint() = %q, want %q", got, want)
+	}
+}
+
 func TestHandleProxyOAuthValidatesJWTAndAppliesIdentityHeaders(t *testing.T) {
 	issuer := newTestJWTIssuer(t)
 
@@ -317,7 +341,7 @@ func TestHandleProxyOAuthRejectsWrongDerivedAudience(t *testing.T) {
 	}
 }
 
-func TestHandleProxyOAuthPolicyDenialIncludesInsufficientScopeChallenge(t *testing.T) {
+func TestHandleProxyOAuthPolicyDenialOmitsInsufficientScopeChallenge(t *testing.T) {
 	issuer := newTestJWTIssuer(t)
 	policy := oauthPolicy(issuer.url)
 	policy.Grants[0].ToolRules[0].Decision = "deny"
@@ -343,11 +367,8 @@ func TestHandleProxyOAuthPolicyDenialIncludesInsufficientScopeChallenge(t *testi
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusForbidden)
 	}
-	challenge := recorder.Header().Get("Www-Authenticate")
-	for _, want := range []string{`error="insufficient_scope"`, `scope="mcp:tool:echo"`, `resource_metadata="http://proxy.example.com/.well-known/oauth-protected-resource/mcp"`} {
-		if !strings.Contains(challenge, want) {
-			t.Fatalf("WWW-Authenticate = %q, missing %q", challenge, want)
-		}
+	if challenge := recorder.Header().Get("Www-Authenticate"); challenge != "" {
+		t.Fatalf("WWW-Authenticate = %q, want empty for policy denial", challenge)
 	}
 }
 

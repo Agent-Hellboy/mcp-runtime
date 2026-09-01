@@ -214,7 +214,7 @@ spec:
 - **Header-based identity** at the gateway (default path).
 - **Optional bearer-token validation** against JWKS / issuer / audience on the split Sentinel API services (`platform-api`, `runtime-api`, `analytics-api`) and on ingest.
 - `spec.auth.mode: oauth` enables the gateway as an MCP OAuth protected resource. It publishes Protected Resource Metadata, validates issuer and audience/resource binding (using `auth.audience` or the canonical public MCP URL), and strips the client bearer token before forwarding upstream.
-- OAuth policy denials return `403` with an `insufficient_scope` challenge and a stable `mcp:*` scope hint when the denied tool, trust level, or side effect is known. See the [MCP Authorization specification](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization).
+- OAuth authentication failures return `401` with an authorization challenge. Authenticated OAuth policy denials return `403` without an `insufficient_scope` challenge because Runtime policy decisions are not OAuth scope negotiation. See the [MCP Authorization specification](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization).
 
 ### First-party authorization server
 
@@ -259,6 +259,12 @@ For local Cursor testing, set `OAUTH_ALLOWED_REDIRECT_URI_SCHEMES=cursor`.
 This is an explicit interoperability allow-list for Cursor's native
 `cursor://anysphere.cursor-mcp/oauth/callback` redirect; arbitrary custom URI
 schemes remain rejected, and the setting should remain empty in production.
+
+Gateway pods use `OAUTH_INTERNAL_ISSUER_URL` for authorization-server
+discovery and JWKS retrieval when the public issuer is reachable only through a
+workstation port-forward. The public `issuer_url` remains unchanged for JWT
+issuer validation. Setup defaults this backchannel to
+`http://mcp-oauth-server.mcp-sentinel.svc.cluster.local:8086/oauth`.
 
 ### Practical model
 

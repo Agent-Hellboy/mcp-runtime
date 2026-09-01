@@ -33,6 +33,8 @@ data:
   # Optional local interoperability extension for native clients such as Cursor.
   # Keep empty in production; MCP redirect URIs should be HTTPS or loopback HTTP.
   OAUTH_ALLOWED_REDIRECT_URI_SCHEMES: ""
+  # Optional in-cluster backchannel for gateway discovery/JWKS fetches.
+  OAUTH_INTERNAL_ISSUER_URL: ""
   MCP_MCP_INGRESS_HOST: ""
   API_BASE: "/api/v1"
   OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"

@@ -803,6 +803,7 @@ func renderAnalyticsConfigManifestWithReaders(content, platformMode string, imag
 		"MCP_PLATFORM_DOMAIN",
 		"OAUTH_ISSUER_URL",
 		"OAUTH_ALLOWED_REDIRECT_URI_SCHEMES",
+		"OAUTH_INTERNAL_ISSUER_URL",
 		"MCP_MCP_INGRESS_HOST",
 		"MCP_REGISTRY_ENDPOINT",
 		"MCP_REGISTRY_INGRESS_HOST",
@@ -841,6 +842,9 @@ func renderAnalyticsConfigManifestWithReaders(content, platformMode string, imag
 		} else {
 			manifest.Data["OAUTH_ISSUER_URL"] = "http://localhost:18080/oauth"
 		}
+	}
+	if strings.TrimSpace(manifest.Data["OAUTH_INTERNAL_ISSUER_URL"]) == "" {
+		manifest.Data["OAUTH_INTERNAL_ISSUER_URL"] = "http://mcp-oauth-server.mcp-sentinel.svc.cluster.local:8086/oauth"
 	}
 	if strings.TrimSpace(manifest.Data["PLATFORM_TRAEFIK_NAMESPACE"]) == "" {
 		if namespace := resolveTraefikNamespace(); namespace != "" {

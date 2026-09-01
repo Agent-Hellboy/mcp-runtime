@@ -94,6 +94,27 @@ spec:
   rules:
     - http:
         paths:
+          - path: /.well-known/oauth-authorization-server/oauth
+            pathType: Exact
+            backend:
+              service:
+                name: mcp-oauth-server
+                port:
+                  number: 8086
+          - path: /.well-known/openid-configuration/oauth
+            pathType: Exact
+            backend:
+              service:
+                name: mcp-oauth-server
+                port:
+                  number: 8086
+          - path: /oauth/.well-known/openid-configuration
+            pathType: Exact
+            backend:
+              service:
+                name: mcp-oauth-server
+                port:
+                  number: 8086
           - path: /oauth
             pathType: Prefix
             backend:

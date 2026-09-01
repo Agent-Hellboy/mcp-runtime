@@ -150,10 +150,47 @@ func (s *gatewayServer) authenticateOAuth(r *http.Request, policy *policypkg.Doc
 		Identity: identityContext{
 			HumanID:   stringClaim(claims, "sub"),
 			AgentID:   policypkg.FirstNonEmpty(stringClaim(claims, "azp"), stringClaim(claims, "client_id")),
-			TeamID:    policypkg.FirstNonEmpty(stringClaim(claims, "team_id"), stringClaim(claims, "tenant_id"), stringClaim(claims, "tid")),
+			TeamID:    oauthTeamID(claims, policy),
 			SessionID: policypkg.FirstNonEmpty(stringClaim(claims, "sid"), headerIdentity.SessionID),
 		},
 	}
+}
+
+func oauthTeamID(claims jwt.MapClaims, policy *policypkg.Document) string {
+	if teamID := policypkg.FirstNonEmpty(stringClaim(claims, "team_id"), stringClaim(claims, "tenant_id"), stringClaim(claims, "tid")); teamID != "" {
+		return teamID
+	}
+	teamIDs := stringClaims(claims, "team_ids")
+	if policyTeamID := policypkg.PolicyServerTeamID(policy); policyTeamID != "" {
+		for _, teamID := range teamIDs {
+			if teamID == policyTeamID {
+				return teamID
+			}
+		}
+	}
+	if len(teamIDs) == 1 {
+		return teamIDs[0]
+	}
+	return ""
+}
+
+func stringClaims(claims jwt.MapClaims, name string) []string {
+	value, ok := claims[name]
+	if !ok {
+		return nil
+	}
+	values := make([]string, 0)
+	switch typed := value.(type) {
+	case []string:
+		values = append(values, typed...)
+	case []any:
+		for _, item := range typed {
+			if value, ok := item.(string); ok && strings.TrimSpace(value) != "" {
+				values = append(values, strings.TrimSpace(value))
+			}
+		}
+	}
+	return values
 }
 
 func (s *gatewayServer) oauthProviderForIssuer(ctx context.Context, issuerURL string) (*oauthProvider, error) {
@@ -169,9 +206,19 @@ func (s *gatewayServer) oauthProviderForIssuer(ctx context.Context, issuerURL st
 		return provider, nil
 	}
 
-	metadata, err := s.fetchAuthServerMetadata(ctx, issuerURL)
+	lookupIssuerURL := strings.TrimSpace(s.oauthInternalIssuerURL)
+	if lookupIssuerURL == "" {
+		lookupIssuerURL = issuerURL
+	}
+	metadata, err := s.fetchAuthServerMetadataForIssuer(ctx, lookupIssuerURL, issuerURL)
 	if err != nil {
 		return nil, err
+	}
+	if lookupIssuerURL != issuerURL {
+		metadata.JWKSURI, err = rewriteOAuthEndpoint(metadata.JWKSURI, metadata.Issuer, lookupIssuerURL)
+		if err != nil {
+			return nil, err
+		}
 	}
 	jwks, err := keyfunc.Get(metadata.JWKSURI, keyfunc.Options{RefreshInterval: 10 * time.Minute})
 	if err != nil {
@@ -190,8 +237,12 @@ func (s *gatewayServer) oauthProviderForIssuer(ctx context.Context, issuerURL st
 }
 
 func (s *gatewayServer) fetchAuthServerMetadata(ctx context.Context, issuerURL string) (*authServerMetadata, error) {
+	return s.fetchAuthServerMetadataForIssuer(ctx, issuerURL, issuerURL)
+}
+
+func (s *gatewayServer) fetchAuthServerMetadataForIssuer(ctx context.Context, lookupIssuerURL, expectedIssuerURL string) (*authServerMetadata, error) {
 	var lastErr error
-	for _, endpoint := range authServerMetadataCandidates(issuerURL) {
+	for _, endpoint := range authServerMetadataCandidates(lookupIssuerURL) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 		if err != nil {
 			lastErr = err
@@ -217,8 +268,8 @@ func (s *gatewayServer) fetchAuthServerMetadata(ctx context.Context, issuerURL s
 			lastErr = err
 			continue
 		}
-		if strings.TrimSpace(metadata.Issuer) != issuerURL {
-			lastErr = fmt.Errorf("%s issuer %q does not match configured issuer %q", endpoint, metadata.Issuer, issuerURL)
+		if strings.TrimSpace(metadata.Issuer) != expectedIssuerURL {
+			lastErr = fmt.Errorf("%s issuer %q does not match configured issuer %q", endpoint, metadata.Issuer, expectedIssuerURL)
 			continue
 		}
 		if strings.TrimSpace(metadata.JWKSURI) == "" {
@@ -231,6 +282,15 @@ func (s *gatewayServer) fetchAuthServerMetadata(ctx context.Context, issuerURL s
 		lastErr = errors.New("authorization server metadata lookup failed")
 	}
 	return nil, lastErr
+}
+
+func rewriteOAuthEndpoint(endpoint, publicIssuer, internalIssuer string) (string, error) {
+	publicBase := strings.TrimRight(strings.TrimSpace(publicIssuer), "/")
+	internalBase := strings.TrimRight(strings.TrimSpace(internalIssuer), "/")
+	if publicBase == "" || internalBase == "" || !strings.HasPrefix(endpoint, publicBase+"/") {
+		return "", fmt.Errorf("OAuth endpoint %q is not under issuer %q", endpoint, publicIssuer)
+	}
+	return internalBase + strings.TrimPrefix(endpoint, publicBase), nil
 }
 
 func (s *gatewayServer) applyIdentityHeaders(r *http.Request, policy *policypkg.Document, identity identityContext) {
@@ -344,7 +404,7 @@ func shouldChallengeOAuth(policy *policypkg.Document, decision policypkg.Decisio
 		return false
 	}
 	if decision.Status == http.StatusForbidden {
-		return true
+		return false
 	}
 	if decision.Status != http.StatusUnauthorized {
 		return false

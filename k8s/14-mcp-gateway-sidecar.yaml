@@ -86,6 +86,8 @@ spec:
                 configMapKeyRef:
                   name: mcp-sentinel-config
                   key: MCP_CLUSTER_NAME
+            - name: OAUTH_INTERNAL_ISSUER_URL
+              value: "http://mcp-oauth-server.mcp-sentinel.svc.cluster.local:8086/oauth"
             - name: STRIP_PREFIX
               value: "/mcp-auto"
             - name: POLICY_MODE

@@ -98,6 +98,7 @@ type oauthStore struct {
 	refresh  map[string]refreshToken
 	users    map[string]oauthUser
 	password map[string]string
+	teamIDs  map[string][]string
 }
 
 func openOAuthStore(ctx context.Context, dsn string) (*oauthStore, error) {
@@ -123,6 +124,7 @@ func newMemoryOAuthStore(users ...oauthUser) *oauthStore {
 		refresh:  map[string]refreshToken{},
 		users:    map[string]oauthUser{},
 		password: map[string]string{},
+		teamIDs:  map[string][]string{},
 	}
 	for _, user := range users {
 		s.users[user.Email] = user
@@ -216,6 +218,34 @@ WHERE u.email=$1 AND u.deleted_at IS NULL AND ai.provider='password'`, email).
 		return oauthUser{}, false, nil
 	}
 	return user, true, nil
+}
+
+func (s *oauthStore) teamIDsForUser(ctx context.Context, userID string) ([]string, error) {
+	if s.db == nil {
+		s.mu.Lock()
+		ids := append([]string(nil), s.teamIDs[userID]...)
+		s.mu.Unlock()
+		return ids, nil
+	}
+	rows, err := s.db.QueryContext(ctx, `
+SELECT tm.team_id::text
+FROM team_memberships tm
+JOIN teams t ON t.id = tm.team_id AND t.deleted_at IS NULL
+WHERE tm.user_id = $1 AND tm.deleted_at IS NULL
+ORDER BY tm.team_id`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 func (s *oauthStore) saveCode(ctx context.Context, code authorizationCode) error {
