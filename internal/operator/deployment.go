@@ -422,12 +422,37 @@ func (r *MCPServerReconciler) resolveGatewayImage(mcpServer *mcpv1alpha1.MCPServ
 	return "", newOperatorError("gateway.image is required when gateway.enabled is true (set spec.gateway.image or MCP_GATEWAY_PROXY_IMAGE on the operator)", contextMap)
 }
 
-func gatewayExternalBaseURL(mcpServer *mcpv1alpha1.MCPServer) string {
+// gatewayExternalBaseURL builds the public base URL the gateway advertises in
+// its protected-resource metadata and WWW-Authenticate challenges. The gateway
+// runs behind the ingress and never terminates TLS itself, so it cannot infer
+// the scheme from the request: hardcoding http:// there makes the advertised
+// canonical resource disagree with the https:// audience a token is issued for,
+// and every authenticated call fails closed with 401.
+func (r *MCPServerReconciler) gatewayExternalBaseURL(mcpServer *mcpv1alpha1.MCPServer) string {
 	host := effectiveIngressHost(mcpServer)
 	if host == "" {
 		return ""
 	}
-	return "http://" + host
+	scheme := "http"
+	if r.ingressUsesTLS(mcpServer) {
+		scheme = "https"
+	}
+	return scheme + "://" + host
+}
+
+// ingressUsesTLS reports whether this server's ingress terminates TLS, either
+// from the operator-wide default or an explicit per-server Traefik annotation.
+func (r *MCPServerReconciler) ingressUsesTLS(mcpServer *mcpv1alpha1.MCPServer) bool {
+	if r.DefaultIngressTLS {
+		return true
+	}
+	for key, value := range mcpServer.Spec.IngressAnnotations {
+		if strings.EqualFold(strings.TrimSpace(key), "traefik.ingress.kubernetes.io/router.tls") &&
+			strings.EqualFold(strings.TrimSpace(value), "true") {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *MCPServerReconciler) buildGatewayContainer(mcpServer *mcpv1alpha1.MCPServer) (corev1.Container, error) {
@@ -451,7 +476,7 @@ func (r *MCPServerReconciler) buildGatewayContainer(mcpServer *mcpv1alpha1.MCPSe
 		// port-forward used by local clients.
 		{Name: "OAUTH_INTERNAL_ISSUER_URL", Value: "http://mcp-oauth-server.mcp-sentinel.svc.cluster.local:8086/oauth"},
 	}
-	if externalBaseURL := gatewayExternalBaseURL(mcpServer); externalBaseURL != "" {
+	if externalBaseURL := r.gatewayExternalBaseURL(mcpServer); externalBaseURL != "" {
 		envVars = append(envVars, corev1.EnvVar{Name: "EXTERNAL_BASE_URL", Value: externalBaseURL})
 	}
 	if endpoint := strings.TrimSpace(r.GatewayOTLPEndpoint); endpoint != "" {
