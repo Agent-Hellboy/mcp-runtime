@@ -11,6 +11,15 @@ type APIPath struct {
 // PlatformAPIPaths returns ingress rules ordered most-specific first.
 func PlatformAPIPaths() []APIPath {
 	return []APIPath{
+		// Bare well-known paths: clients that drop the issuer's /oauth path
+		// component request these, and the OAuth server answers them. Without
+		// these routes they fall through to the UI and 404 instead.
+		{Path: "/.well-known/oauth-authorization-server", PathType: "Exact", Service: "mcp-oauth-server", Port: 8086},
+		{Path: "/.well-known/openid-configuration", PathType: "Exact", Service: "mcp-oauth-server", Port: 8086},
+		{Path: "/.well-known/oauth-authorization-server/oauth", PathType: "Exact", Service: "mcp-oauth-server", Port: 8086},
+		{Path: "/.well-known/openid-configuration/oauth", PathType: "Exact", Service: "mcp-oauth-server", Port: 8086},
+		{Path: "/oauth/.well-known/openid-configuration", PathType: "Exact", Service: "mcp-oauth-server", Port: 8086},
+		{Path: "/oauth", PathType: "Prefix", Service: "mcp-oauth-server", Port: 8086},
 		{Path: "/api/v1/runtime/registry/push", PathType: "Exact", Service: "mcp-runtime-api", Port: 8084},
 		{Path: "/api/v1/admin/namespaces", PathType: "Prefix", Service: "mcp-platform-api", Port: 8080},
 		{Path: "/api/v1/admin/audit", PathType: "Prefix", Service: "mcp-platform-api", Port: 8080},

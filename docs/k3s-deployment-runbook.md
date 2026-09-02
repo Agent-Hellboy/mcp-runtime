@@ -91,6 +91,38 @@ default. Override the path with `MCP_DEPLOY_ENV=/path/to/other.env`. See
 | `OIDC_AUDIENCE` | optional | OIDC audience; defaults to Google client ID. |
 | `OIDC_JWKS_URL` | optional | JWKS URL for token validation. |
 
+#### MCP OAuth authorization server
+
+Applies to MCP servers with `spec.auth.mode: oauth`. Browser sign-in above is a
+separate thing: that is OIDC for the dashboard, this is the authorization server
+MCP clients use.
+
+| Variable | Required | Purpose |
+|----------|----------|---------|
+| `OAUTH_ISSUER_URL` | optional | Public issuer. Defaults to `https://<platform host>/oauth`. |
+| `OAUTH_INTERNAL_ISSUER_URL` | optional | In-cluster issuer for the gateway. Defaults to the `mcp-oauth-server` service URL. |
+| `OAUTH_ALLOWED_REDIRECT_URI_SCHEMES` | optional | Extra `redirect_uri` schemes beyond https and http-loopback, comma-separated. Native MCP clients need this: Cursor registers `cursor://anysphere.cursor-mcp/oauth/callback`, so set `cursor`. |
+| `OAUTH_ALLOW_INSECURE_HTTP` | **never set in public** | Local Kind only. Unset, redirect URIs must be https or loopback. |
+
+The issuer **must keep its `/oauth` path**. The ingress routes the OAuth server
+by path on the platform host and there is no dedicated `oauth.` hostname
+(`internal/cli/setup/ingressmanifest/paths.go`), so a path-free issuer such as
+`https://oauth.<domain>` resolves to nothing and discovery fails.
+
+Discovery is served at the RFC 8414 path-insertion URL:
+
+```bash
+curl -s https://platform.<domain>/.well-known/oauth-authorization-server/oauth
+```
+
+The bare `/.well-known/oauth-authorization-server` is **not** routed to the
+OAuth server by this ingress, even though the server itself answers it.
+
+A ready-to-adapt protected server is in `examples/mcpserver-oauth.yaml`. Its
+`auth.issuerURL` must match `OAUTH_ISSUER_URL`, and `auth.audience` must be the
+server's canonical resource URI (`https://mcp.<domain>/<prefix>/mcp`) — the
+gateway fails closed with 401 when a token's `aud` does not match.
+
 #### Platform-runtime backup (`hack/deploy/mcpruntime-org/clean.sh`)
 
 | Variable | Default | Purpose |

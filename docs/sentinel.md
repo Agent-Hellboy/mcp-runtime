@@ -7,6 +7,7 @@
 | Service | Role |
 |---|---|
 | **mcp-gateway** | Transparent sidecar. Extracts identity, evaluates tool-level policy, emits allow/deny audit events, forwards traffic upstream. |
+| **mcp-oauth-server** | First-party OAuth 2.1 authorization server. Handles MCP authorization-code + PKCE, CIMD, DCR compatibility, token rotation, and JWKS publication. |
 | **ingest** | Receives `POST /events`, validates ingest-scoped API keys or optional JWTs, writes to Kafka. |
 | **processor** | Consumes Kafka, batches, writes into ClickHouse with indexed audit fields. |
 | **api** | Three HTTP services behind Traefik path routing: **platform-api** (Postgres identity/auth/registry), **runtime-api** (Kubernetes runtime governance + registry push), **analytics-api** (ClickHouse events/stats/usage). OpenAPI at `GET /api/v1/openapi.yaml` per service. |
@@ -103,6 +104,7 @@ For local `setup --test-mode` clusters, setup seeds two email/password logins:
 |---|---|---|---|
 | **UI** | `/` | `mcp-sentinel-ui:8082` | Browser app and server-side auth/OIDC upstream to platform-api. Traefik routes `/api/v1/*` directly to the API services. |
 | **platform-api** | `/api/v1/auth/*`, `/api/v1/registry/authz`, `/api/v1/admin/*` | `mcp-platform-api:8080` | Login, identity, registry forwardAuth, admin namespaces/audit. |
+| **oauth-server** | `/.well-known/*`, `/oauth/*` | `mcp-oauth-server:8086` | First-party MCP OAuth authorization server, client registration, authorization codes, tokens, and JWKS. |
 | **runtime-api** | `/api/v1/runtime/*`, `/api/v1/deployments/*` | `mcp-runtime-api:8084` | Runtime governance, registry push, dashboard summary. |
 | **analytics-api** | `/api/v1/stats`, `/api/v1/events`, `/api/v1/user/analytics/usage` | `mcp-analytics-api:8085` | ClickHouse query surfaces. |
 | **Ingest** | `/ingest/events` | `mcp-sentinel-ingest:8081/events` | Event intake used by `mcp-gateway`; the public ingress strips `/ingest`. |
@@ -147,6 +149,7 @@ cardinality.
 | **ingest** | `/live`, `/ready`, and `/health` are open. `/events` accepts `x-api-key` from `INGEST_API_KEYS`, legacy `API_KEYS`, or a configured OIDC bearer token. If no API keys and no JWKS are configured, intake auth is bypassed. |
 | **processor** | No data API. It exposes metrics and a simple health check on the metrics port. |
 | **mcp-gateway** | No admin API. It authenticates MCP requests according to the rendered server policy and exposes Prometheus metrics at `/metrics`. |
+| **mcp-oauth-server** | `/health`, `/live`, and `/ready` are open. OAuth metadata, JWKS, authorization, registration, and token endpoints implement the public OAuth contract; credentials and signing keys are never logged. |
 
 ### API services
 
@@ -257,6 +260,24 @@ emits audit events to `ANALYTICS_INGEST_URL` when configured.
 
 The sidecar emits audit events on allowed and denied tool calls. Denied calls do
 not reach the upstream MCP server.
+
+### First-party OAuth authorization server
+
+`services/oauth-server` runs on port `8086` and is intentionally separate from
+`mcp-gateway`: the authorization server authenticates the resource owner and
+issues tokens, while each gateway remains the protected resource and enforces
+MCP policy. The service stores clients, one-time authorization codes, and
+rotating refresh-token hashes in Postgres. `CIMD` is the preferred client
+registration path; clients that cannot use CIMD fall back to `/oauth/register`,
+which supports deprecated DCR clients for backward compatibility. CIMD failures
+must not be converted into implicit clients because redirect URIs must remain
+validated and bound to the registered client.
+
+The official MCP SDK remains the owner of MCP transport and client-side OAuth
+helpers. Runtime does not duplicate those client helpers in the gateway or
+authorization server: the gateway is the policy-aware protected resource, and
+the separate OAuth service is the token issuer and resource-owner login
+boundary.
 
 ## Governance UI walkthrough
 

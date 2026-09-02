@@ -56,6 +56,7 @@ type oauthProvider struct {
 }
 
 type authServerMetadata struct {
+	Issuer  string `json:"issuer"`
 	JWKSURI string `json:"jwks_uri"`
 }
 
@@ -73,37 +74,38 @@ type analyticsEvent struct {
 }
 
 type gatewayServer struct {
-	proxy                 *httputil.ReverseProxy
-	metrics               *gatewayMetrics
-	analyticsURL          string
-	apiKey                string
-	source                string
-	eventType             string
-	analyticsQueue        chan analyticsEvent
-	stripPrefix           string
-	externalBaseURL       *url.URL
-	httpClient            *http.Client
-	policyFile            string
-	serverName            string
-	serverNamespace       string
-	clusterName           string
-	defaultHumanHeader    string
-	defaultAgentHeader    string
-	defaultTeamHeader     string
-	defaultSessionHeader  string
-	verifiedSPIFFEHeader  string
-	trustedProxySPIFFE    string
-	defaultPolicyMode     string
-	defaultPolicyDecision string
-	defaultPolicyVersion  string
-	analyticsMu           sync.Mutex
-	analyticsOnce         sync.Once
-	analyticsWG           sync.WaitGroup
-	analyticsClosed       bool
-	analyticsDropped      atomic.Uint64
-	oauthMu               sync.Mutex
-	oauthProviders        map[string]*oauthProvider
-	policyState           atomic.Value
+	proxy                  *httputil.ReverseProxy
+	metrics                *gatewayMetrics
+	analyticsURL           string
+	apiKey                 string
+	source                 string
+	eventType              string
+	analyticsQueue         chan analyticsEvent
+	stripPrefix            string
+	externalBaseURL        *url.URL
+	httpClient             *http.Client
+	oauthInternalIssuerURL string
+	policyFile             string
+	serverName             string
+	serverNamespace        string
+	clusterName            string
+	defaultHumanHeader     string
+	defaultAgentHeader     string
+	defaultTeamHeader      string
+	defaultSessionHeader   string
+	verifiedSPIFFEHeader   string
+	trustedProxySPIFFE     string
+	defaultPolicyMode      string
+	defaultPolicyDecision  string
+	defaultPolicyVersion   string
+	analyticsMu            sync.Mutex
+	analyticsOnce          sync.Once
+	analyticsWG            sync.WaitGroup
+	analyticsClosed        bool
+	analyticsDropped       atomic.Uint64
+	oauthMu                sync.Mutex
+	oauthProviders         map[string]*oauthProvider
+	policyState            atomic.Value
 }
 
 type statusRecorder struct {

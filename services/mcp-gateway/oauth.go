@@ -48,11 +48,12 @@ func (s *gatewayServer) handleOAuthProtectedResource(w http.ResponseWriter, r *h
 	if r.Method == http.MethodHead {
 		return true
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	payload := map[string]any{
 		"resource":                 s.publicRequestURL(r, resourcePath),
 		"authorization_servers":    []string{strings.TrimSpace(policy.Auth.IssuerURL)},
 		"bearer_methods_supported": []string{"header"},
-	})
+	}
+	_ = json.NewEncoder(w).Encode(payload)
 	return true
 }
 
@@ -122,7 +123,19 @@ func (s *gatewayServer) authenticateOAuth(r *http.Request, policy *policypkg.Doc
 			Identity: result.Identity,
 		}
 	}
-	if audience := strings.TrimSpace(policy.Auth.Audience); audience != "" && !serviceutil.AudienceMatches(claims["aud"], audience) {
+	audience := strings.TrimSpace(policy.Auth.Audience)
+	if audience == "" {
+		var ok bool
+		audience, ok = s.canonicalOAuthResource(r)
+		if !ok {
+			return oauthAuthResult{
+				Status:   http.StatusServiceUnavailable,
+				Reason:   "oauth_resource_unavailable",
+				Identity: result.Identity,
+			}
+		}
+	}
+	if !serviceutil.AudienceMatches(claims["aud"], audience) {
 		return oauthAuthResult{
 			Status:   http.StatusUnauthorized,
 			Reason:   "invalid_token",
@@ -137,10 +150,47 @@ func (s *gatewayServer) authenticateOAuth(r *http.Request, policy *policypkg.Doc
 		Identity: identityContext{
 			HumanID:   stringClaim(claims, "sub"),
 			AgentID:   policypkg.FirstNonEmpty(stringClaim(claims, "azp"), stringClaim(claims, "client_id")),
-			TeamID:    policypkg.FirstNonEmpty(stringClaim(claims, "team_id"), stringClaim(claims, "tenant_id"), stringClaim(claims, "tid")),
+			TeamID:    oauthTeamID(claims, policy),
 			SessionID: policypkg.FirstNonEmpty(stringClaim(claims, "sid"), headerIdentity.SessionID),
 		},
 	}
+}
+
+func oauthTeamID(claims jwt.MapClaims, policy *policypkg.Document) string {
+	if teamID := policypkg.FirstNonEmpty(stringClaim(claims, "team_id"), stringClaim(claims, "tenant_id"), stringClaim(claims, "tid")); teamID != "" {
+		return teamID
+	}
+	teamIDs := stringClaims(claims, "team_ids")
+	if policyTeamID := policypkg.PolicyServerTeamID(policy); policyTeamID != "" {
+		for _, teamID := range teamIDs {
+			if teamID == policyTeamID {
+				return teamID
+			}
+		}
+	}
+	if len(teamIDs) == 1 {
+		return teamIDs[0]
+	}
+	return ""
+}
+
+func stringClaims(claims jwt.MapClaims, name string) []string {
+	value, ok := claims[name]
+	if !ok {
+		return nil
+	}
+	values := make([]string, 0)
+	switch typed := value.(type) {
+	case []string:
+		values = append(values, typed...)
+	case []any:
+		for _, item := range typed {
+			if value, ok := item.(string); ok && strings.TrimSpace(value) != "" {
+				values = append(values, strings.TrimSpace(value))
+			}
+		}
+	}
+	return values
 }
 
 func (s *gatewayServer) oauthProviderForIssuer(ctx context.Context, issuerURL string) (*oauthProvider, error) {
@@ -156,9 +206,15 @@ func (s *gatewayServer) oauthProviderForIssuer(ctx context.Context, issuerURL st
 		return provider, nil
 	}
 
-	metadata, err := s.fetchAuthServerMetadata(ctx, issuerURL)
+	metadata, usingInternalIssuer, err := s.fetchAuthServerMetadataWithFallback(ctx, issuerURL)
 	if err != nil {
 		return nil, err
+	}
+	if usingInternalIssuer {
+		metadata.JWKSURI, err = rewriteOAuthEndpoint(metadata.JWKSURI, metadata.Issuer, s.oauthInternalIssuerURL)
+		if err != nil {
+			return nil, err
+		}
 	}
 	jwks, err := keyfunc.Get(metadata.JWKSURI, keyfunc.Options{RefreshInterval: 10 * time.Minute})
 	if err != nil {
@@ -176,9 +232,34 @@ func (s *gatewayServer) oauthProviderForIssuer(ctx context.Context, issuerURL st
 	return provider, nil
 }
 
+// fetchAuthServerMetadataWithFallback prefers the in-cluster first-party issuer
+// for local reachability, but still supports MCP servers configured with an
+// external or test authorization server. The metadata issuer is validated
+// against the configured issuer on every attempt.
+func (s *gatewayServer) fetchAuthServerMetadataWithFallback(ctx context.Context, issuerURL string) (*authServerMetadata, bool, error) {
+	internalIssuerURL := strings.TrimSpace(s.oauthInternalIssuerURL)
+	if internalIssuerURL == "" || internalIssuerURL == issuerURL {
+		metadata, err := s.fetchAuthServerMetadataForIssuer(ctx, issuerURL, issuerURL)
+		return metadata, false, err
+	}
+
+	if metadata, err := s.fetchAuthServerMetadataForIssuer(ctx, internalIssuerURL, issuerURL); err == nil {
+		return metadata, true, nil
+	}
+
+	// The internal issuer is only a transport optimization. It must not prevent
+	// external providers, including the E2E mock provider, from being used.
+	metadata, err := s.fetchAuthServerMetadataForIssuer(ctx, issuerURL, issuerURL)
+	return metadata, false, err
+}
+
 func (s *gatewayServer) fetchAuthServerMetadata(ctx context.Context, issuerURL string) (*authServerMetadata, error) {
+	return s.fetchAuthServerMetadataForIssuer(ctx, issuerURL, issuerURL)
+}
+
+func (s *gatewayServer) fetchAuthServerMetadataForIssuer(ctx context.Context, lookupIssuerURL, expectedIssuerURL string) (*authServerMetadata, error) {
 	var lastErr error
-	for _, endpoint := range authServerMetadataCandidates(issuerURL) {
+	for _, endpoint := range authServerMetadataCandidates(lookupIssuerURL) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 		if err != nil {
 			lastErr = err
@@ -204,6 +285,10 @@ func (s *gatewayServer) fetchAuthServerMetadata(ctx context.Context, issuerURL s
 			lastErr = err
 			continue
 		}
+		if strings.TrimSpace(metadata.Issuer) != expectedIssuerURL {
+			lastErr = fmt.Errorf("%s issuer %q does not match configured issuer %q", endpoint, metadata.Issuer, expectedIssuerURL)
+			continue
+		}
 		if strings.TrimSpace(metadata.JWKSURI) == "" {
 			lastErr = fmt.Errorf("%s missing jwks_uri", endpoint)
 			continue
@@ -214,6 +299,15 @@ func (s *gatewayServer) fetchAuthServerMetadata(ctx context.Context, issuerURL s
 		lastErr = errors.New("authorization server metadata lookup failed")
 	}
 	return nil, lastErr
+}
+
+func rewriteOAuthEndpoint(endpoint, publicIssuer, internalIssuer string) (string, error) {
+	publicBase := strings.TrimRight(strings.TrimSpace(publicIssuer), "/")
+	internalBase := strings.TrimRight(strings.TrimSpace(internalIssuer), "/")
+	if publicBase == "" || internalBase == "" || !strings.HasPrefix(endpoint, publicBase+"/") {
+		return "", fmt.Errorf("OAuth endpoint %q is not under issuer %q", endpoint, publicIssuer)
+	}
+	return internalBase + strings.TrimPrefix(endpoint, publicBase), nil
 }
 
 func (s *gatewayServer) applyIdentityHeaders(r *http.Request, policy *policypkg.Document, identity identityContext) {
@@ -245,6 +339,17 @@ func (s *gatewayServer) applyIdentityHeaders(r *http.Request, policy *policypkg.
 }
 
 func (s *gatewayServer) applyUpstreamToken(r *http.Request, policy *policypkg.Document, token string) {
+	if policypkg.PolicyUsesOAuth(policy) {
+		// The token authenticated to this MCP resource is never an upstream API
+		// credential. MCP's authorization spec explicitly forbids a resource
+		// server from accepting or transiting unrelated bearer tokens.
+		r.Header.Del(defaultTokenHeader)
+		r.Header.Del(oauthTokenHeader(policy))
+		if policy.Session != nil {
+			r.Header.Del(strings.TrimSpace(policy.Session.UpstreamTokenHeader))
+		}
+		return
+	}
 	if policy == nil || policy.Session == nil {
 		return
 	}
@@ -312,7 +417,13 @@ func oauthTokenHeader(policy *policypkg.Document) string {
 }
 
 func shouldChallengeOAuth(policy *policypkg.Document, decision policypkg.Decision) bool {
-	if !policypkg.PolicyUsesOAuth(policy) || decision.Status != http.StatusUnauthorized {
+	if !policypkg.PolicyUsesOAuth(policy) {
+		return false
+	}
+	if decision.Status == http.StatusForbidden {
+		return false
+	}
+	if decision.Status != http.StatusUnauthorized {
 		return false
 	}
 	switch decision.Reason {
@@ -323,7 +434,7 @@ func shouldChallengeOAuth(policy *policypkg.Document, decision policypkg.Decisio
 	}
 }
 
-func (s *gatewayServer) oauthAuthenticateHeader(r *http.Request, originalPath, reason string) string {
+func (s *gatewayServer) oauthAuthenticateHeader(r *http.Request, originalPath, reason, toolName string, decision policypkg.Decision) string {
 	values := []string{
 		`realm="mcp-runtime"`,
 		fmt.Sprintf(`resource_metadata="%s"`, s.publicRequestURL(r, oauthMetadataPath(originalPath))),
@@ -331,7 +442,80 @@ func (s *gatewayServer) oauthAuthenticateHeader(r *http.Request, originalPath, r
 	if reason == "invalid_token" {
 		values = append(values, `error="invalid_token"`)
 	}
+	if decision.Status == http.StatusForbidden {
+		values = append(values, `error="insufficient_scope"`)
+		if scopes := oauthRequiredScopes(decision, toolName); len(scopes) > 0 {
+			values = append(values, fmt.Sprintf(`scope="%s"`, strings.Join(scopes, " ")))
+		}
+		values = append(values, fmt.Sprintf(`error_description="%s"`, oauthScopeDescription(decision.Reason)))
+	}
 	return "Bearer " + strings.Join(values, ", ")
+}
+
+func (s *gatewayServer) canonicalOAuthResource(r *http.Request) (string, bool) {
+	if r == nil || r.URL == nil {
+		return "", false
+	}
+	resource := s.publicRequestURL(r, normalizeURLPath(r.URL.Path))
+	parsed, err := url.Parse(resource)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return "", false
+	}
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	if parsed.Path == "/" {
+		parsed.Path = ""
+	}
+	parsed.RawPath = ""
+	return parsed.String(), true
+}
+
+func oauthRequiredScopes(decision policypkg.Decision, toolName string) []string {
+	switch decision.Reason {
+	case "tool_denied", "tool_not_granted":
+		if toolName != "" {
+			return []string{"mcp:tool:" + oauthScopeToken(toolName)}
+		}
+	case "trust_too_low":
+		if decision.RequiredTrust != "" {
+			return []string{"mcp:trust:" + oauthScopeToken(decision.RequiredTrust)}
+		}
+	case "side_effect_not_allowed":
+		if decision.RequiredSideEffect != "" {
+			return []string{"mcp:side-effect:" + oauthScopeToken(decision.RequiredSideEffect)}
+		}
+	case "no_matching_grant", "grant_without_trust":
+		return []string{"mcp:access"}
+	}
+	return nil
+}
+
+func oauthScopeDescription(reason string) string {
+	switch reason {
+	case "tool_denied", "tool_not_granted":
+		return "Tool permission required for this operation"
+	case "trust_too_low":
+		return "Higher trust permission required for this operation"
+	case "side_effect_not_allowed":
+		return "Side-effect permission required for this operation"
+	default:
+		return "Permission required for this operation"
+	}
+}
+
+func oauthScopeToken(value string) string {
+	var b strings.Builder
+	for _, r := range strings.TrimSpace(value) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case strings.ContainsRune("!#$%&'()*+-.^_`|~:", r):
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	return b.String()
 }
 
 func stringClaim(claims jwt.MapClaims, key string) string {
@@ -377,20 +561,25 @@ func authServerMetadataCandidates(issuerURL string) []string {
 		candidates = append(candidates, value)
 	}
 
-	trimmed := strings.TrimRight(issuerURL, "/")
-	addCandidate(trimmed + "/.well-known/oauth-authorization-server")
-	addCandidate(trimmed + "/.well-known/openid-configuration")
-
-	parsed, err := url.Parse(trimmed)
+	parsed, err := url.Parse(issuerURL)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return candidates
+		return nil
 	}
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
 	issuerPath := strings.Trim(parsed.EscapedPath(), "/")
+	base := url.URL{Scheme: parsed.Scheme, Host: parsed.Host}
 	if issuerPath == "" {
+		addCandidate(base.String() + "/.well-known/oauth-authorization-server")
+		addCandidate(base.String() + "/.well-known/openid-configuration")
 		return candidates
 	}
-	base := url.URL{Scheme: parsed.Scheme, Host: parsed.Host}
+	// RFC 8414 path insertion is required first for issuers with a path,
+	// followed by OIDC path insertion, then OIDC path appending. The order is
+	// observable with providers that expose more than one discovery document.
 	addCandidate(base.String() + "/.well-known/oauth-authorization-server/" + issuerPath)
 	addCandidate(base.String() + "/.well-known/openid-configuration/" + issuerPath)
+	trimmed := strings.TrimRight(parsed.String(), "/")
+	addCandidate(trimmed + "/.well-known/openid-configuration")
 	return candidates
 }

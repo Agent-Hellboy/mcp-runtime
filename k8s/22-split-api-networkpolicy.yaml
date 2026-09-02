@@ -31,13 +31,16 @@ spec:
       ports:
         - protocol: TCP
           port: 9090
+    # The Kubernetes API server is not reachable by pod selector on every
+    # distribution: k3s runs it as an embedded host process with no Pod at all,
+    # and kubeadm runs it as a static pod in kube-system labelled
+    # component: kube-apiserver, not component: apiserver in default. Selecting
+    # it by label therefore matches nothing and silently denies API egress,
+    # which breaks registry push (it resolves namespaces through the API).
+    # Allow 443 by CIDR instead, matching the mcp-platform-api policy.
     - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: default
-          podSelector:
-            matchLabels:
-              component: apiserver
+        - ipBlock:
+            cidr: 0.0.0.0/0
       ports:
         - protocol: TCP
           port: 443
@@ -112,6 +115,44 @@ spec:
       ports:
         - protocol: TCP
           port: 8084
+    - to:
+        - podSelector:
+            matchLabels:
+              app: mcp-sentinel-postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 443
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mcp-oauth-server-egress
+  namespace: mcp-sentinel
+spec:
+  podSelector:
+    matchLabels:
+      app: mcp-oauth-server
+  policyTypes:
+    - Egress
+  egress:
     - to:
         - podSelector:
             matchLabels:

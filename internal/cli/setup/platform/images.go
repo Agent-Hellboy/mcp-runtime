@@ -361,6 +361,7 @@ func prepareAnalyticsImages(logger *zap.Logger, extRegistry *config.ExternalRegi
 		AnalyticsAPI: analyticsImageFor(extRegistry, analyticsComponents[3].Repository),
 		Processor:    analyticsImageFor(extRegistry, analyticsComponents[4].Repository),
 		UI:           analyticsImageFor(extRegistry, analyticsComponents[5].Repository),
+		OAuthServer:  analyticsImageFor(extRegistry, analyticsComponents[6].Repository),
 	}
 
 	if parallelBuilds {
@@ -509,6 +510,8 @@ func assignAnalyticsImage(images *AnalyticsImageSet, repository, image string) {
 		images.Processor = image
 	case "mcp-sentinel-ui":
 		images.UI = image
+	case "mcp-oauth-server":
+		images.OAuthServer = image
 	}
 }
 

@@ -60,7 +60,7 @@ flowchart LR
 
 | Enum | Values | Notes |
 |---|---|---|
-| **auth.mode** | `none`, `header`, `oauth` | Working path today is `header` (identity extraction at the gateway). |
+| **auth.mode** | `none`, `header`, `oauth` | `oauth` enables MCP protected-resource metadata and JWT validation at the gateway; `header` remains the default identity-extraction path. |
 | **policy.mode** | `allow-list`, `observe` | `allow-list` enforces deny-by-default; `observe` keeps the decision path visible. |
 | **trust** | `low`, `medium`, `high` | Used on tools, grants, sessions. Effective trust = min(grant, session). |
 | **tool sideEffect** | `read`, `write`, `destructive` | Required on each listed tool. Grants must include the tool's side effect in `allowedSideEffects` before a tool call can pass. |
@@ -213,11 +213,58 @@ spec:
 
 - **Header-based identity** at the gateway (default path).
 - **Optional bearer-token validation** against JWKS / issuer / audience on the split Sentinel API services (`platform-api`, `runtime-api`, `analytics-api`) and on ingest.
-- `spec.auth.mode: oauth` exists on the type as a forward-looking shape.
+- `spec.auth.mode: oauth` enables the gateway as an MCP OAuth protected resource. It publishes Protected Resource Metadata, validates issuer and audience/resource binding (using `auth.audience` or the canonical public MCP URL), and strips the client bearer token before forwarding upstream.
+- OAuth authentication failures return `401` with an authorization challenge. Authenticated OAuth policy denials return `403` without an `insufficient_scope` challenge because Runtime policy decisions are not OAuth scope negotiation. See the [MCP Authorization specification](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization).
 
-### Not yet implemented
+### First-party authorization server
 
-No `/authorize`, `/token`, `/.well-known/oauth-authorization-server`, PKCE, or Dynamic Client Registration endpoint in this release.
+The bundled `mcp-oauth-server` is the first-party OAuth 2.1 authorization
+server for MCP clients. It is deployed separately from the gateway and uses
+the platform Postgres identity store for the resource-owner login.
+
+When the platform issuer is `https://platform.example.com/oauth`, it exposes:
+
+- `GET /.well-known/oauth-authorization-server/oauth` (and OIDC discovery compatibility paths)
+- `GET /oauth/jwks.json`
+- `GET, POST /oauth/authorize` with mandatory S256 PKCE
+- `POST /oauth/token` for authorization-code and rotating refresh-token grants
+- `POST /oauth/register` for deprecated Dynamic Client Registration compatibility
+
+OAuth Client ID Metadata Documents (CIMD) are preferred: an HTTPS `client_id`
+URL is fetched and validated when the client is not pre-registered. Clients
+that cannot resolve or use CIMD must fall back to DCR, which remains available
+at `/oauth/register`. Redirect URIs are exact-match, except that native
+loopback clients may select an ephemeral port; all other URI components must
+match and non-loopback redirects must use HTTPS. Access tokens are RS256 JWTs
+with the MCP `resource` as their audience; the gateway validates that audience
+and never forwards the bearer token to an upstream MCP server.
+
+### MCP SDK boundary
+
+Use the official MCP SDK in an application service for Streamable HTTP,
+JSON-RPC, tool/resource dispatch, and client-side OAuth flows. The SDK's
+server authorization middleware verifies tokens issued by an authorization
+server; it is not a replacement for the first-party authorization service
+described above. MCP Runtime terminates OAuth at the gateway so it can apply
+resource audience checks, grants, agent sessions, scopes, and token stripping
+before forwarding a request to the SDK-backed application. Do not add a
+second bearer-token gate to the upstream application unless that application
+is intentionally exposed outside the gateway.
+
+Configure `OAUTH_ISSUER_URL` and persist `OAUTH_PRIVATE_KEY` through the
+deployment secret. `mcp-runtime setup` generates and preserves that key. Do
+not enable insecure HTTP or ephemeral signing keys outside local development.
+
+For local Cursor testing, set `OAUTH_ALLOWED_REDIRECT_URI_SCHEMES=cursor`.
+This is an explicit interoperability allow-list for Cursor's native
+`cursor://anysphere.cursor-mcp/oauth/callback` redirect; arbitrary custom URI
+schemes remain rejected, and the setting should remain empty in production.
+
+Gateway pods use `OAUTH_INTERNAL_ISSUER_URL` for authorization-server
+discovery and JWKS retrieval when the public issuer is reachable only through a
+workstation port-forward. The public `issuer_url` remains unchanged for JWT
+issuer validation. Setup defaults this backchannel to
+`http://mcp-oauth-server.mcp-sentinel.svc.cluster.local:8086/oauth`.
 
 ### Practical model
 

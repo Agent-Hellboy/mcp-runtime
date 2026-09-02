@@ -102,6 +102,9 @@ jobs:
           - image: mcp-gateway
             dockerfile: services/mcp-gateway/Dockerfile
             tag: mcp-sentinel-mcp-gateway:ci
+          - image: oauth-server
+            dockerfile: services/oauth-server/Dockerfile
+            tag: mcp-oauth-server:ci
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

@@ -1835,3 +1835,70 @@ func TestSetupWithManager(t *testing.T) {
 		}
 	})
 }
+
+func TestGatewayExternalBaseURLSchemeFollowsIngressTLS(t *testing.T) {
+	server := func(annotations map[string]string) *mcpv1alpha1.MCPServer {
+		return &mcpv1alpha1.MCPServer{
+			Spec: mcpv1alpha1.MCPServerSpec{
+				IngressHost:        "mcp.example.com",
+				IngressAnnotations: annotations,
+			},
+		}
+	}
+	for _, testCase := range []struct {
+		name        string
+		defaultTLS  bool
+		annotations map[string]string
+		want        string
+	}{
+		{"plain http when no tls", false, nil, "http://mcp.example.com"},
+		{"operator-wide tls default", true, nil, "https://mcp.example.com"},
+		{
+			name:        "per-server traefik tls annotation",
+			annotations: map[string]string{"traefik.ingress.kubernetes.io/router.tls": "true"},
+			want:        "https://mcp.example.com",
+		},
+		{
+			name:        "annotation set to false stays http",
+			annotations: map[string]string{"traefik.ingress.kubernetes.io/router.tls": "false"},
+			want:        "http://mcp.example.com",
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			r := MCPServerReconciler{DefaultIngressTLS: testCase.defaultTLS}
+			if got := r.gatewayExternalBaseURL(server(testCase.annotations)); got != testCase.want {
+				t.Fatalf("gatewayExternalBaseURL = %q, want %q", got, testCase.want)
+			}
+		})
+	}
+}
+
+func TestGatewayExternalBaseURLEmptyWithoutAnyHost(t *testing.T) {
+	r := MCPServerReconciler{DefaultIngressTLS: true}
+	if got := r.gatewayExternalBaseURL(&mcpv1alpha1.MCPServer{}); got != "" {
+		t.Fatalf("gatewayExternalBaseURL = %q, want empty", got)
+	}
+}
+
+// Path-based servers set publicPathPrefix, which suppresses IngressHost
+// defaulting in api/v1alpha1, so the gateway must fall back to the
+// operator-wide host or it advertises no public URL at all.
+func TestGatewayExternalBaseURLFallsBackToOperatorDefaultHost(t *testing.T) {
+	r := MCPServerReconciler{DefaultIngressHost: "mcp.example.com", DefaultIngressTLS: true}
+	server := &mcpv1alpha1.MCPServer{
+		Spec: mcpv1alpha1.MCPServerSpec{PublicPathPrefix: "demo"},
+	}
+	if got := r.gatewayExternalBaseURL(server); got != "https://mcp.example.com" {
+		t.Fatalf("gatewayExternalBaseURL = %q, want https://mcp.example.com", got)
+	}
+}
+
+func TestGatewayExternalBaseURLPrefersExplicitIngressHost(t *testing.T) {
+	r := MCPServerReconciler{DefaultIngressHost: "fallback.example.com", DefaultIngressTLS: true}
+	server := &mcpv1alpha1.MCPServer{
+		Spec: mcpv1alpha1.MCPServerSpec{IngressHost: "explicit.example.com"},
+	}
+	if got := r.gatewayExternalBaseURL(server); got != "https://explicit.example.com" {
+		t.Fatalf("gatewayExternalBaseURL = %q, want https://explicit.example.com", got)
+	}
+}

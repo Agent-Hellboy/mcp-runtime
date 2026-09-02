@@ -102,6 +102,20 @@ var sentinelComponents = []sentinelComponent{
 			RemotePort:   8082,
 		},
 	},
+	{
+		Key:       "oauth-server",
+		Display:   "OAuth Server",
+		Namespace: core.DefaultAnalyticsNamespace,
+		Kind:      "deployment",
+		Resource:  "mcp-oauth-server",
+		Label:     "mcp-oauth-server",
+		PortTarget: &sentinelPortTarget{
+			ResourceKind: "service",
+			ResourceName: "mcp-oauth-server",
+			LocalPort:    8086,
+			RemotePort:   8086,
+		},
+	},
 	{Key: "gateway", Display: "Gateway", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Resource: "mcp-sentinel-gateway", Label: "mcp-sentinel-gateway"},
 	{
 		Key:       "prometheus",

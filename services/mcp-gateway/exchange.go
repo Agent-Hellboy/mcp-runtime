@@ -79,8 +79,10 @@ type Exchange struct {
 	PolicyErr error
 
 	// Set by stage 3 (AuthFilter). Must be complete before stage 4 reads them.
-	Identity   identityContext
-	OAuthToken string // forwarded to upstream via session.UpstreamTokenHeader
+	Identity identityContext
+	// OAuthToken is retained only for request-scoped auth state. OAuth bearer
+	// tokens are never forwarded to the upstream MCP server.
+	OAuthToken string
 
 	// Set by stage 4 (AuthzFilter). Policy and Identity must not change after this.
 	Decision policypkg.Decision

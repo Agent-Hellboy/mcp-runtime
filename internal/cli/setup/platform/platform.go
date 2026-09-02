@@ -46,6 +46,7 @@ var pathBasedSentinelIngressNames = []string{
 	"mcp-sentinel-gateway-adapter-session",
 	"mcp-sentinel-gateway-api",
 	"mcp-sentinel-gateway-ingest",
+	"mcp-oauth-server",
 }
 
 const (
@@ -84,6 +85,7 @@ type AnalyticsImageSet struct {
 	AnalyticsAPI  string
 	Processor     string
 	UI            string
+	OAuthServer   string
 	Traefik       string
 	ClickHouse    string
 	Kafka         string
@@ -130,6 +132,12 @@ var analyticsComponents = []analyticsComponent{
 		Name:         "ui",
 		Repository:   "mcp-sentinel-ui",
 		Dockerfile:   "services/ui/Dockerfile",
+		BuildContext: ".",
+	},
+	{
+		Name:         "oauth-server",
+		Repository:   "mcp-oauth-server",
+		Dockerfile:   "services/oauth-server/Dockerfile",
 		BuildContext: ".",
 	},
 }

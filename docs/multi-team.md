@@ -163,7 +163,9 @@ Header mode defaults:
 
 Override the team header per server with `spec.auth.teamIDHeader`. In OAuth
 mode, the proxy validates the token and reads team identity from `team_id`,
-`tenant_id`, or `tid`, in that order.
+`tenant_id`, or `tid`, in that order. First-party OAuth tokens with multiple
+memberships use `team_ids`; the gateway selects the policy server's team ID
+when present, or the sole team ID when there is only one.
 
 ## Platform API Enforcement
 

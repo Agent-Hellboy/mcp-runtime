@@ -208,6 +208,61 @@ func TestHandleProxyOAuthChallengeUsesExternalBaseURL(t *testing.T) {
 	}
 }
 
+func TestOAuthTeamIDSelectsPolicyTeamFromTeamIDsClaim(t *testing.T) {
+	claims := jwt.MapClaims{"team_ids": []any{"team-other", "team-acme"}}
+	policy := oauthPolicy("https://issuer.example.com")
+	policy.Server.TeamID = "team-acme"
+	if got := oauthTeamID(claims, policy); got != "team-acme" {
+		t.Fatalf("oauthTeamID() = %q, want team-acme", got)
+	}
+}
+
+func TestRewriteOAuthEndpointUsesInternalIssuer(t *testing.T) {
+	got, err := rewriteOAuthEndpoint(
+		"https://public.example.com/oauth/jwks.json",
+		"https://public.example.com/oauth",
+		"http://mcp-oauth-server.mcp-sentinel.svc.cluster.local:8086/oauth",
+	)
+	if err != nil {
+		t.Fatalf("rewriteOAuthEndpoint() error = %v", err)
+	}
+	want := "http://mcp-oauth-server.mcp-sentinel.svc.cluster.local:8086/oauth/jwks.json"
+	if got != want {
+		t.Fatalf("rewriteOAuthEndpoint() = %q, want %q", got, want)
+	}
+}
+
+func TestFetchAuthServerMetadataFallsBackToConfiguredIssuer(t *testing.T) {
+	var publicIssuerURL string
+	publicIssuer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(authServerMetadata{Issuer: publicIssuerURL, JWKSURI: publicIssuerURL + "/keys"})
+	}))
+	t.Cleanup(publicIssuer.Close)
+	publicIssuerURL = publicIssuer.URL
+
+	internalIssuer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"issuer":"http://localhost:18080/oauth","jwks_uri":"http://localhost:18080/oauth/keys"}`)
+	}))
+	t.Cleanup(internalIssuer.Close)
+
+	server := &gatewayServer{
+		httpClient:             publicIssuer.Client(),
+		oauthInternalIssuerURL: internalIssuer.URL,
+	}
+	metadata, usingInternal, err := server.fetchAuthServerMetadataWithFallback(context.Background(), publicIssuer.URL)
+	if err != nil {
+		t.Fatalf("fetchAuthServerMetadataWithFallback() error = %v", err)
+	}
+	if usingInternal {
+		t.Fatal("fetchAuthServerMetadataWithFallback() used mismatched internal metadata")
+	}
+	if metadata.Issuer != publicIssuer.URL {
+		t.Fatalf("metadata issuer = %q, want %s", metadata.Issuer, publicIssuer.URL)
+	}
+}
+
 func TestHandleProxyOAuthValidatesJWTAndAppliesIdentityHeaders(t *testing.T) {
 	issuer := newTestJWTIssuer(t)
 
@@ -253,8 +308,98 @@ func TestHandleProxyOAuthValidatesJWTAndAppliesIdentityHeaders(t *testing.T) {
 	if got := upstreamHeaders.Get(defaultSessionHeader); got != "session-1" {
 		t.Fatalf("%s = %q, want %q", defaultSessionHeader, got, "session-1")
 	}
-	if got := upstreamHeaders.Get("Authorization"); got != "Bearer "+token {
-		t.Fatalf("Authorization = %q, want bearer token", got)
+	if got := upstreamHeaders.Get("Authorization"); got != "" {
+		t.Fatalf("Authorization = %q, want inbound bearer token stripped", got)
+	}
+}
+
+func TestHandleProxyOAuthDerivesCanonicalAudience(t *testing.T) {
+	issuer := newTestJWTIssuer(t)
+	policy := oauthPolicy(issuer.url)
+	policy.Auth.Audience = ""
+	proxy := newTestGatewayServer(t, policy, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	token := issuer.sign(t, jwt.MapClaims{
+		"iss": issuer.url,
+		"aud": "http://proxy.example.com/mcp",
+		"sub": "human-1",
+		"azp": "client-1",
+		"sid": "session-1",
+		"exp": time.Now().Add(time.Hour).Unix(),
+	})
+	req := httptest.NewRequest(http.MethodPost, "http://proxy.example.com/mcp", strings.NewReader(`{"method":"tools/call","params":{"name":"echo"}}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	recorder := httptest.NewRecorder()
+
+	proxy.handleGateway(recorder, req)
+
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusNoContent)
+	}
+}
+
+func TestHandleProxyOAuthRejectsWrongDerivedAudience(t *testing.T) {
+	issuer := newTestJWTIssuer(t)
+	policy := oauthPolicy(issuer.url)
+	policy.Auth.Audience = ""
+	proxy := newTestGatewayServer(t, policy, func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("wrong-audience request reached upstream")
+	})
+
+	token := issuer.sign(t, jwt.MapClaims{
+		"iss": issuer.url,
+		"aud": "https://other.example.com/mcp",
+		"sub": "human-1",
+		"azp": "client-1",
+		"sid": "session-1",
+		"exp": time.Now().Add(time.Hour).Unix(),
+	})
+	req := httptest.NewRequest(http.MethodPost, "http://proxy.example.com/mcp", strings.NewReader(`{"method":"tools/call","params":{"name":"echo"}}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	recorder := httptest.NewRecorder()
+
+	proxy.handleGateway(recorder, req)
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnauthorized)
+	}
+	if got := recorder.Header().Get("Www-Authenticate"); !strings.Contains(got, `error="invalid_token"`) {
+		t.Fatalf("WWW-Authenticate = %q, missing invalid_token", got)
+	}
+}
+
+func TestHandleProxyOAuthPolicyDenialOmitsInsufficientScopeChallenge(t *testing.T) {
+	issuer := newTestJWTIssuer(t)
+	policy := oauthPolicy(issuer.url)
+	policy.Grants[0].ToolRules[0].Decision = "deny"
+	proxy := newTestGatewayServer(t, policy, func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("denied request reached upstream")
+	})
+
+	token := issuer.sign(t, jwt.MapClaims{
+		"iss": issuer.url,
+		"aud": "mcp-runtime",
+		"sub": "human-1",
+		"azp": "client-1",
+		"sid": "session-1",
+		"exp": time.Now().Add(time.Hour).Unix(),
+	})
+	req := httptest.NewRequest(http.MethodPost, "http://proxy.example.com/mcp", strings.NewReader(`{"method":"tools/call","params":{"name":"echo"}}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	recorder := httptest.NewRecorder()
+
+	proxy.handleGateway(recorder, req)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusForbidden)
+	}
+	if challenge := recorder.Header().Get("Www-Authenticate"); challenge != "" {
+		t.Fatalf("WWW-Authenticate = %q, want empty for policy denial", challenge)
 	}
 }
 
@@ -303,6 +448,49 @@ func TestApplyUpstreamTokenClearsHeaderWhenTokenMissing(t *testing.T) {
 
 	if got := req.Header.Get("Authorization"); got != "" {
 		t.Fatalf("Authorization = %q, want empty", got)
+	}
+}
+
+func TestApplyUpstreamTokenNeverForwardsOAuthBearer(t *testing.T) {
+	t.Parallel()
+
+	proxy := &gatewayServer{}
+	policy := oauthPolicy("https://issuer.example.com")
+	policy.Session.UpstreamTokenHeader = "X-Upstream-Authorization"
+	req := httptest.NewRequest(http.MethodGet, "http://proxy.example.com/mcp", nil)
+	req.Header.Set("Authorization", "Bearer inbound-token")
+	req.Header.Set("X-Upstream-Authorization", "Bearer spoofed-upstream-token")
+
+	proxy.applyUpstreamToken(req, policy, "inbound-token")
+
+	if got := req.Header.Get("Authorization"); got != "" {
+		t.Fatalf("Authorization = %q, want empty", got)
+	}
+	if got := req.Header.Get("X-Upstream-Authorization"); got != "" {
+		t.Fatalf("X-Upstream-Authorization = %q, want empty", got)
+	}
+}
+
+func TestAuthServerMetadataCandidatesUseMCPPathOrder(t *testing.T) {
+	want := []string{
+		"https://auth.example.com/.well-known/oauth-authorization-server/tenant1",
+		"https://auth.example.com/.well-known/openid-configuration/tenant1",
+		"https://auth.example.com/tenant1/.well-known/openid-configuration",
+	}
+	got := authServerMetadataCandidates("https://auth.example.com/tenant1")
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("candidates = %#v, want %#v", got, want)
+	}
+}
+
+func TestAuthServerMetadataCandidatesUseRootOrder(t *testing.T) {
+	want := []string{
+		"https://auth.example.com/.well-known/oauth-authorization-server",
+		"https://auth.example.com/.well-known/openid-configuration",
+	}
+	got := authServerMetadataCandidates("https://auth.example.com")
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("candidates = %#v, want %#v", got, want)
 	}
 }
 
@@ -1246,6 +1434,7 @@ func newTestJWTIssuer(t *testing.T) *testJWTIssuer {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/oauth-authorization-server", func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]string{
+			"issuer":   issuer.url,
 			"jwks_uri": issuer.server.URL + "/keys",
 		})
 	})

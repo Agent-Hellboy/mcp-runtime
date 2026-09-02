@@ -1890,6 +1890,7 @@ func TestPrepareAnalyticsImagesUsesTestModeImageSet(t *testing.T) {
 		AnalyticsAPI: "registry.example.com/mcp-analytics-api:latest",
 		Processor:    "registry.example.com/mcp-sentinel-processor:latest",
 		UI:           "registry.example.com/mcp-sentinel-ui:latest",
+		OAuthServer:  "registry.example.com/mcp-oauth-server:latest",
 	}
 	if got != want {
 		t.Fatalf("prepareAnalyticsImages() = %+v, want %+v", got, want)
@@ -1898,7 +1899,7 @@ func TestPrepareAnalyticsImagesUsesTestModeImageSet(t *testing.T) {
 		t.Fatalf("expected %d builds in test mode, got %d", len(analyticsComponents), buildCalls)
 	}
 	// Sentinel service Dockerfiles need the repo root context for shared packages and service modules.
-	wantBuildContexts := []string{".", ".", ".", ".", ".", "."}
+	wantBuildContexts := []string{".", ".", ".", ".", ".", ".", "."}
 	if !slices.Equal(buildContexts, wantBuildContexts) {
 		t.Fatalf("build contexts = %v, want %v", buildContexts, wantBuildContexts)
 	}
@@ -2066,6 +2067,7 @@ func TestPrepareAnalyticsImagesParallelBuildsPreparesInternalRegistryOnce(t *tes
 		AnalyticsAPI: "registry.local:5000/mcp-analytics-api:latest",
 		Processor:    "registry.local:5000/mcp-sentinel-processor:latest",
 		UI:           "registry.local:5000/mcp-sentinel-ui:latest",
+		OAuthServer:  "registry.local:5000/mcp-oauth-server:latest",
 	}
 	if got != want {
 		t.Fatalf("prepareAnalyticsImages() = %+v, want %+v", got, want)
@@ -2158,6 +2160,7 @@ func TestDeployAnalyticsManifestsWithKubectl_RecreatesInitializationJobs(t *test
 		"08-runtime-api-rbac.yaml",
 		"08-analytics-api.yaml",
 		"22-split-api-networkpolicy.yaml",
+		"14-oauth-server.yaml",
 		"09-ui.yaml",
 		"10-gateway.yaml",
 		"11-prometheus.yaml",
@@ -2431,6 +2434,7 @@ func TestDeployAnalyticsManifestsReturnsRolloutFailures(t *testing.T) {
 		"08-runtime-api-rbac.yaml",
 		"08-analytics-api.yaml",
 		"22-split-api-networkpolicy.yaml",
+		"14-oauth-server.yaml",
 		"09-ui.yaml",
 		"10-gateway.yaml",
 		"11-prometheus.yaml",
@@ -2600,6 +2604,7 @@ func TestDeployAnalyticsManifestsWithKubectl_WaitsForPostgresStatefulSet(t *test
 		"08-runtime-api-rbac.yaml",
 		"08-analytics-api.yaml",
 		"22-split-api-networkpolicy.yaml",
+		"14-oauth-server.yaml",
 		"09-ui.yaml",
 		"10-gateway.yaml",
 		"11-prometheus.yaml",
