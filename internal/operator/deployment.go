@@ -431,6 +431,14 @@ func (r *MCPServerReconciler) resolveGatewayImage(mcpServer *mcpv1alpha1.MCPServ
 func (r *MCPServerReconciler) gatewayExternalBaseURL(mcpServer *mcpv1alpha1.MCPServer) string {
 	host := effectiveIngressHost(mcpServer)
 	if host == "" {
+		// Path-based servers set publicPathPrefix, which suppresses the
+		// DefaultIngressHost defaulting in api/v1alpha1 (it only applies when
+		// both ingressHost and publicPathPrefix are unset). The ingress then
+		// matches any host, but the gateway still has to advertise a concrete
+		// public URL, so fall back to the operator-wide default here.
+		host = strings.TrimSpace(r.DefaultIngressHost)
+	}
+	if host == "" {
 		return ""
 	}
 	scheme := "http"
