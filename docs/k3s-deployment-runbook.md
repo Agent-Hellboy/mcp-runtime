@@ -118,6 +118,11 @@ curl -s https://platform.<domain>/.well-known/oauth-authorization-server/oauth
 The bare `/.well-known/oauth-authorization-server` is **not** routed to the
 OAuth server by this ingress, even though the server itself answers it.
 
+A ready-to-adapt protected server is in `examples/mcpserver-oauth.yaml`. Its
+`auth.issuerURL` must match `OAUTH_ISSUER_URL`, and `auth.audience` must be the
+server's canonical resource URI (`https://mcp.<domain>/<prefix>/mcp`) — the
+gateway fails closed with 401 when a token's `aud` does not match.
+
 #### Platform-runtime backup (`hack/deploy/mcpruntime-org/clean.sh`)
 
 | Variable | Default | Purpose |
