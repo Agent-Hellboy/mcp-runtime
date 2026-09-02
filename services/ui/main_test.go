@@ -991,10 +991,12 @@ func TestSecurityHeadersMiddlewareAlwaysSetsBaselineHeaders(t *testing.T) {
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
 
 	wantContains := map[string]string{
-		"X-Content-Type-Options":  "nosniff",
-		"Referrer-Policy":         "strict-origin-when-cross-origin",
-		"Permissions-Policy":      "interest-cohort=()",
-		"Content-Security-Policy": "frame-ancestors 'none'",
+		"X-Content-Type-Options": "nosniff",
+		"Referrer-Policy":        "strict-origin-when-cross-origin",
+		"Permissions-Policy":     "interest-cohort=()",
+		// 'self', not 'none': the dashboard shell frames /legacy/index.html
+		// on the same origin, and 'none' blocks same-origin ancestors too.
+		"Content-Security-Policy": "frame-ancestors 'self'",
 	}
 	for header, fragment := range wantContains {
 		got := rec.Header().Get(header)
