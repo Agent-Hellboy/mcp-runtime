@@ -111,7 +111,7 @@ func (h *oauthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, `{"ok":true}`)
 		return
 	}
-	if r.URL.Path == h.discoveryPath("oauth-authorization-server") || r.URL.Path == h.discoveryPath("openid-configuration") || r.URL.Path == h.discoveryPath("openid-configuration-append") {
+	if h.isDiscoveryPath(r.URL.Path) {
 		h.handleMetadata(w, r)
 		return
 	}
@@ -127,6 +127,23 @@ func (h *oauthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		h.writeError(w, http.StatusNotFound, "not_found", "endpoint not found")
 	}
+}
+
+// isDiscoveryPath accepts the RFC 8414 / OIDC path-insertion and path-append
+// forms for the configured issuer, plus the bare well-known paths at the root.
+// The root forms mirror the root /authorize, /token and /register aliases: a
+// client that drops the issuer's path component still finds the document and
+// reads absolute endpoint URLs from it instead of getting a 404.
+func (h *oauthHandler) isDiscoveryPath(path string) bool {
+	switch path {
+	case h.discoveryPath("oauth-authorization-server"),
+		h.discoveryPath("openid-configuration"),
+		h.discoveryPath("openid-configuration-append"),
+		"/.well-known/oauth-authorization-server",
+		"/.well-known/openid-configuration":
+		return true
+	}
+	return false
 }
 
 func (h *oauthHandler) endpointPath(name string) string {
@@ -451,6 +468,64 @@ func loopbackRedirectURIsMatch(registered, requested string) bool {
 		registeredURL.Opaque == requestedURL.Opaque
 }
 
+// formActionSource returns a CSP source expression for an authorization
+// request's redirect target. The consent form posts back to the issuer
+// ('self'), but the resulting 302 leaves that origin; browsers that enforce
+// form-action across redirects (Firefox, Safari) drop the callback unless the
+// target is listed. The redirect URI is already validated against the client's
+// registered set before this runs, so this widens nothing the server would not
+// already redirect to. Returns "" when the value cannot be rendered safely.
+func formActionSource(redirectURI string) string {
+	parsed, err := url.Parse(redirectURI)
+	if err != nil {
+		return ""
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	if !isSafeCSPToken(scheme) {
+		return ""
+	}
+	if scheme != "http" && scheme != "https" {
+		return scheme + ":"
+	}
+	host := strings.ToLower(parsed.Host)
+	if host == "" || !isSafeCSPHost(host) {
+		return ""
+	}
+	return scheme + "://" + host
+}
+
+// isSafeCSPToken and isSafeCSPHost keep header separators and whitespace out of
+// the emitted policy so a redirect URI can never inject CSP directives.
+func isSafeCSPToken(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+		case r == '-', r == '.', r == '_', r == '+':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func isSafeCSPHost(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+		case r == '-', r == '.', r == '_', r == ':', r == '[', r == ']':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 func (h *oauthHandler) renderLogin(w http.ResponseWriter, request authorizeRequest) {
 	h.renderLoginPage(w, request, "")
 }
@@ -464,9 +539,19 @@ func (h *oauthHandler) renderLoginPage(w http.ResponseWriter, request authorizeR
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "no-referrer")
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
+	formAction := "'self'"
+	if source := formActionSource(request.RedirectURI); source != "" {
+		formAction += " " + source
+	}
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; form-action "+formAction+"; base-uri 'none'; frame-ancestors 'none'")
 	transaction := randomString(32)
 	http.SetCookie(w, &http.Cookie{Name: "mcp_oauth_tx", Value: transaction, Path: h.issuer.EscapedPath(), HttpOnly: true, Secure: h.issuer.Scheme == "https", SameSite: http.SameSiteLaxMode, MaxAge: 300})
+	details := `<p>Sign in with your MCP Runtime account to authorize this client.</p>`
+	details += `<dl><dt>Client</dt><dd>` + html.EscapeString(request.ClientID) + `</dd>`
+	if request.Resource != "" {
+		details += `<dt>Resource</dt><dd>` + html.EscapeString(request.Resource) + `</dd>`
+	}
+	details += `</dl>`
 	fields := ""
 	for key, value := range map[string]string{"client_id": request.ClientID, "redirect_uri": request.RedirectURI, "response_type": request.ResponseType, "scope": request.Scope, "state": request.State, "resource": request.Resource, "code_challenge": request.CodeChallenge, "code_challenge_method": request.CodeChallengeMethod, "oauth_transaction": transaction} {
 		fields += `<input type="hidden" name="` + html.EscapeString(key) + `" value="` + html.EscapeString(value) + `">`
@@ -474,7 +559,7 @@ func (h *oauthHandler) renderLoginPage(w http.ResponseWriter, request authorizeR
 	if message != "" {
 		message = `<p role="alert">` + html.EscapeString(message) + `</p>`
 	}
-	_, _ = fmt.Fprintf(w, `<!doctype html><html><head><meta charset="utf-8"><title>MCP authorization</title></head><body><main><h1>Authorize MCP client</h1>%s<form method="post" action="%s">%s<label>Email <input name="email" type="email" autocomplete="username" required></label><label>Password <input name="password" type="password" autocomplete="current-password" required></label><button name="consent" value="approve" type="submit">Approve</button><button name="consent" value="deny" type="submit">Deny</button></form></main></body></html>`, message, html.EscapeString(h.endpoint("authorize")), fields)
+	_, _ = fmt.Fprintf(w, `<!doctype html><html><head><meta charset="utf-8"><title>MCP authorization</title></head><body><main><h1>Authorize MCP client</h1>%s%s<form method="post" action="%s">%s<label>Email <input name="email" type="email" autocomplete="username" required></label><label>Password <input name="password" type="password" autocomplete="current-password" required></label><button name="consent" value="approve" type="submit">Approve</button><button name="consent" value="deny" type="submit">Deny</button></form></main></body></html>`, details, message, html.EscapeString(h.endpoint("authorize")), fields)
 }
 
 func (h *oauthHandler) redirectError(w http.ResponseWriter, request authorizeRequest, code, description string) {

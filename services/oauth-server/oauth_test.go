@@ -329,3 +329,128 @@ func pkceChallenge(verifier string) string {
 	sum := sha256.Sum256([]byte(verifier))
 	return base64.RawURLEncoding.EncodeToString(sum[:])
 }
+
+func TestFormActionSourceRendersValidatedRedirectTarget(t *testing.T) {
+	for _, testCase := range []struct {
+		name     string
+		redirect string
+		want     string
+	}{
+		{"loopback http", "http://127.0.0.1:9000/callback", "http://127.0.0.1:9000"},
+		{"localhost with port", "http://localhost:8787/callback", "http://localhost:8787"},
+		{"https origin", "https://client.example/cb", "https://client.example"},
+		{"native scheme", "cursor://anysphere.cursor-mcp/oauth/callback", "cursor:"},
+		{"header injection is refused", "https://client.example/cb\n;form-action *", ""},
+		{"empty scheme is refused", "/relative/callback", ""},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := formActionSource(testCase.redirect); got != testCase.want {
+				t.Fatalf("formActionSource(%q) = %q, want %q", testCase.redirect, got, testCase.want)
+			}
+		})
+	}
+}
+
+func TestLoginPageCSPAllowsTheRegisteredRedirectTarget(t *testing.T) {
+	h, _ := testOAuthHandler(t)
+	body := `{"client_name":"Example","redirect_uris":["http://127.0.0.1:9000/callback"],"token_endpoint_auth_method":"none"}`
+	register := httptest.NewRequest(http.MethodPost, "https://auth.example.com/oauth/register", strings.NewReader(body))
+	register.Header.Set("Content-Type", "application/json")
+	registered := httptest.NewRecorder()
+	h.ServeHTTP(registered, register)
+	var client struct {
+		ID string `json:"client_id"`
+	}
+	if err := json.Unmarshal(registered.Body.Bytes(), &client); err != nil {
+		t.Fatal(err)
+	}
+	params := url.Values{"client_id": {client.ID}, "redirect_uri": {"http://127.0.0.1:9000/callback"}, "response_type": {"code"}, "resource": {"https://mcp.example.com/server"}, "code_challenge": {pkceChallenge("test-verifier-with-enough-entropy-123456789")}, "code_challenge_method": {"S256"}, "scope": {"mcp"}, "state": {"state-1"}}
+	page := httptest.NewRecorder()
+	h.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "https://auth.example.com/oauth/authorize?"+params.Encode(), nil))
+	policy := page.Header().Get("Content-Security-Policy")
+	if !strings.Contains(policy, "form-action 'self' http://127.0.0.1:9000;") {
+		t.Fatalf("CSP does not permit the validated redirect target: %s", policy)
+	}
+	if !strings.Contains(page.Body.String(), "Sign in with your MCP Runtime account") {
+		t.Fatalf("login page is missing sign-in guidance: %s", page.Body.String())
+	}
+}
+
+func TestFailedPKCEVerificationBurnsTheAuthorizationCode(t *testing.T) {
+	h, _ := testOAuthHandler(t)
+	body := `{"client_name":"Example","redirect_uris":["http://127.0.0.1:9000/callback"],"token_endpoint_auth_method":"none"}`
+	register := httptest.NewRequest(http.MethodPost, "https://auth.example.com/oauth/register", strings.NewReader(body))
+	register.Header.Set("Content-Type", "application/json")
+	registered := httptest.NewRecorder()
+	h.ServeHTTP(registered, register)
+	var client struct {
+		ID string `json:"client_id"`
+	}
+	if err := json.Unmarshal(registered.Body.Bytes(), &client); err != nil {
+		t.Fatal(err)
+	}
+	verifier := "test-verifier-with-enough-entropy-123456789"
+	params := url.Values{"client_id": {client.ID}, "redirect_uri": {"http://127.0.0.1:9000/callback"}, "response_type": {"code"}, "resource": {"https://mcp.example.com/server"}, "code_challenge": {pkceChallenge(verifier)}, "code_challenge_method": {"S256"}, "scope": {"mcp"}, "state": {"state-1"}}
+	page := httptest.NewRecorder()
+	h.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "https://auth.example.com/oauth/authorize?"+params.Encode(), nil))
+	cookies := page.Result().Cookies()
+	form := url.Values{}
+	for key, values := range params {
+		form.Set(key, values[0])
+	}
+	form.Set("email", "test@example.com")
+	form.Set("password", "password")
+	form.Set("consent", "approve")
+	form.Set("oauth_transaction", cookies[0].Value)
+	post := httptest.NewRequest(http.MethodPost, "https://auth.example.com/oauth/authorize", strings.NewReader(form.Encode()))
+	post.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	post.AddCookie(cookies[0])
+	approval := httptest.NewRecorder()
+	h.ServeHTTP(approval, post)
+	redirect, err := url.Parse(approval.Header().Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := redirect.Query().Get("code")
+
+	exchange := func(codeVerifier string) int {
+		tokenForm := url.Values{"grant_type": {"authorization_code"}, "client_id": {client.ID}, "code": {code}, "redirect_uri": {"http://127.0.0.1:9000/callback"}, "code_verifier": {codeVerifier}}
+		request := httptest.NewRequest(http.MethodPost, "https://auth.example.com/oauth/token", strings.NewReader(tokenForm.Encode()))
+		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		response := httptest.NewRecorder()
+		h.ServeHTTP(response, request)
+		return response.Code
+	}
+	if status := exchange("wrong-verifier-with-enough-entropy-98765"); status != http.StatusBadRequest {
+		t.Fatalf("wrong verifier status = %d, want 400", status)
+	}
+	if status := exchange(verifier); status != http.StatusBadRequest {
+		t.Fatalf("code survived a failed PKCE verification: replay status = %d, want 400", status)
+	}
+}
+
+func TestRootWellKnownDiscoveryAliasIsServed(t *testing.T) {
+	h, _ := testOAuthHandler(t)
+	for _, path := range []string{
+		"/.well-known/oauth-authorization-server/oauth",
+		"/.well-known/openid-configuration/oauth",
+		"/oauth/.well-known/openid-configuration",
+		"/.well-known/oauth-authorization-server",
+		"/.well-known/openid-configuration",
+	} {
+		t.Run(path, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			h.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "https://auth.example.com"+path, nil))
+			if response.Code != http.StatusOK {
+				t.Fatalf("discovery %s status = %d", path, response.Code)
+			}
+			var document map[string]any
+			if err := json.Unmarshal(response.Body.Bytes(), &document); err != nil {
+				t.Fatal(err)
+			}
+			if document["issuer"] != "https://auth.example.com/oauth" {
+				t.Fatalf("issuer = %v, want the configured issuer", document["issuer"])
+			}
+		})
+	}
+}

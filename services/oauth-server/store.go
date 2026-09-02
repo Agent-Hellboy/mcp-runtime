@@ -263,11 +263,14 @@ func (s *oauthStore) consumeCode(ctx context.Context, hash, clientID, redirectUR
 	if s.db == nil {
 		s.mu.Lock()
 		code, ok := s.codes[hash]
-		if ok && (code.ClientID != clientID || code.RedirectURI != redirectURI || code.ExpiresAt.Before(time.Now()) || !verifyPKCE(verifier, code.CodeChallenge)) {
+		if ok && (code.ClientID != clientID || code.RedirectURI != redirectURI || code.ExpiresAt.Before(time.Now())) {
 			ok = false
 		}
 		if ok {
+			// The code is consumed whether or not PKCE verification succeeds:
+			// a stolen code must not survive for the verifier to be guessed.
 			delete(s.codes, hash)
+			ok = verifyPKCE(verifier, code.CodeChallenge)
 		}
 		s.mu.Unlock()
 		return code, ok, nil
@@ -287,6 +290,14 @@ func (s *oauthStore) consumeCode(ctx context.Context, hash, clientID, redirectUR
 		return authorizationCode{}, false, err
 	}
 	if !verifyPKCE(verifier, code.CodeChallenge) {
+		// Burn the code on a failed PKCE verification so a stolen code cannot
+		// be replayed while an attacker brute-forces the verifier.
+		if _, err := tx.ExecContext(ctx, `UPDATE oauth_authorization_codes SET used_at=now() WHERE code_hash=$1`, hash); err != nil {
+			return authorizationCode{}, false, err
+		}
+		if err := tx.Commit(); err != nil {
+			return authorizationCode{}, false, err
+		}
 		return authorizationCode{}, false, nil
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE oauth_authorization_codes SET used_at=now() WHERE code_hash=$1`, hash); err != nil {
