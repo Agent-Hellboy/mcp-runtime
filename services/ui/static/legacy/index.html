@@ -931,11 +931,13 @@
                       <th>MCP Action</th>
                       <th>Decision</th>
                       <th>Policy</th>
+                      <th>Matched grant</th>
+                      <th>Matched session</th>
                     </tr>
                   </thead>
                   <tbody id="events-body">
                     <tr>
-                      <td colspan="6" class="empty">No events yet.</td>
+                      <td colspan="8" class="empty">No events yet.</td>
                     </tr>
                   </tbody>
                 </table>
@@ -1123,6 +1125,30 @@
               </tbody>
             </table>
           </div>
+        </div>
+      </section>
+
+      <section id="tab-governance-grant-detail" class="tab-content" role="tabpanel" hidden>
+        <div class="panel">
+          <div class="panel-head">
+            <div><h2 id="governance-grant-detail-title">Access Grant</h2><p class="panel-kicker" id="governance-grant-detail-kicker"></p></div>
+            <button class="ghost" id="governance-grant-detail-back" type="button">← Back to Governance</button>
+          </div>
+          <div class="server-detail-grid" id="governance-grant-detail-info"></div>
+          <h3>Recent activity <span class="muted-text">(last 7 days)</span></h3>
+          <div class="table-wrap scroll-table"><table class="audit-table"><thead><tr><th>Time</th><th>Action</th><th>Decision</th><th>Session</th></tr></thead><tbody id="governance-grant-detail-activity-body"></tbody></table></div>
+        </div>
+      </section>
+
+      <section id="tab-governance-session-detail" class="tab-content" role="tabpanel" hidden>
+        <div class="panel">
+          <div class="panel-head">
+            <div><h2 id="governance-session-detail-title">Agent Session</h2><p class="panel-kicker" id="governance-session-detail-kicker"></p></div>
+            <button class="ghost" id="governance-session-detail-back" type="button">← Back to Governance</button>
+          </div>
+          <div class="server-detail-grid" id="governance-session-detail-info"></div>
+          <h3>Tool call timeline</h3>
+          <div class="table-wrap scroll-table"><table class="audit-table"><thead><tr><th>Time</th><th>Tool</th><th>Decision</th><th>Reason</th></tr></thead><tbody id="governance-session-detail-timeline-body"></tbody></table></div>
         </div>
       </section>
 

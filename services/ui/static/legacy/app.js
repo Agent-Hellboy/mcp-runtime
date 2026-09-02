@@ -593,6 +593,8 @@ async function loadEvents() {
         <td>${renderAuditTarget(event)}</td>
         <td>${renderDecision(event.decision)}</td>
         <td>${renderPolicySummary(event)}</td>
+        <td>${renderMatchedAccessLink(event, "grant")}</td>
+        <td>${renderMatchedAccessLink(event, "session")}</td>
       `;
       fragment.appendChild(row);
     });
@@ -602,6 +604,92 @@ async function loadEvents() {
     if (isUnauthorizedError(err)) return;
     console.error("Failed to load events:", err);
   }
+}
+
+function renderMatchedAccessLink(event, kind) {
+  const payload = event.payload || {};
+  const name = payload[`matched_${kind}`] || "";
+  if (!name) return '<span class="muted-text">-</span>';
+  const namespace = payload[`matched_${kind}_namespace`] || event.namespace || activeScopeNamespace();
+  return `<button class="table-link" type="button" data-access-kind="${kind}" data-access-name="${escapeHtml(name)}" data-access-namespace="${escapeHtml(namespace)}">${escapeHtml(`${namespace}/${name}`)}</button>`;
+}
+
+function createAccessLinkCell(name, namespace, kind, onClick) {
+  const cell = document.createElement("td");
+  const button = document.createElement("button");
+  button.className = "table-link identity-link";
+  button.type = "button";
+  button.textContent = name || "-";
+  button.title = `${namespace}/${name}`;
+  button.addEventListener("click", onClick);
+  cell.appendChild(button);
+  const sub = document.createElement("span");
+  sub.className = "identity-subtext";
+  sub.textContent = namespace || "";
+  cell.appendChild(sub);
+  return cell;
+}
+
+function accessDetailStat(label, value) {
+  return `<div class="server-detail-stat"><span>${escapeHtml(label)}</span><strong>${escapeHtml(String(value || "-"))}</strong></div>`;
+}
+
+function showGrantDetail(grant) {
+  const namespace = grant.namespace || activeScopeNamespace();
+  setText("governance-grant-detail-title", grant.name || "Access Grant");
+  setText("governance-grant-detail-kicker", `${namespace} / MCPAccessGrant`);
+  document.getElementById("governance-grant-detail-info").innerHTML = [
+    accessDetailStat("Server", grant.serverRef?.name),
+    accessDetailStat("Subject", subjectLabel(grant.subject)),
+    accessDetailStat("Max trust", grant.maxTrust),
+    accessDetailStat("Status", grant.disabled ? "Disabled" : "Active"),
+  ].join("");
+  activateTab("governance-grant-detail");
+  loadGrantActivity(grant.name || "", namespace);
+}
+
+function showSessionDetail(session) {
+  const namespace = session.namespace || activeScopeNamespace();
+  setText("governance-session-detail-title", session.name || "Agent Session");
+  setText("governance-session-detail-kicker", `${namespace} / MCPAgentSession`);
+  document.getElementById("governance-session-detail-info").innerHTML = [
+    accessDetailStat("Server", session.serverRef?.name),
+    accessDetailStat("Subject", subjectLabel(session.subject)),
+    accessDetailStat("Trust", session.consentedTrust),
+    accessDetailStat("Status", session.revoked ? "Revoked" : "Active"),
+  ].join("");
+  activateTab("governance-session-detail");
+  loadSessionTimeline(session.name || "", namespace);
+}
+
+function subjectLabel(subject) {
+  if (!subject) return "-";
+  return [subject.humanID, subject.agentID, subject.teamID].filter(Boolean).join(" / ") || "-";
+}
+
+async function loadGrantActivity(name, namespace) {
+  const body = document.getElementById("governance-grant-detail-activity-body");
+  body.innerHTML = '<tr><td colspan="4" class="empty">Loading activity…</td></tr>';
+  try {
+    const data = await fetchJSON("/events?limit=1000");
+    const since = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    const events = (data.events || []).filter((event) => {
+      const payload = event.payload || {};
+      const timestamp = Date.parse(event.timestamp || "");
+      return payload.matched_grant === name && (payload.matched_grant_namespace || event.namespace || namespace) === namespace && (!Number.isNaN(timestamp) ? timestamp >= since : true);
+    });
+    body.innerHTML = events.length ? events.map((event) => `<tr><td>${renderAuditTime(event)}</td><td>${escapeHtml(event.tool_name || event.payload?.tool_name || event.payload?.rpc_method || "-")}</td><td>${renderDecision(event.decision)}</td><td>${renderMatchedAccessLink(event, "session")}</td></tr>`).join("") : '<tr><td colspan="4" class="empty">No recent activity.</td></tr>';
+  } catch (err) { body.innerHTML = '<tr><td colspan="4" class="empty">Activity unavailable.</td></tr>'; }
+}
+
+async function loadSessionTimeline(name, namespace) {
+  const body = document.getElementById("governance-session-detail-timeline-body");
+  body.innerHTML = '<tr><td colspan="4" class="empty">Loading timeline…</td></tr>';
+  try {
+    const data = await fetchJSON(`/events?limit=1000&session_id=${encodeURIComponent(name)}`);
+    const events = (data.events || []).filter((event) => (event.payload?.matched_session_namespace || event.namespace || namespace) === namespace);
+    body.innerHTML = events.length ? events.map((event) => `<tr><td>${renderAuditTime(event)}</td><td>${escapeHtml(event.tool_name || event.payload?.tool_name || event.payload?.rpc_method || "-")}</td><td>${renderDecision(event.decision)}</td><td>${escapeHtml(event.payload?.reason || "-")}</td></tr>`).join("") : '<tr><td colspan="4" class="empty">No tool calls recorded.</td></tr>';
+  } catch (err) { body.innerHTML = '<tr><td colspan="4" class="empty">Timeline unavailable.</td></tr>'; }
 }
 
 function renderAuditTime(event) {
@@ -2699,7 +2787,7 @@ function renderGrants() {
     const serverNamespace = grant.serverRef?.namespace || namespace;
 
     const row = document.createElement("tr");
-    row.appendChild(createIdentityCell(grant.name || "-", namespace));
+    row.appendChild(createAccessLinkCell(grant.name || "-", namespace, "grant", () => showGrantDetail(grant)));
     row.appendChild(createIdentityCell(grant.serverRef?.name || "-", serverNamespace));
     row.appendChild(createSubjectCell(grant.subject));
     row.appendChild(createGrantRiskCell(grant.maxTrust, grant.allowedSideEffects));
@@ -2906,7 +2994,7 @@ function renderSessions() {
     const serverNamespace = session.serverRef?.namespace || namespace;
 
     const row = document.createElement("tr");
-    row.appendChild(createIdentityCell(session.name || "-", namespace));
+    row.appendChild(createAccessLinkCell(session.name || "-", namespace, "session", () => showSessionDetail(session)));
     row.appendChild(createIdentityCell(session.serverRef?.name || "-", serverNamespace));
     row.appendChild(createSubjectCell(session.subject));
     row.appendChild(createTrustCell(session.consentedTrust));
@@ -3055,6 +3143,21 @@ function updateSessionExpiresUTCHint() {
 }
 
 function initGovernance() {
+  document.getElementById("events-body")?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-access-kind]");
+    if (!button) return;
+    const kind = button.dataset.accessKind;
+    const namespace = button.dataset.accessNamespace || activeScopeNamespace();
+    const name = button.dataset.accessName || "";
+    const item = kind === "grant"
+      ? grantsCache.find((grant) => (grant.name || "") === name && (grant.namespace || activeScopeNamespace()) === namespace)
+      : sessionsCache.find((session) => (session.name || "") === name && (session.namespace || activeScopeNamespace()) === namespace);
+    if (item) {
+      kind === "grant" ? showGrantDetail(item) : showSessionDetail(item);
+    }
+  });
+  document.getElementById("governance-grant-detail-back")?.addEventListener("click", () => activateTab("governance"));
+  document.getElementById("governance-session-detail-back")?.addEventListener("click", () => activateTab("governance"));
   setFieldValue("grant-namespace", activeScopeNamespace());
   setFieldValue("grant-policy-version", defaults.policyVersion);
   setFieldValue("session-namespace", activeScopeNamespace());

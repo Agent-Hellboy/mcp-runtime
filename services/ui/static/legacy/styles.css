@@ -652,6 +652,22 @@ select:disabled {
   vertical-align: top;
 }
 
+.table-link {
+  border: 0;
+  padding: 0;
+  color: var(--accent, #67e8f9);
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  text-decoration: underline;
+}
+
+.table-link:hover,
+.table-link:focus-visible {
+  color: #fff;
+}
+
 .audit-cell {
   display: grid;
   gap: 4px;
