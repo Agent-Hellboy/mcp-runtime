@@ -92,7 +92,7 @@ Pre-commit: `pre-commit install`; full suite `pre-commit run --all-files` (sets 
 - **Commits:** `fix(<component>):`, `feat(<component>):`, `doc:`, `website:` — components: `cli`, `operator`, `api`, `crd`, `access`, `policy`, `sentinel`, `services-api`, `mcp-gateway`, `test`, `ci`, …
 - **Docs:** avoid new top-level docs unless needed; use `docs/` and skills for runbooks.
 - **Secrets:** alpha repo — no real credentials in tree.
-- **Skills:** keep `.claude/skills` → `../.codex/skills`. After non-trivial changes, update affected `.codex/skills/*/SKILL.md` when workflows or gotchas shift.
+- **Skills:** keep `.claude/skills` → `../.codex/skills`. After non-trivial changes, update affected `.codex/skills/*/SKILL.md` when workflows or gotchas shift — check for an existing `reference.md` or `references/` companion first (e.g. `mcp-runtime-troubleshooting/reference.md`, `qa-e2e-ui/references/`) and extend that for symptom-oriented or long-form content instead of growing `SKILL.md` past ~250-400 lines.
 - **AI session hygiene:** before ending a non-trivial session, propose `ai-assist/` updates; user reviews before commit (see below).
 
 ## AI session hygiene
