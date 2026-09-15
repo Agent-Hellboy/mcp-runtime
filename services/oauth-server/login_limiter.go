@@ -3,15 +3,18 @@ package main
 import (
 	"net"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 )
 
 const (
-	loginFailureLimit = 5
-	loginBackoff      = time.Minute
-	loginMaxBackoff   = 15 * time.Minute
+	loginFailureLimit  = 5
+	loginBackoff       = time.Minute
+	loginMaxBackoff    = 15 * time.Minute
+	loginMaxEntries    = 4096
+	loginEvictionBatch = 256
 )
 
 type loginAttempt struct {
@@ -89,13 +92,47 @@ func (l *loginAttemptLimiter) success(keys ...string) {
 }
 
 func (l *loginAttemptLimiter) pruneLocked(now time.Time) {
-	if len(l.attempts) < 4096 {
-		return
-	}
 	for key, attempt := range l.attempts {
 		if now.Sub(attempt.updatedAt) > loginMaxBackoff {
 			delete(l.attempts, key)
 		}
+	}
+	// Evict at the limit because callers may add a new key immediately after
+	// this cleanup returns.
+	if len(l.attempts) < loginMaxEntries {
+		return
+	}
+
+	// Keep active lockouts and recent failures while evicting the least useful
+	// entries. This makes attacker-controlled email/IP keys strictly bounded
+	// even when all entries are too recent for TTL pruning.
+	target := loginMaxEntries - loginEvictionBatch
+	type candidate struct {
+		key      string
+		updated  time.Time
+		failures int
+		locked   bool
+	}
+	candidates := make([]candidate, 0, len(l.attempts))
+	for key, attempt := range l.attempts {
+		candidates = append(candidates, candidate{
+			key:      key,
+			updated:  attempt.updatedAt,
+			failures: attempt.failures,
+			locked:   now.Before(attempt.blockedTill),
+		})
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].locked != candidates[j].locked {
+			return !candidates[i].locked
+		}
+		if (candidates[i].failures > 0) != (candidates[j].failures > 0) {
+			return candidates[i].failures == 0
+		}
+		return candidates[i].updated.Before(candidates[j].updated)
+	})
+	for _, entry := range candidates[:len(candidates)-target] {
+		delete(l.attempts, entry.key)
 	}
 }
 

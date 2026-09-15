@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -279,6 +280,23 @@ func TestLoginAttemptLimiterBlocksAndResets(t *testing.T) {
 	limiter.success(keys...)
 	if !limiter.allowed(keys...) {
 		t.Fatal("successful authentication did not reset the limiter")
+	}
+}
+
+func TestLoginAttemptLimiterCapsFreshEntries(t *testing.T) {
+	limiter := newLoginAttemptLimiter()
+	now := time.Now()
+	for i := 0; i < loginMaxEntries; i++ {
+		limiter.attempts["email:user-"+strconv.Itoa(i)+"@example.com"] = loginAttempt{updatedAt: now}
+	}
+
+	limiter.failure("email:new@example.com")
+
+	if got := len(limiter.attempts); got > loginMaxEntries {
+		t.Fatalf("login attempt entries = %d, want <= %d", got, loginMaxEntries)
+	}
+	if _, ok := limiter.attempts["email:new@example.com"]; !ok {
+		t.Fatal("new login attempt was evicted instead of an inactive entry")
 	}
 }
 
