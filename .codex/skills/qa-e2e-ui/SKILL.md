@@ -159,9 +159,11 @@ Prefer MCP browser tools in Codex sessions:
 3. Treat browser console errors and failed network requests as findings unless
    they are explained by an intentional negative test.
 
-If no browser automation is available, mark browser checks as **blocked** and
-run only curl/API smoke checks. Do not report a full UI pass without browser
-evidence.
+If no MCP browser server is wired in, do not jump straight to **blocked** —
+drive Playwright directly from Node first (see Step 7b for the runner setup and
+the cached-browser-revision gotcha). Mark browser checks **blocked** only when
+no browser can be launched at all, and then run only curl/API smoke checks. Do
+not report a full UI pass without browser evidence.
 
 Capture the following evidence per role:
 
@@ -272,6 +274,7 @@ command that rewrites tracked files during the audit.
 
 ```bash
 (cd services/ui && go test ./... -race -count=1)
+(cd services/ui/frontend && npm test && npm run build)
 node --check services/ui/static/app.js
 go test ./internal/cli/... ./cmd/mcp-runtime/... -count=1
 go test ./test/golden/... -count=1
@@ -285,6 +288,80 @@ E2E_CACHE_MODE=1 \
 If a check is unsafe or too expensive for the requested scope, skip it with a
 specific reason. For example, skip Kind e2e when the live contributor cluster is
 busy with unrelated user work or when the user requested a read-only audit.
+
+## Step 7b - Frontend development, test, and validation tooling
+
+The dashboard frontend lives in `services/ui/frontend` (React 19 + Vite +
+TypeScript, no UI framework). Use its own toolchain for component-level
+evidence before spending a cluster deploy on a browser pass.
+
+Installed and available for test/validation work:
+
+| Tool | Use it for |
+|---|---|
+| `vitest` | test runner, jsdom environment, `src/test/setup.ts` |
+| `@testing-library/react` | render components, query by role/label/test id |
+| `@testing-library/user-event` | realistic typing, clicking, select, tab order — prefer over `fireEvent` |
+| `@testing-library/jest-dom` | `toBeInTheDocument`, `toHaveTextContent`, `toHaveFocus`, … |
+| `vitest-axe` + `axe-core` | assert `toHaveNoViolations()` on rendered trees |
+| `tsc -b` | type contract check, runs as part of `npm run build` |
+
+```bash
+cd services/ui/frontend
+npm test                 # vitest run
+npx vitest run src/components/servers   # narrow while iterating
+npx tsc -b               # types only, no bundle
+npm run build            # tsc -b && vite build -> ../static
+```
+
+Rules that keep this evidence honest:
+
+- `vite build` writes into `services/ui/static/`, which the Go service embeds.
+  A frontend change is not deployable until `npm run build` has run and the new
+  `static/assets/*` hashes are committed. `public/legacy/` is copied through the
+  build, so verify `services/ui/static/legacy/` still exists afterwards —
+  `emptyOutDir: true` makes a missed copy silent.
+- Disable the `color-contrast` axe rule in jsdom (no layout engine) and cover
+  contrast in the browser pass instead. Every other rule should stay on.
+- jsdom tests cannot prove responsive bounds or real network paths. Keep
+  overflow, viewport, and request-URL assertions in the Playwright pass.
+- Adding a test-only dependency is fine; check `npm audit --omit=dev` stays at
+  zero and note any pre-existing dev-tree advisories rather than silently
+  inheriting them.
+
+### Playwright runner setup
+
+There is no Playwright MCP server wired into every session. When it is absent,
+drive Playwright directly from Node and still produce the same evidence:
+
+```bash
+node -e "console.log(require('<path>/node_modules/playwright/package.json').version)"
+ls ~/Library/Caches/ms-playwright/     # which browser builds actually exist
+```
+
+The common failure is a Playwright package whose pinned browser revision is not
+in the cache ("Executable doesn't exist at .../chromium_headless_shell-<rev>").
+Do not conclude browser automation is unavailable. Either run
+`npx playwright install chromium`, or launch the cached build explicitly:
+
+```js
+import { chromium } from '<path>/node_modules/playwright/index.mjs';
+const browser = await chromium.launch({
+  executablePath: process.env.HOME +
+    '/Library/Caches/ms-playwright/chromium-<rev>/chrome-mac-arm64/' +
+    'Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing',
+});
+```
+
+Script the before/after passes as one file parameterized by surface, so the same
+actions, viewports, and assertions run against both deployments. Collect per
+run: `page.on('console')`, `page.on('pageerror')`, `page.on('response')` filtered
+to `/api/` and `/auth/`, screenshots per step, and a
+`document.documentElement.scrollWidth` vs `clientWidth` measurement at 390px.
+
+Query by `data-testid` for QA hooks and by role/label for the accessibility
+assertions. Generated ids (React `useId()`) are not stable across builds — never
+select on them.
 
 ## Step 8 - Public-host defense
 
