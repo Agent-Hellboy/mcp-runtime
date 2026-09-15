@@ -1214,6 +1214,7 @@ function loadActiveTab() {
 }
 
 function resetDashboard() {
+  toolsCatalogCache = [];
   setText("dash-total-events", "-");
   setText("dash-active-servers", "-");
   setText("dash-active-grants", "-");
@@ -1708,6 +1709,7 @@ function serverLiveInventoryPending(server) {
 
 function renderSignedOutServerCatalog() {
   serversCache = [];
+  toolsCatalogCache = [];
   publishPolicyCache = null;
   selectedServerKey = "";
   selectedServerEventsCache = [];
