@@ -49,11 +49,49 @@ const serverInventoryLoaded = new Set();
 // Keyed by serverKey → { sections: { label → { open, items[] } }, connectOpen }
 let serverCardOpenState = {};
 
+const sessionAPIRuntimePrefixes = [
+  "/dashboard/summary",
+  "/runtime/namespaces",
+  "/runtime/servers",
+  "/runtime/tools",
+  "/runtime/server-events",
+  "/runtime/observability/links",
+  "/runtime/observability/grafana/dashboard",
+  "/runtime/observability/prometheus/query",
+  "/runtime/teams",
+  "/runtime/grants",
+  "/runtime/sessions",
+  "/runtime/components",
+  "/runtime/policy",
+  "/user/api-keys",
+  "/admin/operations",
+  "/admin/deployments",
+];
+
+const sessionAPIAnalyticsPrefixes = [
+  "/events",
+  "/analytics/usage",
+  "/user/analytics/usage",
+];
+
+function sessionAPIPathAllowed(pathname, prefixes) {
+  return prefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
+}
+
+function sessionAPIURL(path, method = "GET") {
+  const pathname = String(path || "").split("?")[0];
+  const isGET = String(method || "GET").toUpperCase() === "GET";
+  if (authenticated && isGET && (sessionAPIPathAllowed(pathname, sessionAPIRuntimePrefixes) || sessionAPIPathAllowed(pathname, sessionAPIAnalyticsPrefixes))) {
+    return `/api/ui/v1${path}`;
+  }
+  return `${apiBase}${path}`;
+}
+
 // API Helper
 async function fetchJSON(path, options = {}) {
   const headers = { ...options.headers };
 
-  const response = await fetch(`${apiBase}${path}`, {
+  const response = await fetch(sessionAPIURL(path, options.method), {
     ...options,
     credentials: "same-origin",
     headers,
@@ -2644,10 +2682,14 @@ function startAutoRefresh() {
   const autoRefreshCheckbox = document.getElementById("auto-refresh");
   if (autoRefreshCheckbox && !autoRefreshCheckbox.checked) return;
   autoRefreshInterval = setInterval(() => {
-    loadDashboardSummary();
-    loadDashboardAnalytics();
-    loadGovernanceDecisionAnalytics();
-    loadEvents();
+    const active = resolveActiveTab();
+    if (active === "dashboard") {
+      loadDashboardSummary();
+      loadDashboardAnalytics();
+    } else if (active === "governance" && isAdminUser()) {
+      loadGovernanceDecisionAnalytics();
+      loadEvents();
+    }
     // loadServers() intentionally removed from the auto-refresh loop.
     // Full server card re-renders every 5s caused DOM wipes that made
     // cards fluctuate visually. Server cards load fresh on page open

@@ -119,7 +119,7 @@ func main() {
 
 	mux, err := newMux(apiBase, apiUpstream, apiKey, apiKeys, adminAPIKeys)
 	if err != nil {
-		log.Fatalf("invalid API upstream: %v", err)
+		log.Fatalf("invalid API, runtime, or analytics upstream: %v", err)
 	}
 
 	shutdown, err := serviceutil.InitTracer("mcp-sentinel-ui")
@@ -205,6 +205,16 @@ func newMux(apiBase, apiUpstream, apiKey, apiKeys, adminAPIKeys string) (*http.S
 	parsedAPIKeys := parseAPIKeyList(apiKeys)
 	parsedAdminAPIKeys := parseAPIKeyList(adminAPIKeys)
 	mux.HandleFunc("/auth/admin-check", handleAdminCheck(sessions, parsedAPIKeys, parsedAdminAPIKeys, legacyAdminAPIKeyFallbackEnabled()))
+
+	runtimeBase, err := parseRuntimeUpstream(serviceutil.EnvOr("RUNTIME_UPSTREAM", defaultRuntimeUpstream))
+	if err != nil {
+		return nil, err
+	}
+	analyticsBase, err := parseRuntimeUpstream(serviceutil.EnvOr("ANALYTICS_UPSTREAM", defaultAnalyticsUpstream))
+	if err != nil {
+		return nil, err
+	}
+	mux.Handle(uiSessionAPIPrefix+"/", newSessionProxyWithUpstreams(runtimeBase, analyticsBase, sessions))
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/")

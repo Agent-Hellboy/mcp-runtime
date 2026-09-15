@@ -147,9 +147,15 @@ Primary request paths:
 
 ## UI And Platform API
 
-The browser loads static assets from the UI service. `/api/v1/*` calls go
-through Traefik to the split API services using the active UI session bearer
-token or configured API key.
+The browser loads static assets from the UI service. Unmigrated `/api/v1/*`
+calls go through Traefik to the split API services and still require a bearer
+token or API key. Authenticated dashboard reads use the UI session BFF:
+
+`GET /api/ui/v1/*` with the HttpOnly `mcp_ui_session` cookie, restricted to an
+explicit allowlist of runtime dashboard and analytics paths. The UI service
+injects the stored bearer token or upstream API key toward runtime-api or
+analytics-api and does not expose that credential to JavaScript. Mutating
+requests remain on the owning API ingress and are not accepted by the BFF.
 
 ```mermaid
 sequenceDiagram
@@ -166,14 +172,17 @@ sequenceDiagram
     Ingress->>UI: static app shell
     Browser->>UI: POST /auth/login
     UI-->>Browser: mcp_ui_session cookie
-    Browser->>Ingress: GET /api/v1/runtime/servers
-    Ingress->>Runtime: GET /api/v1/runtime/servers
+    Browser->>Ingress: GET /api/ui/v1/runtime/servers
+    Ingress->>UI: session BFF
+    UI->>Runtime: GET /api/v1/runtime/servers with session credential
     Runtime->>Platform: POST /internal/auth/resolve (service token)
     Platform->>DB: authenticate principal and team membership
     Runtime->>K8s: list MCPServer resources in allowed namespaces
-    Runtime-->>Browser: server list
-    Browser->>Ingress: GET /api/v1/dashboard/summary
-    Ingress->>Runtime: dashboard summary
+    Runtime-->>UI: server list
+    UI-->>Browser: server list
+    Browser->>Ingress: GET /api/ui/v1/dashboard/summary
+    Ingress->>UI: session BFF
+    UI->>Runtime: dashboard summary with session credential
     Runtime->>K8s: grants, sessions, servers
     Runtime->>Store: analytics summary
 ```
@@ -182,6 +191,9 @@ Primary request paths:
 
 - UI: `/`, `/config.js`, `/app.js`, `/styles.css`, `/health`
 - UI auth: `/auth/login`, `/auth/logout`, `/auth/status`, `/auth/admin-check`
+- UI session BFF: allowlisted `GET /api/ui/v1/*` runtime dashboard/catalog and
+  analytics reads; `RUNTIME_UPSTREAM` selects runtime-api and
+  `ANALYTICS_UPSTREAM` selects analytics-api.
 - API auth: `/api/v1/auth/login`, `/api/v1/auth/signup`, `/api/v1/auth/oidc`,
   `/api/v1/auth/me`
 - Dashboard and analytics: `/api/v1/dashboard/summary`, `/api/v1/events`,
@@ -331,7 +343,8 @@ Primary request paths:
 | Check platform health | `status`, `cluster doctor`, service `/health` | CLI, K8s, API/UI/ingest/processor/gateway health routes | workload status, secrets, ingress, registry | `smoke-auth`, `observability` |
 | Log in to platform from CLI | `mcp-runtime auth login` | CLI, API, Postgres, authfile | JWT/API token, platform URL | `cli-platform`, `api-platform` |
 | Browser login/logout | UI `/auth/*` | browser, UI, API key/session store | `mcp_ui_session`, admin check | `ui-auth` |
-| List visible servers | UI/CLI/API `GET /api/v1/runtime/servers` | API, Postgres principal, K8s MCPServer list | namespace scoping, public/org/team/user catalogs | `api-platform`, `multitenancy` |
+| Authenticated dashboard reads via UI session | UI allowlisted `GET /api/ui/v1/*` | browser, UI BFF, runtime-api/analytics-api | session cookie translated to bearer or API key | `ui-auth` |
+| List visible servers | CLI/API `GET /api/v1/runtime/servers` | API, Postgres principal, K8s MCPServer list | namespace scoping, public/org/team/user catalogs | `api-platform`, `multitenancy` |
 | Publish MCP server | `server deploy`, `POST /api/v1/runtime/servers` | CLI/API, registry, K8s, operator | MCPServer spec, image scope, ingress path | `cli-platform`, `api-platform`, `all` |
 | Admin direct kube changes | `--use-kube` CLI | CLI, kubeconfig, Kubernetes API, operator | CRDs and RBAC, no platform auth boundary | targeted local/admin tests |
 | Reconcile server workload | MCPServer change | K8s API, operator, Deployment, Service, Ingress, status | CRD defaults, service target port, gateway sidecar | `smoke-auth`, `all` |

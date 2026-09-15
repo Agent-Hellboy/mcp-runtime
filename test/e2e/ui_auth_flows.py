@@ -55,6 +55,8 @@ def check_vite_assets(base, label, index_html):
 
 def check_ui_auth(base, label, *, include_observability=False):
     expect_status(f"{base}/auth/status", 200, contains='"authenticated":false')
+    expect_status(f"{base}/api/ui/v1/runtime/servers", 401, contains='"error":"unauthorized"')
+    expect_status(f"{base}/api/ui/v1/runtime/adapter/sessions", 404, contains='"error":"not_found"')
     expect_status(f"{base}/auth/login", 401, method="POST", body={"api_key": "wrong-api-key"})
     login_status, login_headers, login_body = request(f"{base}/auth/login", method="POST", body={"api_key": api_key})
     check(login_status == 200, f"{label} POST /auth/login accepted UI API key", f"{label} login failed: {login_status} {login_body}")
@@ -66,6 +68,15 @@ def check_ui_auth(base, label, *, include_observability=False):
     check(status.get("authenticated") is True, f"{label} GET /auth/status returned authenticated session", f"{label} status response: {status}")
     admin_status, _, admin_body = request(f"{base}/auth/admin-check", headers=cookie_headers)
     check(admin_status == 204, f"{label} GET /auth/admin-check allowed admin session", f"{label} admin-check failed: {admin_status} {admin_body}")
+    proxy_payload = expect_json(f"{base}/api/ui/v1/runtime/servers", headers=cookie_headers)
+    check(
+        isinstance(proxy_payload.get("servers"), list),
+        f"{label} GET /api/ui/v1/runtime/servers used UI session",
+        f"{label} session proxy returned an invalid payload: {proxy_payload}",
+    )
+    proxy_body = json.dumps(proxy_payload)
+    check(api_key not in proxy_body, f"{label} session proxy omitted API key", f"{label} session proxy leaked API key")
+    check("Bearer " not in proxy_body, f"{label} session proxy omitted bearer token", f"{label} session proxy leaked bearer")
     if include_observability:
         expect_status(f"{base}/grafana/api/health", 200, headers=cookie_headers, contains="database")
         expect_status(f"{base}/prometheus/-/healthy", 404, headers=cookie_headers)
@@ -87,6 +98,17 @@ expect_status(f"{gateway_base}/prometheus/-/healthy", 404)
 
 check_ui_auth(ui_base, "ui")
 check_ui_auth(gateway_base, "gateway", include_observability=True)
+adapter_status, _, adapter_body = request(f"{gateway_base}/api/v1/runtime/adapter/sessions")
+check(
+    adapter_status == 401,
+    "gateway GET /api/v1/runtime/adapter/sessions stays on runtime-api",
+    f"adapter sessions status={adapter_status} body={adapter_body}",
+)
+check(
+    "authentication required" in adapter_body,
+    "gateway adapter sessions still require runtime-api credentials",
+    f"adapter sessions body={adapter_body}",
+)
 
 print("ui-auth request routes:")
 for route in (
@@ -99,6 +121,8 @@ for route in (
     "ui:/auth/status",
     "ui:/auth/admin-check",
     "ui:/auth/logout",
+    "ui:/api/ui/v1/runtime/servers",
+    "ui:/api/ui/v1/runtime/adapter/sessions",
     "gateway:/",
     "gateway:/config.js",
     f"gateway:{gateway_script_path}",
@@ -107,6 +131,8 @@ for route in (
     "gateway:/auth/status",
     "gateway:/auth/admin-check",
     "gateway:/auth/logout",
+    "gateway:/api/ui/v1/runtime/servers",
+    "gateway:/api/v1/runtime/adapter/sessions",
     "gateway:/grafana/api/health",
     "gateway:/prometheus/-/healthy (hidden)",
 ):
