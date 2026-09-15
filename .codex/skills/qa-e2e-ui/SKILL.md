@@ -147,6 +147,23 @@ surface and the fallback. A fallback that is merely reachable but emits
 unexplained browser `401`/`404` errors is a failed phase, not a passing
 compatibility check.
 
+Script it once, parameterized by surface, not copy-pasted per pass — this is
+what made a same-day three-PR migration comparison tractable in practice:
+
+```js
+// node evidence.mjs <out-dir> <surface: legacy|react>
+// Drives the same signed-out -> login -> workflow -> mobile -> logout flow
+// against either surface. Collects page.on('console'), page.on('pageerror'),
+// page.on('response') filtered to /api/ and /auth/, a screenshot per step,
+// and document.documentElement.scrollWidth vs clientWidth at 390px.
+```
+
+Run it unmodified with `out-dir=before` against the pre-change deployment and
+`out-dir=after` against the candidate. Diff the two evidence sets by hand —
+server/tool counts, request paths and statuses, console errors, 390px
+overflow — and paste the delta as a literal before/after table in the PR
+description. Do not narrate results from memory.
+
 ## Step 3 - Browser instrumentation is required
 
 Prefer MCP browser tools in Codex sessions:
@@ -160,8 +177,9 @@ Prefer MCP browser tools in Codex sessions:
    they are explained by an intentional negative test.
 
 If no MCP browser server is wired in, do not jump straight to **blocked** —
-drive Playwright directly from Node first (see Step 7b for the runner setup and
-the cached-browser-revision gotcha). Mark browser checks **blocked** only when
+drive Playwright directly from Node first (see
+`references/frontend-tooling.md` for the runner setup and the
+cached-browser-revision gotcha). Mark browser checks **blocked** only when
 no browser can be launched at all, and then run only curl/API smoke checks. Do
 not report a full UI pass without browser evidence.
 
@@ -235,18 +253,27 @@ browser/API assertion for the exact changed control. Examples:
 
 Use curl to support browser findings, not replace them.
 
-Dashboard load:
+Dashboard load — the root `/` is the React shell (`services/ui/static/`, a
+Vite build with a content-hashed bundle filename; never hardcode it, read it
+from `index.html`). Unmigrated workspaces render through the legacy fallback
+at `/legacy/index.html` (`services/ui/static/legacy/`, a plain unhashed
+`app.js`). Check both while any workspace still depends on the fallback:
 
 ```bash
 curl -sS -o "$QA_TMP/index.html" -w "%{http_code} %{size_download}\n" \
   http://localhost:18080/
-grep -q 'Dashboard sections' "$QA_TMP/index.html" || echo "FAIL: dashboard shell missing"
-grep -q 'app.js' "$QA_TMP/index.html" || echo "FAIL: bundle script missing"
-grep -q 'config.js' "$QA_TMP/index.html" || echo "FAIL: config script missing"
+grep -q '<div id="root">' "$QA_TMP/index.html" || echo "FAIL: React root mount missing"
+grep -qE '<script type="module"[^>]*src="/assets/index-[^"]+\.js"' "$QA_TMP/index.html" \
+  || echo "FAIL: React bundle script missing"
 
-curl -sSI http://localhost:18080/app.js | tr -d '\r' \
+BUNDLE_JS="$(grep -oE '/assets/index-[^"]+\.js' "$QA_TMP/index.html" | head -1)"
+curl -sSI "http://localhost:18080${BUNDLE_JS}" | tr -d '\r' \
   | grep -qiE '^Content-Type: (text|application)/javascript' \
-  || echo "FAIL: app.js content-type"
+  || echo "FAIL: bundle content-type"
+
+curl -sS -o "$QA_TMP/legacy.html" -w "%{http_code}\n" http://localhost:18080/legacy/index.html
+grep -q 'Dashboard sections' "$QA_TMP/legacy.html" || echo "FAIL: legacy dashboard shell missing"
+grep -q 'app.js' "$QA_TMP/legacy.html" || echo "FAIL: legacy bundle script missing"
 
 curl -sS http://localhost:18080/config.js | grep -q 'window.MCP_API_BASE' \
   || echo "FAIL: /config.js missing MCP_API_BASE"
@@ -254,12 +281,15 @@ curl -sS http://localhost:18080/config.js | grep -qi 'api.?key' \
   && echo "FAIL: /config.js exposes an apiKey-shaped field"
 ```
 
-Static assets:
+Static assets — the React bundle is minified build output gated by
+`npm run build`/`tsc -b` (`references/frontend-tooling.md`), not something to
+syntax-check directly. `services/ui/static/legacy/app.js` is the only
+remaining hand-authored, unminified static script:
 
 ```bash
-node --check services/ui/static/app.js
-curl -sS -o "$QA_TMP/app.js" http://localhost:18080/app.js
-node --check "$QA_TMP/app.js"
+node --check services/ui/static/legacy/app.js
+curl -sS -o "$QA_TMP/legacy-app.js" http://localhost:18080/legacy/app.js
+node --check "$QA_TMP/legacy-app.js"
 ```
 
 Discover API routes from implementation and browser network traffic. Do not
@@ -275,7 +305,7 @@ command that rewrites tracked files during the audit.
 ```bash
 (cd services/ui && go test ./... -race -count=1)
 (cd services/ui/frontend && npm test && npm run build)
-node --check services/ui/static/app.js
+node --check services/ui/static/legacy/app.js
 go test ./internal/cli/... ./cmd/mcp-runtime/... -count=1
 go test ./test/golden/... -count=1
 E2E_CACHE_MODE=1 \
@@ -289,79 +319,14 @@ If a check is unsafe or too expensive for the requested scope, skip it with a
 specific reason. For example, skip Kind e2e when the live contributor cluster is
 busy with unrelated user work or when the user requested a read-only audit.
 
-## Step 7b - Frontend development, test, and validation tooling
+## Step 7b - Frontend development, test, and Playwright-without-MCP tooling
 
-The dashboard frontend lives in `services/ui/frontend` (React 19 + Vite +
-TypeScript, no UI framework). Use its own toolchain for component-level
-evidence before spending a cluster deploy on a browser pass.
-
-Installed and available for test/validation work:
-
-| Tool | Use it for |
-|---|---|
-| `vitest` | test runner, jsdom environment, `src/test/setup.ts` |
-| `@testing-library/react` | render components, query by role/label/test id |
-| `@testing-library/user-event` | realistic typing, clicking, select, tab order — prefer over `fireEvent` |
-| `@testing-library/jest-dom` | `toBeInTheDocument`, `toHaveTextContent`, `toHaveFocus`, … |
-| `vitest-axe` + `axe-core` | assert `toHaveNoViolations()` on rendered trees |
-| `tsc -b` | type contract check, runs as part of `npm run build` |
-
-```bash
-cd services/ui/frontend
-npm test                 # vitest run
-npx vitest run src/components/servers   # narrow while iterating
-npx tsc -b               # types only, no bundle
-npm run build            # tsc -b && vite build -> ../static
-```
-
-Rules that keep this evidence honest:
-
-- `vite build` writes into `services/ui/static/`, which the Go service embeds.
-  A frontend change is not deployable until `npm run build` has run and the new
-  `static/assets/*` hashes are committed. `public/legacy/` is copied through the
-  build, so verify `services/ui/static/legacy/` still exists afterwards —
-  `emptyOutDir: true` makes a missed copy silent.
-- Disable the `color-contrast` axe rule in jsdom (no layout engine) and cover
-  contrast in the browser pass instead. Every other rule should stay on.
-- jsdom tests cannot prove responsive bounds or real network paths. Keep
-  overflow, viewport, and request-URL assertions in the Playwright pass.
-- Adding a test-only dependency is fine; check `npm audit --omit=dev` stays at
-  zero and note any pre-existing dev-tree advisories rather than silently
-  inheriting them.
-
-### Playwright runner setup
-
-There is no Playwright MCP server wired into every session. When it is absent,
-drive Playwright directly from Node and still produce the same evidence:
-
-```bash
-node -e "console.log(require('<path>/node_modules/playwright/package.json').version)"
-ls ~/Library/Caches/ms-playwright/     # which browser builds actually exist
-```
-
-The common failure is a Playwright package whose pinned browser revision is not
-in the cache ("Executable doesn't exist at .../chromium_headless_shell-<rev>").
-Do not conclude browser automation is unavailable. Either run
-`npx playwright install chromium`, or launch the cached build explicitly:
-
-```js
-import { chromium } from '<path>/node_modules/playwright/index.mjs';
-const browser = await chromium.launch({
-  executablePath: process.env.HOME +
-    '/Library/Caches/ms-playwright/chromium-<rev>/chrome-mac-arm64/' +
-    'Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing',
-});
-```
-
-Script the before/after passes as one file parameterized by surface, so the same
-actions, viewports, and assertions run against both deployments. Collect per
-run: `page.on('console')`, `page.on('pageerror')`, `page.on('response')` filtered
-to `/api/` and `/auth/`, screenshots per step, and a
-`document.documentElement.scrollWidth` vs `clientWidth` measurement at 390px.
-
-Query by `data-testid` for QA hooks and by role/label for the accessibility
-assertions. Generated ids (React `useId()`) are not stable across builds — never
-select on them.
+Read `references/frontend-tooling.md` before doing `services/ui/frontend`
+component-test/build work, or when no Playwright MCP server is wired in and
+you need to drive Playwright directly from Node (covers the vitest/
+testing-library/vitest-axe toolchain, why the bundle filename is content-hashed,
+and the cached-browser-revision launch failure with its fix). Skip it for a
+narrow API-only or docs-only check.
 
 ## Step 8 - Public-host defense
 
@@ -424,7 +389,7 @@ Expected:
 Actual:
 Network/API evidence:
 Console evidence:
-Likely implementation area: <services/ui/static/app.js | services/ui/main.go | services/platform-api/... | services/runtime-api/...>
+Likely implementation area: <services/ui/frontend/src/... | services/ui/static/legacy/app.js | services/ui/main.go | services/platform-api/... | services/runtime-api/...>
 Recommended regression test:
 Status: Open
 ```
