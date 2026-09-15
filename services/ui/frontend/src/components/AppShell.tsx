@@ -7,6 +7,8 @@ import type { AuthStatus } from "../api/types";
 type AppShellProps = {
   auth: AuthStatus;
   authBusy: boolean;
+  theme: "dark" | "light";
+  onToggleTheme: () => void;
   workspace: WorkspaceId;
   onSelectWorkspace: (id: WorkspaceId) => void;
   onSignIn: () => void;
@@ -17,6 +19,8 @@ type AppShellProps = {
 export function AppShell({
   auth,
   authBusy,
+  theme,
+  onToggleTheme,
   workspace,
   onSelectWorkspace,
   onSignIn,
@@ -34,7 +38,14 @@ export function AppShell({
           <h1>Control Plane Dashboard</h1>
           <p className="lede">Monitor, govern, and operate your MCP infrastructure.</p>
         </div>
-        <AccountBar status={auth} busy={authBusy} onSignIn={onSignIn} onSignOut={onSignOut} />
+        <AccountBar
+          status={auth}
+          busy={authBusy}
+          theme={theme}
+          onToggleTheme={onToggleTheme}
+          onSignIn={onSignIn}
+          onSignOut={onSignOut}
+        />
       </header>
       <WorkspaceNavigation
         active={workspace}

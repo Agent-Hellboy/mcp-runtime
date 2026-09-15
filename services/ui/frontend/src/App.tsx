@@ -10,6 +10,17 @@ import type { WorkspaceId } from "./components/WorkspaceNavigation";
 import { login, logout, readAuthStatus, type LoginInput } from "./api/auth";
 import { isAdmin, type AuthStatus } from "./api/types";
 
+type ThemeMode = "dark" | "light";
+const THEME_STORAGE_KEY = "mcp-sentinel-theme";
+
+function initialTheme(): ThemeMode {
+  try {
+    return window.localStorage.getItem(THEME_STORAGE_KEY) === "light" ? "light" : "dark";
+  } catch {
+    return "dark";
+  }
+}
+
 function loginErrorMessage(err: unknown): string {
   const raw = err instanceof Error ? err.message : "";
   if (!raw || raw.includes("unauthorized") || raw.includes("401")) {
@@ -42,6 +53,17 @@ export function App() {
   const [showSignIn, setShowSignIn] = useState(false);
   const [loginError, setLoginError] = useState("");
   const [workspace, setWorkspace] = useState<WorkspaceId>("servers");
+  const [theme, setTheme] = useState<ThemeMode>(initialTheme);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    try {
+      window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+    } catch {
+      // The theme still applies when storage is unavailable (for example in a
+      // locked-down browser profile); persistence is a progressive enhancement.
+    }
+  }, [theme]);
 
   useEffect(() => {
     let cancelled = false;
@@ -145,6 +167,8 @@ export function App() {
     <AppShell
       auth={auth}
       authBusy={authBusy}
+      theme={theme}
+      onToggleTheme={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}
       workspace={workspace}
       onSelectWorkspace={(id) => {
         setShowSignIn(false);
