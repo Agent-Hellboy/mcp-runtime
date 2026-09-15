@@ -1032,9 +1032,11 @@ func TestStartPolicyCacheRequiresConfiguredPolicyFile(t *testing.T) {
 func TestEmitIfEnabledDropsWhenQueueIsFull(t *testing.T) {
 	t.Parallel()
 
+	registry := prometheus.NewRegistry()
 	proxy := &gatewayServer{
 		analyticsURL:   "http://analytics.example.com",
 		analyticsQueue: make(chan analyticsEvent, 1),
+		metrics:        newGatewayMetrics(registry),
 	}
 	proxy.analyticsQueue <- analyticsEvent{Envelope: events.Envelope{Source: "existing"}}
 
@@ -1061,20 +1063,28 @@ func TestEmitIfEnabledDropsWhenQueueIsFull(t *testing.T) {
 	if got := proxy.analyticsDropped.Load(); got != 1 {
 		t.Fatalf("analytics dropped count = %d, want 1", got)
 	}
+	if got := testutil.ToFloat64(proxy.metrics.analyticsDropsTotal); got != 1 {
+		t.Fatalf("analytics drop metric = %v, want 1", got)
+	}
 }
 
 func TestEmitIfEnabledDropsWhenDispatcherClosed(t *testing.T) {
 	t.Parallel()
 
+	registry := prometheus.NewRegistry()
 	proxy := &gatewayServer{
 		analyticsURL:    "http://analytics.example.com",
 		analyticsClosed: true,
+		metrics:         newGatewayMetrics(registry),
 	}
 
 	proxy.emitIfEnabled(context.Background(), events.Envelope{Source: "closed", EventType: "mcp.request"})
 
 	if got := proxy.analyticsDropped.Load(); got != 1 {
 		t.Fatalf("analytics dropped count = %d, want 1", got)
+	}
+	if got := testutil.ToFloat64(proxy.metrics.analyticsDropsTotal); got != 1 {
+		t.Fatalf("analytics drop metric = %v, want 1", got)
 	}
 }
 

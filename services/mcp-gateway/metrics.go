@@ -56,6 +56,7 @@ func recordPolicyReloadFailure() {
 type gatewayMetrics struct {
 	requestsTotal          *prometheus.CounterVec
 	policyDecisionsTotal   *prometheus.CounterVec
+	analyticsDropsTotal    prometheus.Counter
 	requestDurationSeconds *prometheus.HistogramVec
 	inflightRequests       *prometheus.GaugeVec
 	requestBytesTotal      *prometheus.CounterVec
@@ -81,6 +82,10 @@ func newGatewayMetrics(registerer prometheus.Registerer) *gatewayMetrics {
 			Name: "mcp_gateway_policy_decisions_total",
 			Help: "Total policy decisions made by MCP gateway sidecars.",
 		}, []string{"namespace", "server", "cluster", "team_id", "decision", "reason", "rpc_method"}),
+		analyticsDropsTotal: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "mcp_gateway_analytics_drop_total",
+			Help: "Total analytics events dropped by MCP gateway sidecars.",
+		}),
 		requestDurationSeconds: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "mcp_gateway_request_duration_seconds",
 			Help:    "End-to-end request duration observed by MCP gateway sidecars.",
@@ -111,6 +116,7 @@ func newGatewayMetrics(registerer prometheus.Registerer) *gatewayMetrics {
 		registerer.MustRegister(
 			m.requestsTotal,
 			m.policyDecisionsTotal,
+			m.analyticsDropsTotal,
 			m.requestDurationSeconds,
 			m.inflightRequests,
 			m.requestBytesTotal,
@@ -120,6 +126,13 @@ func newGatewayMetrics(registerer prometheus.Registerer) *gatewayMetrics {
 		)
 	}
 	return m
+}
+
+func (m *gatewayMetrics) recordAnalyticsDrop() {
+	if m == nil {
+		return
+	}
+	m.analyticsDropsTotal.Inc()
 }
 
 func (s *gatewayServer) metricScope(policy *policypkg.Document) gatewayMetricScope {
