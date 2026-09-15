@@ -18,8 +18,8 @@ RUN cd services/ui && go mod download
 
 COPY services/ui/*.go ./services/ui/
 COPY --from=frontend /src/services/ui/static/ ./services/ui/static/
-ARG TARGETOS=linux
-ARG TARGETARCH=amd64
+ARG TARGETOS
+ARG TARGETARCH
 RUN cd services/ui && \
     mkdir -p /out && CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o /out/ui .
 

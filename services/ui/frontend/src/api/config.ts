@@ -10,7 +10,7 @@ export type RuntimeConfig = {
 
 export function readRuntimeConfig(): RuntimeConfig {
   return {
-    apiBase: window.MCP_API_BASE || "/api",
+    apiBase: window.MCP_API_BASE || "/api/v1",
     defaults: {
       namespace: window.MCP_DEFAULTS?.namespace || "",
       policyVersion: window.MCP_DEFAULTS?.policyVersion || "v1",

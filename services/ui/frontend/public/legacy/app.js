@@ -1,4 +1,4 @@
-const apiBase = window.MCP_API_BASE || "/api";
+const apiBase = window.MCP_API_BASE || "/api/v1";
 const defaults = Object.assign(
   { namespace: "", policyVersion: "v1" },
   window.MCP_DEFAULTS || {}
@@ -13,6 +13,7 @@ let userAPIKeysCache = [];
 let teamsCache = [];
 let teamMembersCache = [];
 let serversCache = [];
+let toolsCatalogCache = [];
 let publishPolicyCache = null;
 let selectedServerKey = "";
 let selectedServerEventsCache = [];
@@ -27,6 +28,7 @@ let operationsDeploymentsCache = [];
 let userAPIKeyClearTimer = null;
 let serverSearchQuery = "";
 let serverStatusFilter = "all";
+let toolRiskFilter = "";
 let selectedOperationsServerKey = "";
 let selectedUserAnalyticsServerKey = "";
 let selectedTeamSlug = "";
@@ -47,11 +49,49 @@ const serverInventoryLoaded = new Set();
 // Keyed by serverKey → { sections: { label → { open, items[] } }, connectOpen }
 let serverCardOpenState = {};
 
+const sessionAPIRuntimePrefixes = [
+  "/dashboard/summary",
+  "/runtime/namespaces",
+  "/runtime/servers",
+  "/runtime/tools",
+  "/runtime/server-events",
+  "/runtime/observability/links",
+  "/runtime/observability/grafana/dashboard",
+  "/runtime/observability/prometheus/query",
+  "/runtime/teams",
+  "/runtime/grants",
+  "/runtime/sessions",
+  "/runtime/components",
+  "/runtime/policy",
+  "/user/api-keys",
+  "/admin/operations",
+  "/admin/deployments",
+];
+
+const sessionAPIAnalyticsPrefixes = [
+  "/events",
+  "/analytics/usage",
+  "/user/analytics/usage",
+];
+
+function sessionAPIPathAllowed(pathname, prefixes) {
+  return prefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
+}
+
+function sessionAPIURL(path, method = "GET") {
+  const pathname = String(path || "").split("?")[0];
+  const isGET = String(method || "GET").toUpperCase() === "GET";
+  if (authenticated && isGET && (sessionAPIPathAllowed(pathname, sessionAPIRuntimePrefixes) || sessionAPIPathAllowed(pathname, sessionAPIAnalyticsPrefixes))) {
+    return `/api/ui/v1${path}`;
+  }
+  return `${apiBase}${path}`;
+}
+
 // API Helper
 async function fetchJSON(path, options = {}) {
   const headers = { ...options.headers };
 
-  const response = await fetch(`${apiBase}${path}`, {
+  const response = await fetch(sessionAPIURL(path, options.method), {
     ...options,
     credentials: "same-origin",
     headers,
@@ -591,6 +631,8 @@ async function loadEvents() {
         <td>${renderAuditTarget(event)}</td>
         <td>${renderDecision(event.decision)}</td>
         <td>${renderPolicySummary(event)}</td>
+        <td>${renderMatchedAccessLink(event, "grant")}</td>
+        <td>${renderMatchedAccessLink(event, "session")}</td>
       `;
       fragment.appendChild(row);
     });
@@ -600,6 +642,92 @@ async function loadEvents() {
     if (isUnauthorizedError(err)) return;
     console.error("Failed to load events:", err);
   }
+}
+
+function renderMatchedAccessLink(event, kind) {
+  const payload = event.payload || {};
+  const name = payload[`matched_${kind}`] || "";
+  if (!name) return '<span class="muted-text">-</span>';
+  const namespace = payload[`matched_${kind}_namespace`] || event.namespace || activeScopeNamespace();
+  return `<button class="table-link" type="button" data-access-kind="${kind}" data-access-name="${escapeHtml(name)}" data-access-namespace="${escapeHtml(namespace)}">${escapeHtml(`${namespace}/${name}`)}</button>`;
+}
+
+function createAccessLinkCell(name, namespace, kind, onClick) {
+  const cell = document.createElement("td");
+  const button = document.createElement("button");
+  button.className = "table-link identity-link";
+  button.type = "button";
+  button.textContent = name || "-";
+  button.title = `${namespace}/${name}`;
+  button.addEventListener("click", onClick);
+  cell.appendChild(button);
+  const sub = document.createElement("span");
+  sub.className = "identity-subtext";
+  sub.textContent = namespace || "";
+  cell.appendChild(sub);
+  return cell;
+}
+
+function accessDetailStat(label, value) {
+  return `<div class="server-detail-stat"><span>${escapeHtml(label)}</span><strong>${escapeHtml(String(value || "-"))}</strong></div>`;
+}
+
+function showGrantDetail(grant) {
+  const namespace = grant.namespace || activeScopeNamespace();
+  setText("governance-grant-detail-title", grant.name || "Access Grant");
+  setText("governance-grant-detail-kicker", `${namespace} / MCPAccessGrant`);
+  document.getElementById("governance-grant-detail-info").innerHTML = [
+    accessDetailStat("Server", grant.serverRef?.name),
+    accessDetailStat("Subject", subjectLabel(grant.subject)),
+    accessDetailStat("Max trust", grant.maxTrust),
+    accessDetailStat("Status", grant.disabled ? "Disabled" : "Active"),
+  ].join("");
+  activateTab("governance-grant-detail");
+  loadGrantActivity(grant.name || "", namespace);
+}
+
+function showSessionDetail(session) {
+  const namespace = session.namespace || activeScopeNamespace();
+  setText("governance-session-detail-title", session.name || "Agent Session");
+  setText("governance-session-detail-kicker", `${namespace} / MCPAgentSession`);
+  document.getElementById("governance-session-detail-info").innerHTML = [
+    accessDetailStat("Server", session.serverRef?.name),
+    accessDetailStat("Subject", subjectLabel(session.subject)),
+    accessDetailStat("Trust", session.consentedTrust),
+    accessDetailStat("Status", session.revoked ? "Revoked" : "Active"),
+  ].join("");
+  activateTab("governance-session-detail");
+  loadSessionTimeline(session.name || "", namespace);
+}
+
+function subjectLabel(subject) {
+  if (!subject) return "-";
+  return [subject.humanID, subject.agentID, subject.teamID].filter(Boolean).join(" / ") || "-";
+}
+
+async function loadGrantActivity(name, namespace) {
+  const body = document.getElementById("governance-grant-detail-activity-body");
+  body.innerHTML = '<tr><td colspan="4" class="empty">Loading activity…</td></tr>';
+  try {
+    const data = await fetchJSON("/events?limit=1000");
+    const since = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    const events = (data.events || []).filter((event) => {
+      const payload = event.payload || {};
+      const timestamp = Date.parse(event.timestamp || "");
+      return payload.matched_grant === name && (payload.matched_grant_namespace || event.namespace || namespace) === namespace && (!Number.isNaN(timestamp) ? timestamp >= since : true);
+    });
+    body.innerHTML = events.length ? events.map((event) => `<tr><td>${renderAuditTime(event)}</td><td>${escapeHtml(event.tool_name || event.payload?.tool_name || event.payload?.rpc_method || "-")}</td><td>${renderDecision(event.decision)}</td><td>${renderMatchedAccessLink(event, "session")}</td></tr>`).join("") : '<tr><td colspan="4" class="empty">No recent activity.</td></tr>';
+  } catch (err) { body.innerHTML = '<tr><td colspan="4" class="empty">Activity unavailable.</td></tr>'; }
+}
+
+async function loadSessionTimeline(name, namespace) {
+  const body = document.getElementById("governance-session-detail-timeline-body");
+  body.innerHTML = '<tr><td colspan="4" class="empty">Loading timeline…</td></tr>';
+  try {
+    const data = await fetchJSON(`/events?limit=1000&session_id=${encodeURIComponent(name)}`);
+    const events = (data.events || []).filter((event) => (event.payload?.matched_session_namespace || event.namespace || namespace) === namespace);
+    body.innerHTML = events.length ? events.map((event) => `<tr><td>${renderAuditTime(event)}</td><td>${escapeHtml(event.tool_name || event.payload?.tool_name || event.payload?.rpc_method || "-")}</td><td>${renderDecision(event.decision)}</td><td>${escapeHtml(event.payload?.reason || "-")}</td></tr>`).join("") : '<tr><td colspan="4" class="empty">No tool calls recorded.</td></tr>';
+  } catch (err) { body.innerHTML = '<tr><td colspan="4" class="empty">Timeline unavailable.</td></tr>'; }
 }
 
 function renderAuditTime(event) {
@@ -1287,6 +1415,24 @@ function createUserServerActionsCell(server) {
   });
   actions.appendChild(analyticsButton);
 
+  if (server.observability?.prometheus?.queries?.length) {
+    const metricsButton = document.createElement("button");
+    metricsButton.type = "button";
+    metricsButton.className = "ghost action-btn";
+    metricsButton.textContent = "Prometheus";
+    metricsButton.addEventListener("click", () => openScopedObservability(server, "prometheus"));
+    actions.appendChild(metricsButton);
+  }
+
+  if (server.observability?.grafana?.available && server.observability?.grafana?.url) {
+    const grafanaButton = document.createElement("button");
+    grafanaButton.type = "button";
+    grafanaButton.className = "ghost action-btn";
+    grafanaButton.textContent = "Grafana";
+    grafanaButton.addEventListener("click", () => openScopedObservability(server, "grafana"));
+    actions.appendChild(grafanaButton);
+  }
+
   if (server.endpoint) {
     const copyButton = document.createElement("button");
     copyButton.type = "button";
@@ -1307,6 +1453,35 @@ function createUserServerActionsCell(server) {
 
   cell.appendChild(actions);
   return cell;
+}
+
+async function openScopedObservability(server, target) {
+  if (!server?.namespace || !server?.name) return;
+  try {
+    const links = server.observability || await fetchJSON(
+      `/runtime/observability/links?namespace=${encodeURIComponent(server.namespace)}&server=${encodeURIComponent(server.name)}`
+    );
+    if (target === "grafana") {
+      if (links?.grafana?.available && links.grafana.url) {
+        window.open(links.grafana.url, "_blank", "noopener");
+        return;
+      }
+      showToast(links?.grafana?.reason || "Grafana is not available for this server", "error");
+      return;
+    }
+    const queries = links?.prometheus?.queries || [];
+    const requestRate = queries.find((query) => query.id === "request_rate");
+    const query = requestRate || queries[0];
+    if (!query?.url) {
+      showToast("Prometheus metrics are not available for this server", "error");
+      return;
+    }
+    window.open(query.url, "_blank", "noopener");
+  } catch (err) {
+    if (isUnauthorizedError(err)) return;
+    console.error("Failed to open observability link:", err);
+    showToast(readErrorMessage(err, "Observability is unavailable"), "error");
+  }
 }
 
 function renderUserDashboardAnalytics(data) {
@@ -1413,6 +1588,9 @@ async function loadServers() {
     serversCache = Array.isArray(data.servers) ? data.servers : [];
     publishPolicyCache = data.publish_policy || null;
     renderServers();
+    loadToolCatalog()
+      .then(() => renderToolCatalog())
+      .catch(() => renderToolCatalog("Error loading tools."));
     scheduleServerLiveInventoryRefresh();
   } catch (err) {
     if (isUnauthorizedError(err)) return;
@@ -1423,6 +1601,19 @@ async function loadServers() {
     if (grid) {
       grid.innerHTML = '<div class="component-card error">Error loading MCP servers.</div>';
     }
+    renderToolCatalog("Error loading tools.");
+  }
+}
+
+async function loadToolCatalog() {
+  try {
+    const data = await fetchJSON(scopedPath("/runtime/tools"));
+    toolsCatalogCache = Array.isArray(data.tools) ? data.tools : [];
+  } catch (err) {
+    if (isUnauthorizedError(err)) return;
+    console.error("Failed to load tool catalog:", err);
+    toolsCatalogCache = [];
+    throw err;
   }
 }
 
@@ -1575,6 +1766,7 @@ function renderServers() {
   const grid = document.getElementById("servers-grid");
   if (!grid) return;
   renderServerCatalogSummary();
+  renderToolCatalog();
 
   if (serversCache.length === 0) {
     grid.innerHTML = '<div class="server-empty-state">No MCP servers found.</div>';
@@ -1657,7 +1849,7 @@ function serverSearchText(server) {
     server.ready,
     server.endpoint,
     metadataSearchText(server.labels),
-    ...(inventory.tools || []).map((tool) => `${tool.name || ""} ${tool.requiredTrust || ""} ${tool.sideEffect || ""} ${tool.description || ""} ${tool.drift || ""}`),
+    ...(inventory.tools || []).map((tool) => `${tool.name || ""} ${tool.requiredTrust || ""} ${tool.sideEffect || ""} ${tool.riskLevel || ""} ${tool.description || ""} ${tool.drift || ""}`),
     ...(inventory.prompts || []).map(inventorySearchText),
     ...(inventory.resources || []).map(inventorySearchText),
     ...(inventory.tasks || []).map(inventorySearchText),
@@ -1711,6 +1903,7 @@ function mergeToolInventory(liveItems, declaredItems) {
       description: item.description || governance?.description || "",
       requiredTrust: governance?.requiredTrust || "",
       sideEffect: governance?.sideEffect || "",
+      riskLevel: governance?.riskLevel || computedToolRisk(governance || item),
       labels: governance?.labels || item.labels || {},
       drift: governance ? "" : "ungoverned",
     });
@@ -1778,6 +1971,100 @@ function inventorySearchText(item) {
   if (typeof item === "string") return item;
   const labels = metadataSearchText(item?.labels);
   return `${item?.name || ""} ${item?.uri || ""} ${item?.description || ""} ${item?.drift || ""} ${labels}`;
+}
+
+function renderToolCatalog(errorMessage = "") {
+  const tbody = document.getElementById("tool-catalog-body");
+  if (!tbody) return;
+  const rows = filteredToolCatalogRows();
+  setText("tool-catalog-count", `${formatNumber(rows.length)} tools`);
+  if (errorMessage) {
+    tbody.innerHTML = `<tr><td colspan="7" class="empty">${escapeHtml(errorMessage)}</td></tr>`;
+    return;
+  }
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="empty">No tools match this search.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = "";
+  const fragment = document.createDocumentFragment();
+  rows.forEach((tool) => {
+    const row = document.createElement("tr");
+    row.appendChild(createIdentityCell(tool.tool_name || "-", tool.description || ""));
+    row.appendChild(createIdentityCell(tool.server_name || "-", tool.namespace || ""));
+    row.appendChild(createBadgeCell(tool.required_trust || "-", "badge-muted"));
+    row.appendChild(createBadgeCell(tool.side_effect || "-", "badge-muted"));
+    row.appendChild(createBadgeCell(tool.risk_level || computedToolRisk(tool), riskBadgeClass(tool.risk_level || computedToolRisk(tool))));
+    row.appendChild(createBadgeCell(tool.drift_status || "-", driftBadgeClass(tool.drift_status)));
+    const action = document.createElement("td");
+    const btn = document.createElement("button");
+    btn.className = "ghost compact-action";
+    btn.type = "button";
+    btn.textContent = "Copy";
+    btn.addEventListener("click", () => {
+      copyTextToClipboard(JSON.stringify(tool.connect_config || {}, null, 2), "Connect config copied");
+    });
+    action.appendChild(btn);
+    row.appendChild(action);
+    fragment.appendChild(row);
+  });
+  tbody.appendChild(fragment);
+}
+
+function filteredToolCatalogRows() {
+  const query = serverSearchQuery.trim().toLowerCase();
+  return toolsCatalogCache.filter((tool) => {
+    if (toolRiskFilter && String(tool.risk_level || computedToolRisk(tool)).toLowerCase() !== toolRiskFilter) {
+      return false;
+    }
+    if (!query) return true;
+    return [
+      tool.tool_name,
+      tool.description,
+      tool.server_name,
+      tool.namespace,
+      tool.team_id,
+      tool.required_trust,
+      tool.side_effect,
+      tool.risk_level,
+      tool.drift_status,
+    ].filter(Boolean).join(" ").toLowerCase().includes(query);
+  });
+}
+
+function computedToolRisk(tool) {
+  const explicit = String(tool?.riskLevel || tool?.risk_level || "").trim().toLowerCase();
+  if (["low", "medium", "high"].includes(explicit)) return explicit;
+  const trust = String(tool?.requiredTrust || tool?.required_trust || "low").trim().toLowerCase();
+  const sideEffect = String(tool?.sideEffect || tool?.side_effect || "").trim().toLowerCase();
+  if (sideEffect === "destructive" || trust === "high") return "high";
+  if (sideEffect === "write" || trust === "medium") return "medium";
+  if (sideEffect === "read" && trust === "low") return "low";
+  return "";
+}
+
+function riskBadgeClass(risk) {
+  switch (String(risk || "").toLowerCase()) {
+    case "high":
+      return "badge-error";
+    case "medium":
+      return "badge-warning";
+    case "low":
+      return "badge-success";
+    default:
+      return "badge-muted";
+  }
+}
+
+function driftBadgeClass(drift) {
+  switch (String(drift || "").toLowerCase()) {
+    case "ungoverned":
+      return "badge-error";
+    case "missing":
+      return "badge-warning";
+    default:
+      return "badge-muted";
+  }
 }
 
 function renderServerCatalogSummary() {
@@ -2021,6 +2308,18 @@ function renderServerMeta(server) {
     actions.appendChild(copyURL);
   }
   if (server.access_json && Object.keys(server.access_json).length) {
+    const copyConfig = document.createElement("button");
+    copyConfig.className = "ghost server-action";
+    copyConfig.type = "button";
+    copyConfig.textContent = "Copy config";
+    copyConfig.addEventListener("click", (event) => {
+      const details = event.currentTarget.closest(".server-meta-wrap")?.parentElement?.querySelector("details.server-connect");
+      if (details) {
+        details.open = true;
+        details.scrollIntoView({ block: "nearest" });
+      }
+    });
+    actions.appendChild(copyConfig);
     const jsonText = JSON.stringify(server.access_json || {}, null, 2);
     const copyJSON = document.createElement("button");
     copyJSON.className = "ghost server-action";
@@ -2230,11 +2529,13 @@ function renderInventoryBlock(label, items, itemRenderer) {
 function renderToolItem(tool) {
   const trust = tool.requiredTrust ? `<span class="trust-chip">${escapeHtml(tool.requiredTrust)}</span>` : "";
   const sideEffect = tool.sideEffect ? `<span class="trust-chip">${escapeHtml(tool.sideEffect)}</span>` : "";
+  const riskValue = computedToolRisk(tool);
+  const risk = riskValue ? `<span class="risk-chip risk-${escapeHtml(riskValue)}">${escapeHtml(riskValue)} risk</span>` : "";
   const drift = renderDriftBadge(tool);
   const labels = renderInventoryLabels(tool.labels);
   return renderExpandableInventoryItem({
     name: tool.name || "-",
-    summaryMeta: [trust, sideEffect, drift].filter(Boolean).join(" "),
+    summaryMeta: [trust, sideEffect, risk, drift].filter(Boolean).join(" "),
     description: tool.description,
     labels,
   });
@@ -2359,6 +2660,10 @@ function initDashboard() {
     serverSearchQuery = event.target.value || "";
     renderServers();
   });
+  document.getElementById("tool-risk-filter")?.addEventListener("change", (event) => {
+    toolRiskFilter = event.target.value || "";
+    renderToolCatalog();
+  });
   document.querySelectorAll("[data-server-status]").forEach((button) => {
     button.addEventListener("click", () => {
       serverStatusFilter = button.dataset.serverStatus || "all";
@@ -2377,10 +2682,14 @@ function startAutoRefresh() {
   const autoRefreshCheckbox = document.getElementById("auto-refresh");
   if (autoRefreshCheckbox && !autoRefreshCheckbox.checked) return;
   autoRefreshInterval = setInterval(() => {
-    loadDashboardSummary();
-    loadDashboardAnalytics();
-    loadGovernanceDecisionAnalytics();
-    loadEvents();
+    const active = resolveActiveTab();
+    if (active === "dashboard") {
+      loadDashboardSummary();
+      loadDashboardAnalytics();
+    } else if (active === "governance" && isAdminUser()) {
+      loadGovernanceDecisionAnalytics();
+      loadEvents();
+    }
     // loadServers() intentionally removed from the auto-refresh loop.
     // Full server card re-renders every 5s caused DOM wipes that made
     // cards fluctuate visually. Server cards load fresh on page open
@@ -2520,7 +2829,7 @@ function renderGrants() {
     const serverNamespace = grant.serverRef?.namespace || namespace;
 
     const row = document.createElement("tr");
-    row.appendChild(createIdentityCell(grant.name || "-", namespace));
+    row.appendChild(createAccessLinkCell(grant.name || "-", namespace, "grant", () => showGrantDetail(grant)));
     row.appendChild(createIdentityCell(grant.serverRef?.name || "-", serverNamespace));
     row.appendChild(createSubjectCell(grant.subject));
     row.appendChild(createGrantRiskCell(grant.maxTrust, grant.allowedSideEffects));
@@ -2727,7 +3036,7 @@ function renderSessions() {
     const serverNamespace = session.serverRef?.namespace || namespace;
 
     const row = document.createElement("tr");
-    row.appendChild(createIdentityCell(session.name || "-", namespace));
+    row.appendChild(createAccessLinkCell(session.name || "-", namespace, "session", () => showSessionDetail(session)));
     row.appendChild(createIdentityCell(session.serverRef?.name || "-", serverNamespace));
     row.appendChild(createSubjectCell(session.subject));
     row.appendChild(createTrustCell(session.consentedTrust));
@@ -2876,6 +3185,21 @@ function updateSessionExpiresUTCHint() {
 }
 
 function initGovernance() {
+  document.getElementById("events-body")?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-access-kind]");
+    if (!button) return;
+    const kind = button.dataset.accessKind;
+    const namespace = button.dataset.accessNamespace || activeScopeNamespace();
+    const name = button.dataset.accessName || "";
+    const item = kind === "grant"
+      ? grantsCache.find((grant) => (grant.name || "") === name && (grant.namespace || activeScopeNamespace()) === namespace)
+      : sessionsCache.find((session) => (session.name || "") === name && (session.namespace || activeScopeNamespace()) === namespace);
+    if (item) {
+      kind === "grant" ? showGrantDetail(item) : showSessionDetail(item);
+    }
+  });
+  document.getElementById("governance-grant-detail-back")?.addEventListener("click", () => activateTab("governance"));
+  document.getElementById("governance-session-detail-back")?.addEventListener("click", () => activateTab("governance"));
   setFieldValue("grant-namespace", activeScopeNamespace());
   setFieldValue("grant-policy-version", defaults.policyVersion);
   setFieldValue("session-namespace", activeScopeNamespace());

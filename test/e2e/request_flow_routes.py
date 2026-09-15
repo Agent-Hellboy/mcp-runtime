@@ -997,6 +997,15 @@ if deep_request_flows:
         "GET /auth/admin-check allowed admin UI session",
         f"admin-check failed: {ui_admin_status} {ui_admin_body}",
     )
+    expect_status(f"{ui_base}/api/ui/v1/runtime/servers", 401, contains='"error":"unauthorized"')
+    proxy_payload = expect_json(
+        f"{ui_base}/api/ui/v1/runtime/servers", headers=ui_cookie_headers
+    )
+    check(
+        isinstance(proxy_payload.get("servers"), list),
+        "GET /api/ui/v1/runtime/servers used UI session",
+        f"session proxy returned an invalid payload: {proxy_payload}",
+    )
     ui_logout = expect_json(
         f"{ui_base}/auth/logout", method="POST", headers=ui_cookie_headers
     )

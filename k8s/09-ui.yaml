@@ -60,6 +60,10 @@ spec:
                   key: API_BASE
             - name: API_UPSTREAM
               value: "http://mcp-platform-api.mcp-sentinel.svc.cluster.local:8080"
+            - name: RUNTIME_UPSTREAM
+              value: "http://mcp-runtime-api.mcp-sentinel.svc.cluster.local:8084"
+            - name: ANALYTICS_UPSTREAM
+              value: "http://mcp-analytics-api.mcp-sentinel.svc.cluster.local:8085"
             - name: API_KEY
               valueFrom:
                 secretKeyRef:

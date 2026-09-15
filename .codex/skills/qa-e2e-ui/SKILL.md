@@ -32,6 +32,12 @@ user-identity session and a no-user-identity or denied session so role-gating
 regressions surface before merge. If browser automation is unavailable, report
 the UI result **blocked**.
 
+Phase-gate rule: any change under `services/ui/`, `services/ui/frontend/`,
+`services/ui/static/`, UI ingress manifests, or a backend path rendered by the
+dashboard requires this skill. Run the same browser workflow once against the
+pre-change deployment and once against the candidate deployment. A phase is
+not passed by unit tests alone.
+
 ## Step 1 - Confirm preconditions
 
 Do not reinstall the platform or run codegen as part of UI QA. The live
@@ -100,6 +106,46 @@ workflow. If the diff affects data rendered by a tab but not `services/ui/**`
 directly, still validate the owning tab and controls through the browser. Do
 not report a backend-only pass for a change whose success or failure is visible
 in the dashboard.
+
+### Before/after phase gate
+
+For every migration or UI PR, keep the comparison deterministic:
+
+1. **Before:** start a fresh browser context, run the affected signed-out and
+   signed-in workflows at the required desktop and mobile viewports, and save
+   the snapshot, network list, console list, and screenshot evidence.
+2. **Deploy verification:** build/load the candidate image for the Kind node
+   architecture, verify the pod image and environment, and wait for rollout
+   readiness. Do not call browser results “after” until the page is served by
+   that pod.
+3. **After:** repeat the exact actions, roles, viewport sizes, and assertions.
+   Compare visible data, URL/API paths, status codes, console errors, and
+   responsive bounds. Expected negative tests (for example signed-out `401`)
+   must be labeled as such; every other failed request is a finding.
+4. **Phase decision:** record `PASS`, `FAIL`, or `BLOCKED` for each applicable
+   migration phase. `PASS` requires all phase acceptance criteria and browser
+   evidence. `BLOCKED` is for missing fixtures, unavailable browser automation,
+   or an unavailable live dependency—not for a discovered defect.
+
+Use a stable evidence record for each phase:
+
+```text
+phase=<migration phase>
+before_commit=<SHA or deployed image>
+after_commit=<SHA or deployed image>
+role=<signed-out|tenant-user|admin>
+viewport=<width>x<height>
+workflow=<named browser workflow>
+visible_assertions=<snapshot text or screenshot path>
+network_delta=<new/removed/changed routes and statuses>
+console_delta=<new errors/warnings, or none>
+decision=<PASS|FAIL|BLOCKED>
+```
+
+When the migration intentionally leaves a legacy fallback, test both the new
+surface and the fallback. A fallback that is merely reachable but emits
+unexplained browser `401`/`404` errors is a failed phase, not a passing
+compatibility check.
 
 ## Step 3 - Browser instrumentation is required
 
