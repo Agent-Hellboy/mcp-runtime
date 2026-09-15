@@ -96,6 +96,31 @@ toward full parity with `docs/security/authz-matrix.md` when auditing finds gaps
 Any 200/204 response on a path-role combo where the matrix expects 401/403 is
 **Critical** until proven otherwise.
 
+The harness above only exercises `x-api-key`-header roles. It does not cover
+the cookie-authenticated `ui-cookie` role: the browser dashboard's
+`GET /api/ui/v1/*` session proxy (`services/ui/session_proxy.go`) translates
+the HttpOnly `mcp_ui_session` cookie server-side and is not represented in
+`docs/security/authz-matrix.json`/`.md` at all as of this audit. Test it with
+a cookie jar instead of a header:
+
+```bash
+JAR=$(mktemp)
+curl -sS -c "$JAR" -X POST "$BASE/auth/login" -H 'content-type: application/json' \
+  -d '{"email":"<test-user>","password":"<test-password>"}' -o /dev/null
+curl -sS -b "$JAR" -o /dev/null -w "%{http_code}\n" "$BASE/api/ui/v1/runtime/servers"
+rm -f "$JAR"
+```
+
+Add matrix rows for every allowlisted proxy path (`/api/ui/v1/dashboard/summary`,
+`/runtime/{namespaces,servers,tools,server-events,teams,grants,sessions,
+components,policy,observability/*}`, `/user/api-keys`,
+`/admin/{operations,deployments}`, `/events`, `/analytics/usage`,
+`/user/analytics/usage` — see `sessionProxyRuntimePrefixes` /
+`sessionProxyAnalyticsPrefixes` in `session_proxy.go` for the authoritative
+list) and confirm a missing/expired/invalid session returns 401 on each.
+Non-GET methods against `/api/ui/v1/*` must return 405 unless the branch
+under audit has landed a write allowlist with its own CSRF defense.
+
 ## Step 3 — Tenant and grant isolation probes
 
 Build adversarial cases against governance. Pre-create:

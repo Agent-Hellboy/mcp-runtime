@@ -21,7 +21,9 @@ For runtime authn/authz, gateway policy, and protocol fuzzing, use
 Repo-owned namespaces (per `CLAUDE.md`):
 
 - `mcp-runtime` — operator.
-- `mcp-sentinel` — api, ui, ingest, processor, gateway, observability.
+- `mcp-sentinel` — platform/runtime/analytics api, ui, oauth-server, ingest,
+  processor, gateway, observability (ClickHouse, Kafka, Grafana, Prometheus,
+  Loki, Tempo, otel-collector).
 - `mcp-servers` — user MCP server workloads, gateway sidecars.
 - `registry` — Distribution v2 registry.
 - `traefik` — ingress controller (or `kube-system/traefik` on k3s).

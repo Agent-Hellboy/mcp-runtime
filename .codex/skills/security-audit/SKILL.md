@@ -54,6 +54,15 @@ Standards, NetworkPolicy, and manifest hygiene, use `k8s-hardening-audit`.
    - HTML, JavaScript, logs, and API responses escape untrusted content
      and avoid reflecting secrets, auth headers, session cookies, JWTs,
      OIDC tokens, or API keys.
+   - `services/ui/session_proxy.go` translates the HttpOnly `mcp_ui_session`
+     cookie into the caller's stored bearer/API-key credential for an
+     explicit GET-only path allowlist (`sessionProxyRuntimePrefixes`,
+     `sessionProxyAnalyticsPrefixes`) — any change widening that allowlist,
+     or any new cookie-backed route that accepts a non-GET method, needs a
+     CSRF/anti-forgery check (token or equivalent) as a first-class finding
+     if one isn't present; a cookie-authenticated write with no CSRF
+     defense beyond `SameSite` is at least a Medium finding, High if the
+     action is destructive.
    - GitHub Actions and dependency changes keep actions pinned to commit
      SHAs, minimize token permissions, and avoid exposing repository or
      deploy secrets to untrusted PR code.
