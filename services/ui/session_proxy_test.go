@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"net/http"
@@ -9,6 +10,72 @@ import (
 	"testing"
 	"time"
 )
+
+func TestSessionProxyWriteAllowlist(t *testing.T) {
+	cases := []struct {
+		method string
+		path   string
+		want   bool
+	}{
+		{http.MethodPatch, "/runtime/grants/mcp-servers/demo", true},
+		{http.MethodDelete, "/runtime/sessions/mcp-servers/demo", true},
+		{http.MethodPost, "/runtime/teams", true},
+		{http.MethodPost, "/runtime/teams/acme/users", true},
+		{http.MethodPut, "/runtime/teams/acme/members/user-1", true},
+		{http.MethodPost, "/runtime/actions/restart", true},
+		{http.MethodPatch, "/runtime/grants/mcp-servers/demo/extra", false},
+		{http.MethodPost, "/runtime/teams/acme/other", false},
+		{http.MethodPost, "/runtime/servers", false},
+	}
+	for _, tc := range cases {
+		if got := sessionProxyWriteAllowed(tc.method, tc.path); got != tc.want {
+			t.Errorf("sessionProxyWriteAllowed(%q, %q) = %v, want %v", tc.method, tc.path, got, tc.want)
+		}
+	}
+}
+
+func TestSessionProxyRequiresCSRFForWritesAndForwardsBody(t *testing.T) {
+	var gotMethod, gotAuth, gotCSRF, gotBody string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotAuth = r.Header.Get("authorization")
+		gotCSRF = r.Header.Get(csrfHeaderName)
+		body, _ := io.ReadAll(r.Body)
+		gotBody = string(body)
+		w.Header().Set("content-type", "application/json")
+		_, _ = io.WriteString(w, `{"ok":true}`)
+	}))
+	t.Cleanup(upstream.Close)
+
+	proxy := newTestSessionProxy(t, upstream.URL)
+	sess := createTestSession(t, proxy.store, uiSession{UpstreamAuthHeader: "Bearer session-token"})
+
+	withoutToken := httptest.NewRequest(http.MethodPatch, "/api/ui/v1/runtime/grants/mcp-servers/demo", bytes.NewBufferString(`{"disabled":true}`))
+	withoutToken.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sess.ID})
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, withoutToken)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("missing CSRF status = %d, want %d", rec.Code, http.StatusForbidden)
+	}
+
+	withToken := httptest.NewRequest(http.MethodPatch, "/api/ui/v1/runtime/grants/mcp-servers/demo", bytes.NewBufferString(`{"disabled":true}`))
+	withToken.Host = "ui.example.com"
+	withToken.Header.Set("origin", "http://ui.example.com")
+	withToken.Header.Set(csrfHeaderName, sess.CSRFToken)
+	withToken.Header.Set("authorization", "Bearer attacker-token")
+	withToken.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sess.ID})
+	rec = httptest.NewRecorder()
+	proxy.ServeHTTP(rec, withToken)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("valid CSRF status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if gotMethod != http.MethodPatch || gotAuth != "Bearer session-token" || gotBody != `{"disabled":true}` {
+		t.Fatalf("upstream request = method %q auth %q body %q", gotMethod, gotAuth, gotBody)
+	}
+	if gotCSRF != "" {
+		t.Fatalf("CSRF token leaked upstream: %q", gotCSRF)
+	}
+}
 
 func TestParseRuntimeUpstream(t *testing.T) {
 	if _, err := parseRuntimeUpstream(""); err == nil {

@@ -1,4 +1,4 @@
-import { UnauthorizedError, fetchUIJSON } from "./client";
+import { UnauthorizedError, clearCSRFToken, fetchUIJSON, setCSRFToken } from "./client";
 import type { AuthStatus } from "./types";
 
 function asAuthStatus(value: unknown): AuthStatus {
@@ -6,8 +6,14 @@ function asAuthStatus(value: unknown): AuthStatus {
     return { authenticated: false };
   }
   const record = value as Record<string, unknown>;
+  const authenticated = record.authenticated === true;
+  if (authenticated && typeof record.csrf_token === "string") {
+    setCSRFToken(record.csrf_token);
+  } else if (!authenticated) {
+    clearCSRFToken();
+  }
   return {
-    authenticated: record.authenticated === true,
+    authenticated,
     principal: (record.principal as AuthStatus["principal"]) || undefined,
   };
 }
@@ -39,5 +45,9 @@ export async function login(input: LoginInput): Promise<AuthStatus> {
 }
 
 export async function logout(): Promise<void> {
-  await fetchUIJSON("/auth/logout", { method: "POST" });
+  try {
+    await fetchUIJSON("/auth/logout", { method: "POST" });
+  } finally {
+    clearCSRFToken();
+  }
 }

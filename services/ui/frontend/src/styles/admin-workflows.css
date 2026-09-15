@@ -69,6 +69,46 @@
   overflow-wrap: anywhere;
 }
 
+.admin-action-cell {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.button.compact {
+  min-height: 30px;
+  padding: 5px 10px;
+  font-size: 12px;
+}
+
+.button.danger,
+.button.danger:hover:not(:disabled) {
+  background: #7f1d1d;
+  color: #fff;
+}
+
+.button.ghost.danger {
+  color: #fca5a5;
+}
+
+.admin-form {
+  align-items: end;
+  margin-bottom: 18px;
+}
+
+.admin-component-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.inline-error {
+  color: #fca5a5;
+  margin: 12px 0;
+}
+
 @media (max-width: 720px) {
   .admin-nav-list {
     flex-wrap: nowrap;

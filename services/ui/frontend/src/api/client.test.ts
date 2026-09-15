@@ -1,11 +1,20 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { UnauthorizedError, apiURL, fetchJSON, fetchUIJSON, withQuery } from "./client";
+import {
+  UnauthorizedError,
+  apiURL,
+  clearCSRFToken,
+  fetchJSON,
+  fetchUIJSON,
+  setCSRFToken,
+  withQuery,
+} from "./client";
 import { readRuntimeConfig } from "./config";
 
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  clearCSRFToken();
   delete window.MCP_API_BASE;
 });
 
@@ -42,11 +51,17 @@ describe("apiURL", () => {
     );
   });
 
-  it("never routes an admin mutation through the GET-only session proxy", () => {
-    for (const method of ["POST", "PATCH", "DELETE"]) {
-      expect(apiURL("/runtime/grants", "/api/v1", method)).toBe("/api/v1/runtime/grants");
-      expect(apiURL("/runtime/sessions", "/api/v1", method)).toBe("/api/v1/runtime/sessions");
-    }
+  it("routes only concrete admin writes through the session proxy", () => {
+    expect(apiURL("/runtime/grants/mcp-servers/demo", "/api/v1", "PATCH")).toBe(
+      "/api/ui/v1/runtime/grants/mcp-servers/demo"
+    );
+    expect(apiURL("/runtime/sessions/mcp-servers/demo", "/api/v1", "DELETE")).toBe(
+      "/api/ui/v1/runtime/sessions/mcp-servers/demo"
+    );
+    expect(apiURL("/runtime/grants", "/api/v1", "PATCH")).toBe("/api/v1/runtime/grants");
+    expect(apiURL("/runtime/grants/mcp-servers/demo/extra", "/api/v1", "PATCH")).toBe(
+      "/api/v1/runtime/grants/mcp-servers/demo/extra"
+    );
   });
 
   it("does not route mutations through the GET-only session proxy", () => {
@@ -113,6 +128,28 @@ describe("fetchJSON", () => {
     );
 
     await expect(fetchJSON("/runtime/tools")).rejects.toBeInstanceOf(UnauthorizedError);
+  });
+
+  it("adds the in-memory CSRF token only to allowed writes", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ ok: true }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    setCSRFToken("session-csrf");
+
+    await fetchJSON("/runtime/grants/mcp-servers/demo", {
+      method: "PATCH",
+      headers: { "X-CSRF-Token": "attacker-token", Authorization: "Bearer leaked" },
+      body: JSON.stringify({ disabled: true }),
+    });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/ui/v1/runtime/grants/mcp-servers/demo");
+    const headers = new Headers(init.headers);
+    expect(headers.get("x-csrf-token")).toBe("session-csrf");
+    expect(headers.get("authorization")).toBeNull();
   });
 });
 

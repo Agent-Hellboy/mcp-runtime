@@ -1,7 +1,10 @@
+import { useState } from "react";
+
 import { AdminTable, type AdminColumn } from "./AdminTable";
 import { AsyncSection } from "./AsyncSection";
 import { StatusBadge } from "../StatusBadge";
 import { useAdminReload, useComponents } from "../../hooks/useAdminData";
+import { restartComponent } from "../../api/admin";
 import type { ComponentStatus } from "../../api/types";
 
 type PlatformHealthPanelProps = {
@@ -48,6 +51,17 @@ export function PlatformHealthPanel({ onSignIn }: PlatformHealthPanelProps) {
   const componentsQuery = useComponents(true);
   const components = componentsQuery.data ?? [];
   const readyCount = components.filter(componentReady).length;
+  const [busyKey, setBusyKey] = useState("");
+  const [error, setError] = useState("");
+
+  async function restart(key?: string): Promise<void> {
+    const label = key ? components.find((item) => item.key === key)?.display || key : "all components";
+    if (!window.confirm(`Restart ${label}?`)) return;
+    setBusyKey(key || "all"); setError("");
+    try { await restartComponent(key); reload(); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : "Component restart failed."); }
+    finally { setBusyKey(""); }
+  }
 
   return (
     <section className="panel" aria-labelledby="platform-title">
@@ -68,7 +82,8 @@ export function PlatformHealthPanel({ onSignIn }: PlatformHealthPanelProps) {
         </ul>
       </div>
 
-      <nav className="admin-links" aria-label="Observability tools">
+      <nav className="admin-links" aria-label="Platform actions and observability tools">
+        <button type="button" className="button danger" data-testid="restart-all" disabled={busyKey !== ""} onClick={() => void restart()}>{busyKey === "all" ? "Restarting…" : "Restart all"}</button>
         <a
           className="button ghost"
           href="/grafana"
@@ -89,6 +104,8 @@ export function PlatformHealthPanel({ onSignIn }: PlatformHealthPanelProps) {
         </a>
       </nav>
 
+      {error ? <p className="inline-error" role="alert" data-testid="platform-action-error">{error}</p> : null}
+
       <AsyncSection
         query={componentsQuery}
         loadingLabel="Loading platform components…"
@@ -107,9 +124,16 @@ export function PlatformHealthPanel({ onSignIn }: PlatformHealthPanelProps) {
         />
       </AsyncSection>
 
+      <div className="admin-component-actions" aria-label="Restart individual components">
+        {components.map((component) => (
+          <button key={component.key} type="button" className="button ghost compact" data-testid={`restart-${component.key}`} disabled={busyKey !== ""} onClick={() => void restart(component.key)}>
+            {busyKey === component.key ? "Restarting…" : `Restart ${component.display || component.key}`}
+          </button>
+        ))}
+      </div>
+
       <p className="panel-footnote">
-        Restarting a component is a destructive operation and stays in the legacy dashboard
-        under More workspaces until a CSRF-protected route exists.
+        Restarting a component rolls its workload and may briefly interrupt traffic.
       </p>
     </section>
   );

@@ -4,6 +4,7 @@ import { AdminTable, type AdminColumn } from "./AdminTable";
 import { AsyncSection } from "./AsyncSection";
 import { StatusBadge } from "../StatusBadge";
 import { useAdminReload, useGrants, useSessions } from "../../hooks/useAdminData";
+import { createGrant, createSession, setGrantDisabled, setSessionRevoked } from "../../api/admin";
 import { accessKey, subjectLabel } from "../../api/types";
 import type { GrantSummary, SessionSummary } from "../../api/types";
 
@@ -25,6 +26,10 @@ export function AccessControlPanel({
   onSignIn,
 }: AccessControlPanelProps) {
   const [filter, setFilter] = useState("");
+  const [busyKey, setBusyKey] = useState("");
+  const [actionError, setActionError] = useState("");
+  const [showGrantForm, setShowGrantForm] = useState(false);
+  const [showSessionForm, setShowSessionForm] = useState(false);
   const filterId = useId();
   const namespaceId = useId();
   const reload = useAdminReload();
@@ -54,6 +59,71 @@ export function AccessControlPanel({
   const activeGrants = grants.filter((grant) => !grant.disabled).length;
   const activeSessions = sessions.filter((session) => !session.revoked).length;
 
+  async function toggleGrant(grant: GrantSummary): Promise<void> {
+    const disabled = !grant.disabled;
+    if (!window.confirm(`${disabled ? "Disable" : "Enable"} grant \"${grant.name}\"?`)) return;
+    const key = `grant:${accessKey(grant)}`;
+    setBusyKey(key);
+    setActionError("");
+    try {
+      await setGrantDisabled(grant.namespace, grant.name, disabled);
+      reload();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Grant update failed.");
+    } finally {
+      setBusyKey("");
+    }
+  }
+
+  async function toggleSession(session: SessionSummary): Promise<void> {
+    const revoked = !session.revoked;
+    if (!window.confirm(`${revoked ? "Revoke" : "Unrevoke"} session \"${session.name}\"?`)) return;
+    const key = `session:${accessKey(session)}`;
+    setBusyKey(key);
+    setActionError("");
+    try {
+      await setSessionRevoked(session.namespace, session.name, revoked);
+      reload();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Session update failed.");
+    } finally {
+      setBusyKey("");
+    }
+  }
+
+  async function applyGrant(event: React.FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const name = String(form.get("name") || "").trim();
+    const server = String(form.get("server") || "").trim();
+    const humanID = String(form.get("humanID") || "").trim();
+    const teamID = String(form.get("teamID") || "").trim();
+    if (!name || !server || (!humanID && !teamID)) { setActionError("Grant name, server, and a human or team subject are required."); return; }
+    setBusyKey("create-grant"); setActionError("");
+    try {
+      await createGrant({ name, namespace: String(form.get("namespace") || namespace || "mcp-servers").trim(), serverRef: { name: server }, subject: { humanID, teamID }, maxTrust: String(form.get("maxTrust") || "low"), allowedSideEffects: ["read"] });
+      setShowGrantForm(false); event.currentTarget.reset(); reload();
+    } catch (error) { setActionError(error instanceof Error ? error.message : "Grant creation failed."); }
+    finally { setBusyKey(""); }
+  }
+
+  async function applySession(event: React.FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const name = String(form.get("name") || "").trim();
+    const server = String(form.get("server") || "").trim();
+    const humanID = String(form.get("humanID") || "").trim();
+    const teamID = String(form.get("teamID") || "").trim();
+    if (!name || !server || (!humanID && !teamID)) { setActionError("Session name, server, and a human or team subject are required."); return; }
+    const rawExpiry = String(form.get("expiresAt") || "");
+    setBusyKey("create-session"); setActionError("");
+    try {
+      await createSession({ name, namespace: String(form.get("namespace") || namespace || "mcp-servers").trim(), serverRef: { name: server }, subject: { humanID, teamID }, consentedTrust: String(form.get("trust") || "low"), expiresAt: rawExpiry ? new Date(rawExpiry).toISOString() : undefined });
+      setShowSessionForm(false); event.currentTarget.reset(); reload();
+    } catch (error) { setActionError(error instanceof Error ? error.message : "Session creation failed."); }
+    finally { setBusyKey(""); }
+  }
+
   const grantColumns: Array<AdminColumn<GrantSummary>> = [
     {
       id: "name",
@@ -82,9 +152,20 @@ export function AccessControlPanel({
       id: "status",
       header: "Status",
       cell: (grant) => (
-        <StatusBadge tone={grant.disabled ? "attention" : "ready"}>
-          {grant.disabled ? "Disabled" : "Active"}
-        </StatusBadge>
+        <div className="admin-action-cell">
+          <StatusBadge tone={grant.disabled ? "attention" : "ready"}>
+            {grant.disabled ? "Disabled" : "Active"}
+          </StatusBadge>
+          <button
+            type="button"
+            className="button ghost compact"
+            data-testid="grant-toggle"
+            disabled={busyKey === `grant:${accessKey(grant)}`}
+            onClick={() => void toggleGrant(grant)}
+          >
+            {busyKey === `grant:${accessKey(grant)}` ? "Saving…" : grant.disabled ? "Enable" : "Disable"}
+          </button>
+        </div>
       ),
     },
   ];
@@ -113,9 +194,20 @@ export function AccessControlPanel({
       id: "status",
       header: "Status",
       cell: (session) => (
-        <StatusBadge tone={session.revoked ? "attention" : "ready"}>
-          {session.revoked ? "Revoked" : "Active"}
-        </StatusBadge>
+        <div className="admin-action-cell">
+          <StatusBadge tone={session.revoked ? "attention" : "ready"}>
+            {session.revoked ? "Revoked" : "Active"}
+          </StatusBadge>
+          <button
+            type="button"
+            className="button ghost compact"
+            data-testid="session-toggle"
+            disabled={busyKey === `session:${accessKey(session)}`}
+            onClick={() => void toggleSession(session)}
+          >
+            {busyKey === `session:${accessKey(session)}` ? "Saving…" : session.revoked ? "Unrevoke" : "Revoke"}
+          </button>
+        </div>
       ),
     },
   ];
@@ -174,6 +266,13 @@ export function AccessControlPanel({
         </button>
       </form>
 
+      <div className="admin-links" aria-label="Access control actions">
+        <button type="button" className="button" data-testid="grant-create-toggle" onClick={() => setShowGrantForm((value) => !value)}>Create grant</button>
+        <button type="button" className="button ghost" data-testid="session-create-toggle" onClick={() => setShowSessionForm((value) => !value)}>Create session</button>
+      </div>
+      {showGrantForm ? <form className="toolbar admin-form" onSubmit={(event) => void applyGrant(event)} data-testid="grant-create-form"><div className="field"><label htmlFor="grant-name">Name</label><input id="grant-name" name="name" required /></div><div className="field"><label htmlFor="grant-server">Server</label><input id="grant-server" name="server" required /></div><div className="field"><label htmlFor="grant-human">Human ID</label><input id="grant-human" name="humanID" /></div><div className="field"><label htmlFor="grant-team">Team ID</label><input id="grant-team" name="teamID" /></div><div className="field"><label htmlFor="grant-trust">Max trust</label><select id="grant-trust" name="maxTrust" defaultValue="low"><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></div><button className="button" disabled={busyKey === "create-grant"}>{busyKey === "create-grant" ? "Creating…" : "Create"}</button></form> : null}
+      {showSessionForm ? <form className="toolbar admin-form" onSubmit={(event) => void applySession(event)} data-testid="session-create-form"><div className="field"><label htmlFor="session-name">Name</label><input id="session-name" name="name" required /></div><div className="field"><label htmlFor="session-server">Server</label><input id="session-server" name="server" required /></div><div className="field"><label htmlFor="session-human">Human ID</label><input id="session-human" name="humanID" /></div><div className="field"><label htmlFor="session-team">Team ID</label><input id="session-team" name="teamID" /></div><div className="field"><label htmlFor="session-trust">Trust</label><select id="session-trust" name="trust" defaultValue="low"><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></div><div className="field"><label htmlFor="session-expires">Expires</label><input id="session-expires" name="expiresAt" type="datetime-local" /></div><button className="button" disabled={busyKey === "create-session"}>{busyKey === "create-session" ? "Creating…" : "Create"}</button></form> : null}
+
       <h3 className="subsection-title">Access grants</h3>
       <AsyncSection
         query={grantsQuery}
@@ -215,11 +314,7 @@ export function AccessControlPanel({
           testId="sessions-table"
         />
       </AsyncSection>
-
-      <p className="panel-footnote" data-testid="access-mutation-note">
-        Disabling a grant or revoking a session is still handled in the legacy dashboard under
-        More workspaces. Those write paths need a CSRF-protected route before they move here.
-      </p>
+      {actionError ? <p className="inline-error" role="alert" data-testid="access-action-error">{actionError}</p> : null}
     </section>
   );
 }

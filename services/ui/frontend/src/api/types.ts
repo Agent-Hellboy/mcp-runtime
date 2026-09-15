@@ -116,6 +116,17 @@ export type TeamRecord = {
   created_at?: string;
 };
 
+export type TeamMembership = {
+  team_id?: string;
+  team_slug?: string;
+  team_name?: string;
+  team_namespace?: string;
+  user_id: string;
+  email?: string;
+  role: string;
+  created_at?: string;
+};
+
 export type ComponentStatus = {
   key: string;
   display: string;
@@ -170,6 +181,14 @@ export type AdminOperations = {
   users: UserActivity[];
   audit_logs: AuditLogEntry[];
   images: ImageActivity[];
+};
+
+export type UsageResponse = {
+  totals: { events: number; allowed: number; denied: number; unique_servers: number; unique_humans: number; unique_agents: number };
+  servers: Array<{ server: string; namespace: string; events: number; allowed: number; denied: number; unique_humans: number; unique_agents: number }>;
+  actors: Array<{ human_id: string; agent_id: string; events: number; unique_servers: number; unique_tools: number; denied: number }>;
+  tools: Array<{ server: string; tool_name: string; human_id: string; team_id: string; agent_id: string; events: number; denied: number }>;
+  decisions: Array<{ decision: string; events: number }>;
 };
 
 export type GatewayEvent = {

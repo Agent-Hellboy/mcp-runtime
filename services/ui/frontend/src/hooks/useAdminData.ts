@@ -7,6 +7,7 @@ import {
   listGrants,
   listSessions,
   listTeams,
+  listUsage,
   readOperations,
 } from "../api/admin";
 import { UnauthorizedError } from "../api/client";
@@ -74,6 +75,14 @@ export function useOperations(enabled: boolean, user: string) {
   return useQuery({
     queryKey: [ADMIN_QUERY_KEY, "operations", user],
     queryFn: () => readOperations({ user, limit: "100" }),
+    enabled,
+  });
+}
+
+export function useUsage(enabled: boolean, limit: string) {
+  return useQuery({
+    queryKey: [ADMIN_QUERY_KEY, "usage", limit],
+    queryFn: () => listUsage(limit),
     enabled,
   });
 }

@@ -33,6 +33,7 @@ var sessionProxyRuntimePrefixes = []string{
 	"/runtime/grants",
 	"/runtime/sessions",
 	"/runtime/components",
+	"/runtime/actions/restart",
 	"/runtime/policy",
 	"/user/api-keys",
 	"/admin/operations",
@@ -44,6 +45,83 @@ var sessionProxyAnalyticsPrefixes = []string{
 	"/analytics/usage",
 	"/user/analytics/usage",
 }
+
+// State-changing routes are kept separate from the read allowlist. A route is
+// admitted only for the listed methods and, when Segments is non-zero, the
+// exact number of path segments after Prefix.
+var sessionProxyWriteRoutes = []sessionProxyWriteRoute{
+	{Prefix: "/user/api-keys", Methods: []string{http.MethodPost}},
+	{Prefix: "/user/api-keys/", Methods: []string{http.MethodDelete}, Segments: 1},
+	{Prefix: "/runtime/grants/", Methods: []string{http.MethodPatch, http.MethodDelete}, Segments: 2},
+	{Prefix: "/runtime/grants", Methods: []string{http.MethodPost}},
+	{Prefix: "/runtime/sessions/", Methods: []string{http.MethodPatch, http.MethodDelete}, Segments: 2},
+	{Prefix: "/runtime/sessions", Methods: []string{http.MethodPost}},
+	{Prefix: "/runtime/teams", Methods: []string{http.MethodPost}},
+	{Prefix: "/runtime/teams/", Methods: []string{http.MethodPost}, Segments: 2, Suffixes: []string{"members", "users"}},
+	{Prefix: "/runtime/teams/", Methods: []string{http.MethodPut, http.MethodDelete}, Segments: 3, Suffixes: []string{"members"}, SuffixIndex: 1},
+	{Prefix: "/runtime/actions/restart", Methods: []string{http.MethodPost}},
+}
+
+type sessionProxyWriteRoute struct {
+	Prefix      string
+	Methods     []string
+	Segments    int
+	Suffixes    []string
+	SuffixIndex int
+}
+
+func sessionProxyWriteRouteMatches(route sessionProxyWriteRoute, requestPath string) bool {
+	if route.Segments == 0 {
+		return requestPath == route.Prefix
+	}
+	rest, ok := strings.CutPrefix(requestPath, route.Prefix)
+	if !ok || rest == "" || strings.HasPrefix(rest, "/") || strings.HasSuffix(rest, "/") {
+		return false
+	}
+	parts := strings.Split(rest, "/")
+	if len(parts) != route.Segments {
+		return false
+	}
+	if len(route.Suffixes) == 0 {
+		return true
+	}
+	index := len(parts) - 1
+	if route.SuffixIndex > 0 {
+		index = route.SuffixIndex
+	}
+	for _, suffix := range route.Suffixes {
+		if parts[index] == suffix {
+			return true
+		}
+	}
+	return false
+}
+
+func sessionProxyWriteAllowed(method, requestPath string) bool {
+	for _, route := range sessionProxyWriteRoutes {
+		if !sessionProxyWriteRouteMatches(route, requestPath) {
+			continue
+		}
+		for _, allowed := range route.Methods {
+			if allowed == method {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func sessionProxyAllowHeader(requestPath string) string {
+	methods := []string{http.MethodGet}
+	for _, route := range sessionProxyWriteRoutes {
+		if sessionProxyWriteRouteMatches(route, requestPath) {
+			methods = append(methods, route.Methods...)
+		}
+	}
+	return strings.Join(methods, ", ")
+}
+
+const sessionProxyMaxWriteBody = 32 * 1024
 
 var sessionProxyHTTPClient = &http.Client{
 	Timeout: sessionProxyTimeout,
@@ -125,15 +203,19 @@ func sessionProxyPathAllowed(requestPath string, prefixes []string) bool {
 }
 
 func (p *sessionProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		w.Header().Set("allow", http.MethodGet)
-		serviceutil.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
-		return
-	}
+	write := unsafeHTTPMethod(r.Method)
 	base, upstreamPath, ok := sessionProxyRoute(r.URL.Path)
 	if !ok {
 		serviceutil.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "not_found"})
 		return
+	}
+	if write {
+		suffix := strings.TrimPrefix(upstreamPath, "/api/v1")
+		if !sessionProxyWriteAllowed(r.Method, suffix) {
+			w.Header().Set("allow", sessionProxyAllowHeader(suffix))
+			serviceutil.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+			return
+		}
 	}
 	sess, ok := p.store.sessionFromRequest(r)
 	if !ok {
@@ -144,6 +226,17 @@ func (p *sessionProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		serviceutil.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
+	}
+	if status := verifyCSRF(r, sess); status != 0 {
+		// #nosec G706 -- path-only telemetry; no credential or token material.
+		log.Printf("ui session proxy csrf rejection method=%q path=%q", r.Method, r.URL.Path)
+		serviceutil.WriteJSON(w, status, map[string]string{"error": "csrf_failed"})
+		return
+	}
+
+	var body io.Reader
+	if write && r.Body != nil {
+		body = http.MaxBytesReader(w, r.Body, sessionProxyMaxWriteBody)
 	}
 
 	if strings.HasPrefix(upstreamPath, "/api/v1/events") ||
@@ -158,7 +251,7 @@ func (p *sessionProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		serviceutil.WriteJSON(w, http.StatusBadGateway, map[string]string{"error": "upstream_error"})
 		return
 	}
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, upstreamURL.String(), nil)
+	req, err := http.NewRequestWithContext(r.Context(), r.Method, upstreamURL.String(), body)
 	if err != nil {
 		serviceutil.WriteJSON(w, http.StatusBadGateway, map[string]string{"error": "upstream_error"})
 		return
@@ -167,6 +260,13 @@ func (p *sessionProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		req.Header.Set("accept", accept)
 	} else {
 		req.Header.Set("accept", "application/json")
+	}
+	if write {
+		contentType := strings.TrimSpace(r.Header.Get("content-type"))
+		if contentType == "" {
+			contentType = "application/json"
+		}
+		req.Header.Set("content-type", contentType)
 	}
 	req.Header.Set("x-mcp-source", "ui")
 	if authHeader != "" {
