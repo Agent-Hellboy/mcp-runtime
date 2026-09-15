@@ -28,7 +28,7 @@ RBAC access. For platform workflows, run mcp-runtime auth login --api-url
 
 	mgr.BindUseKubeFlag(cmd)
 
-	cmd.AddCommand(newGrantCmd(mgr), newSessionCmd(mgr))
+	cmd.AddCommand(newGrantCmd(mgr), newSessionCmd(mgr), newExplainCmd(mgr))
 	return cmd
 }
 

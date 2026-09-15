@@ -165,6 +165,7 @@ Tests: `server`/`metadata` package tests and golden CLI help snapshots.
 
 - `access grant init|list|get|apply|delete|enable|disable`
 - `access session init|list|get|apply|delete|revoke|unrevoke`
+- `access explain` evaluates a hypothetical request against live or local rendered policy
 
 `init` scaffolds reviewable YAML; `apply` writes through the platform API by
 default. Add `--use-kube` only for admin/operator direct Kubernetes flows

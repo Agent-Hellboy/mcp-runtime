@@ -415,6 +415,29 @@ mcp-runtime access session revoke   cursor-session --namespace mcp-team-acme
 mcp-runtime access session unrevoke cursor-session --namespace mcp-team-acme
 ```
 
+### Explain a hypothetical decision
+
+Evaluate a request against the live rendered gateway policy without sending
+traffic. The command exits 0 for an allow decision and 1 for a deny decision.
+Use `--policy-file` to test a local rendered policy document; the file must
+include a valid policy revision.
+
+```bash
+mcp-runtime access explain \
+  --server workspace-demo \
+  --namespace mcp-team-acme \
+  --human alice@example.com \
+  --tool write-file
+
+mcp-runtime access explain \
+  --server workspace-demo \
+  --namespace mcp-team-acme \
+  --human alice@example.com \
+  --tool write-file \
+  --policy-file candidate-policy.json \
+  --json
+```
+
 ### Cross-team access
 
 Team A can grant Team B's agents access to Team A's servers:

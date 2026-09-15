@@ -30,6 +30,7 @@ func TestCLIHelpGoldens(t *testing.T) {
 		{name: "access_grant_init_help", args: []string{"access", "grant", "init", "--help"}, golden: "mcp-runtime_access_grant_init_help.golden"},
 		{name: "access_session_help", args: []string{"access", "session", "--help"}, golden: "mcp-runtime_access_session_help.golden"},
 		{name: "access_session_init_help", args: []string{"access", "session", "init", "--help"}, golden: "mcp-runtime_access_session_init_help.golden"},
+		{name: "access_explain_help", args: []string{"access", "explain", "--help"}, golden: "mcp-runtime_access_explain_help.golden"},
 		{name: "adapter_help", args: []string{"adapter", "--help"}, golden: "mcp-runtime_adapter_help.golden"},
 		{name: "adapter_proxy_help", args: []string{"adapter", "proxy", "--help"}, golden: "mcp-runtime_adapter_proxy_help.golden"},
 		{name: "adapter_stdio_help", args: []string{"adapter", "stdio", "--help"}, golden: "mcp-runtime_adapter_stdio_help.golden"},
