@@ -71,6 +71,10 @@ type uiSession struct {
 	Principal          sessionPrincipal
 	UpstreamAuthHeader string
 	UpstreamAPIKey     string
+	// CSRFToken is the session-bound synchroniser token. It is handed to
+	// same-origin JavaScript and required back on every state-changing
+	// request; see csrf.go.
+	CSRFToken string
 }
 
 // uiSessionStore is intentionally in-memory only; sessions are cleared on UI restart.
@@ -379,7 +383,11 @@ func handleLogin(apiKey, upstreamAPIKey, apiUpstream string, store *uiSessionSto
 			log.Printf(`auth_login_success_after_failures timestamp=%q prior_failures=%d`, time.Now().UTC().Format(time.RFC3339), priorFailures)
 		}
 		http.SetCookie(w, newSessionCookie(r, sess.ID, sess.ExpiresAt))
-		serviceutil.WriteJSON(w, http.StatusOK, map[string]any{"authenticated": true, "principal": sess.Principal})
+		serviceutil.WriteJSON(w, http.StatusOK, map[string]any{
+			"authenticated": true,
+			"principal":     sess.Principal,
+			"csrf_token":    sess.CSRFToken,
+		})
 	}
 }
 
@@ -790,6 +798,11 @@ func (s *uiSessionStore) createSession(_ context.Context, session uiSession) (ui
 		return uiSession{}, err
 	}
 	session.ID = id
+	csrfToken, err := randomURLToken(24)
+	if err != nil {
+		return uiSession{}, err
+	}
+	session.CSRFToken = csrfToken
 	maxExpiry := s.now().Add(sessionDuration)
 	if session.ExpiresAt.IsZero() || session.ExpiresAt.After(maxExpiry) {
 		session.ExpiresAt = maxExpiry
@@ -913,6 +926,7 @@ func handleStatus(store *uiSessionStore) http.HandlerFunc {
 		serviceutil.WriteJSON(w, http.StatusOK, map[string]any{
 			"authenticated": true,
 			"principal":     sess.Principal,
+			"csrf_token":    sess.CSRFToken,
 		})
 	}
 }

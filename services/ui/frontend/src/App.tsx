@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { AppShell } from "./components/AppShell";
+import { ActivityWorkspace } from "./components/user/ActivityWorkspace";
+import { ApiKeysWorkspace } from "./components/user/ApiKeysWorkspace";
 import { LegacyWorkspace } from "./components/LegacyWorkspace";
 import { SignInPanel } from "./components/SignInPanel";
 import { ServersWorkspace } from "./components/servers/ServersWorkspace";
-import type { WorkspaceId } from "./components/WorkspaceNavigation";
+import { visibleWorkspaceTabs, type WorkspaceId } from "./components/WorkspaceNavigation";
 import { login, logout, readAuthStatus, type LoginInput } from "./api/auth";
 import type { AuthStatus } from "./api/types";
 
@@ -89,6 +91,15 @@ export function App() {
     setWorkspace("legacy");
   }, []);
 
+  // A workspace that role gating no longer permits must not stay rendered; this
+  // mirrors the legacy resolveActiveTab() fallback to Servers.
+  useEffect(() => {
+    const allowed = visibleWorkspaceTabs(auth).some((tab) => tab.id === workspace);
+    if (!allowed) {
+      setWorkspace("servers");
+    }
+  }, [auth, workspace]);
+
   let content;
   if (!authReady) {
     content = (
@@ -109,6 +120,10 @@ export function App() {
     );
   } else if (workspace === "legacy") {
     content = <LegacyWorkspace />;
+  } else if (workspace === "activity") {
+    content = <ActivityWorkspace auth={auth} onSignIn={handleSignIn} />;
+  } else if (workspace === "keys") {
+    content = <ApiKeysWorkspace auth={auth} onSignIn={handleSignIn} />;
   } else {
     content = <ServersWorkspace authenticated={auth.authenticated} onSignIn={handleSignIn} />;
   }
