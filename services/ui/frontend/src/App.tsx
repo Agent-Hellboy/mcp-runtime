@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 
 import { AppShell } from "./components/AppShell";
 import { ActivityWorkspace } from "./components/user/ActivityWorkspace";
@@ -24,7 +25,18 @@ function loginErrorMessage(err: unknown): string {
   return "Sign-in failed. Try again.";
 }
 
+function authCacheKey(status: AuthStatus): string {
+  if (!status.authenticated) {
+    return "signed-out";
+  }
+  const principal = status.principal;
+  return [principal?.role, principal?.subject, principal?.email, principal?.auth_type]
+    .map((value) => value || "")
+    .join("|");
+}
+
 export function App() {
+  const queryClient = useQueryClient();
   const [auth, setAuth] = useState<AuthStatus>({ authenticated: false });
   const [authReady, setAuthReady] = useState(false);
   const [authBusy, setAuthBusy] = useState(false);
@@ -57,15 +69,18 @@ export function App() {
 
   const handleSignIn = useCallback(() => {
     setLoginError("");
+    queryClient.clear();
+    setAuth({ authenticated: false });
     setShowSignIn(true);
     setWorkspace("servers");
-  }, []);
+  }, [queryClient]);
 
   const handleSubmit = useCallback(async (input: LoginInput) => {
     setAuthBusy(true);
     setLoginError("");
     try {
       const status = await login(input);
+      queryClient.clear();
       setAuth(status);
       setShowSignIn(false);
     } catch (err) {
@@ -73,18 +88,20 @@ export function App() {
     } finally {
       setAuthBusy(false);
     }
-  }, []);
+  }, [queryClient]);
 
   const handleSignOut = useCallback(async () => {
     setAuthBusy(true);
     try {
       await logout();
     } finally {
+      queryClient.clear();
       setAuth({ authenticated: false });
       setShowSignIn(false);
+      setWorkspace("servers");
       setAuthBusy(false);
     }
-  }, []);
+  }, [queryClient]);
 
   const openLegacy = useCallback(() => {
     setShowSignIn(false);
@@ -108,7 +125,7 @@ export function App() {
         <p className="state-title">Checking your session…</p>
       </div>
     );
-  } else if (showSignIn && !auth.authenticated) {
+  } else if (showSignIn) {
     content = (
       <SignInPanel
         onSubmit={handleSubmit}
@@ -136,6 +153,19 @@ export function App() {
       onSelectWorkspace={(id) => {
         setShowSignIn(false);
         setWorkspace(id);
+        if (workspace === "legacy" && id !== "legacy") {
+          void readAuthStatus()
+            .then((status) => {
+              if (authCacheKey(auth) !== authCacheKey(status)) {
+                queryClient.clear();
+              }
+              setAuth(status);
+            })
+            .catch(() => {
+              queryClient.clear();
+              setAuth({ authenticated: false });
+            });
+        }
       }}
       onSignIn={handleSignIn}
       onSignOut={handleSignOut}

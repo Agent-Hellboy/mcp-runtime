@@ -21,8 +21,8 @@ func decodeAuthBody(t *testing.T, body string) map[string]any {
 
 func TestHandleLoginReturnsCSRFTokenMatchingSession(t *testing.T) {
 	previousHook := passwordLoginHook
-	passwordLoginHook = func(context.Context, string, string, string) (sessionPrincipal, string, error) {
-		return sessionPrincipal{Role: "user", Subject: "user-1", AuthType: "platform_jwt"}, "platform-token", nil
+	passwordLoginHook = func(context.Context, string, string, string) (sessionPrincipal, string, time.Time, error) {
+		return sessionPrincipal{Role: "user", Subject: "user-1", AuthType: "platform_jwt"}, "platform-token", time.Now().Add(15 * time.Minute), nil
 	}
 	defer func() { passwordLoginHook = previousHook }()
 

@@ -799,7 +799,8 @@ func TestUISessionStateIsEphemeralAcrossStoreRestart(t *testing.T) {
 
 func TestHandleLoginWithPassword(t *testing.T) {
 	previousHook := passwordLoginHook
-	passwordLoginHook = func(_ context.Context, upstream, email, password string) (sessionPrincipal, string, error) {
+	expiresAt := time.Now().Add(15 * time.Minute)
+	passwordLoginHook = func(_ context.Context, upstream, email, password string) (sessionPrincipal, string, time.Time, error) {
 		if upstream != "http://api.example" {
 			t.Fatalf("upstream = %q, want http://api.example", upstream)
 		}
@@ -811,7 +812,7 @@ func TestHandleLoginWithPassword(t *testing.T) {
 			Subject:  "user-1",
 			Email:    "admin@example.com",
 			AuthType: "platform_jwt",
-		}, "platform-token", nil
+		}, "platform-token", expiresAt, nil
 	}
 	defer func() { passwordLoginHook = previousHook }()
 
@@ -824,6 +825,13 @@ func TestHandleLoginWithPassword(t *testing.T) {
 	cookies := login.Result().Cookies()
 	if len(cookies) != 1 {
 		t.Fatalf("cookies = %d, want 1", len(cookies))
+	}
+	sess, ok := store.get(cookies[0].Value)
+	if !ok {
+		t.Fatal("password login did not store a session")
+	}
+	if sess.ExpiresAt.After(expiresAt.Add(time.Second)) || sess.ExpiresAt.Before(expiresAt.Add(-time.Second)) {
+		t.Fatalf("session expiry = %s, want token expiry %s", sess.ExpiresAt, expiresAt)
 	}
 }
 
