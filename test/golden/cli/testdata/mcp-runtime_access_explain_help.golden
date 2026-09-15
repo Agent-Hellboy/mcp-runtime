@@ -1,0 +1,23 @@
+Evaluate a hypothetical MCP request against the rendered gateway policy without sending traffic.
+
+The default policy source is the live rendered policy for --server. Use --policy-file to evaluate a local rendered policy document instead. A denied decision is printed and exits with status 1; an allowed decision exits with status 0.
+
+Usage:
+  mcp-runtime access explain [flags]
+
+Flags:
+      --agent string         Agent identity to evaluate
+  -h, --help                 help for explain
+      --human string         Human identity to evaluate
+      --json                 Print a JSON decision for scripting
+      --namespace string     MCPServer namespace (default "mcp-servers")
+      --policy-file string   Local rendered policy JSON file (skips live policy lookup)
+      --rpc-method string    MCP JSON-RPC method to evaluate (default "tools/call")
+      --server string        MCPServer name to evaluate
+      --session string       Agent session identity to evaluate
+      --team string          Team identity to evaluate
+      --tool string          MCP tool name to evaluate
+
+Global Flags:
+      --debug      Enable debug mode with structured error logging
+      --use-kube   Use direct Kubernetes mode with kubectl; requires admin/operator cluster access (admin/dev/test only)

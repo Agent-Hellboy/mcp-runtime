@@ -10,6 +10,7 @@ Usage:
   mcp-runtime access [command]
 
 Available Commands:
+  explain     Explain a hypothetical access decision
   grant       Manage MCPAccessGrant resources
   session     Manage MCPAgentSession resources
 
