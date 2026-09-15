@@ -168,6 +168,7 @@ func (p *sessionProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	} else {
 		req.Header.Set("accept", "application/json")
 	}
+	copySessionProxyOriginHeaders(req, r)
 	req.Header.Set("x-mcp-source", "ui")
 	if authHeader != "" {
 		req.Header.Set("authorization", authHeader)
@@ -187,6 +188,30 @@ func (p *sessionProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	copySessionProxyResponse(w, resp)
+}
+
+// copySessionProxyOriginHeaders preserves the public origin used by runtime-api
+// when it builds browser-facing connect and observability URLs. The ingress
+// supplied forwarded values win; direct requests use the UI request host and
+// transport as a safe fallback. No client credential or unrelated proxy header
+// is forwarded.
+func copySessionProxyOriginHeaders(dst, src *http.Request) {
+	forwardedHost := strings.TrimSpace(src.Header.Get("x-forwarded-host"))
+	if forwardedHost == "" {
+		forwardedHost = strings.TrimSpace(src.Host)
+	}
+	if forwardedHost != "" {
+		dst.Header.Set("x-forwarded-host", forwardedHost)
+	}
+
+	forwardedProto := strings.TrimSpace(src.Header.Get("x-forwarded-proto"))
+	if forwardedProto == "" {
+		forwardedProto = "http"
+		if src.TLS != nil {
+			forwardedProto = "https"
+		}
+	}
+	dst.Header.Set("x-forwarded-proto", forwardedProto)
 }
 
 func sessionUpstreamCredential(sess uiSession) (authHeader, apiKey string, ok bool) {
