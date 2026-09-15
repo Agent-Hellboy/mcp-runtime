@@ -47,11 +47,7 @@ export function AppShell({
           onSignOut={onSignOut}
         />
       </header>
-      <WorkspaceNavigation
-        active={workspace}
-        onSelect={onSelectWorkspace}
-        role={auth.authenticated ? auth.principal?.role : undefined}
-      />
+      <WorkspaceNavigation active={workspace} auth={auth} onSelect={onSelectWorkspace} />
       <main className="workspace" id="workspace-content" tabIndex={-1}>
         {children}
       </main>

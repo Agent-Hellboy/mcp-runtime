@@ -7,6 +7,8 @@ function asAuthStatus(value: unknown): AuthStatus {
   }
   const record = value as Record<string, unknown>;
   const authenticated = record.authenticated === true;
+  // The CSRF token rides the auth response and is held in memory by the client
+  // module; it is never returned to callers or rendered.
   if (authenticated && typeof record.csrf_token === "string") {
     setCSRFToken(record.csrf_token);
   } else if (!authenticated) {

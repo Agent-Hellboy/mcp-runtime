@@ -20,6 +20,8 @@ export const SESSION_PROXY_GET_PATHS = new Set([
   "/admin/deployments",
   "/events",
   "/analytics/usage",
+  "/user/api-keys",
+  "/user/analytics/usage",
 ]);
 
 const SESSION_PROXY_GET_PREFIXES = ["/runtime/teams/"];

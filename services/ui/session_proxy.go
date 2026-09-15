@@ -268,6 +268,7 @@ func (p *sessionProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		req.Header.Set("content-type", contentType)
 	}
+	copySessionProxyOriginHeaders(req, r)
 	req.Header.Set("x-mcp-source", "ui")
 	if authHeader != "" {
 		req.Header.Set("authorization", authHeader)
@@ -314,6 +315,17 @@ func resolveSessionProxyURL(base *url.URL, upstreamPath, rawQuery string) (*url.
 	resolved.RawQuery = rawQuery
 	resolved.Fragment = ""
 	return resolved, nil
+}
+
+// copySessionProxyOriginHeaders preserves the public origin used by the
+// runtime API when the dashboard is reached through an ingress or proxy.
+func copySessionProxyOriginHeaders(dst, src *http.Request) {
+	if forwardedHost := strings.TrimSpace(src.Header.Get("x-forwarded-host")); forwardedHost != "" {
+		dst.Header.Set("x-forwarded-host", forwardedHost)
+	}
+	if forwardedProto := strings.TrimSpace(src.Header.Get("x-forwarded-proto")); forwardedProto != "" {
+		dst.Header.Set("x-forwarded-proto", forwardedProto)
+	}
 }
 
 func copySessionProxyResponse(w http.ResponseWriter, resp *http.Response) {

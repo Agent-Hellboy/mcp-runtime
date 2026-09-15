@@ -111,14 +111,13 @@ afterEach(() => {
 
 describe("admin navigation gating", () => {
   it("lists the admin tab only for an admin role", () => {
-    expect(visibleWorkspaceTabs("admin").map((tab) => tab.id)).toEqual([
+    expect(visibleWorkspaceTabs(ADMIN).map((tab) => tab.id)).toEqual([
       "servers",
       "admin",
       "legacy",
     ]);
-    for (const role of ["user", "viewer", "", undefined]) {
-      expect(visibleWorkspaceTabs(role).map((tab) => tab.id)).toEqual(["servers", "legacy"]);
-    }
+    const user = { authenticated: true, principal: { role: "user" } } as AuthStatus;
+    expect(visibleWorkspaceTabs(user).map((tab) => tab.id)).not.toContain("admin");
   });
 });
 

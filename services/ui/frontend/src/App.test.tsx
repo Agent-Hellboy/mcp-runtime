@@ -212,6 +212,7 @@ describe("App", () => {
     expect(screen.getByTitle("MCP Sentinel dashboard")).toBeInTheDocument();
 
     await user.click(screen.getByTestId("logout-button"));
-    await waitFor(() => expect(screen.queryByTitle("MCP Sentinel dashboard")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId("catalog-signed-out")).toBeInTheDocument());
+    expect(screen.queryByTitle("MCP Sentinel dashboard")).not.toBeInTheDocument();
   });
 });

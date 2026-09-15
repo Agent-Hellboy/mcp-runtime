@@ -120,7 +120,7 @@ func TestSessionProxyUpstreamPathAllowlist(t *testing.T) {
 }
 
 func TestSessionProxyInjectsBearerAndStripsClientAuth(t *testing.T) {
-	var gotPath, gotQuery, gotAuth, gotAPIKey, gotCookie, gotSource string
+	var gotPath, gotQuery, gotAuth, gotAPIKey, gotCookie, gotSource, gotForwardedHost, gotForwardedProto string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
 		gotQuery = r.URL.RawQuery
@@ -128,6 +128,8 @@ func TestSessionProxyInjectsBearerAndStripsClientAuth(t *testing.T) {
 		gotAPIKey = r.Header.Get("x-api-key")
 		gotCookie = r.Header.Get("cookie")
 		gotSource = r.Header.Get("x-mcp-source")
+		gotForwardedHost = r.Header.Get("x-forwarded-host")
+		gotForwardedProto = r.Header.Get("x-forwarded-proto")
 		w.Header().Set("content-type", "application/json")
 		w.Header().Set("x-upstream-trace", "trace-1")
 		w.Header().Set("set-cookie", "leaked=1")
@@ -143,6 +145,9 @@ func TestSessionProxyInjectsBearerAndStripsClientAuth(t *testing.T) {
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/ui/v1/runtime/servers?namespace=mcp-servers", nil)
+	req.Host = "localhost:18080"
+	req.Header.Set("x-forwarded-host", "platform.example.test")
+	req.Header.Set("x-forwarded-proto", "https")
 	req.Header.Set("authorization", "Bearer attacker-token")
 	req.Header.Set("x-api-key", "attacker-key")
 	req.Header.Set("cookie", sessionCookieName+"="+sess.ID)
@@ -171,6 +176,9 @@ func TestSessionProxyInjectsBearerAndStripsClientAuth(t *testing.T) {
 	}
 	if gotSource != "ui" {
 		t.Fatalf("x-mcp-source = %q", gotSource)
+	}
+	if gotForwardedHost != "platform.example.test" || gotForwardedProto != "https" {
+		t.Fatalf("public origin headers = %q/%q", gotForwardedHost, gotForwardedProto)
 	}
 	if rec.Header().Get("content-type") != "application/json" {
 		t.Fatalf("content-type = %q", rec.Header().Get("content-type"))

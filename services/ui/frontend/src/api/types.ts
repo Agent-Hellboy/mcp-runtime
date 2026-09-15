@@ -125,6 +125,10 @@ export type TeamMembership = {
   email?: string;
   role: string;
   created_at?: string;
+  id?: string;
+  slug?: string;
+  name?: string;
+  namespace?: string;
 };
 
 export type ComponentStatus = {
@@ -183,14 +187,6 @@ export type AdminOperations = {
   images: ImageActivity[];
 };
 
-export type UsageResponse = {
-  totals: { events: number; allowed: number; denied: number; unique_servers: number; unique_humans: number; unique_agents: number };
-  servers: Array<{ server: string; namespace: string; events: number; allowed: number; denied: number; unique_humans: number; unique_agents: number }>;
-  actors: Array<{ human_id: string; agent_id: string; events: number; unique_servers: number; unique_tools: number; denied: number }>;
-  tools: Array<{ server: string; tool_name: string; human_id: string; team_id: string; agent_id: string; events: number; denied: number }>;
-  decisions: Array<{ decision: string; events: number }>;
-};
-
 export type GatewayEvent = {
   timestamp?: string;
   namespace?: string;
@@ -216,4 +212,73 @@ export function subjectLabel(subject: SubjectRef | undefined): string {
 
 export function accessKey(item: { name: string; namespace: string }): string {
   return `${item.namespace}/${item.name}`;
+}
+
+// --- Phase 3: user workflows -------------------------------------------------
+
+// Mirrors platformclient.APIKeySummary. The raw key value is deliberately not
+// part of this type: it exists only in the one-time create response.
+export type UserAPIKey = {
+  id: string;
+  name: string;
+  prefix: string;
+  created_at: string;
+  revoked: boolean;
+  revoked_at?: string;
+};
+
+export type UsageTotals = {
+  events: number;
+  allowed: number;
+  denied: number;
+  unique_servers: number;
+  unique_humans: number;
+  unique_agents: number;
+  unique_sessions?: number;
+};
+
+export type ServerUsage = {
+  server: string;
+  namespace: string;
+  team_id?: string;
+  events: number;
+  allowed: number;
+  denied: number;
+  unique_humans: number;
+  unique_agents: number;
+  last_seen?: string;
+};
+
+export type ToolUsage = {
+  server: string;
+  tool_name: string;
+  human_id: string;
+  team_id: string;
+  agent_id: string;
+  events: number;
+  denied: number;
+  last_seen?: string;
+};
+
+export type UsageResponse = {
+  totals: UsageTotals;
+  servers: ServerUsage[];
+  tools: ToolUsage[];
+  window_days?: number;
+  actors?: Array<{ human_id: string; agent_id: string; events: number; unique_servers: number; unique_tools: number; denied: number }>;
+  decisions?: Array<{ decision: string; events: number }>;
+};
+
+// Legacy role gating, reproduced exactly (services/ui/static/legacy/app.js).
+// Activity is tenant-only; API keys additionally require a user identity.
+export function isAdminPrincipal(status: AuthStatus): boolean {
+  return status.authenticated && status.principal?.role === "admin";
+}
+
+export function isTenantUser(status: AuthStatus): boolean {
+  return status.authenticated && !isAdminPrincipal(status);
+}
+
+export function hasUserIdentity(status: AuthStatus): boolean {
+  return status.authenticated && (status.principal?.subject || "").trim() !== "";
 }
