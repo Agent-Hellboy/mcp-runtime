@@ -1,14 +1,13 @@
 import type { AuthStatus } from "../api/types";
-import { hasUserIdentity, isTenantUser } from "../api/types";
+import { hasUserIdentity, isAdmin, isTenantUser } from "../api/types";
 
-export type WorkspaceId = "servers" | "activity" | "keys" | "legacy";
+export type WorkspaceId = "servers" | "admin" | "activity" | "keys" | "legacy";
 
 export type WorkspaceTab = {
   id: WorkspaceId;
   label: string;
   description: string;
   // Optional visibility gate, evaluated against the authenticated principal.
-  // Omitted means always visible, matching the Phase 2 behavior.
   visible?: (auth: AuthStatus) => boolean;
 };
 
@@ -19,17 +18,21 @@ export const WORKSPACE_TABS: WorkspaceTab[] = [
     description: "Deployed MCP servers and their governed tool catalog.",
   },
   {
+    id: "admin",
+    label: "Administration",
+    description: "Access control, teams, operations, and platform health.",
+    visible: isAdmin,
+  },
+  {
     id: "activity",
     label: "Activity",
     description: "Your MCP usage and team membership.",
-    // Legacy data-user-only: tenant accounts only.
     visible: isTenantUser,
   },
   {
     id: "keys",
     label: "Keys",
     description: "Personal API keys for agents and CI jobs.",
-    // Legacy data-auth-required + data-user-identity-required.
     visible: hasUserIdentity,
   },
   {
@@ -39,8 +42,8 @@ export const WORKSPACE_TABS: WorkspaceTab[] = [
   },
 ];
 
-// visibleWorkspaceTabs applies the same role gating the legacy dashboard used,
-// so navigation cannot offer a workspace the principal may not read.
+// Navigation fails closed: a tab is offered only when its server-backed
+// principal is allowed to read it.
 export function visibleWorkspaceTabs(auth: AuthStatus): WorkspaceTab[] {
   return WORKSPACE_TABS.filter((tab) => !tab.visible || tab.visible(auth));
 }

@@ -73,6 +73,131 @@ export function isServerReady(server: ServerSummary): boolean {
   return current === desired && Number(desired) > 0;
 }
 
+// --- Phase 4: admin governance and operations -------------------------------
+
+export type SubjectRef = {
+  humanID?: string;
+  agentID?: string;
+  teamID?: string;
+};
+
+export type ServerRef = {
+  name?: string;
+  namespace?: string;
+};
+
+export type GrantSummary = {
+  name: string;
+  namespace: string;
+  serverRef?: ServerRef;
+  subject?: SubjectRef;
+  maxTrust?: string;
+  allowedSideEffects?: string[];
+  disabled: boolean;
+  age?: string;
+};
+
+export type SessionSummary = {
+  name: string;
+  namespace: string;
+  serverRef?: ServerRef;
+  subject?: SubjectRef;
+  consentedTrust?: string;
+  revoked: boolean;
+  expiresAt?: string;
+  age?: string;
+};
+
+export type TeamRecord = {
+  id: string;
+  slug: string;
+  name: string;
+  namespace: string;
+  created_at?: string;
+};
+
+export type ComponentStatus = {
+  key: string;
+  display: string;
+  namespace: string;
+  kind: string;
+  resource: string;
+  status: string;
+  ready: string;
+  message?: string;
+};
+
+export type UserActivity = {
+  id: string;
+  email: string;
+  role: string;
+  namespace?: string;
+  last_login_at?: string;
+  last_activity_at?: string;
+  login_count: number;
+  failed_action_count: number;
+  registry_credentials: number;
+  api_keys: number;
+};
+
+export type AuditLogEntry = {
+  user_id?: string;
+  action: string;
+  resource: string;
+  namespace?: string;
+  status: string;
+  message?: string;
+  actor_ip?: string;
+  source?: string;
+  auth_identity?: string;
+  image_ref?: string;
+  server_name?: string;
+  created_at?: string;
+};
+
+export type ImageActivity = {
+  email?: string;
+  namespace?: string;
+  image_ref: string;
+  server_name?: string;
+  deployment_target?: string;
+  action: string;
+  status: string;
+  created_at?: string;
+};
+
+export type AdminOperations = {
+  users: UserActivity[];
+  audit_logs: AuditLogEntry[];
+  images: ImageActivity[];
+};
+
+export type GatewayEvent = {
+  timestamp?: string;
+  namespace?: string;
+  tool_name?: string;
+  decision?: string;
+  source?: string;
+  event_type?: string;
+  payload?: Record<string, unknown>;
+};
+
+// The authenticated principal returned by the server is the only source of
+// truth for admin access. Anything else must fail closed.
+export function isAdmin(status: AuthStatus): boolean {
+  return status.authenticated === true && status.principal?.role === "admin";
+}
+
+export function subjectLabel(subject: SubjectRef | undefined): string {
+  if (!subject) {
+    return "—";
+  }
+  return [subject.humanID, subject.agentID, subject.teamID].filter(Boolean).join(" / ") || "—";
+}
+
+export function accessKey(item: { name: string; namespace: string }): string {
+  return `${item.namespace}/${item.name}`;
+}
 
 // --- Phase 3: user workflows -------------------------------------------------
 

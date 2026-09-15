@@ -94,11 +94,11 @@ describe("visibleWorkspaceTabs", () => {
 
   it("hides Activity from admins but keeps Keys when they have an identity", () => {
     // Legacy: Activity is data-user-only; Keys needs a user subject.
-    expect(ids(ADMIN as AuthStatus)).toEqual(["servers", "keys", "legacy"]);
+    expect(ids(ADMIN as AuthStatus)).toEqual(["servers", "admin", "keys", "legacy"]);
   });
 
   it("hides both from a session with no user identity", () => {
-    expect(ids(API_KEY_SESSION as AuthStatus)).toEqual(["servers", "legacy"]);
+    expect(ids(API_KEY_SESSION as AuthStatus)).toEqual(["servers", "admin", "legacy"]);
   });
 });
 

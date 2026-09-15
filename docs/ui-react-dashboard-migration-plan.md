@@ -177,12 +177,48 @@ Migrate admin-only surfaces: teams, access control, operations, audit links, dep
 
 Acceptance criteria:
 
-- [ ] Navigation and route guards fail closed based on the authenticated principal returned by the server.
-- [ ] Non-admin users cannot render or invoke admin-only controls, even by direct URL/navigation.
-- [ ] Destructive operations require an explicit confirmation and show the affected namespace/server/resource.
-- [ ] Audit, grant, and session links preserve the current detail context and provide a usable back path.
-- [ ] Grafana and other external/admin links retain their existing forward-auth behavior.
-- [ ] Security regression QA covers role boundaries, `401`/`403`, CSRF-sensitive actions, and secret exposure.
+- [x] Navigation and route guards fail closed based on the authenticated principal returned by the server.
+- [x] Non-admin users cannot render or invoke admin-only controls, even by direct URL/navigation.
+- [ ] Destructive operations require an explicit confirmation and show the affected namespace/server/resource. — **deferred with the mutations themselves**, see below.
+- [x] Audit, grant, and session links preserve the current detail context and provide a usable back path.
+- [x] Grafana and other external/admin links retain their existing forward-auth behavior.
+- [ ] Security regression QA covers role boundaries, `401`/`403`, CSRF-sensitive actions, and secret exposure. — component-level role/401 coverage landed; live browser QA still pending.
+
+Phase 4 scope decision — **read surfaces only**:
+
+The admin *reads* (access control, teams, operations, audit trail, image
+activity, platform health, observability entry points) are migrated and served
+through the Phase 1 GET-only session proxy. Admin *mutations* — disabling a
+grant, revoking a session, creating or deleting a team, restarting a component,
+retiring a server — deliberately stay in the legacy fallback, for three
+reasons:
+
+1. The session proxy is GET-only, and the CSRF protection required before any
+   cookie-backed mutating route can be exposed is Phase 3's work.
+2. The legacy dashboard routes every non-GET to `/api/v1` with no browser
+   credential, so those writes already answer `401` from the browser today
+   (verified against the contributor cluster). Rebuilding them in React against
+   the same path would ship a visibly broken control.
+3. Duplicating a write path across the legacy iframe and React risks a
+   double-fire, which this plan explicitly forbids.
+
+Each migrated panel states where its write actions still live. The destructive
+confirmation criterion therefore moves to whichever phase lands the
+CSRF-protected mutating route.
+
+Role gating fails closed in three places: the admin tab is filtered out of the
+navigation for any non-admin role, the App route resets to Servers if the
+principal is not an admin, and `AdminGuard` refuses to render admin children
+regardless of how the route was reached. A non-admin session issues no admin
+request at all, because every admin query is `enabled` on the server-returned
+principal.
+
+BLOCKED: the grant and session drill-down activity panels read gateway decision
+events from `/events`, which is the analytics path that is unavailable on the
+contributor cluster (`502`). They render an explicit "activity unavailable"
+error rather than an empty table, and are covered by mocked component tests.
+They cannot be validated against live data until the analytics service is
+restored.
 
 ### Phase 5 — Legacy retirement and React completion
 
