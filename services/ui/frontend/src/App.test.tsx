@@ -178,4 +178,20 @@ describe("App", () => {
     await user.click(screen.getByTestId("workspace-tab-servers"));
     expect(screen.queryByTitle("MCP Sentinel dashboard")).not.toBeInTheDocument();
   });
+
+  it("unmounts the legacy dashboard when signing out", async () => {
+    const user = userEvent.setup();
+    stubRoutes({
+      "/auth/status": ADMIN,
+      "/auth/logout": { status: 200, body: { authenticated: false } },
+      ...EMPTY_CATALOG,
+    });
+
+    renderApp();
+    await user.click(await screen.findByTestId("workspace-tab-legacy"));
+    expect(screen.getByTitle("MCP Sentinel dashboard")).toBeInTheDocument();
+
+    await user.click(screen.getByTestId("logout-button"));
+    await waitFor(() => expect(screen.queryByTitle("MCP Sentinel dashboard")).not.toBeInTheDocument());
+  });
 });
