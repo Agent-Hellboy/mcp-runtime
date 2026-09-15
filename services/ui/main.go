@@ -55,7 +55,7 @@ var (
 	loginFailureThreshold  = intEnvOr("UI_LOGIN_FAILURE_THRESHOLD", defaultLoginFailureThreshold)
 	loginLockoutDuration   = durationEnvOr("UI_LOGIN_LOCKOUT", defaultLoginLockoutDuration)
 	forceSecureCookie      = boolEnvOr("UI_FORCE_SECURE_COOKIE", false)
-	passwordLoginHook      func(context.Context, string, string, string) (sessionPrincipal, string, error)
+	passwordLoginHook      func(context.Context, string, string, string) (sessionPrincipal, string, time.Time, error)
 )
 
 type sessionPrincipal struct {
@@ -71,6 +71,10 @@ type uiSession struct {
 	Principal          sessionPrincipal
 	UpstreamAuthHeader string
 	UpstreamAPIKey     string
+	// CSRFToken is the session-bound synchroniser token. It is handed to
+	// same-origin JavaScript and required back on every state-changing
+	// request; see csrf.go.
+	CSRFToken string
 }
 
 // uiSessionStore is intentionally in-memory only; sessions are cleared on UI restart.
@@ -300,12 +304,13 @@ func handleLogin(apiKey, upstreamAPIKey, apiUpstream string, store *uiSessionSto
 			var (
 				p         sessionPrincipal
 				token     string
+				expiresAt time.Time
 				verifyErr error
 			)
 			if passwordLoginHook != nil {
-				p, token, verifyErr = passwordLoginHook(r.Context(), apiUpstream, email, password)
+				p, token, expiresAt, verifyErr = passwordLoginHook(r.Context(), apiUpstream, email, password)
 			} else {
-				p, token, verifyErr = loginPasswordWithAPI(r.Context(), apiUpstream, email, password)
+				p, token, expiresAt, verifyErr = loginPasswordWithAPI(r.Context(), apiUpstream, email, password)
 			}
 			if verifyErr != nil {
 				failures := loginAttempts.recordFailure(clientID)
@@ -319,6 +324,7 @@ func handleLogin(apiKey, upstreamAPIKey, apiUpstream string, store *uiSessionSto
 			sess, err = store.createSession(r.Context(), uiSession{
 				Principal:          p,
 				UpstreamAuthHeader: "Bearer " + token,
+				ExpiresAt:          expiresAt,
 			})
 		} else if idToken != "" {
 			var (
@@ -379,7 +385,11 @@ func handleLogin(apiKey, upstreamAPIKey, apiUpstream string, store *uiSessionSto
 			log.Printf(`auth_login_success_after_failures timestamp=%q prior_failures=%d`, time.Now().UTC().Format(time.RFC3339), priorFailures)
 		}
 		http.SetCookie(w, newSessionCookie(r, sess.ID, sess.ExpiresAt))
-		serviceutil.WriteJSON(w, http.StatusOK, map[string]any{"authenticated": true, "principal": sess.Principal})
+		serviceutil.WriteJSON(w, http.StatusOK, map[string]any{
+			"authenticated": true,
+			"principal":     sess.Principal,
+			"csrf_token":    sess.CSRFToken,
+		})
 	}
 }
 
@@ -399,10 +409,10 @@ func loginOIDCSession(ctx context.Context, apiUpstream, idToken string) (session
 	return p, idToken, idTokenExpiry(idToken), nil
 }
 
-func loginPasswordWithAPI(ctx context.Context, apiUpstream, email, password string) (sessionPrincipal, string, error) {
+func loginPasswordWithAPI(ctx context.Context, apiUpstream, email, password string) (sessionPrincipal, string, time.Time, error) {
 	loginURL, err := apiUpstreamURL(apiUpstream, "api", "v1", "auth", "login")
 	if err != nil {
-		return sessionPrincipal{}, "", err
+		return sessionPrincipal{}, "", time.Time{}, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -412,24 +422,25 @@ func loginPasswordWithAPI(ctx context.Context, apiUpstream, email, password stri
 		"password": password,
 	})
 	if err != nil {
-		return sessionPrincipal{}, "", err
+		return sessionPrincipal{}, "", time.Time{}, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, loginURL, strings.NewReader(string(body)))
 	if err != nil {
-		return sessionPrincipal{}, "", err
+		return sessionPrincipal{}, "", time.Time{}, err
 	}
 	req.Header.Set("content-type", "application/json")
 	req.Header.Set("x-mcp-source", "ui")
 	resp, err := authHTTPClient.Do(req)
 	if err != nil {
-		return sessionPrincipal{}, "", err
+		return sessionPrincipal{}, "", time.Time{}, err
 	}
 	defer drainAndClose(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return sessionPrincipal{}, "", fmt.Errorf("password auth failed: status %d", resp.StatusCode)
+		return sessionPrincipal{}, "", time.Time{}, fmt.Errorf("password auth failed: status %d", resp.StatusCode)
 	}
 	var payload struct {
 		AccessToken string `json:"access_token"`
+		ExpiresIn   int    `json:"expires_in"`
 		User        struct {
 			ID        string `json:"id"`
 			Email     string `json:"email"`
@@ -438,21 +449,25 @@ func loginPasswordWithAPI(ctx context.Context, apiUpstream, email, password stri
 		} `json:"user"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return sessionPrincipal{}, "", err
+		return sessionPrincipal{}, "", time.Time{}, err
 	}
 	if strings.TrimSpace(payload.AccessToken) == "" {
-		return sessionPrincipal{}, "", errors.New("missing access token")
+		return sessionPrincipal{}, "", time.Time{}, errors.New("missing access token")
+	}
+	if payload.ExpiresIn <= 0 {
+		return sessionPrincipal{}, "", time.Time{}, errors.New("missing access token expiry")
 	}
 	role := strings.TrimSpace(payload.User.Role)
 	if role == "" {
 		role = "user"
 	}
+	expiresAt := time.Now().UTC().Add(time.Duration(payload.ExpiresIn) * time.Second)
 	return sessionPrincipal{
 		Role:     role,
 		Subject:  strings.TrimSpace(payload.User.ID),
 		Email:    strings.TrimSpace(payload.User.Email),
 		AuthType: "platform_jwt",
-	}, payload.AccessToken, nil
+	}, payload.AccessToken, expiresAt, nil
 }
 
 func idTokenExpiry(idToken string) time.Time {
@@ -790,6 +805,11 @@ func (s *uiSessionStore) createSession(_ context.Context, session uiSession) (ui
 		return uiSession{}, err
 	}
 	session.ID = id
+	csrfToken, err := randomURLToken(24)
+	if err != nil {
+		return uiSession{}, err
+	}
+	session.CSRFToken = csrfToken
 	maxExpiry := s.now().Add(sessionDuration)
 	if session.ExpiresAt.IsZero() || session.ExpiresAt.After(maxExpiry) {
 		session.ExpiresAt = maxExpiry
@@ -913,6 +933,7 @@ func handleStatus(store *uiSessionStore) http.HandlerFunc {
 		serviceutil.WriteJSON(w, http.StatusOK, map[string]any{
 			"authenticated": true,
 			"principal":     sess.Principal,
+			"csrf_token":    sess.CSRFToken,
 		})
 	}
 }

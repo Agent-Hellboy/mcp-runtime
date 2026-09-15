@@ -45,6 +45,55 @@ var sessionProxyAnalyticsPrefixes = []string{
 	"/user/analytics/usage",
 }
 
+// sessionProxyWriteRoutes is the allowlist of state-changing routes the UI
+// session may reach, kept separate from the read allowlist so that widening
+// reads can never silently widen writes. Each entry is matched exactly or as a
+// path prefix when Wildcard is set, and only for the listed methods.
+//
+// Phase 3 needs exactly two: create a user API key, and revoke one.
+var sessionProxyWriteRoutes = []sessionProxyWriteRoute{
+	{Prefix: "/user/api-keys", Methods: []string{http.MethodPost}},
+	{Prefix: "/user/api-keys/", Methods: []string{http.MethodDelete}, Wildcard: true},
+}
+
+type sessionProxyWriteRoute struct {
+	Prefix   string
+	Methods  []string
+	Wildcard bool
+}
+
+// sessionProxyRouteMatches reports whether a request path belongs to a write
+// route. A wildcard route requires exactly one more non-empty segment after its
+// prefix, so it matches neither its own bare prefix (an empty resource id) nor
+// anything nested deeper.
+func sessionProxyRouteMatches(route sessionProxyWriteRoute, requestPath string) bool {
+	if !route.Wildcard {
+		return requestPath == route.Prefix
+	}
+	rest, ok := strings.CutPrefix(requestPath, route.Prefix)
+	return ok && rest != "" && !strings.Contains(rest, "/")
+}
+
+// sessionProxyWriteAllowed reports whether a method and path pair is on the
+// write allowlist. Everything not listed is denied.
+func sessionProxyWriteAllowed(method, requestPath string) bool {
+	for _, route := range sessionProxyWriteRoutes {
+		if !sessionProxyRouteMatches(route, requestPath) {
+			continue
+		}
+		for _, allowed := range route.Methods {
+			if allowed == method {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// sessionProxyMaxWriteBody bounds proxied request bodies. Phase 3 writes are
+// small JSON documents; anything larger is a bug or an attack.
+const sessionProxyMaxWriteBody = 32 * 1024
+
 var sessionProxyHTTPClient = &http.Client{
 	Timeout: sessionProxyTimeout,
 	CheckRedirect: func(*http.Request, []*http.Request) error {
@@ -125,25 +174,42 @@ func sessionProxyPathAllowed(requestPath string, prefixes []string) bool {
 }
 
 func (p *sessionProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		w.Header().Set("allow", http.MethodGet)
-		serviceutil.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
-		return
-	}
+	write := unsafeHTTPMethod(r.Method)
 	base, upstreamPath, ok := sessionProxyRoute(r.URL.Path)
 	if !ok {
 		serviceutil.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "not_found"})
 		return
+	}
+	if write {
+		suffix := strings.TrimPrefix(upstreamPath, "/api/v1")
+		if !sessionProxyWriteAllowed(r.Method, suffix) {
+			w.Header().Set("allow", sessionProxyAllowHeader(suffix))
+			serviceutil.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+			return
+		}
 	}
 	sess, ok := p.store.sessionFromRequest(r)
 	if !ok {
 		serviceutil.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
+	// Authenticate before CSRF so an expired session reads as 401 (sign in
+	// again) rather than 403 (forbidden), which is what the client acts on.
 	authHeader, apiKey, ok := sessionUpstreamCredential(sess)
 	if !ok {
 		serviceutil.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
+	}
+	if status := verifyCSRF(r, sess); status != 0 {
+		// #nosec G706 -- path-only telemetry; no credential or token material.
+		log.Printf("ui session proxy csrf rejection method=%q path=%q", r.Method, r.URL.Path)
+		serviceutil.WriteJSON(w, status, map[string]string{"error": "csrf_failed"})
+		return
+	}
+
+	var body io.Reader
+	if write && r.Body != nil {
+		body = http.MaxBytesReader(w, r.Body, sessionProxyMaxWriteBody)
 	}
 
 	if strings.HasPrefix(upstreamPath, "/api/v1/events") ||
@@ -158,10 +224,19 @@ func (p *sessionProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		serviceutil.WriteJSON(w, http.StatusBadGateway, map[string]string{"error": "upstream_error"})
 		return
 	}
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, upstreamURL.String(), nil)
+	req, err := http.NewRequestWithContext(r.Context(), r.Method, upstreamURL.String(), body)
 	if err != nil {
 		serviceutil.WriteJSON(w, http.StatusBadGateway, map[string]string{"error": "upstream_error"})
 		return
+	}
+	// Forward only the content type; the CSRF token is a UI-origin concern and
+	// must never be relayed upstream.
+	if write {
+		contentType := strings.TrimSpace(r.Header.Get("content-type"))
+		if contentType == "" {
+			contentType = "application/json"
+		}
+		req.Header.Set("content-type", contentType)
 	}
 	if accept := strings.TrimSpace(r.Header.Get("accept")); accept != "" {
 		req.Header.Set("accept", accept)
@@ -265,4 +340,16 @@ func skipSessionProxyResponseHeader(key string) bool {
 	default:
 		return false
 	}
+}
+
+// sessionProxyAllowHeader lists the methods a path actually accepts, so a
+// rejected write reports the truth instead of a blanket "GET".
+func sessionProxyAllowHeader(requestPath string) string {
+	methods := []string{http.MethodGet}
+	for _, route := range sessionProxyWriteRoutes {
+		if sessionProxyRouteMatches(route, requestPath) {
+			methods = append(methods, route.Methods...)
+		}
+	}
+	return strings.Join(methods, ", ")
 }
