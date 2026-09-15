@@ -2,6 +2,7 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 
 import { App } from "./App";
+import { AppProviders } from "./providers/AppProviders";
 import "./styles/global.css";
 
 const root = document.getElementById("root");
@@ -27,7 +28,9 @@ function loadRuntimeConfig(): Promise<void> {
 loadRuntimeConfig().then(() => {
   createRoot(root).render(
     <React.StrictMode>
-      <App />
+      <AppProviders>
+        <App />
+      </AppProviders>
     </React.StrictMode>
   );
 });

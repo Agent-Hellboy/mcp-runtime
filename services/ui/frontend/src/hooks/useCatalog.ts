@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useQueries, useQueryClient } from "@tanstack/react-query";
+import { useCallback } from "react";
 
 import { listNamespaces, listServers, listTools } from "../api/catalog";
 import { UnauthorizedError } from "../api/client";
@@ -6,21 +7,7 @@ import type { NamespaceEntry, ServerSummary, ToolRow } from "../api/types";
 
 export type CatalogStatus = "loading" | "ready" | "error" | "unauthorized";
 
-export type CatalogState = {
-  status: CatalogStatus;
-  namespaces: NamespaceEntry[];
-  servers: ServerSummary[];
-  tools: ToolRow[];
-  error: string;
-};
-
-const INITIAL: CatalogState = {
-  status: "loading",
-  namespaces: [],
-  servers: [],
-  tools: [],
-  error: "",
-};
+export const CATALOG_QUERY_KEY = "catalog";
 
 function errorMessage(err: unknown): string {
   if (err instanceof Error && err.message.trim()) {
@@ -29,50 +16,58 @@ function errorMessage(err: unknown): string {
   return "The catalog could not be loaded.";
 }
 
-// useCatalog owns the namespace-scoped catalog read. Namespace changes refetch
-// from the server; every other filter is applied client-side by the workspace.
+// useCatalog owns the namespace-scoped catalog read. The namespace is part of
+// the query key, so changing scope refetches and caches per scope; every other
+// filter is applied client-side by the workspace.
 export function useCatalog(enabled: boolean, namespace: string) {
-  const [state, setState] = useState<CatalogState>(INITIAL);
-  const [reloadToken, setReloadToken] = useState(0);
+  const queryClient = useQueryClient();
 
-  const reload = useCallback(() => setReloadToken((token) => token + 1), []);
+  const results = useQueries({
+    queries: [
+      {
+        queryKey: [CATALOG_QUERY_KEY, "namespaces"],
+        queryFn: listNamespaces,
+        enabled,
+      },
+      {
+        queryKey: [CATALOG_QUERY_KEY, "servers", namespace],
+        queryFn: () => listServers(namespace),
+        enabled,
+      },
+      {
+        queryKey: [CATALOG_QUERY_KEY, "tools", namespace],
+        queryFn: () => listTools(namespace),
+        enabled,
+      },
+    ],
+  });
 
-  useEffect(() => {
-    if (!enabled) {
-      setState({ ...INITIAL, status: "unauthorized" });
-      return;
-    }
+  const [namespacesQuery, serversQuery, toolsQuery] = results;
+  const firstError = results.find((result) => result.error)?.error;
 
-    let cancelled = false;
-    setState((previous) => ({ ...previous, status: "loading", error: "" }));
+  const reload = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: [CATALOG_QUERY_KEY] });
+  }, [queryClient]);
 
-    (async () => {
-      try {
-        const [namespaces, servers, tools] = await Promise.all([
-          listNamespaces(),
-          listServers(namespace),
-          listTools(namespace),
-        ]);
-        if (cancelled) {
-          return;
-        }
-        setState({ status: "ready", namespaces, servers, tools, error: "" });
-      } catch (err) {
-        if (cancelled) {
-          return;
-        }
-        if (err instanceof UnauthorizedError) {
-          setState({ ...INITIAL, status: "unauthorized" });
-          return;
-        }
-        setState({ ...INITIAL, status: "error", error: errorMessage(err) });
-      }
-    })();
+  let status: CatalogStatus;
+  if (!enabled) {
+    status = "unauthorized";
+  } else if (firstError instanceof UnauthorizedError) {
+    status = "unauthorized";
+  } else if (firstError) {
+    status = "error";
+  } else if (results.some((result) => result.isPending)) {
+    status = "loading";
+  } else {
+    status = "ready";
+  }
 
-    return () => {
-      cancelled = true;
-    };
-  }, [enabled, namespace, reloadToken]);
-
-  return { ...state, reload };
+  return {
+    status,
+    namespaces: (namespacesQuery.data ?? []) as NamespaceEntry[],
+    servers: (serversQuery.data ?? []) as ServerSummary[],
+    tools: (toolsQuery.data ?? []) as ToolRow[],
+    error: firstError ? errorMessage(firstError) : "",
+    reload,
+  };
 }

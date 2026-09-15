@@ -4,6 +4,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { axe } from "vitest-axe";
 
 import { App } from "./App";
+import { AppProviders } from "./providers/AppProviders";
+
+function renderApp() {
+  return render(
+    <AppProviders>
+      <App />
+    </AppProviders>
+  );
+}
 
 // Colour contrast needs real layout, which jsdom does not provide; the browser
 // QA pass covers it. Everything else runs here.
@@ -77,7 +86,7 @@ afterEach(() => {
 describe("accessibility", () => {
   it("has no detectable violations while signed out", async () => {
     stub(false);
-    const { container } = render(<App />);
+    const { container } = renderApp();
     await screen.findByTestId("catalog-signed-out");
 
     expect(await axe(container, AXE_OPTIONS)).toHaveNoViolations();
@@ -86,7 +95,7 @@ describe("accessibility", () => {
   it("has no detectable violations on the sign-in form", async () => {
     const user = userEvent.setup();
     stub(false);
-    const { container } = render(<App />);
+    const { container } = renderApp();
     await user.click(await screen.findByTestId("signin-button"));
 
     expect(await axe(container, AXE_OPTIONS)).toHaveNoViolations();
@@ -94,7 +103,7 @@ describe("accessibility", () => {
 
   it("has no detectable violations on the servers workspace", async () => {
     stub(true);
-    const { container } = render(<App />);
+    const { container } = renderApp();
     await screen.findByTestId("server-list");
 
     expect(await axe(container, AXE_OPTIONS)).toHaveNoViolations();
@@ -103,7 +112,7 @@ describe("accessibility", () => {
   it("has no detectable violations with a tool selected", async () => {
     const user = userEvent.setup();
     stub(true);
-    const { container } = render(<App />);
+    const { container } = renderApp();
     await screen.findByTestId("server-list");
     await user.click(screen.getAllByTestId("tool-row-select")[0]);
     await waitFor(() => expect(screen.getByTestId("tool-detail")).toBeInTheDocument());
@@ -114,7 +123,7 @@ describe("accessibility", () => {
   it("keeps every interactive control keyboard reachable", async () => {
     const user = userEvent.setup();
     stub(true);
-    render(<App />);
+    renderApp();
     await screen.findByTestId("server-list");
 
     const search = screen.getByTestId("tool-search");

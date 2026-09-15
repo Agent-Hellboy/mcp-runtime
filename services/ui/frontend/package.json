@@ -10,6 +10,8 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@tanstack/react-query": "^5.102.8",
+    "@tanstack/react-table": "^9.2.4",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
   },

@@ -3,6 +3,15 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
+import { AppProviders } from "./providers/AppProviders";
+
+function renderApp() {
+  return render(
+    <AppProviders>
+      <App />
+    </AppProviders>
+  );
+}
 
 type Route = { status: number; body: unknown };
 
@@ -58,7 +67,7 @@ describe("App", () => {
   it("renders the signed-out shell with a sign-in action", async () => {
     stubRoutes({ "/auth/status": SIGNED_OUT });
 
-    render(<App />);
+    renderApp();
 
     expect(await screen.findByTestId("catalog-signed-out")).toBeInTheDocument();
     expect(screen.getByTestId("account-state")).toHaveTextContent("Signed out");
@@ -74,7 +83,7 @@ describe("App", () => {
       ...EMPTY_CATALOG,
     });
 
-    render(<App />);
+    renderApp();
     await user.click(await screen.findByTestId("signin-button"));
 
     await user.type(screen.getByTestId("login-email"), "admin@mcpruntime.org");
@@ -106,7 +115,7 @@ describe("App", () => {
       ...EMPTY_CATALOG,
     });
 
-    render(<App />);
+    renderApp();
     await user.click(await screen.findByTestId("signin-button"));
     await user.type(screen.getByTestId("login-api-key"), "ui-key");
     await user.click(screen.getByTestId("login-submit"));
@@ -124,7 +133,7 @@ describe("App", () => {
       "/auth/login": { status: 401, body: { error: "unauthorized" } },
     });
 
-    render(<App />);
+    renderApp();
     await user.click(await screen.findByTestId("signin-button"));
     await user.type(screen.getByTestId("login-email"), "nobody@example.com");
     await user.type(screen.getByTestId("login-password"), "wrong");
@@ -144,7 +153,7 @@ describe("App", () => {
       ...EMPTY_CATALOG,
     });
 
-    render(<App />);
+    renderApp();
     await user.click(await screen.findByTestId("logout-button"));
 
     await waitFor(() =>
@@ -160,7 +169,7 @@ describe("App", () => {
     const user = userEvent.setup();
     stubRoutes({ "/auth/status": ADMIN, ...EMPTY_CATALOG });
 
-    render(<App />);
+    renderApp();
     await user.click(await screen.findByTestId("workspace-tab-legacy"));
 
     const frame = screen.getByTitle("MCP Sentinel dashboard");

@@ -1,5 +1,8 @@
-import { StatusBadge, riskTone } from "../StatusBadge";
-import { toolKey, type ToolRow } from "../../api/types";
+import { flexRender, useTable, type SortingState } from "@tanstack/react-table";
+import { useMemo, useState } from "react";
+
+import { buildToolColumns, toolTableFeatures } from "./toolColumns";
+import type { ToolRow } from "../../api/types";
 
 type ToolCatalogProps = {
   tools: ToolRow[];
@@ -9,16 +12,10 @@ type ToolCatalogProps = {
   emptyMessage: string;
 };
 
-function driftTone(drift: string): "ready" | "attention" | "neutral" {
-  switch (drift) {
-    case "declared":
-      return "ready";
-    case "missing":
-    case "ungoverned":
-      return "attention";
-    default:
-      return "neutral";
-  }
+function sortHint(direction: false | "asc" | "desc"): string {
+  if (direction === "asc") return "ascending";
+  if (direction === "desc") return "descending";
+  return "none";
 }
 
 export function ToolCatalog({
@@ -28,6 +25,22 @@ export function ToolCatalog({
   onSelectTool,
   emptyMessage,
 }: ToolCatalogProps) {
+  const [sorting, setSorting] = useState<SortingState>([]);
+
+  const columns = useMemo(
+    () => buildToolColumns({ selectedToolKey, onSelectTool }),
+    [selectedToolKey, onSelectTool]
+  );
+
+  const table = useTable({
+    features: toolTableFeatures,
+    columns,
+    data: tools,
+    state: { sorting },
+    onSortingChange: setSorting,
+  });
+
+  const rows = table.getRowModel().rows;
   const caption =
     tools.length === totalCount
       ? `${totalCount} tool${totalCount === 1 ? "" : "s"}`
@@ -44,65 +57,73 @@ export function ToolCatalog({
       <div className="table-scroll" data-testid="tool-table-scroll" tabIndex={0}>
         <table className="data-table" data-testid="tool-table">
           <caption className="visually-hidden">
-            Governed tool catalog with trust, side effect, risk, and drift for each tool.
+            Governed tool catalog with trust, side effect, risk, and drift for each tool. Column
+            headers are buttons that sort the table.
           </caption>
           <thead>
-            <tr>
-              <th scope="col">Tool</th>
-              <th scope="col">Server</th>
-              <th scope="col">Trust</th>
-              <th scope="col">Side effect</th>
-              <th scope="col">Risk</th>
-              <th scope="col">Drift</th>
-            </tr>
+            {table.getHeaderGroups().map((group) => (
+              <tr key={group.id}>
+                {group.headers.map((header) => {
+                  const direction = header.column.getIsSorted();
+                  return (
+                    <th
+                      key={header.id}
+                      scope="col"
+                      aria-sort={
+                        direction === "asc"
+                          ? "ascending"
+                          : direction === "desc"
+                            ? "descending"
+                            : "none"
+                      }
+                    >
+                      <button
+                        type="button"
+                        className="column-sort"
+                        data-testid={`tool-sort-${header.column.id}`}
+                        onClick={header.column.getToggleSortingHandler()}
+                      >
+                        {flexRender(header.column.columnDef.header, header.getContext())}
+                        <span className="visually-hidden">
+                          , sorted {sortHint(direction)}, activate to change sorting
+                        </span>
+                        <span className="sort-indicator" aria-hidden="true">
+                          {direction === "asc" ? "▲" : direction === "desc" ? "▼" : "↕"}
+                        </span>
+                      </button>
+                    </th>
+                  );
+                })}
+              </tr>
+            ))}
           </thead>
           <tbody>
-            {tools.length === 0 ? (
+            {rows.length === 0 ? (
               <tr>
-                <td colSpan={6} className="table-empty" data-testid="tool-table-empty">
+                <td colSpan={columns.length} className="table-empty" data-testid="tool-table-empty">
                   {emptyMessage}
                 </td>
               </tr>
             ) : (
-              tools.map((tool) => {
-                const key = toolKey(tool);
-                const selected = key === selectedToolKey;
+              rows.map((row) => {
+                const tool = row.original;
+                const key = `${tool.namespace}/${tool.server_name}/${tool.tool_name}`;
+                const cells = row.getAllCells();
+                const [first, ...rest] = cells;
                 return (
                   <tr
                     key={key}
-                    className={selected ? "selected" : undefined}
+                    className={key === selectedToolKey ? "selected" : undefined}
                     data-testid="tool-row"
                   >
                     <th scope="row">
-                      <button
-                        type="button"
-                        className="link-button"
-                        aria-pressed={selected}
-                        data-testid="tool-row-select"
-                        onClick={() => onSelectTool(selected ? "" : key)}
-                      >
-                        {tool.tool_name}
-                      </button>
-                      {tool.description ? (
-                        <span className="cell-detail">{tool.description}</span>
-                      ) : null}
+                      {flexRender(first.column.columnDef.cell, first.getContext())}
                     </th>
-                    <td>
-                      {tool.server_name}
-                      <span className="cell-detail">{tool.namespace}</span>
-                    </td>
-                    <td>{tool.required_trust || "—"}</td>
-                    <td>{tool.side_effect || "—"}</td>
-                    <td>
-                      <StatusBadge tone={riskTone(tool.risk_level)}>
-                        {tool.risk_level || "unrated"}
-                      </StatusBadge>
-                    </td>
-                    <td>
-                      <StatusBadge tone={driftTone(tool.drift_status)}>
-                        {tool.drift_status || "unknown"}
-                      </StatusBadge>
-                    </td>
+                    {rest.map((cell) => (
+                      <td key={cell.id}>
+                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                      </td>
+                    ))}
                   </tr>
                 );
               })

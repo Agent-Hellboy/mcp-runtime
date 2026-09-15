@@ -116,6 +116,18 @@ before, `mcp-sentinel-ui:phase2-react-servers-20260915-191447` after, both
   its own role-gated tabs (Servers, Keys, Analytics, Teams, Access Control, Ops,
   Settings for admin), `Role: admin`, and 3 server cards. Keys, Teams, and
   Settings were clean.
+- Library choice: the slice uses two headless libraries and keeps the Sentinel
+  CSS tokens — TanStack Query for the namespace-scoped catalog reads (caching,
+  request dedup, a 401-aware retry policy, invalidation) and TanStack Table v9
+  for the tool table (sorting with ordinal risk/trust ranking, tree-shaken
+  features). Native `<select>` and hand-rolled presentational components were
+  kept deliberately: a component kit would have re-themed the shell away from
+  the legacy dashboard it still sits above until Phase 5. Base UI was evaluated
+  and rejected for now because it is still `1.0.0-rc.0`. Cost: the bundle grew
+  from 216 kB to 292 kB raw (67 kB to 91 kB gzipped). Browser evidence: sorting
+  works by mouse and keyboard with correct `aria-sort`, and returning to an
+  already-fetched namespace scope issued zero network requests.
+
 - BLOCKED, unchanged from Phase 1 and unrelated to this change: the cluster's
   analytics path is down (`mcp-analytics-api` not ready, ClickHouse/Kafka/
   processor in `CrashLoopBackOff`), so legacy Analytics and the Governance
