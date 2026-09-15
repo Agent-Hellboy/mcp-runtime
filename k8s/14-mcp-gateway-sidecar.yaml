@@ -50,6 +50,13 @@ spec:
         - name: mcp-gateway
           image: mcp-sentinel-mcp-gateway:latest
           imagePullPolicy: IfNotPresent
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
           securityContext:
             allowPrivilegeEscalation: false
             runAsNonRoot: true
