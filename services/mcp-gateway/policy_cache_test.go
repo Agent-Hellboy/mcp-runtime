@@ -162,6 +162,18 @@ func TestConfigStatusExposesSanitizedMetadata(t *testing.T) {
 	}
 }
 
+func TestNextPolicyReloadIntervalAddsBoundedJitter(t *testing.T) {
+	for i := 0; i < 1000; i++ {
+		interval := nextPolicyReloadInterval()
+		if interval < policyReloadInterval {
+			t.Fatalf("interval = %s, want at least %s", interval, policyReloadInterval)
+		}
+		if interval >= policyReloadInterval+policyReloadJitter {
+			t.Fatalf("interval = %s, want less than %s", interval, policyReloadInterval+policyReloadJitter)
+		}
+	}
+}
+
 func jsonContains(t *testing.T, body []byte, key string) bool {
 	t.Helper()
 	var m map[string]json.RawMessage

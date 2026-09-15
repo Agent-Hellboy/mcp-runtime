@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
+	"math/rand/v2"
 	"net/http"
 	"os"
 	"strings"
@@ -11,6 +12,15 @@ import (
 
 	policypkg "mcp-runtime/pkg/policy"
 )
+
+const (
+	policyReloadInterval = 5 * time.Second
+	policyReloadJitter   = 2 * time.Second
+)
+
+func nextPolicyReloadInterval() time.Duration {
+	return policyReloadInterval + rand.N(policyReloadJitter)
+}
 
 // errPolicyUnavailable is returned by currentPolicy when no validated policy
 // snapshot has been activated yet. Callers (including gate filters) fail closed
@@ -30,7 +40,7 @@ func (s *gatewayServer) startPolicyCache() error {
 	}
 
 	go func() {
-		ticker := time.NewTicker(5 * time.Second)
+		ticker := time.NewTicker(nextPolicyReloadInterval())
 		defer ticker.Stop()
 		for range ticker.C {
 			if err := s.reloadPolicy(); err != nil {
