@@ -71,6 +71,7 @@ func (s *gatewayServer) emitIfEnabled(ctx context.Context, event events.Envelope
 	if s.analyticsClosed {
 		s.analyticsMu.Unlock()
 		dropped := s.analyticsDropped.Add(1)
+		s.metrics.recordAnalyticsDrop()
 		if shouldLogAnalyticsDrop(dropped) {
 			log.Printf("gateway analytics dispatcher closed; dropped event total=%d source=%q event_type=%q", dropped, event.Source, event.EventType)
 		}
@@ -93,6 +94,7 @@ func (s *gatewayServer) emitIfEnabled(ctx context.Context, event events.Envelope
 	default:
 		s.analyticsMu.Unlock()
 		dropped := s.analyticsDropped.Add(1)
+		s.metrics.recordAnalyticsDrop()
 		if shouldLogAnalyticsDrop(dropped) {
 			log.Printf("gateway analytics queue full; dropped event total=%d source=%q event_type=%q", dropped, event.Source, event.EventType)
 		}
