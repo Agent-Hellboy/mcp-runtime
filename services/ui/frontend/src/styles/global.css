@@ -328,6 +328,11 @@ body {
   color: var(--muted);
 }
 
+.panel-head > .stat-row {
+  flex: 1 1 360px;
+  width: min(100%, 520px);
+}
+
 .stat-row li {
   padding: 12px 14px;
   border: 1px solid var(--line);
@@ -833,6 +838,10 @@ body {
 
   .panel {
     padding: 16px 14px;
+  }
+
+  .panel-head > .stat-row {
+    width: 100%;
   }
 
   .toolbar {
