@@ -1,6 +1,6 @@
 # Sentinel Dashboard React Migration Plan
 
-Status: Phase 1 implemented; remaining phases proposed for review
+Status: Phases 1-2 implemented; remaining phases proposed for review
 
 Tracking issue: [#388](https://github.com/Agent-Hellboy/mcp-runtime/issues/388)
 
@@ -78,16 +78,50 @@ Port the dashboard shell and the highest-value read-only workspace first.
 
 Acceptance criteria:
 
-- [ ] The root page renders a React header, workspace navigation, account state, and responsive content layout without an iframe for the Servers view.
-- [ ] Signed-out users see a useful explanation and a clear sign-in action; authenticated users see the server workspace.
-- [ ] The workspace loads namespaces, servers, and tools from the scoped API client.
-- [ ] The view has explicit loading, error, unauthorized/session-expired, empty, and no-filter-match states.
-- [ ] Server cards show name, namespace, readiness/status, description, tool count, and endpoint when available.
-- [ ] Tool catalog supports search, namespace, server-status, and risk filters while preserving the API’s trust, side-effect, risk, and drift fields.
-- [ ] The tool table is usable on mobile through a bounded horizontal scroll region; page-level overflow does not hide content.
-- [ ] Keyboard focus, labels, button names, table headers, and alert semantics pass the targeted accessibility checks.
-- [ ] React unit/component tests cover auth states, filters, API failures, empty data, and server/tool rendering.
-- [ ] Browser QA covers desktop and 390px mobile with no console errors and successful network responses.
+- [x] The root page renders a React header, workspace navigation, account state, and responsive content layout without an iframe for the Servers view.
+- [x] Signed-out users see a useful explanation and a clear sign-in action; authenticated users see the server workspace.
+- [x] The workspace loads namespaces, servers, and tools from the scoped API client.
+- [x] The view has explicit loading, error, unauthorized/session-expired, empty, and no-filter-match states.
+- [x] Server cards show name, namespace, readiness/status, description, tool count, and endpoint when available.
+- [x] Tool catalog supports search, namespace, server-status, and risk filters while preserving the API’s trust, side-effect, risk, and drift fields.
+- [x] The tool table is usable on mobile through a bounded horizontal scroll region; page-level overflow does not hide content.
+- [x] Keyboard focus, labels, button names, table headers, and alert semantics pass the targeted accessibility checks.
+- [x] React unit/component tests cover auth states, filters, API failures, empty data, and server/tool rendering.
+- [x] Browser QA covers desktop and 390px mobile with no console errors and successful network responses.
+
+Phase 2 gate evidence from 2026-09-15 (`mcp-sentinel-ui:phase1-session-bff-20260915-r2`
+before, `mcp-sentinel-ui:phase2-react-servers-20260915-191447` after, both
+`linux/arm64` on the Kind node):
+
+- Catalog parity: both deployments rendered 3 servers and 14 tools for the admin
+  session; the search term `aaa-pi` matched 3 tools in each; risk buckets after
+  the port were low 10 / medium 4 / high 0, and the legacy pass's single
+  high-risk row was its "no match" placeholder, not a tool.
+- Reads stayed on the session-backed proxy: `GET /api/ui/v1/runtime/namespaces`,
+  `/runtime/servers`, `/runtime/tools` all `200`, and namespace scoping issued
+  `…/runtime/servers?namespace=<ns>`. React issues one catalog read per scope
+  where the legacy page issued five `/runtime/servers` polls.
+- No credential reached browser JavaScript: `localStorage`, `sessionStorage`,
+  and JS-visible `document.cookie` were all empty, the session cookie stayed
+  `HttpOnly; SameSite=Strict`, `/config.js` carried no key, and the only
+  credential-shaped string in the bundle is the client's own header-stripping
+  code.
+- States were visibly distinct: loading, `role="alert"` error with a retry, the
+  session-expired state, "No MCP servers match this scope.", and
+  "No tools match these filters."
+- At 390px `document.documentElement.scrollWidth` stayed 390 while the 624px
+  table scrolled inside its bounded region. Zero console errors across
+  signed-out, login, catalog, filter, selection, mobile, and logout steps.
+- Legacy fallback: the "More workspaces" tab loaded the legacy dashboard with
+  its own role-gated tabs (Servers, Keys, Analytics, Teams, Access Control, Ops,
+  Settings for admin), `Role: admin`, and 3 server cards. Keys, Teams, and
+  Settings were clean.
+- BLOCKED, unchanged from Phase 1 and unrelated to this change: the cluster's
+  analytics path is down (`mcp-analytics-api` not ready, ClickHouse/Kafka/
+  processor in `CrashLoopBackOff`), so legacy Analytics and the Governance
+  analytics panel return `502` on `/events` and `/analytics/usage` and `500` on
+  `/dashboard/summary`. Governance grants/sessions and Operations inventory
+  still rendered.
 
 ### Phase 3 — User workflows
 
