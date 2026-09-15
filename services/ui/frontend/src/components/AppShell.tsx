@@ -36,7 +36,11 @@ export function AppShell({
         </div>
         <AccountBar status={auth} busy={authBusy} onSignIn={onSignIn} onSignOut={onSignOut} />
       </header>
-      <WorkspaceNavigation active={workspace} onSelect={onSelectWorkspace} />
+      <WorkspaceNavigation
+        active={workspace}
+        onSelect={onSelectWorkspace}
+        role={auth.authenticated ? auth.principal?.role : undefined}
+      />
       <main className="workspace" id="workspace-content" tabIndex={-1}>
         {children}
       </main>

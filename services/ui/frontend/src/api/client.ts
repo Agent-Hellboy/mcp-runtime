@@ -10,6 +10,15 @@ export const SESSION_PROXY_GET_PATHS = new Set([
   "/runtime/namespaces",
   "/runtime/servers",
   "/runtime/tools",
+  // Phase 4 admin reads. Each is already GET-allowlisted server-side in
+  // sessionProxyRuntimePrefixes / sessionProxyAnalyticsPrefixes.
+  "/runtime/grants",
+  "/runtime/sessions",
+  "/runtime/teams",
+  "/runtime/components",
+  "/admin/operations",
+  "/admin/deployments",
+  "/events",
 ]);
 
 export class UnauthorizedError extends Error {

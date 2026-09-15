@@ -19,10 +19,34 @@ describe("apiURL", () => {
   });
 
   it("keeps unmigrated paths on the public API base", () => {
-    expect(apiURL("/runtime/grants", "/api/v1")).toBe("/api/v1/runtime/grants");
+    expect(apiURL("/runtime/policy", "/api/v1")).toBe("/api/v1/runtime/policy");
     expect(apiURL("/runtime/servers/mcp-servers/demo", "/api/v1")).toBe(
       "/api/v1/runtime/servers/mcp-servers/demo"
     );
+  });
+
+  it("routes the Phase 4 admin reads through the session proxy", () => {
+    for (const path of [
+      "/runtime/grants",
+      "/runtime/sessions",
+      "/runtime/teams",
+      "/runtime/components",
+      "/admin/operations",
+      "/admin/deployments",
+      "/events",
+    ]) {
+      expect(apiURL(path, "/api/v1")).toBe(`/api/ui/v1${path}`);
+    }
+    expect(apiURL("/admin/operations?user=a%40b.c", "/api/v1")).toBe(
+      "/api/ui/v1/admin/operations?user=a%40b.c"
+    );
+  });
+
+  it("never routes an admin mutation through the GET-only session proxy", () => {
+    for (const method of ["POST", "PATCH", "DELETE"]) {
+      expect(apiURL("/runtime/grants", "/api/v1", method)).toBe("/api/v1/runtime/grants");
+      expect(apiURL("/runtime/sessions", "/api/v1", method)).toBe("/api/v1/runtime/sessions");
+    }
   });
 
   it("does not route mutations through the GET-only session proxy", () => {

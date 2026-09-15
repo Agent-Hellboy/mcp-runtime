@@ -4,9 +4,10 @@ import { AppShell } from "./components/AppShell";
 import { LegacyWorkspace } from "./components/LegacyWorkspace";
 import { SignInPanel } from "./components/SignInPanel";
 import { ServersWorkspace } from "./components/servers/ServersWorkspace";
+import { AdminWorkspace } from "./components/admin/AdminWorkspace";
 import type { WorkspaceId } from "./components/WorkspaceNavigation";
 import { login, logout, readAuthStatus, type LoginInput } from "./api/auth";
-import type { AuthStatus } from "./api/types";
+import { isAdmin, type AuthStatus } from "./api/types";
 
 function loginErrorMessage(err: unknown): string {
   const raw = err instanceof Error ? err.message : "";
@@ -52,6 +53,14 @@ export function App() {
       cancelled = true;
     };
   }, []);
+
+  // Second line of defence behind AdminGuard: if the session is not (or is no
+  // longer) an admin, the admin workspace is not a reachable route at all.
+  useEffect(() => {
+    if (authReady && workspace === "admin" && !isAdmin(auth)) {
+      setWorkspace("servers");
+    }
+  }, [authReady, workspace, auth]);
 
   const handleSignIn = useCallback(() => {
     setLoginError("");
@@ -109,6 +118,8 @@ export function App() {
     );
   } else if (workspace === "legacy") {
     content = <LegacyWorkspace />;
+  } else if (workspace === "admin") {
+    content = <AdminWorkspace auth={auth} onSignIn={handleSignIn} />;
   } else {
     content = <ServersWorkspace authenticated={auth.authenticated} onSignIn={handleSignIn} />;
   }
