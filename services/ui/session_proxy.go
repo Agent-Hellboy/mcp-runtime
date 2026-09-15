@@ -33,6 +33,7 @@ var sessionProxyRuntimePrefixes = []string{
 	"/runtime/grants",
 	"/runtime/sessions",
 	"/runtime/components",
+	"/runtime/actions/restart",
 	"/runtime/policy",
 	"/user/api-keys",
 	"/admin/operations",
@@ -45,40 +46,60 @@ var sessionProxyAnalyticsPrefixes = []string{
 	"/user/analytics/usage",
 }
 
-// sessionProxyWriteRoutes is the allowlist of state-changing routes the UI
-// session may reach, kept separate from the read allowlist so that widening
-// reads can never silently widen writes. Each entry is matched exactly or as a
-// path prefix when Wildcard is set, and only for the listed methods.
-//
-// Phase 3 needs exactly two: create a user API key, and revoke one.
+// State-changing routes are kept separate from the read allowlist. A route is
+// admitted only for the listed methods and, when Segments is non-zero, the
+// exact number of path segments after Prefix.
 var sessionProxyWriteRoutes = []sessionProxyWriteRoute{
 	{Prefix: "/user/api-keys", Methods: []string{http.MethodPost}},
-	{Prefix: "/user/api-keys/", Methods: []string{http.MethodDelete}, Wildcard: true},
+	{Prefix: "/user/api-keys/", Methods: []string{http.MethodDelete}, Segments: 1},
+	{Prefix: "/runtime/grants/", Methods: []string{http.MethodPatch, http.MethodDelete}, Segments: 2},
+	{Prefix: "/runtime/grants", Methods: []string{http.MethodPost}},
+	{Prefix: "/runtime/sessions/", Methods: []string{http.MethodPatch, http.MethodDelete}, Segments: 2},
+	{Prefix: "/runtime/sessions", Methods: []string{http.MethodPost}},
+	{Prefix: "/runtime/teams", Methods: []string{http.MethodPost}},
+	{Prefix: "/runtime/teams/", Methods: []string{http.MethodPost}, Segments: 2, Suffixes: []string{"members", "users"}},
+	{Prefix: "/runtime/teams/", Methods: []string{http.MethodPut, http.MethodDelete}, Segments: 3, Suffixes: []string{"members"}, SuffixIndex: 1},
+	{Prefix: "/runtime/actions/restart", Methods: []string{http.MethodPost}},
 }
 
 type sessionProxyWriteRoute struct {
-	Prefix   string
-	Methods  []string
-	Wildcard bool
+	Prefix      string
+	Methods     []string
+	Segments    int
+	Suffixes    []string
+	SuffixIndex int
 }
 
-// sessionProxyRouteMatches reports whether a request path belongs to a write
-// route. A wildcard route requires exactly one more non-empty segment after its
-// prefix, so it matches neither its own bare prefix (an empty resource id) nor
-// anything nested deeper.
-func sessionProxyRouteMatches(route sessionProxyWriteRoute, requestPath string) bool {
-	if !route.Wildcard {
+func sessionProxyWriteRouteMatches(route sessionProxyWriteRoute, requestPath string) bool {
+	if route.Segments == 0 {
 		return requestPath == route.Prefix
 	}
 	rest, ok := strings.CutPrefix(requestPath, route.Prefix)
-	return ok && rest != "" && !strings.Contains(rest, "/")
+	if !ok || rest == "" || strings.HasPrefix(rest, "/") || strings.HasSuffix(rest, "/") {
+		return false
+	}
+	parts := strings.Split(rest, "/")
+	if len(parts) != route.Segments {
+		return false
+	}
+	if len(route.Suffixes) == 0 {
+		return true
+	}
+	index := len(parts) - 1
+	if route.SuffixIndex > 0 {
+		index = route.SuffixIndex
+	}
+	for _, suffix := range route.Suffixes {
+		if parts[index] == suffix {
+			return true
+		}
+	}
+	return false
 }
 
-// sessionProxyWriteAllowed reports whether a method and path pair is on the
-// write allowlist. Everything not listed is denied.
 func sessionProxyWriteAllowed(method, requestPath string) bool {
 	for _, route := range sessionProxyWriteRoutes {
-		if !sessionProxyRouteMatches(route, requestPath) {
+		if !sessionProxyWriteRouteMatches(route, requestPath) {
 			continue
 		}
 		for _, allowed := range route.Methods {
@@ -90,8 +111,16 @@ func sessionProxyWriteAllowed(method, requestPath string) bool {
 	return false
 }
 
-// sessionProxyMaxWriteBody bounds proxied request bodies. Phase 3 writes are
-// small JSON documents; anything larger is a bug or an attack.
+func sessionProxyAllowHeader(requestPath string) string {
+	methods := []string{http.MethodGet}
+	for _, route := range sessionProxyWriteRoutes {
+		if sessionProxyWriteRouteMatches(route, requestPath) {
+			methods = append(methods, route.Methods...)
+		}
+	}
+	return strings.Join(methods, ", ")
+}
+
 const sessionProxyMaxWriteBody = 32 * 1024
 
 var sessionProxyHTTPClient = &http.Client{
@@ -193,8 +222,6 @@ func (p *sessionProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		serviceutil.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
-	// Authenticate before CSRF so an expired session reads as 401 (sign in
-	// again) rather than 403 (forbidden), which is what the client acts on.
 	authHeader, apiKey, ok := sessionUpstreamCredential(sess)
 	if !ok {
 		serviceutil.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
@@ -229,19 +256,17 @@ func (p *sessionProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		serviceutil.WriteJSON(w, http.StatusBadGateway, map[string]string{"error": "upstream_error"})
 		return
 	}
-	// Forward only the content type; the CSRF token is a UI-origin concern and
-	// must never be relayed upstream.
+	if accept := strings.TrimSpace(r.Header.Get("accept")); accept != "" {
+		req.Header.Set("accept", accept)
+	} else {
+		req.Header.Set("accept", "application/json")
+	}
 	if write {
 		contentType := strings.TrimSpace(r.Header.Get("content-type"))
 		if contentType == "" {
 			contentType = "application/json"
 		}
 		req.Header.Set("content-type", contentType)
-	}
-	if accept := strings.TrimSpace(r.Header.Get("accept")); accept != "" {
-		req.Header.Set("accept", accept)
-	} else {
-		req.Header.Set("accept", "application/json")
 	}
 	copySessionProxyOriginHeaders(req, r)
 	req.Header.Set("x-mcp-source", "ui")
@@ -263,30 +288,6 @@ func (p *sessionProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	copySessionProxyResponse(w, resp)
-}
-
-// copySessionProxyOriginHeaders preserves the public origin used by runtime-api
-// when it builds browser-facing connect and observability URLs. The ingress
-// supplied forwarded values win; direct requests use the UI request host and
-// transport as a safe fallback. No client credential or unrelated proxy header
-// is forwarded.
-func copySessionProxyOriginHeaders(dst, src *http.Request) {
-	forwardedHost := strings.TrimSpace(src.Header.Get("x-forwarded-host"))
-	if forwardedHost == "" {
-		forwardedHost = strings.TrimSpace(src.Host)
-	}
-	if forwardedHost != "" {
-		dst.Header.Set("x-forwarded-host", forwardedHost)
-	}
-
-	forwardedProto := strings.TrimSpace(src.Header.Get("x-forwarded-proto"))
-	if forwardedProto == "" {
-		forwardedProto = "http"
-		if src.TLS != nil {
-			forwardedProto = "https"
-		}
-	}
-	dst.Header.Set("x-forwarded-proto", forwardedProto)
 }
 
 func sessionUpstreamCredential(sess uiSession) (authHeader, apiKey string, ok bool) {
@@ -316,6 +317,17 @@ func resolveSessionProxyURL(base *url.URL, upstreamPath, rawQuery string) (*url.
 	return resolved, nil
 }
 
+// copySessionProxyOriginHeaders preserves the public origin used by the
+// runtime API when the dashboard is reached through an ingress or proxy.
+func copySessionProxyOriginHeaders(dst, src *http.Request) {
+	if forwardedHost := strings.TrimSpace(src.Header.Get("x-forwarded-host")); forwardedHost != "" {
+		dst.Header.Set("x-forwarded-host", forwardedHost)
+	}
+	if forwardedProto := strings.TrimSpace(src.Header.Get("x-forwarded-proto")); forwardedProto != "" {
+		dst.Header.Set("x-forwarded-proto", forwardedProto)
+	}
+}
+
 func copySessionProxyResponse(w http.ResponseWriter, resp *http.Response) {
 	defer drainAndClose(resp.Body)
 	dst := w.Header()
@@ -340,16 +352,4 @@ func skipSessionProxyResponseHeader(key string) bool {
 	default:
 		return false
 	}
-}
-
-// sessionProxyAllowHeader lists the methods a path actually accepts, so a
-// rejected write reports the truth instead of a blanket "GET".
-func sessionProxyAllowHeader(requestPath string) string {
-	methods := []string{http.MethodGet}
-	for _, route := range sessionProxyWriteRoutes {
-		if sessionProxyRouteMatches(route, requestPath) {
-			methods = append(methods, route.Methods...)
-		}
-	}
-	return strings.Join(methods, ", ")
 }

@@ -6,10 +6,11 @@ import { AdminGuard } from "./AdminGuard";
 import { OperationsPanel } from "./OperationsPanel";
 import { PlatformHealthPanel } from "./PlatformHealthPanel";
 import { TeamsPanel } from "./TeamsPanel";
+import { UsageAnalyticsPanel } from "./UsageAnalyticsPanel";
 import type { AuthStatus } from "../../api/types";
 import "../../styles/admin-workflows.css";
 
-export type AdminSectionId = "access" | "teams" | "operations" | "platform";
+export type AdminSectionId = "access" | "teams" | "operations" | "platform" | "analytics";
 
 type AdminSection = {
   id: AdminSectionId;
@@ -21,6 +22,7 @@ const SECTIONS: AdminSection[] = [
   { id: "teams", label: "Teams" },
   { id: "operations", label: "Operations" },
   { id: "platform", label: "Platform" },
+  { id: "analytics", label: "Analytics" },
 ];
 
 type AdminWorkspaceProps = {
@@ -73,6 +75,8 @@ export function AdminWorkspace({ auth, onSignIn }: AdminWorkspaceProps) {
           <TeamsPanel onSignIn={onSignIn} />
         ) : section === "operations" ? (
           <OperationsPanel onSignIn={onSignIn} />
+        ) : section === "analytics" ? (
+          <UsageAnalyticsPanel onSignIn={onSignIn} />
         ) : (
           <PlatformHealthPanel onSignIn={onSignIn} />
         )}

@@ -116,6 +116,21 @@ export type TeamRecord = {
   created_at?: string;
 };
 
+export type TeamMembership = {
+  team_id?: string;
+  team_slug?: string;
+  team_name?: string;
+  team_namespace?: string;
+  user_id: string;
+  email?: string;
+  role: string;
+  created_at?: string;
+  id?: string;
+  slug?: string;
+  name?: string;
+  namespace?: string;
+};
+
 export type ComponentStatus = {
   key: string;
   display: string;
@@ -219,7 +234,7 @@ export type UsageTotals = {
   unique_servers: number;
   unique_humans: number;
   unique_agents: number;
-  unique_sessions: number;
+  unique_sessions?: number;
 };
 
 export type ServerUsage = {
@@ -231,7 +246,7 @@ export type ServerUsage = {
   denied: number;
   unique_humans: number;
   unique_agents: number;
-  last_seen: string;
+  last_seen?: string;
 };
 
 export type ToolUsage = {
@@ -242,22 +257,16 @@ export type ToolUsage = {
   agent_id: string;
   events: number;
   denied: number;
-  last_seen: string;
+  last_seen?: string;
 };
 
 export type UsageResponse = {
   totals: UsageTotals;
   servers: ServerUsage[];
   tools: ToolUsage[];
-  window_days: number;
-};
-
-export type TeamMembership = {
-  id?: string;
-  slug?: string;
-  name?: string;
-  namespace?: string;
-  role?: string;
+  window_days?: number;
+  actors?: Array<{ human_id: string; agent_id: string; events: number; unique_servers: number; unique_tools: number; denied: number }>;
+  decisions?: Array<{ decision: string; events: number }>;
 };
 
 // Legacy role gating, reproduced exactly (services/ui/static/legacy/app.js).

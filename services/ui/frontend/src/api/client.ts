@@ -19,23 +19,33 @@ export const SESSION_PROXY_GET_PATHS = new Set([
   "/admin/operations",
   "/admin/deployments",
   "/events",
+  "/analytics/usage",
   "/user/api-keys",
   "/user/analytics/usage",
-  "/runtime/teams",
 ]);
 
-// Paths the UI session may write through, mirroring the Go write allowlist in
-// services/ui/session_proxy.go. A "/" suffix means one more path segment.
-export const SESSION_PROXY_WRITE_PATHS: Array<{ path: string; methods: string[] }> = [
+const SESSION_PROXY_GET_PREFIXES = ["/runtime/teams/"];
+
+export const SESSION_PROXY_WRITE_PATHS: Array<{
+  path: string;
+  methods: string[];
+  segments?: number;
+  suffixes?: string[];
+  suffixIndex?: number;
+}> = [
   { path: "/user/api-keys", methods: ["POST"] },
-  { path: "/user/api-keys/", methods: ["DELETE"] },
+  { path: "/user/api-keys/", methods: ["DELETE"], segments: 1 },
+  { path: "/runtime/grants/", methods: ["PATCH", "DELETE"], segments: 2 },
+  { path: "/runtime/grants", methods: ["POST"] },
+  { path: "/runtime/sessions/", methods: ["PATCH", "DELETE"], segments: 2 },
+  { path: "/runtime/sessions", methods: ["POST"] },
+  { path: "/runtime/teams", methods: ["POST"] },
+  { path: "/runtime/teams/", methods: ["POST"], segments: 2, suffixes: ["members", "users"] },
+  { path: "/runtime/teams/", methods: ["PUT", "DELETE"], segments: 3, suffixes: ["members"], suffixIndex: 1 },
+  { path: "/runtime/actions/restart", methods: ["POST"] },
 ];
 
 export const CSRF_HEADER = "X-CSRF-Token";
-
-// The CSRF token is session state held in memory only. It is deliberately not
-// persisted: a reload re-reads it from /auth/status, and nothing durable on the
-// device ever holds it.
 let csrfToken = "";
 
 export function setCSRFToken(token: string): void {
@@ -46,8 +56,6 @@ export function clearCSRFToken(): void {
   csrfToken = "";
 }
 
-// Exposed for tests and for surfacing a "reload to continue" state; callers
-// must not render this value.
 export function hasCSRFToken(): boolean {
   return csrfToken !== "";
 }
@@ -58,15 +66,22 @@ export function isUnsafeMethod(method: string): boolean {
 
 function sessionProxyWriteAllowed(method: string, pathname: string): boolean {
   return SESSION_PROXY_WRITE_PATHS.some((route) => {
-    if (!route.methods.includes(method.toUpperCase())) {
-      return false;
-    }
-    if (route.path.endsWith("/")) {
-      const rest = pathname.startsWith(route.path) ? pathname.slice(route.path.length) : "";
-      return rest !== "" && !rest.includes("/");
-    }
-    return pathname === route.path;
+    const upperMethod = method.toUpperCase();
+    if (!route.methods.includes(upperMethod)) return false;
+    if (route.segments === undefined) return pathname === route.path;
+    const rest = pathname.startsWith(route.path) ? pathname.slice(route.path.length) : "";
+    if (!rest || rest.startsWith("/") || rest.endsWith("/")) return false;
+    const parts = rest.split("/");
+    if (parts.length !== route.segments) return false;
+    if (!route.suffixes) return true;
+    const index = route.suffixIndex ?? parts.length - 1;
+    return route.suffixes.includes(parts[index]);
   });
+}
+
+function sessionProxyGetAllowed(pathname: string): boolean {
+  return SESSION_PROXY_GET_PATHS.has(pathname) ||
+    SESSION_PROXY_GET_PREFIXES.some((prefix) => pathname.startsWith(prefix));
 }
 
 export class CSRFError extends Error {
@@ -94,7 +109,7 @@ export function apiURL(
 ): string {
   const normalized = path.startsWith("/") ? path : `/${path}`;
   const pathname = normalized.split("?")[0];
-  if (method.toUpperCase() === "GET" && SESSION_PROXY_GET_PATHS.has(pathname)) {
+  if (method.toUpperCase() === "GET" && sessionProxyGetAllowed(pathname)) {
     return `${SESSION_PROXY_PREFIX}${normalized}`;
   }
   if (sessionProxyWriteAllowed(method, pathname)) {
@@ -112,8 +127,6 @@ function sameOriginInit(options: RequestInit): RequestInit {
   headers.delete("authorization");
   headers.delete("X-API-Key");
   headers.delete("x-api-key");
-  // A caller must never choose its own CSRF token; only the session's token is
-  // ever sent, and only on methods that can change state.
   headers.delete(CSRF_HEADER);
   headers.delete(CSRF_HEADER.toLowerCase());
 

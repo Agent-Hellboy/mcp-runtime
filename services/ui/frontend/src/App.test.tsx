@@ -56,11 +56,13 @@ const EMPTY_CATALOG = {
 
 beforeEach(() => {
   delete window.MCP_API_BASE;
+  window.localStorage.removeItem("mcp-sentinel-theme");
 });
 
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  window.localStorage.removeItem("mcp-sentinel-theme");
 });
 
 describe("App", () => {
@@ -73,6 +75,24 @@ describe("App", () => {
     expect(screen.getByTestId("account-state")).toHaveTextContent("Signed out");
     expect(screen.getByTestId("signin-button")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Control Plane Dashboard" })).toBeInTheDocument();
+  });
+
+  it("switches themes and persists the preference", async () => {
+    const user = userEvent.setup();
+    stubRoutes({ "/auth/status": SIGNED_OUT });
+
+    renderApp();
+
+    const toggle = await screen.findByTestId("theme-toggle");
+    expect(toggle).toHaveTextContent("Dark");
+    expect(document.documentElement.dataset.theme).toBe("dark");
+
+    await user.click(toggle);
+
+    expect(toggle).toHaveTextContent("Light");
+    expect(toggle).toHaveAttribute("aria-label", "Switch to dark mode");
+    expect(document.documentElement.dataset.theme).toBe("light");
+    expect(window.localStorage.getItem("mcp-sentinel-theme")).toBe("light");
   });
 
   it("signs in through the UI session endpoint and loads the catalog", async () => {

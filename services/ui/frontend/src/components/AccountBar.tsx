@@ -3,6 +3,8 @@ import type { AuthStatus } from "../api/types";
 type AccountBarProps = {
   status: AuthStatus;
   busy: boolean;
+  theme: "dark" | "light";
+  onToggleTheme: () => void;
   onSignIn: () => void;
   onSignOut: () => void;
 };
@@ -17,10 +19,30 @@ function principalLabel(status: AuthStatus): string {
   return who ? `${who} · ${role}` : role;
 }
 
-export function AccountBar({ status, busy, onSignIn, onSignOut }: AccountBarProps) {
+export function AccountBar({
+  status,
+  busy,
+  theme,
+  onToggleTheme,
+  onSignIn,
+  onSignOut,
+}: AccountBarProps) {
+  const nextTheme = theme === "dark" ? "light" : "dark";
+
   if (!status.authenticated) {
     return (
       <div className="account-bar">
+        <button
+          type="button"
+          className="theme-toggle"
+          aria-label={`Switch to ${nextTheme} mode`}
+          aria-pressed={theme === "light"}
+          onClick={onToggleTheme}
+          data-testid="theme-toggle"
+        >
+          <span aria-hidden="true">{theme === "dark" ? "☼" : "☾"}</span>
+          {theme === "dark" ? "Dark" : "Light"}
+        </button>
         <span className="account-state" data-testid="account-state">
           Signed out
         </span>
@@ -38,6 +60,17 @@ export function AccountBar({ status, busy, onSignIn, onSignOut }: AccountBarProp
 
   return (
     <div className="account-bar">
+      <button
+        type="button"
+        className="theme-toggle"
+        aria-label={`Switch to ${nextTheme} mode`}
+        aria-pressed={theme === "light"}
+        onClick={onToggleTheme}
+        data-testid="theme-toggle"
+      >
+        <span aria-hidden="true">{theme === "dark" ? "☼" : "☾"}</span>
+        {theme === "dark" ? "Dark" : "Light"}
+      </button>
       <span className="account-state" data-testid="account-state">
         {principalLabel(status)}
       </span>

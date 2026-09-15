@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-func TestSessionProxyWriteAllowlist(t *testing.T) {
+func TestSessionProxyUserWriteAllowlist(t *testing.T) {
 	cases := []struct {
 		method string
 		path   string
@@ -25,7 +25,6 @@ func TestSessionProxyWriteAllowlist(t *testing.T) {
 		// Read-allowlisted paths are not writable.
 		{method: http.MethodPost, path: "/runtime/servers", want: false},
 		{method: http.MethodDelete, path: "/runtime/servers/ns/name", want: false},
-		{method: http.MethodPost, path: "/runtime/grants", want: false},
 		{method: http.MethodPost, path: "/admin/operations", want: false},
 		// Nested traversal beyond one segment is denied.
 		{method: http.MethodDelete, path: "/user/api-keys/uk_abc/extra", want: false},
@@ -183,7 +182,7 @@ func TestSessionProxyWriteRejectsNonAllowlistedPath(t *testing.T) {
 	sess := createTestSession(t, proxy.store, uiSession{UpstreamAuthHeader: "Bearer session-token"})
 
 	// A read-allowlisted path with a valid token still cannot be written.
-	req := httptest.NewRequest(http.MethodPost, "/api/ui/v1/runtime/grants", strings.NewReader(`{}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/ui/v1/admin/operations", strings.NewReader(`{}`))
 	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sess.ID})
 	req.Header.Set(csrfHeaderName, sess.CSRFToken)
 	rec := httptest.NewRecorder()

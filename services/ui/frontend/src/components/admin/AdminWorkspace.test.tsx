@@ -213,7 +213,7 @@ describe("AdminWorkspace role gating", () => {
     renderAdmin(ADMIN);
 
     expect(await screen.findByTestId("grants-table")).toBeInTheDocument();
-    for (const section of ["access", "teams", "operations", "platform"]) {
+    for (const section of ["access", "teams", "operations", "platform", "analytics"]) {
       expect(screen.getByTestId(`admin-section-${section}`)).toBeInTheDocument();
     }
   });
@@ -302,15 +302,22 @@ describe("AdminWorkspace access control", () => {
     );
   });
 
-  it("states that mutations remain in the legacy fallback", async () => {
-    stubAdminApi();
+  it("exposes CSRF-backed grant and session mutation controls", async () => {
+    const fetchMock = stubAdminApi();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
 
     renderAdmin(ADMIN);
     await screen.findByTestId("grants-table");
 
-    expect(screen.getByTestId("access-mutation-note")).toHaveTextContent(
-      "still handled in the legacy dashboard"
-    );
+    await userEvent.click(screen.getAllByTestId("grant-toggle")[0]);
+    await userEvent.click(screen.getAllByTestId("session-toggle")[0]);
+
+    await waitFor(() => {
+      const writes = fetchMock.mock.calls.filter((call) => (call[1] as RequestInit)?.method);
+      expect(writes.map((call) => (call[1] as RequestInit).method)).toEqual(
+        expect.arrayContaining(["PATCH", "PATCH"])
+      );
+    });
   });
 });
 
