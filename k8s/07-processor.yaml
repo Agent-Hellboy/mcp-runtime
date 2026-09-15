@@ -11,6 +11,17 @@ spec:
       port: 9102
       targetPort: 9102
 ---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: mcp-sentinel-processor
+  namespace: mcp-sentinel
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: mcp-sentinel-processor
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:

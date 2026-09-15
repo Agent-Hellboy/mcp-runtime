@@ -14,6 +14,17 @@ spec:
       port: 9091
       targetPort: 9091
 ---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: mcp-sentinel-ingest
+  namespace: mcp-sentinel
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: mcp-sentinel-ingest
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
