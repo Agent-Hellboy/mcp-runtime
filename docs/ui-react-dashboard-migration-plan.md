@@ -1,6 +1,6 @@
 # Sentinel Dashboard React Migration Plan
 
-Status: Phases 1-2 implemented; remaining phases proposed for review
+Status: Phases 1-3 implemented; remaining phases proposed for review
 
 Tracking issue: [#388](https://github.com/Agent-Hellboy/mcp-runtime/issues/388)
 
@@ -143,11 +143,33 @@ Cookie-backed mutating BFF routes must add CSRF protection before they are expos
 
 Acceptance criteria:
 
-- [ ] Every mutating action has disabled/busy, success, validation, forbidden, and failure states.
-- [ ] One-time API-key material is only rendered in the intended one-time state and is not retained after refresh/navigation.
-- [ ] User-only data is hidden for admins and users without an identity, matching current authorization behavior.
+- [x] Every mutating action has disabled/busy, success, validation, forbidden, and failure states.
+- [x] One-time API-key material is only rendered in the intended one-time state and is not retained after refresh/navigation.
+- [x] User-only data is hidden for admins and users without an identity, matching current authorization behavior.
 - [ ] Browser tests verify refresh, logout, expired session, and direct navigation to each migrated route.
-- [ ] Legacy and React views cannot issue duplicate writes during the migration.
+- [x] Legacy and React views cannot issue duplicate writes during the migration.
+
+CSRF decision: implemented, not deferred. `services/ui/csrf.go` adds a
+session-bound synchroniser token minted in `createSession`, returned in the
+`/auth/login` and `/auth/status` bodies, and required back in `X-CSRF-Token` on
+every unsafe method reaching the session proxy. The authoritative copy lives in
+the server-side session record, so an attacker who can set cookies on the origin
+still cannot forge a matching pair - which a double-submit cookie would not
+prevent. An `Origin` check runs first as an independent signal, and
+`SameSite=Strict` stays as defense in depth. A separate `sessionProxyWriteRoutes`
+allowlist governs writes, so widening reads can never silently widen writes; it
+currently contains exactly `POST /user/api-keys` and `DELETE /user/api-keys/{id}`.
+Unknown methods are treated as unsafe, and a session with no token can never
+write, so both fail closed.
+
+Duplicate-write finding: no duplicate write path exists today. The legacy
+dashboard routes only GETs through `/api/ui/v1` (`sessionAPIURL` in
+`services/ui/static/legacy/app.js`); its non-GET requests go to `/api/v1`
+without a credential and already return `401`. React is therefore the only
+working write path, and the legacy Keys tab remains read-only.
+
+Phase 3 browser QA is pending and will be recorded separately; the live cluster
+has a single UI deployment shared with the Phase 2 candidate.
 
 ### Phase 4 — Admin governance and operations
 
