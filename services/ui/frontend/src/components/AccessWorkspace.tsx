@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { AccessControlPanel, type AccessSelection } from "./admin/AccessControlPanel";
 import { AccessDetail } from "./admin/AccessDetail";
@@ -23,7 +23,6 @@ type AccessWorkspaceProps = {
 export function AccessWorkspace({ auth, onSignIn }: AccessWorkspaceProps) {
   const [namespace, setNamespace] = useState("");
   const [selection, setSelection] = useState<AccessSelection | null>(null);
-  const appliedDefaultNamespace = useRef(false);
 
   // Shares ServersWorkspace's query cache/key, so no extra request when that
   // catalog read has already happened this session.
@@ -37,20 +36,19 @@ export function AccessWorkspace({ auth, onSignIn }: AccessWorkspaceProps) {
   // (services/runtime-api/internal/runtimeapi/subject_binding.go,
   // scopedNamespaceForPrincipal): admin gets every namespace cluster-wide,
   // but a non-admin with no team namespace gets a 403 ("forbidden namespace"
-  // / principal identity required) rather than a default scope. The legacy
-  // dashboard's #scope-namespace selector already accounts for this -
-  // syncScopeSelector() defaults a non-admin session to the first namespace
-  // /runtime/namespaces returns for that principal. Mirror it once, the
-  // first time the list loads, so a non-admin lands on a working, scoped
-  // read instead of an error on first paint; they can still widen or narrow
-  // the namespace filter afterward.
+  // / principal identity required) rather than a default scope - there is no
+  // such thing as a non-admin who legitimately wants an empty namespace, so
+  // this re-applies every time namespace goes back to "", not just once.
+  // (It previously only applied once via a ref; a non-admin who cleared the
+  // "All namespaces"-labelled input back to empty stayed on the broken empty
+  // scope forever, 403ing both tables.) Mirrors the legacy dashboard's
+  // #scope-namespace default (syncScopeSelector's scopes[0] fallback).
   useEffect(() => {
-    if (appliedDefaultNamespace.current || isAdmin(auth) || namespace !== "") {
+    if (isAdmin(auth) || namespace !== "") {
       return;
     }
     const first = namespacesQuery.data?.[0]?.namespace;
     if (first) {
-      appliedDefaultNamespace.current = true;
       setNamespace(first);
     }
   }, [auth, namespace, namespacesQuery.data]);
@@ -78,9 +76,9 @@ export function AccessWorkspace({ auth, onSignIn }: AccessWorkspaceProps) {
   }
 
   // Admin always queries with the namespace as-is ("" means cluster-wide).
-  // A non-admin must wait for the namespace default above to settle before
-  // AccessControlPanel (and its grants/sessions queries) ever mounts -
-  // otherwise the first request goes out with an empty namespace, 403s, and
+  // A non-admin with an empty namespace must wait for the default above to
+  // settle before AccessControlPanel (and its grants/sessions queries) ever
+  // mounts - otherwise the first request goes out empty, 403s, and
   // immediately refires once corrected. Give up and proceed once the
   // namespaces read has resolved with nothing to default to, so a principal
   // with zero visible namespaces still reaches a rendered (if empty) state
@@ -89,7 +87,7 @@ export function AccessWorkspace({ auth, onSignIn }: AccessWorkspaceProps) {
     namespacesQuery.isSuccess && Boolean(namespacesQuery.data[0]?.namespace);
   const waitingForNamespaceDefault =
     !isAdmin(auth) &&
-    !appliedDefaultNamespace.current &&
+    namespace === "" &&
     (namespacesQuery.isPending || hasDefaultToApply);
   if (waitingForNamespaceDefault) {
     return <LoadingState label="Loading access control…" testId="access-loading" />;
