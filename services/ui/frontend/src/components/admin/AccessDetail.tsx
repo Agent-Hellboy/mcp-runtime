@@ -3,6 +3,7 @@ import type { AccessSelection } from "./AccessControlPanel";
 import { ErrorState } from "../ErrorState";
 import { LoadingState } from "../LoadingState";
 import { StatusBadge } from "../StatusBadge";
+import { ForbiddenError } from "../../api/client";
 import { useAccessActivity } from "../../hooks/useAdminData";
 import { subjectLabel } from "../../api/types";
 import type { GatewayEvent } from "../../api/types";
@@ -161,6 +162,12 @@ export function AccessDetail({ selection, onBack }: AccessDetailProps) {
         <LoadingState
           label={isGrant ? "Loading activity…" : "Loading timeline…"}
           testId="access-activity-loading"
+        />
+      ) : activityQuery.error instanceof ForbiddenError ? (
+        <ErrorState
+          title="Admin access required."
+          detail="Gateway decision events are restricted to admin accounts on this cluster."
+          testId="access-activity-forbidden"
         />
       ) : activityQuery.error ? (
         <ErrorState
