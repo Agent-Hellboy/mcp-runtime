@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
+import { AccessWorkspace } from "./components/AccessWorkspace";
 import { AppShell } from "./components/AppShell";
 import { ActivityWorkspace } from "./components/user/ActivityWorkspace";
 import { ApiKeysWorkspace } from "./components/user/ApiKeysWorkspace";
@@ -170,6 +171,8 @@ export function App() {
     content = <LegacyWorkspace />;
   } else if (workspace === "admin") {
     content = <AdminWorkspace auth={auth} onSignIn={handleSignIn} />;
+  } else if (workspace === "access") {
+    content = <AccessWorkspace auth={auth} onSignIn={handleSignIn} />;
   } else if (workspace === "activity") {
     content = <ActivityWorkspace auth={auth} onSignIn={handleSignIn} />;
   } else if (workspace === "keys") {
