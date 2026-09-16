@@ -18,7 +18,7 @@ sub-panel inside it that the top-level gate doesn't already cover.
 
 | Legacy tab | Gate | React route | Status |
 |---|---|---|---|
-| Servers | none | `ServersWorkspace` | Ported. **Gap:** tenant publish-quota stat not carried over (below). |
+| Servers | none | `ServersWorkspace` | Ported. **Was a gap - fixed in this PR** (tenant publish-quota stat, below). |
 | Activity (`userdashboard`) | `data-user-only` (tenant, not admin) | `ActivityWorkspace` (`visible: isTenantUser`) | Ported, gate matches. |
 | Keys (`userkeys`) | `data-auth-required` + `data-user-identity-required` | `ApiKeysWorkspace` (`visible: hasUserIdentity`) | Ported, gate matches. |
 | Analytics (`dashboard`) | `data-admin-only` | `AdminWorkspace` → Analytics section (`UsageAnalyticsPanel`) | Ported, gate matches. |
@@ -28,23 +28,22 @@ sub-panel inside it that the top-level gate doesn't already cover.
 | Platform (`platform`) | `data-admin-only` | `AdminWorkspace` → Platform section (`PlatformHealthPanel`) | Ported, gate matches (component health, Grafana/Prometheus links). |
 | Header Grafana quick-link (`data-admin-only`, in the hero bar, not tab-specific) | admin-only | none | **Gap, low severity**: same destination (`/grafana`) is one extra click away via Platform → Platform Health. **Recommend: explicitly descoped** as a navigation convenience, not a capability loss. |
 
-## Confirmed real, fixable gap: tenant server-publish quota
+## Fixed in this PR: tenant server-publish quota
 
 Legacy's Servers tab shows a `count/limit` (or `off`) publish-quota stat for
 tenant (non-admin) users, sourced from `GET /runtime/servers`'s
 `publish_policy` field
 (`services/runtime-api/internal/runtimeapi/servers.go:85,98`,
 `active_server_limit_enabled`/`active_server_count`/`active_server_limit`).
-The React `listServers()` (`api/catalog.ts`) discards this field entirely -
-`ServerSummary` has no `publish_policy`, and `ServersWorkspace`'s stat row has
-no quota entry. A tenant user who is near or at their active-server limit has
-no way to see that in the React shell today.
+The React `listServers()` (`api/catalog.ts`) previously discarded this field -
+`ServerSummary` had no `publish_policy`, and `ServersWorkspace`'s stat row had
+no quota entry, so a tenant user near or at their active-server limit had no
+way to see that in the React shell.
 
-**Not fixed in this pass** - flagged here rather than folded into the
-inventory/removal work silently. Small, scoped, well-understood fix
-(surface `publish_policy` through `listServers`/`ServerSummary`, add a
-stat-row entry gated the same way legacy's was: visible only when
-authenticated and limit-enabled).
+**Fixed here**: `listServers()` now returns `publish_policy` alongside the
+server list, `ServerSummary` carries it, and `ServersWorkspace`'s stat row
+gets a `formatPublishQuota` entry gated the same way legacy's was - visible
+only when authenticated and limit-enabled.
 
 ## Recommendation
 
@@ -52,12 +51,11 @@ Every tab has an accepted React route with matching role-gating. The three
 items marked "explicitly descoped" above are navigation/UX differences or
 aggregate-vs-live-feed data differences, not capability loss for any role -
 they're a reasonable call to make now rather than block removal on. The
-tenant quota stat is the one genuine, if narrow, information loss and should
-be closed before or immediately after legacy removal, not silently dropped.
+tenant quota stat was the one genuine, if narrow, information loss, and it is
+now closed (above).
 
 Given the above, legacy retirement (removing the iframe fallback and
-`services/ui/static/legacy/**`) is safe to proceed, provided:
-1. The quota-stat gap is fixed (this PR or an immediate follow-up), and
-2. Full browser/API/accessibility/security evidence is captured against the
-   final React-only shell before the legacy assets are deleted, per the
-   plan's own Phase 5 gate.
+`services/ui/static/legacy/**`) is safe to proceed, provided full
+browser/API/accessibility/security evidence is captured against the final
+React-only shell before the legacy assets are deleted, per the plan's own
+Phase 5 gate.
