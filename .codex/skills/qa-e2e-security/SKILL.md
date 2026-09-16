@@ -101,7 +101,7 @@ matches `RequireRole` enforcement in each split service `routes.go`.
 Baseline traffic (should succeed):
 
 ```bash
-BASE=http://localhost:18080/go-example-mcp/mcp
+BASE=http://localhost:18080/workspace-assistant-mcp/mcp
 PROTO=2025-06-18
 H=(-H "content-type: application/json" -H "accept: application/json, text/event-stream"
    -H "Mcp-Protocol-Version: $PROTO"
@@ -126,10 +126,10 @@ call '{"name":"add","arguments":{"a":2,"b":3}}'      # want allow
 Toggle the grant off → expect deny within a few seconds (sidecar reload):
 
 ```bash
-kubectl annotate mcpaccessgrant go-example-local -n mcp-servers \
+kubectl annotate mcpaccessgrant workspace-assistant-local -n mcp-servers \
   qa.mcpruntime.org/disable="$(date +%s)" --overwrite
 # CLI toggle is also available; use whichever the docs already exercise:
-# ./bin/mcp-runtime access grant disable go-example-local --namespace mcp-servers
+# ./bin/mcp-runtime access grant disable workspace-assistant-local --namespace mcp-servers
 
 sleep 8
 init
@@ -141,9 +141,9 @@ echo "$RESP" | grep -qiE 'denied|forbidden|policy' \
 Re-enable to leave the cluster in a working state for downstream skills:
 
 ```bash
-kubectl annotate mcpaccessgrant go-example-local -n mcp-servers \
+kubectl annotate mcpaccessgrant workspace-assistant-local -n mcp-servers \
   qa.mcpruntime.org/disable- || true
-kubectl apply -f /tmp/go-example-access.yaml
+kubectl apply -f /tmp/workspace-assistant-access.yaml
 sleep 8
 ```
 
@@ -183,12 +183,17 @@ echo "$RESP" | grep -qiE 'denied|forbidden|no.*grant' \
 ## Step 5 — Sub-suite C: Audit emission for allow + deny
 
 Allow + deny paths must both emit audit events; missing audit on deny is a
-common regression.
+common regression. `/api/v1/events` reads from ClickHouse — a `502` here can
+mean the audit path regressed, or it can mean the analytics stack itself is
+down (ClickHouse/Kafka `CrashLoopBackOff` from local PVC corruption is a real,
+previously-seen failure, unrelated to any code change). Check
+`mcp-runtime-troubleshooting/reference.md` for that signature before treating
+a `502` as an audit-path finding.
 
 ```bash
 ADMIN_KEY="$UI_KEY"
 BEFORE="$(curl -sS -H "x-api-key: $ADMIN_KEY" \
-  "http://localhost:18080/api/v1/events?server=go-example-mcp&limit=100" \
+  "http://localhost:18080/api/v1/events?server=workspace-assistant-mcp&limit=100" \
   | jq '.events | length // length // 0')"
 # fire one allow + one deny (tool not in policy)
 init
@@ -196,7 +201,7 @@ call '{"name":"add","arguments":{"a":1,"b":1}}'               >/dev/null
 call '{"name":"definitely-not-a-tool","arguments":{}}'        >/dev/null
 sleep 3
 AFTER="$(curl -sS -H "x-api-key: $ADMIN_KEY" \
-  "http://localhost:18080/api/v1/events?server=go-example-mcp&limit=100" \
+  "http://localhost:18080/api/v1/events?server=workspace-assistant-mcp&limit=100" \
   | jq '.events | length // length // 0')"
 [ "$AFTER" -ge "$((BEFORE + 2))" ] || echo "FAIL: missing audit events"
 ```
@@ -247,41 +252,62 @@ curl -sSI -H "x-api-key: $UI_KEY" http://localhost:18080/api/v1/dashboard/summar
 ## Step 8 — Sub-suite F: Login + lockout
 
 `PLATFORM_DEV_LOGIN` seeds `test@mcpruntime.org`/`test@123` and
-`admin@mcpruntime.org`/`admin@123`. Verify success and lockout. The exact
-login endpoint shape is owned by `services/ui/main.go` — read it before
-asserting shape; do not invent fields.
+`admin@mcpruntime.org`/`admin@123`. Verify success and lockout. The login
+route is `/auth/login` (`services/ui/main.go` → `mux.HandleFunc("/auth/login",
+...)`), not `/login` — read the handler before asserting shape; do not invent
+fields. A successful login sets the `mcp_ui_session` cookie
+(`HttpOnly; SameSite=Strict`).
 
 ```bash
 # Correct creds → 200 + session cookie.
 curl -sS -i -c /tmp/c.txt -H "content-type: application/json" \
   -d '{"email":"test@mcpruntime.org","password":"test@123"}' \
-  http://localhost:18080/login | head -1
+  http://localhost:18080/auth/login | head -1
+grep -q 'mcp_ui_session' /tmp/c.txt || echo "FAIL: session cookie not set"
 
 # Wrong password 6× → lockout (handler increments per-IP failure counter).
 for i in 1 2 3 4 5 6; do
   curl -sS -o /dev/null -w "$i=%{http_code}\n" -H "content-type: application/json" \
     -d '{"email":"test@mcpruntime.org","password":"WRONG"}' \
-    http://localhost:18080/login
+    http://localhost:18080/auth/login
 done
 # At least one of those should be a lockout/429 response; never a 5xx.
 ```
 
 ## Step 9 — Sub-suite G: UI→API proxy
 
-Browser-origin requests proxy through the UI; direct API-key clients also
-work. Both should be enforced, neither should leak the API key to the
-browser.
+The browser session (cookie) and direct API-key clients are two **separate**
+trust paths that must never merge. The browser never receives a bearer token
+or API key: it only holds the `HttpOnly` session cookie, and the UI service
+(`services/ui/session_proxy.go`) translates that cookie to the stored
+upstream credential server-side, only for the explicit GET allowlist at
+`/api/ui/v1/*` (`sessionProxyRuntimePrefixes` / `sessionProxyAnalyticsPrefixes`
+in `session_proxy.go`). The cookie has **no** access to the direct
+`/api/v1/*` backend routes — those require an `x-api-key`/bearer header, which
+only a non-browser client (CLI, curl) presents.
 
 ```bash
-# Confirm browser config endpoint does NOT include the API key.
-curl -sS http://localhost:18080/config | jq . | grep -i apiKey \
-  && echo "FAIL: api key leaked via /config" || echo "OK: no key in /config"
+# Confirm the runtime-config script does NOT include an API key.
+# It is JavaScript (window.MCP_API_BASE = ...), not JSON — do not pipe to jq.
+curl -sS http://localhost:18080/config.js | grep -i apiKey \
+  && echo "FAIL: api key leaked via /config.js" || echo "OK: no key in /config.js"
 
-# Authenticated browser session can reach /api.
-curl -sS -b /tmp/c.txt http://localhost:18080/api/v1/dashboard/summary | jq -e '.servers // .summary // 0' >/dev/null \
-  || echo "FAIL: authed browser cannot reach /api"
+# Authenticated browser session reaches ONLY the session-backed proxy...
+curl -sS -b /tmp/c.txt http://localhost:18080/api/ui/v1/dashboard/summary \
+  | jq -e '.servers // .summary // 0' >/dev/null \
+  || echo "FAIL: authed browser cannot reach the session proxy"
 
-# Direct API-key client should also work.
+# ...and must NOT be treated as authenticated on the direct backend path —
+# a cookie alone carries no x-api-key/bearer, so this should be 401.
+curl -sS -o /dev/null -w "cookie_on_direct_api=%{http_code}\n" \
+  -b /tmp/c.txt http://localhost:18080/api/v1/dashboard/summary   # want 401
+
+# A GET path NOT on the session-proxy allowlist must 404/401 through the
+# proxy even for an authenticated cookie (fails closed on unlisted paths).
+curl -sS -o /dev/null -w "unlisted_proxy_path=%{http_code}\n" \
+  -b /tmp/c.txt http://localhost:18080/api/ui/v1/runtime/unlisted-path
+
+# Direct API-key client should also work, on the direct path.
 curl -sS -H "x-api-key: $UI_KEY" http://localhost:18080/api/v1/dashboard/summary \
   | jq -e '.' >/dev/null || echo "FAIL: direct key client"
 ```
