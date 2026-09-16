@@ -27,6 +27,15 @@ export type ServerSummary = {
   tools?: Array<{ name?: string }>;
 };
 
+// GET /runtime/servers's publish_policy field
+// (services/runtime-api/internal/runtimeapi/servers.go). Only meaningful for
+// a non-admin principal - the runtime does not cap admin publishing.
+export type PublishPolicy = {
+  active_server_limit_enabled?: boolean;
+  active_server_count?: number;
+  active_server_limit?: number;
+};
+
 export type ToolRow = {
   tool_name: string;
   description?: string;
@@ -61,6 +70,23 @@ export function serverKey(server: Pick<ServerSummary, "name" | "namespace">): st
 
 export function toolKey(tool: ToolRow): string {
   return `${tool.namespace}/${tool.server_name}/${tool.tool_name}`;
+}
+
+// Mirrors legacy's formatPublishQuota() (services/ui/static/legacy/app.js):
+// "off" when the limit isn't enforced, otherwise "count/limit". Callers
+// gate visibility themselves - the runtime only enforces this for non-admin
+// principals, so it is only meaningful (and only ever legacy-gated visible)
+// for a tenant user.
+export function formatPublishQuota(policy: PublishPolicy | null | undefined): string {
+  if (!policy || policy.active_server_limit_enabled !== true) {
+    return "off";
+  }
+  const limit = Number(policy.active_server_limit || 0);
+  if (!limit) {
+    return "off";
+  }
+  const count = Number(policy.active_server_count || 0);
+  return `${count}/${limit}`;
 }
 
 // A server is "ready" when its readiness string reports every replica up.

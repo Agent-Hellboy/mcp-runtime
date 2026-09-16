@@ -178,7 +178,7 @@ export function App() {
   } else if (workspace === "keys") {
     content = <ApiKeysWorkspace auth={auth} onSignIn={handleSignIn} />;
   } else {
-    content = <ServersWorkspace authenticated={auth.authenticated} onSignIn={handleSignIn} />;
+    content = <ServersWorkspace auth={auth} onSignIn={handleSignIn} />;
   }
 
   return (
