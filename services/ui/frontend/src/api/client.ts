@@ -103,6 +103,18 @@ export class UnauthorizedError extends Error {
   }
 }
 
+// A 403 that isn't the CSRF-token case above - e.g. RequireRole rejecting a
+// non-admin principal (pkg/platformauth/middleware.go), which the gateway
+// reports as {"error":"forbidden","message":"insufficient permissions"}.
+export class ForbiddenError extends Error {
+  readonly status = 403;
+
+  constructor(message = "forbidden") {
+    super(message);
+    this.name = "ForbiddenError";
+  }
+}
+
 export function apiURL(
   path: string,
   apiBase = readRuntimeConfig().apiBase,
@@ -145,8 +157,11 @@ async function readJSON(response: Response): Promise<unknown> {
   }
   if (!response.ok) {
     const text = await response.text();
-    if (response.status === 403 && text.includes("csrf_failed")) {
-      throw new CSRFError();
+    if (response.status === 403) {
+      if (text.includes("csrf_failed")) {
+        throw new CSRFError();
+      }
+      throw new ForbiddenError(text || "forbidden");
     }
     throw new Error(text || `Request failed: ${response.status}`);
   }

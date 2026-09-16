@@ -339,6 +339,21 @@ describe("AccessWorkspace drill-down", () => {
     expect(error).toHaveTextContent("Activity is unavailable.");
     expect(error).toHaveTextContent("analytics service");
   });
+
+  it("tells a non-admin the activity view needs admin access, not that analytics is down", async () => {
+    const user = userEvent.setup();
+    stubAccessApi({
+      "/events": { status: 403, body: { error: "forbidden", message: "insufficient permissions" } },
+    });
+
+    renderAccess(TENANT);
+    await screen.findByTestId("grants-table");
+    await user.click(screen.getAllByTestId("grant-drilldown")[0]);
+
+    const error = await screen.findByTestId("access-activity-forbidden", {}, { timeout: 5000 });
+    expect(error).toHaveTextContent("Admin access required.");
+    expect(screen.queryByTestId("access-activity-error")).not.toBeInTheDocument();
+  });
 });
 
 describe("AccessWorkspace accessibility", () => {
