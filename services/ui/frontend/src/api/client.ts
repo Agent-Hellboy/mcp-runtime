@@ -43,6 +43,7 @@ export const SESSION_PROXY_WRITE_PATHS: Array<{
   { path: "/runtime/teams/", methods: ["POST"], segments: 2, suffixes: ["members", "users"] },
   { path: "/runtime/teams/", methods: ["PUT", "DELETE"], segments: 3, suffixes: ["members"], suffixIndex: 1 },
   { path: "/runtime/actions/restart", methods: ["POST"] },
+  { path: "/runtime/servers/", methods: ["DELETE"], segments: 2 },
 ];
 
 export const CSRF_HEADER = "X-CSRF-Token";

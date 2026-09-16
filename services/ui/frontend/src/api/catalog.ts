@@ -32,3 +32,13 @@ export async function listTools(namespace?: string): Promise<ToolRow[]> {
   const path = withQuery("/runtime/tools", { namespace });
   return asArray<ToolRow>(await fetchJSON(path), "tools");
 }
+
+// Available to any authenticated principal who owns or can publish to the
+// server's namespace, not only admin (services/runtime-api's
+// handleRuntimeServerDelete checks principalCanPublishNamespace /
+// serverWritableByPrincipal, not role === admin).
+export async function retireServer(namespace: string, name: string): Promise<void> {
+  await fetchJSON(`/runtime/servers/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`, {
+    method: "DELETE",
+  });
+}

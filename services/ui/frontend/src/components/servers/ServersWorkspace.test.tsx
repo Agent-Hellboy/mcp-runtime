@@ -410,3 +410,113 @@ describe("ServersWorkspace publish quota", () => {
     expect(screen.queryByTestId("server-quota")).not.toBeInTheDocument();
   });
 });
+
+// GET /runtime/servers/{ns}/{name} and DELETE both go through
+// rr.auth (services/runtime-api/routes.go), not adminOnly - any principal
+// who owns/can-publish the namespace can retire their own server, not only
+// admin. handleRuntimeServerDelete enforces that ownership check itself.
+describe("ServersWorkspace server retire", () => {
+  it("confirms with the exact namespace and name before retiring", async () => {
+    const user = userEvent.setup();
+    const fetchMock = stubCatalog();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+
+    renderWorkspace({ authenticated: true });
+    await screen.findByTestId("server-list");
+
+    await user.click(screen.getAllByTestId("server-card-retire")[0]);
+
+    expect(confirmSpy).toHaveBeenCalledWith(
+      expect.stringContaining('"workspace-assistant"')
+    );
+    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining('"mcp-servers"'));
+    expect(fetchMock.mock.calls.some((call) => (call[1] as RequestInit)?.method === "DELETE")).toBe(
+      false
+    );
+  });
+
+  it("retires through the CSRF-backed proxy and refreshes the catalog on success", async () => {
+    const user = userEvent.setup();
+    let retired = false;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      const url = String(input);
+      if (init.method === "DELETE" && url.includes("/runtime/servers/")) {
+        retired = true;
+        return { ok: true, status: 200, json: async () => ({ success: true }) } as unknown as Response;
+      }
+      const payload = url.includes("/runtime/namespaces")
+        ? NAMESPACES
+        : url.includes("/runtime/servers")
+          ? retired
+            ? { servers: [] }
+            : SERVERS
+          : TOOLS;
+      return { ok: true, status: 200, json: async () => payload } as unknown as Response;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    renderWorkspace({ authenticated: true });
+    await screen.findByTestId("server-list");
+    expect(screen.getAllByTestId("server-card")).toHaveLength(2);
+
+    await user.click(screen.getAllByTestId("server-card-retire")[0]);
+
+    await waitFor(() => expect(screen.getByTestId("server-list-empty")).toBeInTheDocument());
+
+    const deleteCall = fetchMock.mock.calls.find(
+      (call) => (call[1] as RequestInit)?.method === "DELETE"
+    );
+    expect(String(deleteCall?.[0])).toBe("/api/ui/v1/runtime/servers/mcp-servers/workspace-assistant");
+    const init = deleteCall?.[1] as RequestInit;
+    expect(init.credentials).toBe("same-origin");
+    expect(new Headers(init.headers).get("x-api-key")).toBeNull();
+  });
+
+  it("shows an inline error and keeps the server listed when retire fails", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      const url = String(input);
+      if (init.method === "DELETE") {
+        return {
+          ok: false,
+          status: 403,
+          text: async () => JSON.stringify({ error: "server is not owned by this user" }),
+        } as unknown as Response;
+      }
+      const payload = url.includes("/runtime/namespaces")
+        ? NAMESPACES
+        : url.includes("/runtime/servers")
+          ? SERVERS
+          : TOOLS;
+      return { ok: true, status: 200, json: async () => payload } as unknown as Response;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    renderWorkspace({ authenticated: true });
+    await screen.findByTestId("server-list");
+
+    await user.click(screen.getAllByTestId("server-card-retire")[0]);
+
+    const error = await screen.findByTestId("server-retire-error");
+    expect(error).toHaveTextContent("server is not owned by this user");
+    expect(error).toHaveAttribute("role", "alert");
+    expect(screen.getAllByTestId("server-card")).toHaveLength(2);
+  });
+
+  it("does not call the API when the confirmation is declined", async () => {
+    const user = userEvent.setup();
+    const fetchMock = stubCatalog();
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+
+    renderWorkspace({ authenticated: true });
+    await screen.findByTestId("server-list");
+    fetchMock.mockClear();
+
+    await user.click(screen.getAllByTestId("server-card-retire")[0]);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(screen.getAllByTestId("server-card")).toHaveLength(2);
+  });
+});

@@ -512,9 +512,11 @@ body {
   overflow-wrap: anywhere;
 }
 
-.server-card > .button {
+.server-card-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
   margin-top: auto;
-  align-self: flex-start;
 }
 
 /* Table ------------------------------------------------------------------ */

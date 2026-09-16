@@ -7,6 +7,7 @@ import { EMPTY_FILTERS, ToolFilters, type CatalogFilters } from "./ToolFilters";
 import { EmptyState } from "../EmptyState";
 import { ErrorState } from "../ErrorState";
 import { LoadingState } from "../LoadingState";
+import { retireServer } from "../../api/catalog";
 import { useCatalog } from "../../hooks/useCatalog";
 import { formatPublishQuota, isServerReady, isTenantUser, serverKey, toolKey } from "../../api/types";
 import type { AuthStatus, ServerSummary, ToolRow } from "../../api/types";
@@ -208,6 +209,10 @@ export function ServersWorkspace({ auth, onSignIn }: ServersWorkspaceProps) {
           onSelect={(key) => {
             setFilters((previous) => ({ ...previous, selectedServerKey: key }));
             setSelectedToolKey("");
+          }}
+          onRetire={async (namespace, name) => {
+            await retireServer(namespace, name);
+            catalog.reload();
           }}
         />
       </section>

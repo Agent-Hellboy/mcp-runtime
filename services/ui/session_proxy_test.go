@@ -26,6 +26,9 @@ func TestSessionProxyWriteAllowlist(t *testing.T) {
 		{http.MethodPatch, "/runtime/grants/mcp-servers/demo/extra", false},
 		{http.MethodPost, "/runtime/teams/acme/other", false},
 		{http.MethodPost, "/runtime/servers", false},
+		{http.MethodDelete, "/runtime/servers/mcp-servers/demo", true},
+		{http.MethodPatch, "/runtime/servers/mcp-servers/demo", false},
+		{http.MethodDelete, "/runtime/servers/mcp-servers/demo/extra", false},
 	}
 	for _, tc := range cases {
 		if got := sessionProxyWriteAllowed(tc.method, tc.path); got != tc.want {
