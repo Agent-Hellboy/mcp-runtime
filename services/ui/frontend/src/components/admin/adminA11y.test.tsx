@@ -113,30 +113,25 @@ describe("admin navigation gating", () => {
   it("lists the admin tab only for an admin role", () => {
     expect(visibleWorkspaceTabs(ADMIN).map((tab) => tab.id)).toEqual([
       "servers",
+      "access",
       "admin",
       "legacy",
     ]);
     const user = { authenticated: true, principal: { role: "user" } } as AuthStatus;
     expect(visibleWorkspaceTabs(user).map((tab) => tab.id)).not.toContain("admin");
+    // Access control is not admin-gated - any authenticated principal gets it.
+    expect(visibleWorkspaceTabs(user).map((tab) => tab.id)).toContain("access");
   });
 });
 
 describe("admin accessibility", () => {
-  it("has no detectable violations on access control", async () => {
+  // Access control / grant drill-down a11y coverage lives in
+  // AccessWorkspace.test.tsx now - that surface moved out of AdminWorkspace.
+
+  it("has no detectable violations on teams", async () => {
     stub();
     const { container } = renderAdmin(ADMIN);
-    await screen.findByTestId("grants-table");
-
-    expect(await axe(container, AXE_OPTIONS)).toHaveNoViolations();
-  });
-
-  it("has no detectable violations on the grant drill-down", async () => {
-    const user = userEvent.setup();
-    stub();
-    const { container } = renderAdmin(ADMIN);
-    await screen.findByTestId("grants-table");
-    await user.click(screen.getAllByTestId("grant-drilldown")[0]);
-    await screen.findByTestId("access-detail");
+    await screen.findByTestId("teams-table");
 
     expect(await axe(container, AXE_OPTIONS)).toHaveNoViolations();
   });
@@ -145,7 +140,7 @@ describe("admin accessibility", () => {
     const user = userEvent.setup();
     stub();
     const { container } = renderAdmin(ADMIN);
-    await screen.findByTestId("grants-table");
+    await screen.findByTestId("teams-table");
     await user.click(screen.getByTestId("admin-section-operations"));
     await screen.findByTestId("operations-users-table");
 
@@ -156,7 +151,7 @@ describe("admin accessibility", () => {
     const user = userEvent.setup();
     stub();
     const { container } = renderAdmin(ADMIN);
-    await screen.findByTestId("grants-table");
+    await screen.findByTestId("teams-table");
     await user.click(screen.getByTestId("admin-section-platform"));
     await screen.findByTestId("platform-table");
 
