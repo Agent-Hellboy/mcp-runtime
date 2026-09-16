@@ -3,7 +3,7 @@ import { useCallback } from "react";
 
 import { listNamespaces, listServers, listTools } from "../api/catalog";
 import { UnauthorizedError } from "../api/client";
-import type { NamespaceEntry, ServerSummary, ToolRow } from "../api/types";
+import type { NamespaceEntry, PublishPolicy, ServerSummary, ToolRow } from "../api/types";
 
 export type CatalogStatus = "loading" | "ready" | "error" | "unauthorized";
 
@@ -62,10 +62,13 @@ export function useCatalog(enabled: boolean, namespace: string) {
     status = "ready";
   }
 
+  const serverList = serversQuery.data as { servers: ServerSummary[]; publishPolicy: PublishPolicy | null } | undefined;
+
   return {
     status,
     namespaces: (namespacesQuery.data ?? []) as NamespaceEntry[],
-    servers: (serversQuery.data ?? []) as ServerSummary[],
+    servers: serverList?.servers ?? [],
+    publishPolicy: serverList?.publishPolicy ?? null,
     tools: (toolsQuery.data ?? []) as ToolRow[],
     error: firstError ? errorMessage(firstError) : "",
     reload,
