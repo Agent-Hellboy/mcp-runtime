@@ -100,7 +100,7 @@ def check_vite_assets(base, label, index_html):
     check(script_path, f"{label} index references Vite JS asset", f"{label} index missing Vite JS asset: {index_html}")
     check(style_path, f"{label} index references Vite CSS asset", f"{label} index missing Vite CSS asset: {index_html}")
     expect_status(f"{base}{script_path}", 200, contains="/config.js")
-    expect_status(f"{base}{style_path}", 200, contains="legacy-dashboard")
+    expect_status(f"{base}{style_path}", 200, contains="app-shell")
     return script_path, style_path
 
 
