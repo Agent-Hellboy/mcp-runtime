@@ -16,10 +16,7 @@ type AccessWorkspaceProps = {
 
 // Grants and agent sessions are any authenticated user's territory, not
 // admin-only - the backend registers /runtime/grants and /runtime/sessions
-// with its plain auth() middleware, not adminOnly(), and the legacy
-// dashboard's governance tab is gated on data-auth-required, not
-// data-admin-only. Only the gateway policy-decision analytics inside that
-// tab were ever admin-restricted, and that content isn't part of this panel.
+// with its plain auth() middleware, not adminOnly().
 export function AccessWorkspace({ auth, onSignIn }: AccessWorkspaceProps) {
   const [namespace, setNamespace] = useState("");
   const [selection, setSelection] = useState<AccessSelection | null>(null);
@@ -37,13 +34,11 @@ export function AccessWorkspace({ auth, onSignIn }: AccessWorkspaceProps) {
   // (services/runtime-api/internal/runtimeapi/subject_binding.go,
   // scopedNamespaceForPrincipal): admin gets every namespace cluster-wide,
   // but a non-admin with no team namespace gets a 403 ("forbidden namespace"
-  // / principal identity required) rather than a default scope. The legacy
-  // dashboard's #scope-namespace selector already accounts for this -
-  // syncScopeSelector() defaults a non-admin session to the first namespace
-  // /runtime/namespaces returns for that principal. Mirror it once, the
-  // first time the list loads, so a non-admin lands on a working, scoped
-  // read instead of an error on first paint; they can still widen or narrow
-  // the namespace filter afterward.
+  // / principal identity required) rather than a default scope. Default a
+  // non-admin to their first visible namespace once /runtime/namespaces
+  // loads, so they land on a working, scoped read instead of an error on
+  // first paint; they can still widen or narrow the namespace filter
+  // afterward.
   useEffect(() => {
     if (appliedDefaultNamespace.current || isAdmin(auth) || namespace !== "") {
       return;

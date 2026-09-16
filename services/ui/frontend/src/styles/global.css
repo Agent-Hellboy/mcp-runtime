@@ -780,17 +780,6 @@ body {
   font-size: 14px;
 }
 
-/* Legacy fallback -------------------------------------------------------- */
-
-.legacy-dashboard {
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  display: block;
-  width: 100%;
-  height: min(78vh, 900px);
-  background: var(--surface-raised);
-}
-
 /* Theme control --------------------------------------------------------- */
 
 .theme-toggle {
@@ -857,9 +846,5 @@ body {
 
   .server-grid {
     grid-template-columns: 1fr;
-  }
-
-  .legacy-dashboard {
-    height: 70vh;
   }
 }

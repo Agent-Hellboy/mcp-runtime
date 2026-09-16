@@ -85,20 +85,20 @@ describe("visibleWorkspaceTabs", () => {
   const ids = (auth: AuthStatus) => visibleWorkspaceTabs(auth).map((tab) => tab.id);
 
   it("shows only public workspaces when signed out", () => {
-    expect(ids({ authenticated: false })).toEqual(["servers", "legacy"]);
+    expect(ids({ authenticated: false })).toEqual(["servers"]);
   });
 
   it("shows Activity and Keys to a tenant user", () => {
-    expect(ids(TENANT as AuthStatus)).toEqual(["servers", "access", "activity", "keys", "legacy"]);
+    expect(ids(TENANT as AuthStatus)).toEqual(["servers", "access", "activity", "keys"]);
   });
 
   it("hides Activity from admins but keeps Keys when they have an identity", () => {
-    // Legacy: Activity is data-user-only; Keys needs a user subject.
-    expect(ids(ADMIN as AuthStatus)).toEqual(["servers", "access", "admin", "keys", "legacy"]);
+    // Activity is tenant-only; Keys needs a user subject.
+    expect(ids(ADMIN as AuthStatus)).toEqual(["servers", "access", "admin", "keys"]);
   });
 
   it("hides both from a session with no user identity", () => {
-    expect(ids(API_KEY_SESSION as AuthStatus)).toEqual(["servers", "access", "admin", "legacy"]);
+    expect(ids(API_KEY_SESSION as AuthStatus)).toEqual(["servers", "access", "admin"]);
   });
 });
 
@@ -144,17 +144,13 @@ describe("workspace navigation", () => {
     expect(screen.getByTestId("catalog-signed-out")).toBeInTheDocument();
   });
 
-  it("keeps the legacy fallback reachable", async () => {
-    const user = userEvent.setup();
+  it("never offers a legacy fallback tab", async () => {
     stubApp(TENANT);
 
     renderApp();
-    await user.click(await screen.findByTestId("workspace-tab-legacy"));
+    await screen.findByTestId("workspace-tab-activity");
 
-    expect(screen.getByTitle("MCP Sentinel dashboard")).toHaveAttribute(
-      "src",
-      "/legacy/index.html"
-    );
+    expect(screen.queryByTestId("workspace-tab-legacy")).not.toBeInTheDocument();
   });
 });
 

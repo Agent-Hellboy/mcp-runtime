@@ -1209,13 +1209,12 @@ func securityHeadersMiddleware(next http.Handler) http.Handler {
 				"img-src 'self' data: https:; "+
 				"font-src 'self' data: https://fonts.gstatic.com; "+
 				"connect-src 'self' https://accounts.google.com; "+
-				"frame-src 'self' https://accounts.google.com; "+
-				// 'self', not 'none': the dashboard shell renders the legacy
-				// dashboard in a same-origin iframe (src="/legacy/index.html"),
-				// and 'none' forbids every ancestor including same-origin, so
-				// the app blocked its own UI. 'self' keeps cross-origin
-				// framing (clickjacking) blocked.
-				"frame-ancestors 'self'; "+
+				"frame-src https://accounts.google.com; "+
+				// The dashboard no longer frames anything on its own origin
+				// (the legacy same-origin iframe was removed in Phase 5), so
+				// 'none' is safe here and blocks every ancestor, same-origin
+				// included.
+				"frame-ancestors 'none'; "+
 				"base-uri 'self'; "+
 				"form-action 'self'")
 		if isHTTPSRequest(r) {

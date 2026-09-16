@@ -1,7 +1,7 @@
 import type { AuthStatus } from "../api/types";
 import { hasUserIdentity, isAdmin, isTenantUser } from "../api/types";
 
-export type WorkspaceId = "servers" | "access" | "admin" | "activity" | "keys" | "legacy";
+export type WorkspaceId = "servers" | "access" | "admin" | "activity" | "keys";
 
 export type WorkspaceTab = {
   id: WorkspaceId;
@@ -21,9 +21,8 @@ export const WORKSPACE_TABS: WorkspaceTab[] = [
     id: "access",
     label: "Access Control",
     description: "Grants and agent sessions enforced by the MCP gateway.",
-    // Matches the legacy governance tab's data-auth-required gate: any
-    // authenticated principal, not only admins. The backend agrees - the
-    // grants/sessions routes are registered with rr.auth, not rr.adminOnly.
+    // Any authenticated principal, not only admins - the backend registers
+    // /runtime/grants and /runtime/sessions with rr.auth, not rr.adminOnly.
     visible: (auth) => auth.authenticated,
   },
   {
@@ -43,11 +42,6 @@ export const WORKSPACE_TABS: WorkspaceTab[] = [
     label: "Keys",
     description: "Personal API keys for agents and CI jobs.",
     visible: hasUserIdentity,
-  },
-  {
-    id: "legacy",
-    label: "More workspaces",
-    description: "Analytics, teams, access control, and operations.",
   },
 ];
 

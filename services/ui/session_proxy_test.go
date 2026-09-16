@@ -459,26 +459,6 @@ func TestNewMuxSessionProxyUsesStore(t *testing.T) {
 	}
 }
 
-func TestStaticAppRoutesAuthenticatedCatalogThroughSessionProxy(t *testing.T) {
-	source := string(readStaticAsset(t, "static/legacy/app.js"))
-	for _, want := range []string{
-		`function sessionAPIURL(path, method = "GET")`,
-		"`/api/ui/v1${path}`",
-		`const sessionAPIRuntimePrefixes`,
-		`"/runtime/namespaces"`,
-		`"/runtime/servers"`,
-		`"/runtime/tools"`,
-		`fetch(sessionAPIURL(path, options.method)`,
-	} {
-		if !strings.Contains(source, want) {
-			t.Fatalf("legacy app.js missing %q", want)
-		}
-	}
-	if strings.Contains(source, `fetchJSONNoAuthSideEffects(sessionAPIURL`) {
-		t.Fatal("unsigned fetch helper must not use the session proxy")
-	}
-}
-
 func newTestSessionProxy(t *testing.T, upstreamURL string) *sessionProxy {
 	t.Helper()
 	base, err := parseRuntimeUpstream(upstreamURL)

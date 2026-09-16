@@ -146,6 +146,32 @@ describe("App", () => {
     expect(document.body.innerHTML).not.toContain("ui-key");
   });
 
+  it("signs in with a Google credential", async () => {
+    const user = userEvent.setup();
+    window.MCP_GOOGLE_CLIENT_ID = "test-client-id";
+    const initialize = vi.fn();
+    window.google = { accounts: { id: { initialize, renderButton: vi.fn() } } };
+    const { calls } = stubRoutes({
+      "/auth/status": SIGNED_OUT,
+      "/auth/login": ADMIN,
+      ...EMPTY_CATALOG,
+    });
+
+    renderApp();
+    await user.click(await screen.findByTestId("signin-button"));
+    await waitFor(() => expect(initialize).toHaveBeenCalledTimes(1));
+
+    const { callback } = initialize.mock.calls[0][0];
+    callback({ credential: "google-id-token" });
+
+    await waitFor(() => expect(screen.getByTestId("logout-button")).toBeInTheDocument());
+    const loginCall = calls.find((call) => call.url === "/auth/login");
+    expect(String(loginCall?.init.body)).toBe(JSON.stringify({ id_token: "google-id-token" }));
+
+    delete window.google;
+    delete window.MCP_GOOGLE_CLIENT_ID;
+  });
+
   it("shows a sign-in error without leaving the form", async () => {
     const user = userEvent.setup();
     stubRoutes({
@@ -185,34 +211,13 @@ describe("App", () => {
     );
   });
 
-  it("keeps the legacy dashboard reachable for unmigrated workspaces", async () => {
-    const user = userEvent.setup();
+  it("never offers a legacy fallback tab or iframe", async () => {
     stubRoutes({ "/auth/status": ADMIN, ...EMPTY_CATALOG });
 
     renderApp();
-    await user.click(await screen.findByTestId("workspace-tab-legacy"));
+    await screen.findByTestId("server-list-empty");
 
-    const frame = screen.getByTitle("MCP Sentinel dashboard");
-    expect(frame).toHaveAttribute("src", "/legacy/index.html");
-
-    await user.click(screen.getByTestId("workspace-tab-servers"));
-    expect(screen.queryByTitle("MCP Sentinel dashboard")).not.toBeInTheDocument();
-  });
-
-  it("unmounts the legacy dashboard when signing out", async () => {
-    const user = userEvent.setup();
-    stubRoutes({
-      "/auth/status": ADMIN,
-      "/auth/logout": { status: 200, body: { authenticated: false } },
-      ...EMPTY_CATALOG,
-    });
-
-    renderApp();
-    await user.click(await screen.findByTestId("workspace-tab-legacy"));
-    expect(screen.getByTitle("MCP Sentinel dashboard")).toBeInTheDocument();
-
-    await user.click(screen.getByTestId("logout-button"));
-    await waitFor(() => expect(screen.getByTestId("catalog-signed-out")).toBeInTheDocument());
+    expect(screen.queryByTestId("workspace-tab-legacy")).not.toBeInTheDocument();
     expect(screen.queryByTitle("MCP Sentinel dashboard")).not.toBeInTheDocument();
   });
 });

@@ -72,10 +72,10 @@ export function toolKey(tool: ToolRow): string {
   return `${tool.namespace}/${tool.server_name}/${tool.tool_name}`;
 }
 
-// Mirrors legacy's formatPublishQuota() (services/ui/static/legacy/app.js):
+// "count/limit" once the runtime enforces a cap, otherwise "off":
 // "off" when the limit isn't enforced, otherwise "count/limit". Callers
 // gate visibility themselves - the runtime only enforces this for non-admin
-// principals, so it is only meaningful (and only ever legacy-gated visible)
+// principals, so it is only meaningful (and only ever visible)
 // for a tenant user.
 export function formatPublishQuota(policy: PublishPolicy | null | undefined): string {
   if (!policy || policy.active_server_limit_enabled !== true) {
@@ -295,7 +295,7 @@ export type UsageResponse = {
   decisions?: Array<{ decision: string; events: number }>;
 };
 
-// Legacy role gating, reproduced exactly (services/ui/static/legacy/app.js).
+// Role gating helpers shared across every workspace.
 // Activity is tenant-only; API keys additionally require a user identity.
 export function isAdminPrincipal(status: AuthStatus): boolean {
   return status.authenticated && status.principal?.role === "admin";

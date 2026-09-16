@@ -126,10 +126,9 @@ describe("AccessWorkspace role gating", () => {
 
   // The backend registers /runtime/grants and /runtime/sessions with its
   // plain auth() middleware, not adminOnly() (services/runtime-api/routes.go),
-  // and the legacy governance tab is gated on data-auth-required, not
   // data-admin-only. A non-admin, authenticated tenant user must see and
   // manage their own grants/sessions exactly like an admin does.
-  it("gives a tenant (non-admin) user full read access, matching legacy and the backend", async () => {
+  it("gives a tenant (non-admin) user the same full read access an admin gets", async () => {
     stubAccessApi();
 
     renderAccess(TENANT);
@@ -175,10 +174,8 @@ describe("AccessWorkspace role gating", () => {
 
   // The backend 403s a non-admin request with no namespace and no team
   // namespace (scopedNamespaceForPrincipal); default to the first namespace
-  // /runtime/namespaces returns for that principal, matching the legacy
-  // dashboard's #scope-namespace default (syncScopeSelector's scopes[0]
-  // fallback). Admin keeps the cluster-wide default (no namespace param)
-  // unchanged.
+  // /runtime/namespaces returns for that principal. Admin keeps the
+  // cluster-wide default (no namespace param) unchanged.
   it("defaults a tenant session to their first visible namespace so the first read succeeds", async () => {
     const fetchMock = stubAccessApi({
       "/runtime/namespaces": { body: { namespaces: [{ namespace: "mcp-servers" }] } },

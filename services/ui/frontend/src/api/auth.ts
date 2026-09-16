@@ -31,12 +31,18 @@ export async function readAuthStatus(): Promise<AuthStatus> {
   }
 }
 
-export type LoginInput = { email: string; password: string } | { apiKey: string };
+export type LoginInput =
+  | { email: string; password: string }
+  | { apiKey: string }
+  | { idToken: string };
 
 export async function login(input: LoginInput): Promise<AuthStatus> {
-  const body = "apiKey" in input
-    ? { api_key: input.apiKey }
-    : { email: input.email, password: input.password };
+  const body =
+    "apiKey" in input
+      ? { api_key: input.apiKey }
+      : "idToken" in input
+        ? { id_token: input.idToken }
+        : { email: input.email, password: input.password };
   return asAuthStatus(
     await fetchUIJSON("/auth/login", {
       method: "POST",

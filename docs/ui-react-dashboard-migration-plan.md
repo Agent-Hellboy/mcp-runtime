@@ -1,6 +1,6 @@
 # Sentinel Dashboard React Migration Plan
 
-Status: Phases 1-3 implemented; remaining phases proposed for review
+Status: complete. All five phases shipped; the legacy dashboard is removed.
 
 Tracking issue: [#388](https://github.com/Agent-Hellboy/mcp-runtime/issues/388)
 
@@ -226,11 +226,18 @@ Remove the iframe and legacy dashboard only after every workflow has an accepted
 
 Acceptance criteria:
 
-- [ ] A route/workflow inventory maps every legacy tab and action to an accepted React route or an explicitly removed product behavior.
-- [ ] No production navigation points to `/legacy/index.html`.
-- [ ] Legacy static assets and bridge code are deleted only after browser, API, accessibility, and security evidence is green.
-- [ ] The root UI remains deep-linkable, responsive, and compatible with the supported deployment ingress paths.
-- [ ] The final PR updates user/developer docs and closes/supersedes #47 with links to the shipped surfaces.
+- [x] A route/workflow inventory maps every legacy tab and action to an accepted React route or an explicitly removed product behavior (`docs/ui-legacy-retirement-inventory.md`).
+- [x] No production navigation points to `/legacy/index.html`.
+- [x] Legacy static assets and bridge code are deleted only after browser, API, accessibility, and security evidence is green.
+- [x] The root UI remains deep-linkable, responsive, and compatible with the supported deployment ingress paths.
+- [x] The final PR updates user/developer docs and closes/supersedes #47 with links to the shipped surfaces.
+
+Two gaps found during the inventory were closed before removal: non-admin
+access to grants/sessions (previously wrongly admin-gated) and the tenant
+publish-quota stat (previously dropped). A third, Google Sign-In, had no
+React implementation at all and was built from scratch
+(`GoogleSignInButton`) rather than dropped, since it's a full sign-in method,
+not a UI convenience.
 
 ## PR and branch sequence
 
@@ -257,4 +264,4 @@ For each phase, run the narrowest checks first and then the relevant full checks
 
 ## Definition of done for the full migration
 
-The migration is complete when all five phases have passed their acceptance criteria, the legacy inventory has no unmigrated workflows, the iframe and legacy assets are removed, and the browser/API/security evidence is attached to the final PR.
+Done. All five phases passed their acceptance criteria; the iframe and legacy assets are removed.

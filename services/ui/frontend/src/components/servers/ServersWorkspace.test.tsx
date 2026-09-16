@@ -351,7 +351,7 @@ describe("ServersWorkspace", () => {
   });
 });
 
-// Legacy's Servers tab shows a tenant-only "count/limit" (or "off") publish
+// The Servers tab shows a tenant-only "count/limit" (or "off") publish
 // quota stat, sourced from GET /runtime/servers's publish_policy field
 // (services/runtime-api/internal/runtimeapi/servers.go). The runtime does
 // not enforce this for admin, so admin never sees it either.

@@ -115,7 +115,6 @@ describe("admin navigation gating", () => {
       "servers",
       "access",
       "admin",
-      "legacy",
     ]);
     const user = { authenticated: true, principal: { role: "user" } } as AuthStatus;
     expect(visibleWorkspaceTabs(user).map((tab) => tab.id)).not.toContain("admin");

@@ -94,7 +94,7 @@ export function ApiKeysWorkspace({ auth, onSignIn }: ApiKeysWorkspaceProps) {
   }
 
   if (!enabled) {
-    // Matches the legacy data-user-identity-required gate: a session without a
+    // A session without a
     // user subject (for example UI API-key login) owns no personal keys.
     return (
       <section className="panel" aria-labelledby="keys-no-identity-title">
