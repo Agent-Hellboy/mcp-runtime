@@ -8,11 +8,11 @@ import { EmptyState } from "../EmptyState";
 import { ErrorState } from "../ErrorState";
 import { LoadingState } from "../LoadingState";
 import { useCatalog } from "../../hooks/useCatalog";
-import { isServerReady, serverKey, toolKey } from "../../api/types";
-import type { ServerSummary, ToolRow } from "../../api/types";
+import { formatPublishQuota, isServerReady, isTenantUser, serverKey, toolKey } from "../../api/types";
+import type { AuthStatus, ServerSummary, ToolRow } from "../../api/types";
 
 type ServersWorkspaceProps = {
-  authenticated: boolean;
+  auth: AuthStatus;
   onSignIn: () => void;
 };
 
@@ -76,7 +76,8 @@ export function filterTools(
   });
 }
 
-export function ServersWorkspace({ authenticated, onSignIn }: ServersWorkspaceProps) {
+export function ServersWorkspace({ auth, onSignIn }: ServersWorkspaceProps) {
+  const authenticated = auth.authenticated;
   const [filters, setFilters] = useState<CatalogFilters>(EMPTY_FILTERS);
   const [selectedToolKey, setSelectedToolKey] = useState("");
   const catalog = useCatalog(authenticated, filters.namespace);
@@ -180,6 +181,11 @@ export function ServersWorkspace({ authenticated, onSignIn }: ServersWorkspacePr
             <li>
               <strong>{scopedTools.length}</strong> tools
             </li>
+            {isTenantUser(auth) ? (
+              <li data-testid="server-quota">
+                <strong>{formatPublishQuota(catalog.publishPolicy)}</strong> quota
+              </li>
+            ) : null}
           </ul>
         </div>
         <ToolFilters

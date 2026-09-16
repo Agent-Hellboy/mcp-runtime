@@ -4,11 +4,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ServersWorkspace } from "./ServersWorkspace";
 import { AppProviders } from "../../providers/AppProviders";
+import type { AuthStatus } from "../../api/types";
 
-function renderWorkspace(props: { authenticated: boolean; onSignIn?: () => void }) {
+function renderWorkspace(props: { authenticated: boolean; onSignIn?: () => void; auth?: AuthStatus }) {
+  const auth: AuthStatus = props.auth ?? {
+    authenticated: props.authenticated,
+    principal: props.authenticated ? { role: "user", email: "test@mcpruntime.org" } : undefined,
+  };
   return render(
     <AppProviders>
-      <ServersWorkspace authenticated={props.authenticated} onSignIn={props.onSignIn ?? (() => {})} />
+      <ServersWorkspace auth={auth} onSignIn={props.onSignIn ?? (() => {})} />
     </AppProviders>
   );
 }
@@ -343,5 +348,65 @@ describe("ServersWorkspace", () => {
       .map((row) => row.cells[4].textContent);
     // "" (unrated) then low then high - never alphabetical "high" before "low".
     expect(risks).toEqual(["unrated", "low", "high"]);
+  });
+});
+
+// Legacy's Servers tab shows a tenant-only "count/limit" (or "off") publish
+// quota stat, sourced from GET /runtime/servers's publish_policy field
+// (services/runtime-api/internal/runtimeapi/servers.go). The runtime does
+// not enforce this for admin, so admin never sees it either.
+describe("ServersWorkspace publish quota", () => {
+  it("shows a tenant's publish quota once the limit is enabled", async () => {
+    stubCatalog({
+      servers: {
+        ...SERVERS,
+        publish_policy: {
+          active_server_limit_enabled: true,
+          active_server_count: 2,
+          active_server_limit: 5,
+        },
+      },
+    });
+
+    renderWorkspace({
+      authenticated: true,
+      auth: { authenticated: true, principal: { role: "user", email: "test@mcpruntime.org" } },
+    });
+    await screen.findByTestId("server-list");
+
+    expect(screen.getByTestId("server-quota")).toHaveTextContent("2/5");
+  });
+
+  it("shows \"off\" when the limit isn't enforced", async () => {
+    stubCatalog({ servers: { ...SERVERS, publish_policy: { active_server_limit_enabled: false } } });
+
+    renderWorkspace({
+      authenticated: true,
+      auth: { authenticated: true, principal: { role: "user", email: "test@mcpruntime.org" } },
+    });
+    await screen.findByTestId("server-list");
+
+    expect(screen.getByTestId("server-quota")).toHaveTextContent("off");
+  });
+
+  it("never shows the quota stat to an admin", async () => {
+    stubCatalog({
+      servers: {
+        ...SERVERS,
+        publish_policy: {
+          active_server_limit_enabled: true,
+          active_server_count: 2,
+          active_server_limit: 5,
+        },
+      },
+    });
+
+    renderWorkspace({
+      authenticated: true,
+      auth: { authenticated: true, principal: { role: "admin", email: "admin@mcpruntime.org" } },
+    });
+    await screen.findByTestId("server-list");
+
+    expect(screen.queryByTestId("server-quota")).not.toBeInTheDocument();
   });
 });
