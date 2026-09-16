@@ -1,4 +1,4 @@
-import { fetchJSON, withQuery } from "./client";
+import { fetchJSON, fetchPublicJSON, withQuery } from "./client";
 import type { NamespaceEntry, PublishPolicy, ServerSummary, ToolRow } from "./types";
 
 function asArray<T>(value: unknown, key: string): T[] {
@@ -31,6 +31,19 @@ export async function listServers(namespace?: string): Promise<ServerList> {
 export async function listTools(namespace?: string): Promise<ToolRow[]> {
   const path = withQuery("/runtime/tools", { namespace });
   return asArray<ToolRow>(await fetchJSON(path), "tools");
+}
+
+// Anonymous public-mode catalog reads, for a signed-out visitor to a
+// PLATFORM_MODE=public deployment. No namespace is passed - the backend
+// (PublicCatalogFallback) defaults it to the deployment's public namespace,
+// the same scope the removed legacy dashboard's synthesized "public preview"
+// namespace pointed at.
+export async function listPublicServers(): Promise<ServerSummary[]> {
+  return asArray<ServerSummary>(await fetchPublicJSON("/servers"), "servers");
+}
+
+export async function listPublicTools(): Promise<ToolRow[]> {
+  return asArray<ToolRow>(await fetchPublicJSON("/tools"), "tools");
 }
 
 // Available to any authenticated principal who owns or can publish to the

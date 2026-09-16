@@ -12,6 +12,54 @@ export type NamespaceEntry = {
   team_slug?: string;
 };
 
+export type InventoryItem = {
+  name: string;
+  description?: string;
+  labels?: Record<string, string>;
+};
+
+// GET /runtime/servers's liveInventory field
+// (services/runtime-api/internal/runtimeapi/live_inventory.go): what the
+// server itself reported the last time its live MCP session was inspected,
+// as opposed to `prompts`/`resources`/`tasks` below, which are declared on
+// the MCPServer spec and may drift from what the server actually serves.
+export type LiveInventory = {
+  fetchedAt?: string;
+  protocolVersion?: string;
+  tools?: Array<{ name: string; description?: string }>;
+  prompts?: InventoryItem[];
+  resources?: InventoryItem[];
+};
+
+export type ObservabilityPrometheusQueryLink = {
+  id: string;
+  name: string;
+  description?: string;
+  url: string;
+  query?: string;
+};
+
+// GET /runtime/servers's observability field
+// (services/runtime-api/internal/runtimeapi/observability.go). Omitted by
+// the backend entirely when the requesting principal can't observe this
+// server (serverInfoObservableByPrincipal) - its presence is itself the
+// access check, not just its contents.
+export type ObservabilityLinks = {
+  namespace: string;
+  server: string;
+  team_id?: string;
+  prometheus: {
+    queries: ObservabilityPrometheusQueryLink[];
+    direct_admin_only: boolean;
+  };
+  grafana: {
+    available: boolean;
+    url?: string;
+    direct_admin_only: boolean;
+    reason?: string;
+  };
+};
+
 export type ServerSummary = {
   name: string;
   namespace: string;
@@ -25,6 +73,15 @@ export type ServerSummary = {
   endpoint?: string;
   authMode?: string;
   tools?: Array<{ name?: string }>;
+  prompts?: InventoryItem[];
+  resources?: InventoryItem[];
+  tasks?: InventoryItem[];
+  liveInventory?: LiveInventory | null;
+  liveInventoryError?: string;
+  // The full MCP client config for this server ({"mcpServers": {...}}), only
+  // present when the runtime resolved a public connect endpoint for it.
+  access_json?: Record<string, unknown>;
+  observability?: ObservabilityLinks;
 };
 
 // GET /runtime/servers's publish_policy field
@@ -50,6 +107,9 @@ export type ToolRow = {
   side_effect?: string;
   risk_level?: string;
   labels?: Record<string, string>;
+  // Identical to the owning server's access_json - repeated per tool so a
+  // tool-level copy action doesn't need the server record in scope.
+  connect_config?: Record<string, unknown>;
 };
 
 export type Principal = {
@@ -66,6 +126,33 @@ export type AuthStatus = {
 
 export function serverKey(server: Pick<ServerSummary, "name" | "namespace">): string {
   return `${server.namespace}/${server.name}`;
+}
+
+// Prompts and resources can be declared on the MCPServer spec, reported by
+// the server's own live MCP session, both, or neither - union by name so a
+// live-only or declared-only entry isn't dropped. Tasks have no live source,
+// so they're declared-only.
+function mergedInventoryNames(declared: InventoryItem[] | undefined, live: Array<{ name: string }> | undefined): string[] {
+  const names = new Set<string>();
+  for (const item of declared || []) {
+    names.add(item.name);
+  }
+  for (const item of live || []) {
+    names.add(item.name);
+  }
+  return Array.from(names).sort();
+}
+
+export function serverPrompts(server: ServerSummary): string[] {
+  return mergedInventoryNames(server.prompts, server.liveInventory?.prompts);
+}
+
+export function serverResources(server: ServerSummary): string[] {
+  return mergedInventoryNames(server.resources, server.liveInventory?.resources);
+}
+
+export function serverTasks(server: ServerSummary): string[] {
+  return (server.tasks || []).map((item) => item.name).sort();
 }
 
 export function toolKey(tool: ToolRow): string {

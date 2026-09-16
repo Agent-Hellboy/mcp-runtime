@@ -219,6 +219,7 @@ func newMux(apiBase, apiUpstream, apiKey, apiKeys, adminAPIKeys string) (*http.S
 		return nil, err
 	}
 	mux.Handle(uiSessionAPIPrefix+"/", newSessionProxyWithUpstreams(runtimeBase, analyticsBase, sessions))
+	mux.Handle(publicCatalogAPIPrefix+"/", newPublicCatalogProxy(runtimeBase, platformMode == "public"))
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/")
