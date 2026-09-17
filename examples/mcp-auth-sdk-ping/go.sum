@@ -1,5 +1,5 @@
-github.com/Agent-Hellboy/mcp-auth/auth-client/go v0.0.0-20260916144748-59566c5a9c43 h1:iV3rsp1oVfAJvxBHwEM+HiVxxxY2Segt2lNNpBmHdyU=
-github.com/Agent-Hellboy/mcp-auth/auth-client/go v0.0.0-20260916144748-59566c5a9c43/go.mod h1:iExMbPSFoChhOg/Fp8bMZLzH4gF7XnS97K7tdLQPBSU=
+github.com/Agent-Hellboy/mcp-auth/auth-client/go v0.1.1 h1:2bM0hkSZbOqAHcQP7i5TthuXddH8vo588bgkOOY/udc=
+github.com/Agent-Hellboy/mcp-auth/auth-client/go v0.1.1/go.mod h1:zfxloKVlq0CwrNI8mPqxsaijqQUVeaAKBQkr42Qpjmg=
 github.com/golang-jwt/jwt/v5 v5.3.1 h1:kYf81DTWFe7t+1VvL7eS+jKFVWaUnK9cB1qbwn63YCY=
 github.com/golang-jwt/jwt/v5 v5.3.1/go.mod h1:fxCRLWMO43lRc8nhHWY6LGqRcf+1gQWArsqaEUEa5bE=
 github.com/google/go-cmp v0.7.0 h1:wk8382ETsv4JYUZwIsn6YpYiWiBsYLSJiTsyBybVuN8=

@@ -21,6 +21,7 @@ spec:
         runAsNonRoot: true
         runAsUser: 65532
         runAsGroup: 65532
+        fsGroup: 65532
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: auth-server
@@ -28,7 +29,7 @@ spec:
           imagePullPolicy: IfNotPresent
           ports: [{containerPort: 8080}]
           env:
-            - {name: MCP_AUTH_ISSUER, value: MCP_AUTH_ISSUER_VALUE}
+            - {name: MCP_AUTH_ISSUER, value: "MCP_AUTH_ISSUER_VALUE"}
             - {name: MCP_AUTH_RESOURCE, value: MCP_AUTH_RESOURCE_VALUE}
             - {name: MCP_AUTH_LISTEN_ADDR, value: ":8080"}
             - {name: MCP_AUTH_LOCAL_DEVELOPMENT, value: MCP_AUTH_LOCAL_DEVELOPMENT_VALUE}
@@ -36,17 +37,48 @@ spec:
             - {name: MCP_AUTH_LOCAL_CLIENT_ID, value: mcp-auth-example-client}
             - {name: MCP_AUTH_REGISTRATION_ENABLED, value: "true"}
             - {name: MCP_AUTH_REQUIRE_HTTPS, value: MCP_AUTH_REQUIRE_HTTPS_VALUE}
-            - {name: MCP_AUTH_STORE, value: memory}
+            - {name: MCP_AUTH_STORE, value: MCP_AUTH_STORE_VALUE}
+            - {name: MCP_AUTH_DATABASE_URL, value: MCP_AUTH_DATABASE_URL_VALUE}
+            MCP_AUTH_SIGNING_KEY_ENV_BLOCK
             MCP_AUTH_CONNECTOR_ENV_BLOCK
           envFrom:
             MCP_AUTH_CONNECTOR_ENVFROM_BLOCK
           volumeMounts:
+            - name: data
+              mountPath: /data
+            MCP_AUTH_SIGNING_KEY_VOLUME_MOUNT_BLOCK
             MCP_AUTH_CONNECTOR_VOLUME_MOUNT_BLOCK
-          readinessProbe: {httpGet: {path: /readyz, port: 8080}}
-          livenessProbe: {httpGet: {path: /healthz, port: 8080}}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+              httpHeaders:
+                - name: X-Forwarded-Proto
+                  value: https
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+              httpHeaders:
+                - name: X-Forwarded-Proto
+                  value: https
           securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, capabilities: {drop: [ALL]}}
       volumes:
+        - name: data
+          MCP_AUTH_DATA_VOLUME_BLOCK
+        MCP_AUTH_SIGNING_KEY_POD_VOLUME_BLOCK
         MCP_AUTH_CONNECTOR_POD_VOLUME_BLOCK
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mcp-auth-server-data
+  namespace: mcp-sentinel
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
 ---
 apiVersion: v1
 kind: Service
@@ -66,7 +98,10 @@ metadata:
     traefik.ingress.kubernetes.io/router.middlewares: mcp-sentinel-mcp-auth-server-strip-prefix@kubernetescrd
 spec:
   ingressClassName: traefik
-  MCP_AUTH_INGRESS_TLS_BLOCK
+# Rendered by internal/cli/setup/platform/mcp_auth_server.go. The placeholder
+# starts at column 0 and owns its whole line: the renderer supplies the block's
+# own indentation, and drops the entire line in test mode. Do not indent it.
+MCP_AUTH_INGRESS_TLS_BLOCK
   rules:
     - host: MCP_AUTH_INGRESS_HOST_VALUE
       http:
@@ -74,3 +109,47 @@ spec:
           - path: /mcp-auth
             pathType: Prefix
             backend: {service: {name: mcp-auth-server, port: {number: 8080}}}
+---
+# Least-privilege egress for the authorization server. It replaces the
+# old bundled OAuth-server egress policy that was removed with the bundled OAuth
+# server, and ships with the workload so it is applied by the same opt-in
+# --with-mcp-auth-server step rather than by the unconditional platform
+# manifests. SQLite is local to the pod; 443 is needed to reach an external
+# OIDC provider when a connector is configured.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mcp-auth-server-egress
+  namespace: mcp-sentinel
+spec:
+  podSelector:
+    matchLabels:
+      app: mcp-auth-server
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: keycloak
+      ports:
+        - protocol: TCP
+          port: 8080
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 443

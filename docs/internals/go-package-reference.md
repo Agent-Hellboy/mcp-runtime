@@ -6336,30 +6336,34 @@ func NormalizeRegistryMode(mode string) (string, bool)
 <a id="cli-setup-plan-type-input-struct"></a>
 ```text
 type Input struct {
-	Kubeconfig             string
-	Context                string
-	RegistryType           string
-	RegistryStorageSize    string
-	RegistryMode           string
-	ExternalRegistryURL    string
-	ExternalRegistryUser   string
-	ExternalRegistryPass   string
-	StorageMode            string
-	PlatformMode           string
-	IngressMode            string
-	IngressManifest        string
-	IngressManifestChanged bool
-	ForceIngressInstall    bool
-	TLSEnabled             bool
-	TestMode               bool
-	ParallelBuilds         bool
-	StrictProd             bool
-	DeployAnalytics        bool
-	DeployMCPAuthServer    bool
-	MCPAuthServerImage     string
-	MCPAuthConnectorsFile  string
-	MCPAuthConnector       string
-	OperatorArgs           []string
+	Kubeconfig              string
+	Context                 string
+	RegistryType            string
+	RegistryStorageSize     string
+	RegistryMode            string
+	ExternalRegistryURL     string
+	ExternalRegistryUser    string
+	ExternalRegistryPass    string
+	StorageMode             string
+	PlatformMode            string
+	IngressMode             string
+	IngressManifest         string
+	IngressManifestChanged  bool
+	ForceIngressInstall     bool
+	TLSEnabled              bool
+	TestMode                bool
+	ParallelBuilds          bool
+	StrictProd              bool
+	DeployAnalytics         bool
+	DeployMCPAuthServer     bool
+	MCPAuthServerImage      string
+	MCPAuthIssuerURL        string
+	MCPAuthResourceURLs     []string
+	MCPAuthTLSSecret        string
+	MCPAuthSigningKeySecret string
+	MCPAuthConnectorsFile   string
+	MCPAuthConnector        string
+	OperatorArgs            []string
 	// Let's Encrypt (HTTP-01 via cert-manager). If empty, other TLS modes apply; mutually exclusive with TLSClusterIssuer.
 	ACMEmail    string
 	ACMEStaging bool
@@ -6379,33 +6383,37 @@ type Input struct {
 <a id="cli-setup-plan-type-plan-struct"></a>
 ```text
 type Plan struct {
-	Kubeconfig            string
-	Context               string
-	RegistryType          string
-	RegistryStorageSize   string
-	RegistryMode          string
-	ExternalRegistryURL   string
-	ExternalRegistryUser  string
-	ExternalRegistryPass  string
-	StorageMode           string
-	PlatformMode          string
-	Ingress               cluster.IngressOptions
-	RegistryManifest      string
-	TLSEnabled            bool
-	TestMode              bool
-	ParallelBuilds        bool
-	StrictProd            bool
-	DeployAnalytics       bool
-	DeployMCPAuthServer   bool
-	MCPAuthServerImage    string
-	MCPAuthConnectorsFile string
-	MCPAuthConnector      string
-	OperatorArgs          []string
-	ACMEmail              string
-	ACMEStaging           bool
-	TLSClusterIssuer      string
-	MTLSClusterIssuer     string
-	InstallCertManager    bool
+	Kubeconfig              string
+	Context                 string
+	RegistryType            string
+	RegistryStorageSize     string
+	RegistryMode            string
+	ExternalRegistryURL     string
+	ExternalRegistryUser    string
+	ExternalRegistryPass    string
+	StorageMode             string
+	PlatformMode            string
+	Ingress                 cluster.IngressOptions
+	RegistryManifest        string
+	TLSEnabled              bool
+	TestMode                bool
+	ParallelBuilds          bool
+	StrictProd              bool
+	DeployAnalytics         bool
+	DeployMCPAuthServer     bool
+	MCPAuthServerImage      string
+	MCPAuthIssuerURL        string
+	MCPAuthResourceURLs     []string
+	MCPAuthTLSSecret        string
+	MCPAuthSigningKeySecret string
+	MCPAuthConnectorsFile   string
+	MCPAuthConnector        string
+	OperatorArgs            []string
+	ACMEmail                string
+	ACMEStaging             bool
+	TLSClusterIssuer        string
+	MTLSClusterIssuer       string
+	InstallCertManager      bool
 }
     Plan captures the resolved setup decisions.
 

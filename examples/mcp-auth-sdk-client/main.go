@@ -8,8 +8,12 @@ import (
 	"os"
 	"strings"
 
-	mcpauth "github.com/example/mcp-auth/auth-client/go/mcpauth"
+	mcpauth "github.com/Agent-Hellboy/mcp-auth/auth-client/go/mcpauth"
 )
+
+// protocolVersion is the MCP revision this check negotiates. Keep it in step
+// with internal/agentadapter/config.go DefaultProtocolVersion.
+const protocolVersion = "2025-06-18"
 
 func main() {
 	issuer := strings.TrimRight(os.Getenv("MCP_AUTH_ISSUER"), "/")
@@ -32,14 +36,20 @@ func main() {
 	if mcpURL == "" {
 		return
 	}
-	req, err := http.NewRequest(http.MethodPost, mcpURL, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`))
+	// A conforming initialize carries protocolVersion, capabilities and
+	// clientInfo; params:{} only works against a lenient server.
+	initialize := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{` +
+		`"protocolVersion":"` + protocolVersion + `",` +
+		`"capabilities":{},` +
+		`"clientInfo":{"name":"mcp-auth-sdk-client","version":"1.0.0"}}}`
+	req, err := http.NewRequest(http.MethodPost, mcpURL, strings.NewReader(initialize))
 	if err != nil {
 		panic(err)
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
-	req.Header.Set("Mcp-Protocol-Version", "2025-06-18")
+	req.Header.Set("Mcp-Protocol-Version", protocolVersion)
 	response, err := http.DefaultClient.Do(req)
 	if err != nil {
 		panic(err)

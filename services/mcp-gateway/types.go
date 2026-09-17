@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	mcpauth "github.com/example/mcp-auth/auth-client/go/mcpauth"
+	mcpauth "github.com/Agent-Hellboy/mcp-auth/auth-client/go/mcpauth"
 
 	"mcp-runtime/pkg/events"
 	policypkg "mcp-runtime/pkg/policy"

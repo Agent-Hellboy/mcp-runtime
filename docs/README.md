@@ -31,6 +31,8 @@ human workflows.
 </section>
 </div>
 
+OAuth setup and identity-provider configuration: [MCP authorization](mcp-authorization.md).
+
 ## Deploy a governed MCP server in 5 commands
 
 ```bash

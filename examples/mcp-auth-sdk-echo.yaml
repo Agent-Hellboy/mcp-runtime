@@ -26,12 +26,11 @@ spec:
       value: http://localhost:18080/mcp-auth-sdk-echo/mcp
     - name: MCP_AUTH_RESOURCE_METADATA_URL
       value: http://localhost:18080/.well-known/oauth-protected-resource/mcp-auth-sdk-echo/mcp
-    - name: MCP_PATH
-      value: /mcp-auth-sdk-echo/mcp
-    - name: MCP_AUTH_DISCOVERY_ISSUER
-      value: http://mcp-auth-server.mcp-sentinel.svc.cluster.local:8080
-    - name: MCP_AUTH_INTERNAL_BASE_URL
-      value: http://mcp-auth-server.mcp-sentinel.svc.cluster.local:8080
+    # The public issuer is not reachable from inside a pod, so the verifier is
+    # pointed straight at the in-cluster JWKS endpoint. Issuer and audience are
+    # still validated against the public values above.
+    - name: MCP_AUTH_JWKS_URL
+      value: http://mcp-auth-server.mcp-sentinel.svc.cluster.local:8080/.well-known/jwks.json
   tools:
     - name: sdk-echo
       description: Echo a message after SDK verification.

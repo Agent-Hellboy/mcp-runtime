@@ -26,7 +26,9 @@ spec:
   session:
     store: kubernetes
     headerName: X-MCP-Agent-Session
-    upstreamTokenHeader: Authorization
+    # No upstreamTokenHeader: under auth.mode oauth the gateway strips the
+    # caller's token instead of forwarding it, because the MCP authorization
+    # spec forbids a resource server from passing its inbound token upstream.
     idleTimeout: 1h
     maxLifetime: 24h
   tools:

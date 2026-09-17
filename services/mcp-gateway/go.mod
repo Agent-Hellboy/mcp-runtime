@@ -3,7 +3,7 @@ module mcp-sentinel-mcp-gateway
 go 1.26.6
 
 require (
-	github.com/example/mcp-auth/auth-client/go v0.0.0
+	github.com/Agent-Hellboy/mcp-auth/auth-client/go v0.1.1
 	github.com/golang-jwt/jwt/v4 v4.5.2
 	github.com/prometheus/client_golang v1.24.1
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.71.0
@@ -12,8 +12,6 @@ require (
 	go.uber.org/automaxprocs v1.6.0
 	mcp-runtime v0.0.0
 )
-
-replace github.com/example/mcp-auth/auth-client/go => github.com/Agent-Hellboy/mcp-auth/auth-client/go v0.0.0-20260916144748-59566c5a9c43
 
 replace mcp-runtime => ../..
 

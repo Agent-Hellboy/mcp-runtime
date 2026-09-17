@@ -70,7 +70,9 @@ func New(runtime *core.Runtime, clusterMgr setupplatform.ClusterManagerAPI) *cob
 	var withMCPAuthServer bool
 	var mcpAuthServerImage string
 	var mcpAuthIssuerURL string
+	var mcpAuthResourceURLs []string
 	var mcpAuthTLSSecret string
+	var mcpAuthSigningKeySecret string
 	var mcpAuthConnectorsFile string
 	var mcpAuthConnector string
 	var operatorMetricsAddr string
@@ -116,6 +118,28 @@ will use to push and pull container images.`,
 				for _, envVar := range vars {
 					if v := strings.TrimSpace(os.Getenv(envVar)); v != "" {
 						*val = v
+						return
+					}
+				}
+			}
+			// envCSV mirrors envStr for repeatable/comma-separated flags.
+			envCSV := func(flag string, val *[]string, vars ...string) {
+				if cmd.Flags().Changed(flag) {
+					return
+				}
+				for _, envVar := range vars {
+					v := strings.TrimSpace(os.Getenv(envVar))
+					if v == "" {
+						continue
+					}
+					values := []string{}
+					for _, part := range strings.Split(v, ",") {
+						if trimmed := strings.TrimSpace(part); trimmed != "" {
+							values = append(values, trimmed)
+						}
+					}
+					if len(values) > 0 {
+						*val = values
 						return
 					}
 				}
@@ -170,7 +194,9 @@ will use to push and pull container images.`,
 			envBool("with-mcp-auth-server", &withMCPAuthServer, "MCP_SETUP_WITH_MCP_AUTH_SERVER")
 			envStr("mcp-auth-server-image", &mcpAuthServerImage, "MCP_SETUP_MCP_AUTH_SERVER_IMAGE")
 			envStr("mcp-auth-issuer-url", &mcpAuthIssuerURL, "MCP_SETUP_MCP_AUTH_ISSUER_URL")
+			envCSV("mcp-auth-resource-url", &mcpAuthResourceURLs, "MCP_SETUP_MCP_AUTH_RESOURCE_URL")
 			envStr("mcp-auth-tls-secret", &mcpAuthTLSSecret, "MCP_SETUP_MCP_AUTH_TLS_SECRET")
+			envStr("mcp-auth-signing-key-secret", &mcpAuthSigningKeySecret, "MCP_SETUP_MCP_AUTH_SIGNING_KEY_SECRET")
 			envStr("mcp-auth-connectors-file", &mcpAuthConnectorsFile, "MCP_SETUP_MCP_AUTH_CONNECTORS_FILE")
 			envStr("mcp-auth-connector", &mcpAuthConnector, "MCP_SETUP_MCP_AUTH_CONNECTOR")
 			if withMCPAuthServer && withoutAnalytics {
@@ -186,6 +212,22 @@ will use to push and pull container images.`,
 				}
 				if strings.TrimSpace(mcpAuthTLSSecret) == "" {
 					return fmt.Errorf("production mcp-auth deployment requires --mcp-auth-tls-secret")
+				}
+				if strings.TrimSpace(mcpAuthSigningKeySecret) == "" {
+					return fmt.Errorf("production mcp-auth deployment requires --mcp-auth-signing-key-secret; an ephemeral signing key would invalidate every issued token on restart")
+				}
+				// Outside --test-mode every resource must be named explicitly,
+				// otherwise the server would default to the bundled demo
+				// resources and mint tokens with an audience no real MCP server
+				// accepts.
+				if len(mcpAuthResourceURLs) == 0 {
+					return fmt.Errorf("production mcp-auth deployment requires --mcp-auth-resource-url")
+				}
+				for _, value := range mcpAuthResourceURLs {
+					resource, err := url.Parse(strings.TrimSpace(value))
+					if err != nil || resource.Scheme != "https" || resource.Host == "" {
+						return fmt.Errorf("--mcp-auth-resource-url must be absolute HTTPS URLs outside --test-mode; each must equal spec.auth.audience of an MCP server this authorization server issues tokens for")
+					}
 				}
 			}
 			if mcpAuthConnector != "" && mcpAuthConnectorsFile == "" {
@@ -224,37 +266,39 @@ will use to push and pull container images.`,
 			}
 
 			plan := setupplan.Build(setupplan.Input{
-				Kubeconfig:             kubeconfig,
-				Context:                kubeContext,
-				RegistryType:           registryType,
-				RegistryStorageSize:    registryStorageSize,
-				RegistryMode:           registryMode,
-				ExternalRegistryURL:    externalRegistryURL,
-				ExternalRegistryUser:   externalRegistryUsername,
-				ExternalRegistryPass:   externalRegistryPassword,
-				StorageMode:            storageMode,
-				PlatformMode:           platformMode,
-				IngressMode:            ingressMode,
-				IngressManifest:        ingressManifest,
-				IngressManifestChanged: cmd.Flags().Changed("ingress-manifest"),
-				ForceIngressInstall:    forceIngressInstall,
-				TLSEnabled:             tlsEnabled,
-				TestMode:               testMode,
-				ParallelBuilds:         parallelBuilds,
-				StrictProd:             strictProd,
-				DeployAnalytics:        !withoutAnalytics,
-				DeployMCPAuthServer:    withMCPAuthServer,
-				MCPAuthServerImage:     mcpAuthServerImage,
-				MCPAuthIssuerURL:       mcpAuthIssuerURL,
-				MCPAuthTLSSecret:       mcpAuthTLSSecret,
-				MCPAuthConnectorsFile:  mcpAuthConnectorsFile,
-				MCPAuthConnector:       mcpAuthConnector,
-				OperatorArgs:           operatorArgs,
-				ACMEmail:               acmeEmail,
-				ACMEStaging:            acmeStaging,
-				TLSClusterIssuer:       tlsClusterIssuer,
-				MTLSClusterIssuer:      mtlsClusterIssuer,
-				InstallCertManager:     !skipCertManagerInstall,
+				Kubeconfig:              kubeconfig,
+				Context:                 kubeContext,
+				RegistryType:            registryType,
+				RegistryStorageSize:     registryStorageSize,
+				RegistryMode:            registryMode,
+				ExternalRegistryURL:     externalRegistryURL,
+				ExternalRegistryUser:    externalRegistryUsername,
+				ExternalRegistryPass:    externalRegistryPassword,
+				StorageMode:             storageMode,
+				PlatformMode:            platformMode,
+				IngressMode:             ingressMode,
+				IngressManifest:         ingressManifest,
+				IngressManifestChanged:  cmd.Flags().Changed("ingress-manifest"),
+				ForceIngressInstall:     forceIngressInstall,
+				TLSEnabled:              tlsEnabled,
+				TestMode:                testMode,
+				ParallelBuilds:          parallelBuilds,
+				StrictProd:              strictProd,
+				DeployAnalytics:         !withoutAnalytics,
+				DeployMCPAuthServer:     withMCPAuthServer,
+				MCPAuthServerImage:      mcpAuthServerImage,
+				MCPAuthIssuerURL:        mcpAuthIssuerURL,
+				MCPAuthResourceURLs:     mcpAuthResourceURLs,
+				MCPAuthTLSSecret:        mcpAuthTLSSecret,
+				MCPAuthSigningKeySecret: mcpAuthSigningKeySecret,
+				MCPAuthConnectorsFile:   mcpAuthConnectorsFile,
+				MCPAuthConnector:        mcpAuthConnector,
+				OperatorArgs:            operatorArgs,
+				ACMEmail:                acmeEmail,
+				ACMEStaging:             acmeStaging,
+				TLSClusterIssuer:        tlsClusterIssuer,
+				MTLSClusterIssuer:       mtlsClusterIssuer,
+				InstallCertManager:      !skipCertManagerInstall,
 			})
 
 			return setupplatform.SetupPlatform(mgr.logger, plan, mgr.clusterMgr)
@@ -288,8 +332,10 @@ will use to push and pull container images.`,
 	cmd.Flags().BoolVar(&withMCPAuthServer, "with-mcp-auth-server", false, "Deploy the optional bundled mcp-auth authorization server; production requires HTTPS issuer, connector, and TLS Secret")
 	cmd.Flags().StringVar(&mcpAuthServerImage, "mcp-auth-server-image", "docker.io/princekrroshan01/mcp-auth-server:latest", "Container image for the optional bundled mcp-auth authorization server")
 	cmd.Flags().StringVar(&mcpAuthIssuerURL, "mcp-auth-issuer-url", "", "Public HTTPS issuer URL for the bundled mcp-auth authorization server (required outside --test-mode)")
+	cmd.Flags().StringSliceVar(&mcpAuthResourceURLs, "mcp-auth-resource-url", nil, "Canonical resource URI the bundled mcp-auth server issues tokens for; repeat or comma-separate for several MCP servers, each matching that server's auth.audience (required outside --test-mode)")
+	cmd.Flags().StringVar(&mcpAuthSigningKeySecret, "mcp-auth-signing-key-secret", "", "Secret holding the mcp-auth RSA signing key as private-key.pem (required outside --test-mode)")
 	cmd.Flags().StringVar(&mcpAuthTLSSecret, "mcp-auth-tls-secret", "", "TLS Secret for the bundled mcp-auth ingress (required outside --test-mode)")
-	cmd.Flags().StringVar(&mcpAuthConnectorsFile, "mcp-auth-connectors-file", "", "Provider connector JSON file for the external mcp-auth server")
+	cmd.Flags().StringVar(&mcpAuthConnectorsFile, "mcp-auth-connectors-file", "", "Provider connector JSON file for the bundled mcp-auth authorization server")
 	cmd.Flags().StringVar(&mcpAuthConnector, "mcp-auth-connector", "", "Provider connector name to activate (requires --mcp-auth-connectors-file)")
 	cmd.Flags().BoolVar(&withoutAnalytics, "without-analytics", false, "Deprecated alias for --without-sentinel")
 	_ = cmd.Flags().MarkDeprecated("without-analytics", "use --without-sentinel")

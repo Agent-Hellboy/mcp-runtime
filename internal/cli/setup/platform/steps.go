@@ -184,7 +184,7 @@ type mcpAuthServerStep struct{}
 
 func (s mcpAuthServerStep) Name() string { return "mcp-auth-server" }
 func (s mcpAuthServerStep) Run(logger *zap.Logger, deps SetupDeps, ctx *SetupContext) error {
-	if err := deployMCPAuthServer(ctx.Plan.MCPAuthServerImage, ctx.Plan.MCPAuthIssuerURL, ctx.Plan.MCPAuthTLSSecret, ctx.Plan.MCPAuthConnectorsFile, ctx.Plan.MCPAuthConnector, ctx.Plan.TestMode, deps); err != nil {
+	if err := deployMCPAuthServer(ctx.Plan.MCPAuthServerImage, ctx.Plan.MCPAuthIssuerURL, ctx.Plan.MCPAuthResourceURLs, ctx.Plan.MCPAuthTLSSecret, ctx.Plan.MCPAuthSigningKeySecret, ctx.Plan.MCPAuthConnectorsFile, ctx.Plan.MCPAuthConnector, ctx.Plan.TestMode, deps); err != nil {
 		return err
 	}
 	if err := deps.WaitForDeploymentAvailable(logger, "mcp-auth-server", core.DefaultAnalyticsNamespace, "app=mcp-auth-server", analyticsRolloutTimeoutDuration()); err != nil {

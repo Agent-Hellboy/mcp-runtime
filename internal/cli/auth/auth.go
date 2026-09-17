@@ -74,6 +74,7 @@ Optional environment:
 	cmd.AddCommand(m.NewLogoutCmd())
 	cmd.AddCommand(m.NewUseCmd())
 	cmd.AddCommand(m.NewStatusCmd())
+	cmd.AddCommand(newProviderCheckCmd())
 	return cmd
 }
 

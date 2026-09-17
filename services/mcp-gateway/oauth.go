@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	mcpauth "github.com/example/mcp-auth/auth-client/go/mcpauth"
+	mcpauth "github.com/Agent-Hellboy/mcp-auth/auth-client/go/mcpauth"
 	"github.com/golang-jwt/jwt/v4"
 
 	policypkg "mcp-runtime/pkg/policy"
@@ -42,14 +42,33 @@ func (s *gatewayServer) handleOAuthProtectedResource(w http.ResponseWriter, r *h
 		return true
 	}
 
-	resourcePath := oauthResourcePath(r.URL.Path)
+	// auth.audience is the single resource identifier for this server: it is
+	// what RFC 9728 metadata advertises here, what a conforming client sends as
+	// the RFC 8707 resource parameter, and what authenticateOAuth validates the
+	// token's audience against. Deriving it from the request instead would let
+	// the advertised resource and the validated audience drift apart, and a
+	// client that did exactly what the metadata told it would be rejected with
+	// an opaque invalid_token.
+	audience := strings.TrimSpace(policy.Auth.Audience)
+	if audience == "" {
+		w.Header().Set("content-type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		if r.Method != http.MethodHead {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error":   "oauth_audience_missing",
+				"message": "This MCP server has auth.mode oauth but no auth.audience. Set spec.auth.audience to the canonical resource URI.",
+			})
+		}
+		return true
+	}
+
 	w.Header().Set("content-type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if r.Method == http.MethodHead {
 		return true
 	}
 	payload := map[string]any{
-		"resource":                 s.publicRequestURL(r, resourcePath),
+		"resource":                 audience,
 		"authorization_servers":    []string{strings.TrimSpace(policy.Auth.IssuerURL)},
 		"bearer_methods_supported": []string{"header"},
 	}
@@ -96,13 +115,13 @@ func (s *gatewayServer) authenticateOAuth(r *http.Request, policy *policypkg.Doc
 		}
 	}
 
+	// Fail closed rather than deriving the audience from the request. A derived
+	// audience is only as trustworthy as the forwarded host headers behind it,
+	// and it would no longer match the resource advertised in the protected
+	// resource metadata above.
 	audience := strings.TrimSpace(policy.Auth.Audience)
 	if audience == "" {
-		var ok bool
-		audience, ok = s.canonicalOAuthResource(r)
-		if !ok {
-			return oauthAuthResult{Status: http.StatusServiceUnavailable, Reason: "oauth_resource_unavailable", Identity: result.Identity}
-		}
+		return oauthAuthResult{Status: http.StatusServiceUnavailable, Reason: "oauth_audience_missing", Identity: result.Identity}
 	}
 	provider, err := s.oauthProviderForIssuer(r.Context(), issuerURL, audience)
 	if err != nil {
@@ -114,7 +133,9 @@ func (s *gatewayServer) authenticateOAuth(r *http.Request, policy *policypkg.Doc
 		}
 	}
 
-	claims, err := provider.verifier.Verify(token)
+	// VerifyContext so a client disconnect or upstream deadline cancels an
+	// in-flight JWKS fetch instead of holding the request open.
+	claims, err := provider.verifier.VerifyContext(r.Context(), token)
 	if err != nil {
 		return oauthAuthResult{
 			Status:   http.StatusUnauthorized,
@@ -373,17 +394,6 @@ func isOAuthProtectedMetadataPath(value string) bool {
 	return value == oauthProtectedPrefix || strings.HasPrefix(value, oauthProtectedPrefix+"/")
 }
 
-func oauthResourcePath(value string) string {
-	if !isOAuthProtectedMetadataPath(value) {
-		return "/"
-	}
-	suffix := strings.TrimPrefix(value, oauthProtectedPrefix)
-	if suffix == "" {
-		return "/"
-	}
-	return normalizeURLPath(suffix)
-}
-
 func oauthMetadataPath(value string) string {
 	value = normalizeURLPath(value)
 	if value == "/" {
@@ -433,24 +443,6 @@ func (s *gatewayServer) oauthAuthenticateHeader(r *http.Request, originalPath, r
 		values = append(values, fmt.Sprintf(`error_description="%s"`, oauthScopeDescription(decision.Reason)))
 	}
 	return "Bearer " + strings.Join(values, ", ")
-}
-
-func (s *gatewayServer) canonicalOAuthResource(r *http.Request) (string, bool) {
-	if r == nil || r.URL == nil {
-		return "", false
-	}
-	resource := s.publicRequestURL(r, normalizeURLPath(r.URL.Path))
-	parsed, err := url.Parse(resource)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return "", false
-	}
-	parsed.RawQuery = ""
-	parsed.Fragment = ""
-	if parsed.Path == "/" {
-		parsed.Path = ""
-	}
-	parsed.RawPath = ""
-	return parsed.String(), true
 }
 
 func oauthRequiredScopes(decision policypkg.Decision, toolName string) []string {

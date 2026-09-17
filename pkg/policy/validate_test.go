@@ -53,6 +53,15 @@ func TestValidateRejects(t *testing.T) {
 		{"missing server name", func(d *Document) { d.Server.Name = "" }, true, "server.name"},
 		{"invalid auth mode", func(d *Document) { d.Auth = &Auth{Mode: "saml"} }, true, "auth mode"},
 		{"oauth without issuer", func(d *Document) { d.Auth = &Auth{Mode: "oauth"} }, true, "issuer_url"},
+		{"oauth without audience", func(d *Document) {
+			d.Auth = &Auth{Mode: "oauth", IssuerURL: "https://issuer.example.com"}
+		}, true, "audience"},
+		{"oauth audience not a URI", func(d *Document) {
+			d.Auth = &Auth{Mode: "oauth", IssuerURL: "https://issuer.example.com", Audience: "mcp-runtime"}
+		}, true, "absolute URI"},
+		{"oauth audience with fragment", func(d *Document) {
+			d.Auth = &Auth{Mode: "oauth", IssuerURL: "https://issuer.example.com", Audience: "https://mcp.example.com/mcp#frag"}
+		}, true, "fragment"},
 		{"invalid policy mode", func(d *Document) { d.Policy = &Config{Mode: "deny-everything"} }, true, "policy mode"},
 		{"invalid default decision", func(d *Document) { d.Policy = &Config{DefaultDecision: "maybe"} }, true, "default decision"},
 		{"invalid tool trust", func(d *Document) { d.Tools = []Tool{{Name: "t", RequiredTrust: "ultra"}} }, true, "required_trust"},

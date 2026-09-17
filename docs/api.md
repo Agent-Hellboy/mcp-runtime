@@ -213,14 +213,16 @@ spec:
 
 - **Header-based identity** at the gateway (default path).
 - **Optional bearer-token validation** against JWKS / issuer / audience on the split Sentinel API services (`platform-api`, `runtime-api`, `analytics-api`) and on ingest.
-- `spec.auth.mode: oauth` enables the gateway as an MCP OAuth protected resource. It publishes Protected Resource Metadata, validates issuer and audience/resource binding (using `auth.audience` or the canonical public MCP URL), and strips the client bearer token before forwarding upstream.
+- `spec.auth.mode: oauth` enables the gateway as an MCP OAuth protected resource. It publishes Protected Resource Metadata, validates issuer and audience/resource binding (against the configured `auth.audience`), and strips the client bearer token before forwarding upstream.
 - OAuth authentication failures return `401` with an authorization challenge. Authenticated OAuth policy denials return `403` without an `insufficient_scope` challenge because Runtime policy decisions are not OAuth scope negotiation. See the [MCP Authorization specification](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization).
 
 ### Optional bundled authorization server
 
 The optional bundled `mcp-auth-server` image is an OAuth authorization server for MCP
 clients. Enable it explicitly with `mcp-runtime setup --with-mcp-auth-server`
-in test mode, or deploy an equivalent authorization server separately.
+in test or production mode, or deploy an equivalent authorization server
+separately. Production mode requires an HTTPS issuer and resource, a selected
+OIDC connector, a TLS Secret, and a persistent signing-key Secret.
 
 When its public issuer is `https://auth.example.com/mcp-auth`, it exposes:
 
@@ -253,6 +255,11 @@ is intentionally exposed outside the gateway.
 
 Configure the MCP server's external `auth.issuerURL` and explicit
 `auth.audience` to match the authorization server and canonical MCP resource.
+`auth.audience` is the single resource identifier for the server: it must be an
+absolute URI without a fragment, it is what the gateway publishes as `resource`
+in Protected Resource Metadata, and it is what the gateway validates the token's
+audience against. A client that follows the metadata therefore always requests a
+token the gateway accepts.
 Do not enable insecure HTTP or ephemeral signing keys outside local
 development.
 

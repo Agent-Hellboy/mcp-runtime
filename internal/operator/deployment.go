@@ -761,10 +761,7 @@ func serverUsesOAuth(mcpServer *mcpv1alpha1.MCPServer) bool {
 }
 
 func (r *MCPServerReconciler) oauthInternalIssuerURL() string {
-	if value := strings.TrimSpace(r.OAuthInternalIssuerURL); value != "" {
-		return value
-	}
-	return ""
+	return strings.TrimSpace(r.OAuthInternalIssuerURL)
 }
 
 // analyticsEnabled reports whether the gateway sidecar should emit analytics

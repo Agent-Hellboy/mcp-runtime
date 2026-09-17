@@ -168,8 +168,9 @@ kubectl delete secret <server-name>-analytics-creds -n <namespace> --ignore-not-
 
 The bundled authorization server is opt-in and separate from MCP application
 deployment. Setup pulls `princekrroshan01/mcp-auth-server:latest` from Docker
-Hub by default. Production deployments additionally require an HTTPS issuer,
-provider connector, and TLS Secret; test mode may use the local issuer:
+Hub by default. Production deployments additionally require HTTPS
+issuer/resource URLs, a provider connector, signing-key Secret, and TLS
+Secret; test mode may use the local issuer:
 
 ```bash
 ./bin/mcp-runtime setup --test-mode \
@@ -190,3 +191,29 @@ fixtures verify the mcp-auth SDK inside the MCP server process:
 The SDK verifier in the standalone examples is configured with the external
 issuer, canonical MCP resource, discovery URL, and required scope. Use a real
 development access token from the mcp-auth authorization server for testing.
+
+In `--test-mode` the authorization server is configured with the resource of
+every bundled fixture, so one deployment issues tokens all three examples
+accept. Add resources with `--mcp-auth-resource-url` (repeat the flag or
+comma-separate) when you deploy your own server:
+
+```bash
+./bin/mcp-runtime setup --test-mode \
+  --with-mcp-auth-server \
+  --mcp-auth-resource-url http://localhost:18080/my-server/mcp \
+  --ingress-manifest config/ingress/overlays/http
+```
+
+Each value must equal the `spec.auth.audience` of the MCP server it fronts.
+Outside `--test-mode` there is no default: `--mcp-auth-resource-url` is
+required, every value must be HTTPS, and the deployment additionally needs
+`--mcp-auth-signing-key-secret` (a Secret holding the RSA signing key as
+`private-key.pem`). Test mode lets the server generate an ephemeral key, which
+it only permits for a loopback issuer; in production an ephemeral key would
+invalidate every issued token on restart.
+
+The standalone SDK fixtures verify tokens against the in-cluster JWKS endpoint
+(`MCP_AUTH_JWKS_URL`) rather than discovering it, because the public issuer is
+not reachable from inside a pod and the authorization server sits behind an
+ingress that strips its path prefix. Issuer and audience are still validated in
+full.

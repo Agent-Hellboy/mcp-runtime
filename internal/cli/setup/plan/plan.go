@@ -33,32 +33,34 @@ const (
 
 // Input captures the raw CLI inputs for setup.
 type Input struct {
-	Kubeconfig             string
-	Context                string
-	RegistryType           string
-	RegistryStorageSize    string
-	RegistryMode           string
-	ExternalRegistryURL    string
-	ExternalRegistryUser   string
-	ExternalRegistryPass   string
-	StorageMode            string
-	PlatformMode           string
-	IngressMode            string
-	IngressManifest        string
-	IngressManifestChanged bool
-	ForceIngressInstall    bool
-	TLSEnabled             bool
-	TestMode               bool
-	ParallelBuilds         bool
-	StrictProd             bool
-	DeployAnalytics        bool
-	DeployMCPAuthServer    bool
-	MCPAuthServerImage     string
-	MCPAuthIssuerURL       string
-	MCPAuthTLSSecret       string
-	MCPAuthConnectorsFile  string
-	MCPAuthConnector       string
-	OperatorArgs           []string
+	Kubeconfig              string
+	Context                 string
+	RegistryType            string
+	RegistryStorageSize     string
+	RegistryMode            string
+	ExternalRegistryURL     string
+	ExternalRegistryUser    string
+	ExternalRegistryPass    string
+	StorageMode             string
+	PlatformMode            string
+	IngressMode             string
+	IngressManifest         string
+	IngressManifestChanged  bool
+	ForceIngressInstall     bool
+	TLSEnabled              bool
+	TestMode                bool
+	ParallelBuilds          bool
+	StrictProd              bool
+	DeployAnalytics         bool
+	DeployMCPAuthServer     bool
+	MCPAuthServerImage      string
+	MCPAuthIssuerURL        string
+	MCPAuthResourceURLs     []string
+	MCPAuthTLSSecret        string
+	MCPAuthSigningKeySecret string
+	MCPAuthConnectorsFile   string
+	MCPAuthConnector        string
+	OperatorArgs            []string
 	// Let's Encrypt (HTTP-01 via cert-manager). If empty, other TLS modes apply; mutually exclusive with TLSClusterIssuer.
 	ACMEmail    string
 	ACMEStaging bool
@@ -74,35 +76,37 @@ type Input struct {
 
 // Plan captures the resolved setup decisions.
 type Plan struct {
-	Kubeconfig            string
-	Context               string
-	RegistryType          string
-	RegistryStorageSize   string
-	RegistryMode          string
-	ExternalRegistryURL   string
-	ExternalRegistryUser  string
-	ExternalRegistryPass  string
-	StorageMode           string
-	PlatformMode          string
-	Ingress               cluster.IngressOptions
-	RegistryManifest      string
-	TLSEnabled            bool
-	TestMode              bool
-	ParallelBuilds        bool
-	StrictProd            bool
-	DeployAnalytics       bool
-	DeployMCPAuthServer   bool
-	MCPAuthServerImage    string
-	MCPAuthIssuerURL      string
-	MCPAuthTLSSecret      string
-	MCPAuthConnectorsFile string
-	MCPAuthConnector      string
-	OperatorArgs          []string
-	ACMEmail              string
-	ACMEStaging           bool
-	TLSClusterIssuer      string
-	MTLSClusterIssuer     string
-	InstallCertManager    bool
+	Kubeconfig              string
+	Context                 string
+	RegistryType            string
+	RegistryStorageSize     string
+	RegistryMode            string
+	ExternalRegistryURL     string
+	ExternalRegistryUser    string
+	ExternalRegistryPass    string
+	StorageMode             string
+	PlatformMode            string
+	Ingress                 cluster.IngressOptions
+	RegistryManifest        string
+	TLSEnabled              bool
+	TestMode                bool
+	ParallelBuilds          bool
+	StrictProd              bool
+	DeployAnalytics         bool
+	DeployMCPAuthServer     bool
+	MCPAuthServerImage      string
+	MCPAuthIssuerURL        string
+	MCPAuthResourceURLs     []string
+	MCPAuthTLSSecret        string
+	MCPAuthSigningKeySecret string
+	MCPAuthConnectorsFile   string
+	MCPAuthConnector        string
+	OperatorArgs            []string
+	ACMEmail                string
+	ACMEStaging             bool
+	TLSClusterIssuer        string
+	MTLSClusterIssuer       string
+	InstallCertManager      bool
 }
 
 func NormalizePlatformMode(mode string) (string, bool) {
@@ -217,23 +221,25 @@ func Build(input Input) Plan {
 			Manifest: manifestPath,
 			Force:    input.ForceIngressInstall,
 		},
-		RegistryManifest:      registryManifest,
-		TLSEnabled:            input.TLSEnabled,
-		TestMode:              input.TestMode,
-		ParallelBuilds:        input.ParallelBuilds,
-		StrictProd:            input.StrictProd,
-		DeployAnalytics:       input.DeployAnalytics,
-		DeployMCPAuthServer:   input.DeployMCPAuthServer,
-		MCPAuthServerImage:    input.MCPAuthServerImage,
-		MCPAuthIssuerURL:      input.MCPAuthIssuerURL,
-		MCPAuthTLSSecret:      input.MCPAuthTLSSecret,
-		MCPAuthConnectorsFile: input.MCPAuthConnectorsFile,
-		MCPAuthConnector:      input.MCPAuthConnector,
-		OperatorArgs:          input.OperatorArgs,
-		ACMEmail:              input.ACMEmail,
-		ACMEStaging:           input.ACMEStaging,
-		InstallCertManager:    input.InstallCertManager,
-		TLSClusterIssuer:      input.TLSClusterIssuer,
-		MTLSClusterIssuer:     input.MTLSClusterIssuer,
+		RegistryManifest:        registryManifest,
+		TLSEnabled:              input.TLSEnabled,
+		TestMode:                input.TestMode,
+		ParallelBuilds:          input.ParallelBuilds,
+		StrictProd:              input.StrictProd,
+		DeployAnalytics:         input.DeployAnalytics,
+		DeployMCPAuthServer:     input.DeployMCPAuthServer,
+		MCPAuthServerImage:      input.MCPAuthServerImage,
+		MCPAuthIssuerURL:        input.MCPAuthIssuerURL,
+		MCPAuthResourceURLs:     input.MCPAuthResourceURLs,
+		MCPAuthTLSSecret:        input.MCPAuthTLSSecret,
+		MCPAuthSigningKeySecret: input.MCPAuthSigningKeySecret,
+		MCPAuthConnectorsFile:   input.MCPAuthConnectorsFile,
+		MCPAuthConnector:        input.MCPAuthConnector,
+		OperatorArgs:            input.OperatorArgs,
+		ACMEmail:                input.ACMEmail,
+		ACMEStaging:             input.ACMEStaging,
+		InstallCertManager:      input.InstallCertManager,
+		TLSClusterIssuer:        input.TLSClusterIssuer,
+		MTLSClusterIssuer:       input.MTLSClusterIssuer,
 	}
 }

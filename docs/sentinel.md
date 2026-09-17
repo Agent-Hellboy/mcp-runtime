@@ -7,7 +7,7 @@
 | Service | Role |
 |---|---|
 | **mcp-gateway** | Transparent sidecar. Extracts identity, evaluates tool-level policy, emits allow/deny audit events, forwards traffic upstream. |
-| **mcp-auth-server (opt-in)** | External OAuth authorization-server fixture. Setup deploys it only with `--with-mcp-auth-server`; it issues tokens but does not perform Runtime governance. |
+| **mcp-auth-server (opt-in)** | Bundled OAuth authorization server. Setup deploys it only with `--with-mcp-auth-server`; it issues tokens but does not perform Runtime governance. |
 | **ingest** | Receives `POST /events`, validates ingest-scoped API keys or optional JWTs, writes to Kafka. |
 | **processor** | Consumes Kafka, batches, writes into ClickHouse with indexed audit fields. |
 | **api** | Three HTTP services behind Traefik path routing: **platform-api** (Postgres identity/auth/registry), **runtime-api** (Kubernetes runtime governance + registry push), **analytics-api** (ClickHouse events/stats/usage). OpenAPI at `GET /api/v1/openapi.yaml` per service. |
@@ -268,7 +268,7 @@ not reach the upstream MCP server.
 
 ### First-party OAuth authorization server
 
-The external `mcp-auth-server` is an opt-in authorization server for test
+The bundled `mcp-auth-server` is an opt-in authorization server for test
 fixtures and separately deployed MCP environments. It issues tokens; Runtime
 governance and policy remain in the gateway.
 

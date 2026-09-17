@@ -3,6 +3,7 @@ package v1alpha1
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -306,8 +307,15 @@ func (r *MCPServer) validate() error {
 	if gatewayEnabled(r.Spec) && r.Spec.Auth != nil && r.Spec.Auth.Mode == AuthModeOAuth && strings.TrimSpace(r.Spec.Auth.IssuerURL) == "" {
 		allErrs = append(allErrs, field.Required(specPath.Child("auth", "issuerURL"), "auth.issuerURL is required when auth.mode is oauth"))
 	}
-	if r.Spec.Auth != nil && r.Spec.Auth.Mode == AuthModeOAuth && strings.TrimSpace(r.Spec.Auth.Audience) == "" {
-		allErrs = append(allErrs, field.Required(specPath.Child("auth", "audience"), "auth.audience is required when auth.mode is oauth"))
+	if r.Spec.Auth != nil && r.Spec.Auth.Mode == AuthModeOAuth {
+		// auth.audience is also the resource identifier the gateway advertises
+		// in protected resource metadata, so it must be a URI a conforming
+		// client can send back as the RFC 8707 resource parameter.
+		if audience := strings.TrimSpace(r.Spec.Auth.Audience); audience == "" {
+			allErrs = append(allErrs, field.Required(specPath.Child("auth", "audience"), "auth.audience is required when auth.mode is oauth"))
+		} else if parsed, err := url.Parse(audience); err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.Fragment != "" {
+			allErrs = append(allErrs, field.Invalid(specPath.Child("auth", "audience"), r.Spec.Auth.Audience, "auth.audience must be an absolute URI without a fragment, matching the canonical MCP server URL clients connect to"))
+		}
 	}
 	if r.Spec.Auth != nil && r.Spec.Auth.Mode == AuthModeMTLS {
 		if !gatewayEnabled(r.Spec) {

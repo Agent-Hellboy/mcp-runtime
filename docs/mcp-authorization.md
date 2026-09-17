@@ -1,0 +1,345 @@
+# MCP authorization with the bundled server
+
+MCP authorization is optional. MCP clients and servers can communicate without
+OAuth when a deployment does not require user identity or bearer-token
+protection. Enable authorization when clients need standards-based login, PKCE,
+token issuance, and protected-resource discovery.
+
+## What each component does
+
+There are three separate responsibilities:
+
+```text
+MCP client → bundled mcp-auth-server → Keycloak/OIDC provider
+           → MCP access token → Runtime gateway → policy/governance → MCP server
+```
+
+- The bundled `mcp-auth-server` is the OAuth authorization server. It logs the
+  user in through one configured identity provider and mints MCP tokens.
+- Keycloak is an external identity provider. It owns the realm, users, and
+  upstream OIDC client credentials.
+- The Runtime gateway is the protected-resource boundary. It validates the
+  token and applies grants, agent sessions, trust, and per-tool policy before
+  forwarding the call. The authorization server is not the Runtime policy
+  decision point.
+
+This separation is necessary because the authorization server sees login and
+token requests, while Runtime governance must inspect the actual MCP JSON-RPC
+tool call and current grant/session state.
+
+## Public hostnames and TLS
+
+For a public k3s deployment, create DNS A records pointing to the ingress node:
+
+```text
+keycloak.example.com → <public ingress IP>
+auth.example.com     → <public ingress IP>
+```
+
+Issue certificates for both names with the cluster's ACME issuer. The auth
+server setup expects a pre-created Secret such as `mcp-auth-server-tls` in the
+`mcp-sentinel` namespace. Keycloak's certificate can be named
+`keycloak-tls`.
+
+Do not use an HTTP issuer, an IP address, or a self-signed public certificate
+outside local test mode.
+
+## Configure Keycloak
+
+Deploy Keycloak separately, then create:
+
+1. Realm: `mcp-runtime`.
+2. Confidential client: `mcp-auth`.
+3. Standard authorization-code flow enabled; direct password grants disabled.
+4. Exact redirect URI:
+
+   ```text
+   https://auth.example.com/mcp-auth/identity/callback
+   ```
+
+The resulting OIDC issuer is:
+
+```text
+https://keycloak.example.com/realms/mcp-runtime
+```
+
+Create a test user in the realm. Keep the client secret in a secret manager or
+environment variable; never place it in the connector JSON or Git.
+
+## Write the connector file
+
+The connector file is provider configuration, not a credential store. The
+`client_secret_env` value names the environment variable that setup reads and
+stores in the Kubernetes Secret `mcp-auth-connector-secrets`.
+
+```json
+{
+  "keycloak": {
+    "issuer": "https://keycloak.example.com/realms/mcp-runtime",
+    "authorization_endpoint": "https://keycloak.example.com/realms/mcp-runtime/protocol/openid-connect/auth",
+    "token_endpoint": "https://keycloak.example.com/realms/mcp-runtime/protocol/openid-connect/token",
+    "jwks_uri": "https://keycloak.example.com/realms/mcp-runtime/protocol/openid-connect/certs",
+    "client_id": "mcp-auth",
+    "client_secret_env": "KEYCLOAK_CLIENT_SECRET",
+    "exchange_client_id": "mcp-auth",
+    "scopes": ["openid", "profile", "email"],
+    "mcp_scopes": ["tools:read"],
+    "identity_claims": ["preferred_username"],
+    "token_endpoint_auth_method": "client_secret_post",
+    "allowed_upstream_callback_uris": [
+      "https://auth.example.com/mcp-auth/identity/callback"
+    ],
+    "downstream_token_strategy": "upstream_session"
+  }
+}
+```
+
+All four provider endpoints must use HTTPS in production. Explicit endpoints
+are useful when the auth pod cannot hairpin through the public ingress. If an
+internal endpoint is used, it must still be HTTPS and use a certificate trusted
+by the auth server; an internal HTTP shortcut is test-only.
+
+## Configure the MCPServer resource
+
+Set OAuth on the governed MCPServer and choose one canonical resource URI:
+
+```yaml
+spec:
+  auth:
+    mode: oauth
+    issuerURL: https://auth.example.com/mcp-auth
+    audience: https://mcp.example.com/my-server/mcp
+```
+
+The audience must exactly equal the `--mcp-auth-resource-url` value. The
+gateway rejects tokens with a different issuer or audience and strips the
+client bearer token before forwarding upstream.
+
+## Deploy through setup
+
+Create the persistent signing-key Secret with the RSA key stored as
+`private-key.pem`, create the TLS Secret, export the client secret only in the
+setup environment, and run:
+
+```bash
+KEYCLOAK_CLIENT_SECRET='from-your-secret-manager' \
+./bin/mcp-runtime setup \
+  --with-tls --tls-cluster-issuer letsencrypt-prod \
+  --with-mcp-auth-server \
+  --mcp-auth-issuer-url https://auth.example.com/mcp-auth \
+  --mcp-auth-resource-url https://mcp.example.com/my-server/mcp \
+  --mcp-auth-tls-secret mcp-auth-server-tls \
+  --mcp-auth-signing-key-secret mcp-auth-signing-key \
+  --mcp-auth-connectors-file /secure/mcp-auth-connectors.json \
+  --mcp-auth-connector keycloak
+```
+
+The default image is `docker.io/princekrroshan01/mcp-auth-server:latest`.
+The server uses SQLite on a PVC in production and memory storage only in
+`--test-mode`. The setup flag is opt-in; when it is absent, Runtime does not
+deploy this authorization server.
+
+The same values can be supplied through the public deployment environment:
+
+```bash
+export MCP_SETUP_WITH_MCP_AUTH_SERVER=1
+export MCP_SETUP_MCP_AUTH_ISSUER_URL=https://auth.example.com/mcp-auth
+export MCP_SETUP_MCP_AUTH_RESOURCE_URL=https://mcp.example.com/my-server/mcp
+export MCP_SETUP_MCP_AUTH_TLS_SECRET=mcp-auth-server-tls
+export MCP_SETUP_MCP_AUTH_SIGNING_KEY_SECRET=mcp-auth-signing-key
+export MCP_SETUP_MCP_AUTH_CONNECTORS_FILE=/secure/mcp-auth-connectors.json
+export MCP_SETUP_MCP_AUTH_CONNECTOR=keycloak
+```
+
+## Verify the flow
+
+Check that the authorization server and Keycloak publish metadata:
+
+```bash
+curl -fsS https://auth.example.com/mcp-auth/.well-known/oauth-authorization-server
+curl -fsS https://keycloak.example.com/realms/mcp-runtime/.well-known/openid-configuration
+kubectl -n mcp-sentinel rollout status deploy/mcp-auth-server
+```
+
+Then use an MCP client or the shipped OAuth fixture to run the real PKCE flow.
+Verify all of these outcomes:
+
+- no token returns `401` and a proper `WWW-Authenticate` challenge;
+- a valid token reaches the Runtime gateway;
+- a granted tool succeeds and produces an audit event;
+- an ungranted tool returns `403` and does not reach the upstream server;
+- changing or revoking a Runtime grant takes effect without issuing a new IdP
+  token.
+
+## Local test mode
+
+For Kind-only testing:
+
+```bash
+./bin/mcp-runtime setup --test-mode --with-mcp-auth-server \
+  --ingress-manifest config/ingress/overlays/http
+```
+
+Test mode may use the loopback issuer, in-memory storage, generated signing
+keys, and the local development token exchange. It does not prove production
+OIDC federation. Use the Keycloak connector and HTTPS settings above for a
+real provider test.
+
+## Other identity providers
+
+The connector is provider-neutral. Runtime does not compile an Okta, PingOne,
+Auth0, Microsoft Entra ID, Google, or other provider adapter into the gateway.
+The bundled auth server loads a named connector from the JSON file at startup:
+
+```text
+MCP_AUTH_CONNECTORS_FILE → MCP_AUTH_CONNECTOR → IdentityProvider/TokenExchanger
+```
+
+One auth-server process selects one connector and one MCP resource. A file may
+contain several named connectors for different environments, but changing the
+selected provider requires changing `--mcp-auth-connector` and restarting or
+rolling out the deployment. This keeps provider credentials and provider
+specific behavior outside the Runtime gateway and MCP tool handlers.
+
+For any OIDC provider, start with this shape and replace the issuer, client ID,
+and callback settings from that provider's console:
+
+```json
+{
+  "oidc": {
+    "issuer": "https://idp.example.com/<tenant-or-realm>",
+    "client_id": "mcp-auth",
+    "client_secret_env": "OIDC_CLIENT_SECRET",
+    "exchange_client_id": "mcp-auth",
+    "scopes": ["openid", "profile", "email"],
+    "mcp_scopes": ["tools:read"],
+    "identity_claims": ["sub", "email"],
+    "token_endpoint_auth_method": "client_secret_post",
+    "allowed_upstream_callback_uris": [
+      "https://auth.example.com/mcp-auth/identity/callback"
+    ],
+    "downstream_token_strategy": "upstream_session"
+  }
+}
+```
+
+OIDC discovery fills in authorization, token, and JWKS endpoints when they are
+omitted. Explicitly configure them when the browser-facing provider hostname
+and the auth pod's back-channel hostname differ. Request `openid` for OIDC and
+use a stable claim such as `sub` or `preferred_username`; plain OAuth 2.0
+providers need a `userinfo_endpoint` and an identity claim from that response.
+
+Typical issuer patterns are:
+
+| Provider | Typical issuer pattern | Notes |
+|---|---|---|
+| Okta | `https://<org>.okta.com/oauth2/<authorization-server-id>` | Register the exact `/identity/callback` URI and use the authorization server's discovery document. |
+| PingOne | `https://auth.pingone.<region>/<environment-id>/as` | Use the environment's OIDC discovery URL and a confidential client. |
+| Auth0 | `https://<tenant>.auth0.com/` | Enable `openid profile email`; set the API/resource audience according to the Auth0 tenant. |
+| Microsoft Entra ID | `https://login.microsoftonline.com/<tenant-id>/v2.0` | Use a tenant-specific issuer for deterministic claim and issuer validation. |
+| Google | `https://accounts.google.com` | Configure the OAuth client redirect URI and request `openid profile email`. |
+| Generic OIDC | provider's `issuer` URL | The provider must expose discovery, authorization-code login, token, JWKS, and suitable identity claims. |
+
+These are configuration patterns, not a claim that every provider supports
+every optional feature. Verify discovery, callback behavior, token endpoint
+authentication, scopes, refresh behavior, and claims with the provider before
+using it in production. The mcp-auth project has provider-specific notes and a
+verified-provider matrix in its [authorization-server guide](https://github.com/Agent-Hellboy/mcp-auth/blob/main/docs/auth-server.md).
+
+Before setup, run the Runtime preflight against the provider issuer:
+
+```bash
+./bin/mcp-runtime auth provider-check \
+  --issuer-url https://idp.example.com/<tenant-or-realm>
+```
+
+This fetches `/.well-known/openid-configuration` without sending client
+credentials and checks the issuer, authorization endpoint, token endpoint, and
+JWKS URI. It does not prove client-secret validity, redirect registration, user
+login, refresh behavior, or provider claim mappings; complete those with a
+dedicated test user before production rollout.
+
+## Clean setup and credential preservation
+
+`hack/deploy/mcpruntime-org/clean.sh --yes --wait` destructively resets MCP
+Runtime namespaces and workload data. Use it for a clean reinstall, not normal
+upgrades. By default it writes a `0700` backup directory under
+`~/.mcpruntime/backups/mcpruntime-org` and backup files are `0600`.
+
+The backup preserves platform bootstrap secrets, TLS material, OIDC
+configuration, and auth configuration when those resources are included by the
+deployment version. It does not preserve tenant/user database rows, API keys,
+grants, sessions, registry blobs, or analytics history. Keycloak realm data is
+owned by the identity provider and must be exported/restored with Keycloak's
+realm-export tooling; a Kubernetes Secret backup is not a realm backup.
+
+Keep the platform admin password and OIDC client secret in a password manager
+or a `0600` file outside Git, and export them only for setup:
+
+```bash
+umask 077
+export MCP_PLATFORM_ADMIN_EMAIL=admin@example.com
+export MCP_PLATFORM_ADMIN_PASSWORD='<from-password-manager>'
+export KEYCLOAK_CLIENT_SECRET='<from-password-manager>'
+MCP_DEPLOY_ENV=/secure/mcpruntime-org.env \
+  hack/deploy/mcpruntime-org/setup.sh
+```
+
+Before cleaning, run `clean.sh --dry-run` and confirm its namespace list. For a
+fresh provider-backed install, prepare the env file, TLS Secret, signing-key
+Secret, connector file, selected connector, and provider secret first. Never
+use `--no-backup` on production unless the loss is intentional.
+
+After setup, verify in order: provider discovery; mcp-auth discovery and JWKS;
+mcp-auth readiness; platform admin login; Runtime server catalog, sessions,
+and grants; governed MCP metadata; unauthenticated `401` challenge; valid token;
+allowed tool; denied tool; and grant/session revocation. The authorization
+server authenticates and mints tokens; Runtime remains the resource server and
+policy/governance decision point.
+
+## Credentials and secret handling
+
+Never put passwords, OIDC client secrets, private signing keys, bearer tokens,
+or realm exports in the repository, Docker command arguments, shell history,
+issue reports, or CI logs. Connector JSON contains references such as
+`client_secret_env`; setup copies the referenced value into the Kubernetes
+Secret `mcp-auth-connector-secrets`. Rotate provider secrets and platform admin
+passwords after test deployments. Rotate the mcp-auth signing key only with an
+explicit token/JWKS rollover plan because existing tokens will become invalid.
+
+## How the MCP SDK fits
+
+The SDK is used at the application boundary, not as Runtime governance:
+
+- MCP clients use the SDK's discovery, PKCE, token, and `WWW-Authenticate`
+  helpers to obtain an MCP token from the authorization server.
+- A standalone MCP resource server can use the SDK's `JWTVerifier` to validate
+  issuer, JWKS signature, audience, expiry, and required scopes before invoking
+  tools.
+- A governed MCP server normally lets the Runtime gateway terminate the bearer
+  token, apply grants/sessions/policy, and strip the token before forwarding.
+  Add SDK verification in the upstream server only when it is intentionally
+  independently exposed or defense-in-depth is required.
+
+The SDK does not choose the identity provider. It consumes provider-neutral MCP
+authorization metadata and JWTs, so switching from Keycloak to Okta or PingOne
+changes the connector and IdP client configuration, not MCP tool code. Read the
+mcp-auth project's [auth-server architecture](https://github.com/Agent-Hellboy/mcp-auth/blob/main/docs/architecture.md)
+and [auth-client SDK guide](https://github.com/Agent-Hellboy/mcp-auth/blob/main/docs/auth-client.md)
+for the Python and Go APIs, verifier options, metadata discovery, and token
+exchange boundaries.
+
+## Troubleshooting
+
+- `issuer and resource must use HTTPS`: a public deployment has an HTTP issuer
+  or resource; use `https://` and a valid TLS Secret.
+- `connector has non-HTTPS token_endpoint`: the provider endpoint is HTTP;
+  expose Keycloak through trusted HTTPS or use the shortcut only in local test
+  mode.
+- discovery connection refused from the auth pod: do not point the pod at the
+  node's public IP. Use a reachable, trusted HTTPS service endpoint or fix
+  cluster egress/DNS.
+- `audience mismatch`: compare `spec.auth.audience` with
+  `--mcp-auth-resource-url` character-for-character.
+- tokens fail after restart: use a persistent RSA signing-key Secret; do not
+  rely on the test-mode ephemeral key.

@@ -34,6 +34,27 @@ if [[ "${MCP_SETUP_SKIP_CERT_MANAGER_INSTALL:-}" == "1" ]]; then
   SETUP_ARGS+=(--skip-cert-manager-install)
 fi
 
+if [[ "${MCP_SETUP_WITH_MCP_AUTH_SERVER:-}" == "1" ]]; then
+  : "${MCP_SETUP_MCP_AUTH_ISSUER_URL:?MCP_SETUP_MCP_AUTH_ISSUER_URL is required when MCP_SETUP_WITH_MCP_AUTH_SERVER=1}"
+  : "${MCP_SETUP_MCP_AUTH_RESOURCE_URL:?MCP_SETUP_MCP_AUTH_RESOURCE_URL is required when MCP_SETUP_WITH_MCP_AUTH_SERVER=1}"
+  : "${MCP_SETUP_MCP_AUTH_TLS_SECRET:?MCP_SETUP_MCP_AUTH_TLS_SECRET is required when MCP_SETUP_WITH_MCP_AUTH_SERVER=1}"
+  : "${MCP_SETUP_MCP_AUTH_SIGNING_KEY_SECRET:?MCP_SETUP_MCP_AUTH_SIGNING_KEY_SECRET is required when MCP_SETUP_WITH_MCP_AUTH_SERVER=1}"
+  : "${MCP_SETUP_MCP_AUTH_CONNECTORS_FILE:?MCP_SETUP_MCP_AUTH_CONNECTORS_FILE is required when MCP_SETUP_WITH_MCP_AUTH_SERVER=1}"
+  : "${MCP_SETUP_MCP_AUTH_CONNECTOR:?MCP_SETUP_MCP_AUTH_CONNECTOR is required when MCP_SETUP_WITH_MCP_AUTH_SERVER=1}"
+  SETUP_ARGS+=(
+    --with-mcp-auth-server
+    --mcp-auth-issuer-url "$MCP_SETUP_MCP_AUTH_ISSUER_URL"
+    --mcp-auth-resource-url "$MCP_SETUP_MCP_AUTH_RESOURCE_URL"
+    --mcp-auth-tls-secret "$MCP_SETUP_MCP_AUTH_TLS_SECRET"
+    --mcp-auth-signing-key-secret "$MCP_SETUP_MCP_AUTH_SIGNING_KEY_SECRET"
+    --mcp-auth-connectors-file "$MCP_SETUP_MCP_AUTH_CONNECTORS_FILE"
+    --mcp-auth-connector "$MCP_SETUP_MCP_AUTH_CONNECTOR"
+  )
+  if [[ -n "${MCP_SETUP_MCP_AUTH_SERVER_IMAGE:-}" ]]; then
+    SETUP_ARGS+=(--mcp-auth-server-image "$MCP_SETUP_MCP_AUTH_SERVER_IMAGE")
+  fi
+fi
+
 echo "MCP platform domain: $MCP_PLATFORM_DOMAIN"
 echo "kubeconfig: $MCP_SETUP_KUBECONFIG"
 echo "registry host (derived): registry.${MCP_PLATFORM_DOMAIN}"
