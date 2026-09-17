@@ -64,6 +64,13 @@ func (s clusterStep) Run(logger *zap.Logger, deps SetupDeps, ctx *SetupContext) 
 	return setupClusterSteps(logger, ctx.Plan.Kubeconfig, ctx.Plan.Context, ctx.Plan.Ingress, deps)
 }
 
+type mcpAuthPrerequisiteStep struct{}
+
+func (s mcpAuthPrerequisiteStep) Name() string { return "mcp-auth-prerequisites" }
+func (s mcpAuthPrerequisiteStep) Run(_ *zap.Logger, _ SetupDeps, ctx *SetupContext) error {
+	return checkMCPAuthPrerequisites(ctx.Plan.MCPAuthTLSSecret, ctx.Plan.MCPAuthSigningKeySecret, ctx.Plan.TestMode)
+}
+
 type tlsStep struct{}
 
 func (s tlsStep) Name() string { return "tls" }
@@ -212,6 +219,7 @@ func buildSetupSteps(ctx *SetupContext) []SetupStep {
 	return NewSetupPipeline().
 		With(preflightStep{}).
 		With(clusterStep{}).
+		WithIf(ctx.Plan.DeployMCPAuthServer, mcpAuthPrerequisiteStep{}).
 		WithIf(catalogMode, catalogNamespaceStep{}).
 		WithIf(ctx.Plan.TLSEnabled, tlsStep{}).
 		WithIf(strings.TrimSpace(ctx.Plan.MTLSClusterIssuer) != "", workloadPKIStep{}).

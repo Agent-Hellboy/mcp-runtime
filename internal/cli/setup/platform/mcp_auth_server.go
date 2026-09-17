@@ -110,6 +110,55 @@ func deployMCPAuthServer(image, configuredIssuer string, configuredResources []s
 	return nil
 }
 
+// checkMCPAuthPrerequisites runs before image builds and deployment. Production
+// auth uses durable signing material and a certificate-backed ingress; failing
+// here avoids a long setup followed by an opaque FailedMount or TLS failure.
+func checkMCPAuthPrerequisites(tlsSecret, signingKeySecret string, testMode bool) error {
+	if testMode {
+		return nil
+	}
+	kubectl := core.DefaultKubectlClient()
+	for _, prerequisite := range []struct {
+		name   string
+		secret string
+		key    string
+		remedy string
+	}{
+		{
+			name:   "mcp-auth TLS",
+			secret: tlsSecret,
+			key:    "tls.crt",
+			remedy: "create the TLS Secret (or its cert-manager Certificate) in namespace mcp-sentinel before setup",
+		},
+		{
+			name:   "mcp-auth TLS",
+			secret: tlsSecret,
+			key:    "tls.key",
+			remedy: "create the TLS Secret (or its cert-manager Certificate) in namespace mcp-sentinel before setup",
+		},
+		{
+			name:   "mcp-auth signing key",
+			secret: signingKeySecret,
+			key:    "private-key.pem",
+			remedy: "create the Secret with an RSA PEM key under private-key.pem in namespace mcp-sentinel before setup",
+		},
+	} {
+		keyPath := strings.ReplaceAll(prerequisite.key, ".", `\.`)
+		cmd, err := kubectl.CommandArgs([]string{"get", "secret", prerequisite.secret, "-n", "mcp-sentinel", "-o", "jsonpath={.data." + keyPath + "}"})
+		if err != nil {
+			return fmt.Errorf("prepare %s Secret check: %w", prerequisite.name, err)
+		}
+		value, err := cmd.Output()
+		if err != nil {
+			return fmt.Errorf("%s Secret %q is not available in namespace %q: %w; %s", prerequisite.name, prerequisite.secret, "mcp-sentinel", err, prerequisite.remedy)
+		}
+		if strings.TrimSpace(string(value)) == "" {
+			return fmt.Errorf("%s Secret %q is missing non-empty data key %q; %s", prerequisite.name, prerequisite.secret, prerequisite.key, prerequisite.remedy)
+		}
+	}
+	return nil
+}
+
 // renderMCPAuthServerManifest substitutes the deployment-specific values into
 // the authorization server manifest. It performs no I/O so the rendered output,
 // including every production guard, is directly testable.

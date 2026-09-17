@@ -10,7 +10,7 @@ kind: Middleware
 metadata: {name: mcp-auth-server-discovery-rewrite, namespace: mcp-sentinel}
 spec:
   replacePathRegex:
-    regex: ^/\\.well-known/(oauth-authorization-server|openid-configuration)/mcp-auth$
+    regex: ^/\.well-known/(oauth-authorization-server|openid-configuration)/mcp-auth$
     replacement: /.well-known/$1
 ---
 apiVersion: apps/v1

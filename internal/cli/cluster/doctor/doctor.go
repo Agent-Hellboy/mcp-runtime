@@ -278,6 +278,8 @@ func doctorCheckSpecs(kubectl core.KubectlRunner, distro Distribution) []doctorC
 		{Name: "sentinel secrets", Detail: "reading Sentinel API, admin, UI, and ingest keys from mcp-sentinel-secrets", Run: func() DoctorCheck { return checkSentinelSecrets(kubectl) }},
 		{Name: "gateway analytics credentials", Detail: "checking gateway sidecars have ingest credentials when analytics is enabled", Run: func() DoctorCheck { return checkGatewayAnalyticsCredentials(kubectl) }},
 		{Name: "sentinel API auth probe", Detail: "launching a temporary curl pod with UI_API_KEY against runtime-api", Run: func() DoctorCheck { return checkSentinelAPIAuthProbe(kubectl) }},
+		{Name: "mcp-auth deployment", Detail: "checking the optional mcp-auth authorization server rollout when installed", Run: func() DoctorCheck { return checkMCPAuthDeployment(kubectl) }},
+		{Name: "mcp-auth secrets", Detail: "checking optional mcp-auth signing-key and TLS Secret material", Run: func() DoctorCheck { return checkMCPAuthSecrets(kubectl) }},
 		{Name: "runtime API image display refs", Detail: "checking runtime API server listings do not leak internal registry pull hosts", Run: func() DoctorCheck { return checkRuntimeAPIImageDisplayRefs(kubectl) }},
 		{Name: "node capacity", Detail: "checking node metrics, then falling back to allocatable resources if metrics-server is absent", Run: func() DoctorCheck { return checkNodeCapacity(kubectl) }},
 		{Name: "pending pods", Detail: "listing Pending pods across all namespaces", Run: func() DoctorCheck { return checkPendingPodsByNamespace(kubectl) }},

@@ -41,6 +41,23 @@ server setup expects a pre-created Secret such as `mcp-auth-server-tls` in the
 `mcp-sentinel` namespace. Keycloak's certificate can be named
 `keycloak-tls`.
 
+The platform hostname must also be present in the platform UI Ingress before
+opening it in a browser. A browser with HSTS will not offer a certificate
+exception: if DNS is missing, the Ingress is absent, or cert-manager has not
+issued the certificate, Firefox may show a security error or Traefik may serve
+its default certificate. Check these before debugging login:
+
+```bash
+dig +short platform.example.com
+kubectl get ingress -n mcp-sentinel mcp-sentinel-platform-ui
+kubectl get certificate -n mcp-sentinel
+kubectl describe certificate -n mcp-sentinel <platform-certificate>
+```
+
+Wait for the Certificate condition to become `Ready=True`, and verify that
+the certificate SAN contains the exact platform hostname. Do not work around
+this with an HTTP URL or a browser exception.
+
 Do not use an HTTP issuer, an IP address, or a self-signed public certificate
 outside local test mode.
 
@@ -71,6 +88,16 @@ environment variable; never place it in the connector JSON or Git.
 The connector file is provider configuration, not a credential store. The
 `client_secret_env` value names the environment variable that setup reads and
 stores in the Kubernetes Secret `mcp-auth-connector-secrets`.
+
+Every referenced environment variable must be exported in the same shell that
+starts setup. Setup intentionally fails before applying the auth server if a
+referenced secret is unset; this prevents a partially configured connector from
+being deployed. Prefer a protected file or secret manager rather than putting
+the value in the connector JSON:
+
+```bash
+export KEYCLOAK_CLIENT_SECRET="$(tr -d '\n' < /secure/keycloak-client-secret)"
+```
 
 ```json
 {
@@ -296,6 +323,23 @@ and grants; governed MCP metadata; unauthenticated `401` challenge; valid token;
 allowed tool; denied tool; and grant/session revocation. The authorization
 server authenticates and mints tokens; Runtime remains the resource server and
 policy/governance decision point.
+
+If setup stops during image publication with a Kubernetes API TLS handshake
+timeout, first verify the k3s API and registry pod, then rerun the same setup
+command. Image publication is idempotent. If it stops with `references unset
+environment variable`, export the named connector secret and rerun; do not
+disable connector validation.
+
+After an installation that enables mcp-auth, run:
+
+```bash
+./bin/mcp-runtime cluster doctor
+```
+
+The doctor skips mcp-auth when it is not installed. When it is installed, it
+checks the deployment rollout and the required signing-key and TLS Secret data;
+use the reported `kubectl rollout status` or Secret/Certificate remedy before
+testing OAuth.
 
 ## Credentials and secret handling
 
