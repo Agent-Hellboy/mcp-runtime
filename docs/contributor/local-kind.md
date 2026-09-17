@@ -178,12 +178,10 @@ Secret; test mode may use the local issuer:
   --ingress-manifest config/ingress/overlays/http
 ```
 
-Deploy examples separately through the normal CLI flow. The governed fixture
-uses the bundled issuer and the gateway for Runtime governance; the standalone
-fixtures verify the mcp-auth SDK inside the MCP server process:
+Deploy the shipped SDK examples separately through the normal CLI flow. These
+standalone fixtures verify the mcp-auth SDK inside the MCP server process:
 
 ```bash
-./bin/mcp-runtime server apply --use-kube --file examples/mcp-auth-example.yaml
 ./bin/mcp-runtime server apply --use-kube --file examples/mcp-auth-sdk-ping.yaml
 ./bin/mcp-runtime server apply --use-kube --file examples/mcp-auth-sdk-echo.yaml
 ```

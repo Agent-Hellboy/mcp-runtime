@@ -1,4 +1,4 @@
-# MCP authorization with the bundled server
+# MCP authorization with the optional mcp-auth server
 
 MCP authorization is optional. MCP clients and servers can communicate without
 OAuth when a deployment does not require user identity or bearer-token
@@ -10,7 +10,7 @@ token issuance, and protected-resource discovery.
 There are three separate responsibilities:
 
 ```text
-MCP client → bundled mcp-auth-server → Keycloak/OIDC provider
+MCP client → optional mcp-auth-server → Keycloak/OIDC provider
            → MCP access token → Runtime gateway → policy/governance → MCP server
 ```
 
@@ -26,6 +26,26 @@ MCP client → bundled mcp-auth-server → Keycloak/OIDC provider
 This separation is necessary because the authorization server sees login and
 token requests, while Runtime governance must inspect the actual MCP JSON-RPC
 tool call and current grant/session state.
+
+## Responsibility boundary
+
+Runtime ships and can deploy the optional `mcp-auth-server`, but it does not
+manage your identity provider. You are responsible for operating Keycloak,
+Okta, PingOne, Entra ID, Auth0, or another OIDC/OAuth provider, including its
+realm or tenant, users, client registration, client secret, redirect URI,
+claims, scopes, availability, backups, and certificate/DNS configuration.
+
+Runtime is responsible for loading the connector, validating its required
+configuration, exposing MCP authorization metadata, and keeping the provider
+secret in Kubernetes. The mcp-auth server authenticates through that provider
+and mints MCP tokens; Runtime remains the MCP resource server and governance
+decision point.
+
+Before enabling the feature, confirm that the provider exposes HTTPS OIDC
+discovery, has a confidential client with authorization-code flow and S256
+PKCE enabled, has the exact callback URI registered, can issue `tools:read`,
+and includes a stable subject claim. Runtime cannot repair an incorrect realm,
+client registration, redirect URI, claim mapping, or provider outage.
 
 ## Public hostnames and TLS
 
@@ -61,6 +81,12 @@ this with an HTTP URL or a browser exception.
 Do not use an HTTP issuer, an IP address, or a self-signed public certificate
 outside local test mode.
 
+If Traefik connects to Keycloak over HTTPS, configure a Traefik
+`ServersTransport` with `serverName` set to the Keycloak hostname. Otherwise
+the backend certificate is checked against the pod IP and discovery fails with
+`x509: ... certificate ... doesn't contain any IP SANs`. Do not disable TLS
+verification in production.
+
 ## Configure Keycloak
 
 Deploy Keycloak separately, then create:
@@ -82,6 +108,18 @@ https://keycloak.example.com/realms/mcp-runtime
 
 Create a test user in the realm. Keep the client secret in a secret manager or
 environment variable; never place it in the connector JSON or Git.
+
+Run the Runtime-side provider preflight before setup:
+
+```bash
+./bin/mcp-runtime auth provider-check \
+  --issuer-url https://keycloak.example.com/realms/mcp-runtime
+```
+
+This checks discovery of the issuer, authorization endpoint, token endpoint,
+and JWKS URI without sending client credentials. It does not prove the client
+secret, callback, user login, claims, or scopes; complete those provider-side
+checks with a dedicated non-admin test account.
 
 ## Write the connector file
 
@@ -188,7 +226,8 @@ curl -fsS https://keycloak.example.com/realms/mcp-runtime/.well-known/openid-con
 kubectl -n mcp-sentinel rollout status deploy/mcp-auth-server
 ```
 
-Then use an MCP client or the shipped OAuth fixture to run the real PKCE flow.
+Then use an MCP client or the shipped SDK OAuth fixture (`examples/mcp-auth-sdk-ping.yaml`)
+to run the real PKCE flow.
 Verify all of these outcomes:
 
 - no token returns `401` and a proper `WWW-Authenticate` challenge;

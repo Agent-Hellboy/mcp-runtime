@@ -91,7 +91,7 @@ default. Override the path with `MCP_DEPLOY_ENV=/path/to/other.env`. See
 | `OIDC_AUDIENCE` | optional | OIDC audience; defaults to Google client ID. |
 | `OIDC_JWKS_URL` | optional | JWKS URL for token validation. |
 
-#### MCP OAuth authorization server (legacy path)
+#### MCP OAuth authorization server
 
 Applies to MCP servers with `spec.auth.mode: oauth`. Browser sign-in above is a
 separate thing: that is OIDC for the dashboard, this is the authorization server
@@ -99,27 +99,31 @@ MCP clients use.
 
 | Variable | Required | Purpose |
 |----------|----------|---------|
-| `OAUTH_ISSUER_URL` | optional | Public issuer. Defaults to `https://<platform host>/oauth`. |
-| `OAUTH_INTERNAL_ISSUER_URL` | optional | In-cluster transport URL for the configured authorization server. Setup sets this when the bundled `mcp-auth-server` is enabled. |
-| `OAUTH_ALLOWED_REDIRECT_URI_SCHEMES` | optional | Extra `redirect_uri` schemes beyond https and http-loopback, comma-separated. Native MCP clients need this: Cursor registers `cursor://anysphere.cursor-mcp/oauth/callback`, so set `cursor`. |
-| `OAUTH_ALLOW_INSECURE_HTTP` | **never set in public** | Local Kind only. Unset, redirect URIs must be https or loopback. |
+| `MCP_SETUP_MCP_AUTH_ISSUER_URL` | required when enabled | Public HTTPS issuer URL, for example `https://auth.<domain>/mcp-auth`. |
+| `MCP_SETUP_MCP_AUTH_RESOURCE_URL` | required when enabled | Canonical MCP resource URL; must exactly match the protected server's `spec.auth.audience`. |
+| `MCP_SETUP_MCP_AUTH_CONNECTORS_FILE` | required when enabled | Provider-neutral connector JSON; client secrets are referenced by environment variable, never stored in this file. |
+| `MCP_SETUP_MCP_AUTH_CONNECTOR` | required when enabled | Named connector selected by the mcp-auth server. |
+| `MCP_SETUP_MCP_AUTH_TLS_SECRET` | required when enabled | TLS Secret for the authorization-server hostname. |
+| `MCP_SETUP_MCP_AUTH_SIGNING_KEY_SECRET` | required when enabled | Persistent RSA signing-key Secret containing `private-key.pem`. |
 
-The issuer **must keep its `/oauth` path**. The ingress routes the OAuth server
-by path on the platform host and there is no dedicated `oauth.` hostname
-(`internal/cli/setup/ingressmanifest/paths.go`), so a path-free issuer such as
-`https://oauth.<domain>` resolves to nothing and discovery fails.
+The issuer must be the exact public URL configured for the optional
+`mcp-auth-server`, normally `https://auth.<domain>/mcp-auth`. It is a separate
+authorization-server hostname and must not be confused with dashboard OIDC or
+the Runtime gateway. The identity provider hostname, realm, client, users,
+redirect URI, scopes, and certificates are operated by the platform user.
 
-Discovery is served at the RFC 8414 path-insertion URL:
+Discovery is served at the authorization-server metadata URL:
 
 ```bash
-curl -s https://platform.<domain>/.well-known/oauth-authorization-server/oauth
+curl -s https://auth.<domain>/mcp-auth/.well-known/oauth-authorization-server
 ```
 
-The bare `/.well-known/oauth-authorization-server` is **not** routed to the
-OAuth server by this ingress, even though the server itself answers it.
+The protected MCP resource separately publishes Protected Resource Metadata;
+clients should follow its `WWW-Authenticate` challenge or query the resource
+metadata URL generated for that server.
 
 A ready-to-adapt protected server is in `examples/mcpserver-oauth.yaml`. Its
-`auth.issuerURL` must match `OAUTH_ISSUER_URL`, and `auth.audience` must be the
+`auth.issuerURL` must match `MCP_SETUP_MCP_AUTH_ISSUER_URL`, and `auth.audience` must be the
 server's canonical resource URI (`https://mcp.<domain>/<prefix>/mcp`) — the
 gateway fails closed with 401 when a token's `aud` does not match.
 

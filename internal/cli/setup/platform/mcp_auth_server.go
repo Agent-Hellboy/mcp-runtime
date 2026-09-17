@@ -275,11 +275,10 @@ func mcpAuthResourceURLs(configured []string, issuer string, testMode bool) ([]s
 		if !testMode {
 			return nil, fmt.Errorf("production mcp-auth deployment requires at least one resource URL (--mcp-auth-resource-url); each must equal spec.auth.audience of an MCP server this authorization server issues tokens for")
 		}
-		// Test mode serves the bundled fixtures, so one authorization server
-		// covers the governed example and both standalone SDK examples.
+		// Test mode serves the shipped SDK fixtures, so one authorization
+		// server covers both standalone SDK examples.
 		base := strings.TrimSuffix(issuer, "/mcp-auth")
 		return []string{
-			base + "/mcp-auth-example/mcp",
 			base + "/mcp-auth-sdk-ping/mcp",
 			base + "/mcp-auth-sdk-echo/mcp",
 		}, nil

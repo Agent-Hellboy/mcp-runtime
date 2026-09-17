@@ -148,7 +148,6 @@ func TestMCPAuthResourceURLsTestModeCoversEveryBundledExample(t *testing.T) {
 		t.Fatalf("mcpAuthResourceURLs() error = %v", err)
 	}
 	want := []string{
-		"http://localhost:18080/mcp-auth-example/mcp",
 		"http://localhost:18080/mcp-auth-sdk-ping/mcp",
 		"http://localhost:18080/mcp-auth-sdk-echo/mcp",
 	}
@@ -175,7 +174,7 @@ func TestTestModeResourcesMatchBundledExampleAudiences(t *testing.T) {
 	}
 	_, thisFile, _, _ := runtime.Caller(0)
 	examples := filepath.Join(filepath.Dir(thisFile), "..", "..", "..", "..", "examples")
-	for _, name := range []string{"mcp-auth-example.yaml", "mcp-auth-sdk-ping.yaml", "mcp-auth-sdk-echo.yaml"} {
+	for _, name := range []string{"mcp-auth-sdk-ping.yaml", "mcp-auth-sdk-echo.yaml"} {
 		raw, err := os.ReadFile(filepath.Join(examples, name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)

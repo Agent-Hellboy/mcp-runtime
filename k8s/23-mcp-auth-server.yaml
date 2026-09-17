@@ -42,7 +42,7 @@ spec:
             - {name: MCP_AUTH_LISTEN_ADDR, value: ":8080"}
             - {name: MCP_AUTH_LOCAL_DEVELOPMENT, value: "MCP_AUTH_LOCAL_DEVELOPMENT_VALUE"}
             - {name: MCP_AUTH_LOCAL_TOKEN_EXCHANGE, value: "MCP_AUTH_LOCAL_TOKEN_EXCHANGE_VALUE"}
-            - {name: MCP_AUTH_LOCAL_CLIENT_ID, value: mcp-auth-example-client}
+            - {name: MCP_AUTH_LOCAL_CLIENT_ID, value: mcp-auth-sdk-client}
             - {name: MCP_AUTH_REGISTRATION_ENABLED, value: "true"}
             - {name: MCP_AUTH_REQUIRE_HTTPS, value: "MCP_AUTH_REQUIRE_HTTPS_VALUE"}
             - {name: MCP_AUTH_STORE, value: MCP_AUTH_STORE_VALUE}
