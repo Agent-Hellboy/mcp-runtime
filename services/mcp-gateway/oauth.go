@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MicahParks/keyfunc"
+	mcpauth "github.com/example/mcp-auth/auth-client/go/mcpauth"
 	"github.com/golang-jwt/jwt/v4"
 
 	policypkg "mcp-runtime/pkg/policy"
@@ -96,7 +96,15 @@ func (s *gatewayServer) authenticateOAuth(r *http.Request, policy *policypkg.Doc
 		}
 	}
 
-	provider, err := s.oauthProviderForIssuer(r.Context(), issuerURL)
+	audience := strings.TrimSpace(policy.Auth.Audience)
+	if audience == "" {
+		var ok bool
+		audience, ok = s.canonicalOAuthResource(r)
+		if !ok {
+			return oauthAuthResult{Status: http.StatusServiceUnavailable, Reason: "oauth_resource_unavailable", Identity: result.Identity}
+		}
+	}
+	provider, err := s.oauthProviderForIssuer(r.Context(), issuerURL, audience)
 	if err != nil {
 		log.Printf("oauth provider lookup failed for %s: %v", issuerURL, err)
 		return oauthAuthResult{
@@ -106,52 +114,23 @@ func (s *gatewayServer) authenticateOAuth(r *http.Request, policy *policypkg.Doc
 		}
 	}
 
-	claims := jwt.MapClaims{}
-	parser := jwt.NewParser(jwt.WithValidMethods([]string{"RS256", "RS384", "RS512", "ES256", "ES384", "ES512", "EdDSA"}))
-	parsed, err := parser.ParseWithClaims(token, claims, provider.jwks.Keyfunc)
-	if err != nil || !parsed.Valid {
+	claims, err := provider.verifier.Verify(token)
+	if err != nil {
 		return oauthAuthResult{
 			Status:   http.StatusUnauthorized,
 			Reason:   "invalid_token",
 			Identity: result.Identity,
 		}
 	}
-	if !claims.VerifyIssuer(issuerURL, true) {
-		return oauthAuthResult{
-			Status:   http.StatusUnauthorized,
-			Reason:   "invalid_token",
-			Identity: result.Identity,
-		}
-	}
-	audience := strings.TrimSpace(policy.Auth.Audience)
-	if audience == "" {
-		var ok bool
-		audience, ok = s.canonicalOAuthResource(r)
-		if !ok {
-			return oauthAuthResult{
-				Status:   http.StatusServiceUnavailable,
-				Reason:   "oauth_resource_unavailable",
-				Identity: result.Identity,
-			}
-		}
-	}
-	if !serviceutil.AudienceMatches(claims["aud"], audience) {
-		return oauthAuthResult{
-			Status:   http.StatusUnauthorized,
-			Reason:   "invalid_token",
-			Identity: result.Identity,
-		}
-	}
-
 	return oauthAuthResult{
 		Allowed: true,
 		Status:  http.StatusOK,
 		Token:   token,
 		Identity: identityContext{
-			HumanID:   stringClaim(claims, "sub"),
-			AgentID:   policypkg.FirstNonEmpty(stringClaim(claims, "azp"), stringClaim(claims, "client_id")),
-			TeamID:    oauthTeamID(claims, policy),
-			SessionID: policypkg.FirstNonEmpty(stringClaim(claims, "sid"), headerIdentity.SessionID),
+			HumanID:   claims.Subject,
+			AgentID:   policypkg.FirstNonEmpty(stringClaim(claims.Raw, "azp"), stringClaim(claims.Raw, "client_id")),
+			TeamID:    oauthTeamID(jwt.MapClaims(claims.Raw), policy),
+			SessionID: policypkg.FirstNonEmpty(stringClaim(claims.Raw, "sid"), headerIdentity.SessionID),
 		},
 	}
 }
@@ -193,14 +172,15 @@ func stringClaims(claims jwt.MapClaims, name string) []string {
 	return values
 }
 
-func (s *gatewayServer) oauthProviderForIssuer(ctx context.Context, issuerURL string) (*oauthProvider, error) {
+func (s *gatewayServer) oauthProviderForIssuer(ctx context.Context, issuerURL, audience string) (*oauthProvider, error) {
 	issuerURL = strings.TrimSpace(issuerURL)
 	if issuerURL == "" {
 		return nil, errors.New("issuer URL is required")
 	}
 
+	cacheKey := issuerURL + "\x00" + audience
 	s.oauthMu.Lock()
-	provider, ok := s.oauthProviders[issuerURL]
+	provider, ok := s.oauthProviders[cacheKey]
 	s.oauthMu.Unlock()
 	if ok {
 		return provider, nil
@@ -216,18 +196,19 @@ func (s *gatewayServer) oauthProviderForIssuer(ctx context.Context, issuerURL st
 			return nil, err
 		}
 	}
-	jwks, err := keyfunc.Get(metadata.JWKSURI, keyfunc.Options{RefreshInterval: 10 * time.Minute})
-	if err != nil {
-		return nil, err
-	}
-
-	provider = &oauthProvider{jwks: jwks}
+	provider = &oauthProvider{verifier: &mcpauth.JWTVerifier{
+		JWKSURL:      metadata.JWKSURI,
+		Issuer:       issuerURL,
+		Audience:     audience,
+		HTTPClient:   s.httpClient,
+		JWKSCacheTTL: 10 * time.Minute,
+	}}
 	s.oauthMu.Lock()
-	if existing, ok := s.oauthProviders[issuerURL]; ok {
+	if existing, ok := s.oauthProviders[cacheKey]; ok {
 		s.oauthMu.Unlock()
 		return existing, nil
 	}
-	s.oauthProviders[issuerURL] = provider
+	s.oauthProviders[cacheKey] = provider
 	s.oauthMu.Unlock()
 	return provider, nil
 }
@@ -245,6 +226,8 @@ func (s *gatewayServer) fetchAuthServerMetadataWithFallback(ctx context.Context,
 
 	if metadata, err := s.fetchAuthServerMetadataForIssuer(ctx, internalIssuerURL, issuerURL); err == nil {
 		return metadata, true, nil
+	} else {
+		log.Printf("oauth internal provider lookup failed for %s: %v", internalIssuerURL, err)
 	}
 
 	// The internal issuer is only a transport optimization. It must not prevent

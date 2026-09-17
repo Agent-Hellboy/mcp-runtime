@@ -100,7 +100,7 @@ MCP clients use.
 | Variable | Required | Purpose |
 |----------|----------|---------|
 | `OAUTH_ISSUER_URL` | optional | Public issuer. Defaults to `https://<platform host>/oauth`. |
-| `OAUTH_INTERNAL_ISSUER_URL` | optional | In-cluster issuer for the gateway. Defaults to the `mcp-oauth-server` service URL. |
+| `OAUTH_INTERNAL_ISSUER_URL` | optional | In-cluster transport URL for the configured authorization server. Setup sets this when the bundled `mcp-auth-server` is enabled. |
 | `OAUTH_ALLOWED_REDIRECT_URI_SCHEMES` | optional | Extra `redirect_uri` schemes beyond https and http-loopback, comma-separated. Native MCP clients need this: Cursor registers `cursor://anysphere.cursor-mcp/oauth/callback`, so set `cursor`. |
 | `OAUTH_ALLOW_INSECURE_HTTP` | **never set in public** | Local Kind only. Unset, redirect URIs must be https or loopback. |
 

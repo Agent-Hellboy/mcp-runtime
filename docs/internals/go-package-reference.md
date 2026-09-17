@@ -2587,6 +2587,10 @@ type MCPServerReconciler struct {
 	// ClusterName is the cluster label attached to policy and audit events.
 	ClusterName string
 
+	// OAuthInternalIssuerURL is the in-cluster URL used by gateway sidecars for
+	// OAuth metadata and JWKS discovery.
+	OAuthInternalIssuerURL string
+
 	// MTLSClusterIssuer is the pre-existing cert-manager ClusterIssuer used for
 	// gateway and adapter workload certificates.
 	MTLSClusterIssuer string
@@ -2656,6 +2660,10 @@ type OperatorConfig struct {
 
 	// AnalyticsIngestURL is the default analytics ingest endpoint for gateway sidecars.
 	AnalyticsIngestURL string
+
+	// OAuthInternalIssuerURL is the in-cluster URL used by gateway sidecars for
+	// OAuth metadata and JWKS discovery.
+	OAuthInternalIssuerURL string
 
 	// ClusterName is the cluster label attached to emitted audit events.
 	ClusterName string
@@ -5356,7 +5364,6 @@ var DefaultPlatformStatusWorkloads = []PlatformWorkload{
 	{Component: "Platform API", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-platform-api"},
 	{Component: "Runtime Control", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-runtime-api"},
 	{Component: "Analytics API", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-analytics-api"},
-	{Component: "OAuth Server", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-oauth-server"},
 	{Component: "UI", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-sentinel-ui"},
 	{Component: "Gateway", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "mcp-sentinel-gateway"},
 	{Component: "Prometheus", Namespace: core.DefaultAnalyticsNamespace, Kind: "deployment", Name: "prometheus"},
@@ -6348,6 +6355,10 @@ type Input struct {
 	ParallelBuilds         bool
 	StrictProd             bool
 	DeployAnalytics        bool
+	DeployMCPAuthServer    bool
+	MCPAuthServerImage     string
+	MCPAuthConnectorsFile  string
+	MCPAuthConnector       string
 	OperatorArgs           []string
 	// Let's Encrypt (HTTP-01 via cert-manager). If empty, other TLS modes apply; mutually exclusive with TLSClusterIssuer.
 	ACMEmail    string
@@ -6368,29 +6379,33 @@ type Input struct {
 <a id="cli-setup-plan-type-plan-struct"></a>
 ```text
 type Plan struct {
-	Kubeconfig           string
-	Context              string
-	RegistryType         string
-	RegistryStorageSize  string
-	RegistryMode         string
-	ExternalRegistryURL  string
-	ExternalRegistryUser string
-	ExternalRegistryPass string
-	StorageMode          string
-	PlatformMode         string
-	Ingress              cluster.IngressOptions
-	RegistryManifest     string
-	TLSEnabled           bool
-	TestMode             bool
-	ParallelBuilds       bool
-	StrictProd           bool
-	DeployAnalytics      bool
-	OperatorArgs         []string
-	ACMEmail             string
-	ACMEStaging          bool
-	TLSClusterIssuer     string
-	MTLSClusterIssuer    string
-	InstallCertManager   bool
+	Kubeconfig            string
+	Context               string
+	RegistryType          string
+	RegistryStorageSize   string
+	RegistryMode          string
+	ExternalRegistryURL   string
+	ExternalRegistryUser  string
+	ExternalRegistryPass  string
+	StorageMode           string
+	PlatformMode          string
+	Ingress               cluster.IngressOptions
+	RegistryManifest      string
+	TLSEnabled            bool
+	TestMode              bool
+	ParallelBuilds        bool
+	StrictProd            bool
+	DeployAnalytics       bool
+	DeployMCPAuthServer   bool
+	MCPAuthServerImage    string
+	MCPAuthConnectorsFile string
+	MCPAuthConnector      string
+	OperatorArgs          []string
+	ACMEmail              string
+	ACMEStaging           bool
+	TLSClusterIssuer      string
+	MTLSClusterIssuer     string
+	InstallCertManager    bool
 }
     Plan captures the resolved setup decisions.
 
@@ -6534,7 +6549,6 @@ type AnalyticsImageSet struct {
 	AnalyticsAPI  string
 	Processor     string
 	UI            string
-	OAuthServer   string
 	Traefik       string
 	ClickHouse    string
 	Kafka         string

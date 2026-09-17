@@ -63,6 +63,9 @@ func validateAuth(auth *Auth) error {
 	if mode == "oauth" && strings.TrimSpace(auth.IssuerURL) == "" {
 		return fmt.Errorf("policy: auth mode %q requires issuer_url", auth.Mode)
 	}
+	if mode == "oauth" && strings.TrimSpace(auth.Audience) == "" {
+		return fmt.Errorf("policy: auth mode %q requires audience", auth.Mode)
+	}
 	if mode == "mtls" && strings.TrimSpace(auth.TrustDomain) == "" {
 		return fmt.Errorf("policy: auth mode %q requires trust_domain", auth.Mode)
 	}

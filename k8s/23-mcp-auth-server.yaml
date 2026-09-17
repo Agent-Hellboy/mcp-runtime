@@ -1,0 +1,76 @@
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata: {name: mcp-auth-server-strip-prefix, namespace: mcp-sentinel}
+spec:
+  stripPrefix:
+    prefixes: [/mcp-auth]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-auth-server
+  namespace: mcp-sentinel
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: mcp-auth-server}}
+  template:
+    metadata: {labels: {app: mcp-auth-server}}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: auth-server
+          image: docker.io/princekrroshan01/mcp-auth-server:latest
+          imagePullPolicy: IfNotPresent
+          ports: [{containerPort: 8080}]
+          env:
+            - {name: MCP_AUTH_ISSUER, value: MCP_AUTH_ISSUER_VALUE}
+            - {name: MCP_AUTH_RESOURCE, value: MCP_AUTH_RESOURCE_VALUE}
+            - {name: MCP_AUTH_LISTEN_ADDR, value: ":8080"}
+            - {name: MCP_AUTH_LOCAL_DEVELOPMENT, value: MCP_AUTH_LOCAL_DEVELOPMENT_VALUE}
+            - {name: MCP_AUTH_LOCAL_TOKEN_EXCHANGE, value: MCP_AUTH_LOCAL_TOKEN_EXCHANGE_VALUE}
+            - {name: MCP_AUTH_LOCAL_CLIENT_ID, value: mcp-auth-example-client}
+            - {name: MCP_AUTH_REGISTRATION_ENABLED, value: "true"}
+            - {name: MCP_AUTH_REQUIRE_HTTPS, value: MCP_AUTH_REQUIRE_HTTPS_VALUE}
+            - {name: MCP_AUTH_STORE, value: memory}
+            MCP_AUTH_CONNECTOR_ENV_BLOCK
+          envFrom:
+            MCP_AUTH_CONNECTOR_ENVFROM_BLOCK
+          volumeMounts:
+            MCP_AUTH_CONNECTOR_VOLUME_MOUNT_BLOCK
+          readinessProbe: {httpGet: {path: /readyz, port: 8080}}
+          livenessProbe: {httpGet: {path: /healthz, port: 8080}}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, capabilities: {drop: [ALL]}}
+      volumes:
+        MCP_AUTH_CONNECTOR_POD_VOLUME_BLOCK
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-auth-server
+  namespace: mcp-sentinel
+spec:
+  selector: {app: mcp-auth-server}
+  ports: [{name: http, port: 8080, targetPort: 8080}]
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: mcp-auth-server
+  namespace: mcp-sentinel
+  annotations:
+    traefik.ingress.kubernetes.io/router.middlewares: mcp-sentinel-mcp-auth-server-strip-prefix@kubernetescrd
+spec:
+  ingressClassName: traefik
+  MCP_AUTH_INGRESS_TLS_BLOCK
+  rules:
+    - host: MCP_AUTH_INGRESS_HOST_VALUE
+      http:
+        paths:
+          - path: /mcp-auth
+            pathType: Prefix
+            backend: {service: {name: mcp-auth-server, port: {number: 8080}}}

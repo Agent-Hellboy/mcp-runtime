@@ -9,7 +9,7 @@ func TestValidateAcceptsWellFormedDocument(t *testing.T) {
 	doc := &Document{
 		SchemaVersion: SchemaVersion,
 		Server:        Server{Name: "demo", Namespace: "mcp-servers"},
-		Auth:          &Auth{Mode: "oauth", IssuerURL: "https://issuer.example.com"},
+		Auth:          &Auth{Mode: "oauth", IssuerURL: "https://issuer.example.com", Audience: "https://resource.example.com/mcp"},
 		Policy:        &Config{Mode: "allow-list", DefaultDecision: "deny"},
 		Tools: []Tool{
 			{Name: "read-file", RequiredTrust: "low", SideEffect: "read"},

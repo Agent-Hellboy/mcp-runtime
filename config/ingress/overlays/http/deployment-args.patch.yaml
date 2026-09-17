@@ -9,7 +9,7 @@
     # the same server namespaces. web stays plaintext (no redirect) for the HTTP
     # test flows.
     - --providers.kubernetescrd=true
-    - --providers.kubernetescrd.namespaces=mcp-servers,mcp-servers-org,mcp-servers-public
+    - --providers.kubernetescrd.namespaces=mcp-servers,mcp-servers-org,mcp-servers-public,mcp-sentinel
     - --entrypoints.web.address=:8000
     - --entrypoints.web.forwardedHeaders.insecure=false
     - --entrypoints.websecure.address=:8443

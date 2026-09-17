@@ -164,3 +164,29 @@ kubectl delete mcpaccessgrant <grant-name> -n <namespace> --ignore-not-found
 kubectl delete mcpserver <server-name> -n <namespace> --ignore-not-found
 kubectl delete secret <server-name>-analytics-creds -n <namespace> --ignore-not-found
 ```
+# Optional bundled mcp-auth integration fixture
+
+The bundled authorization server is opt-in and separate from MCP application
+deployment. Setup pulls `princekrroshan01/mcp-auth-server:latest` from Docker
+Hub by default. Production deployments additionally require an HTTPS issuer,
+provider connector, and TLS Secret; test mode may use the local issuer:
+
+```bash
+./bin/mcp-runtime setup --test-mode \
+  --with-mcp-auth-server \
+  --ingress-manifest config/ingress/overlays/http
+```
+
+Deploy examples separately through the normal CLI flow. The governed fixture
+uses the bundled issuer and the gateway for Runtime governance; the standalone
+fixtures verify the mcp-auth SDK inside the MCP server process:
+
+```bash
+./bin/mcp-runtime server apply --use-kube --file examples/mcp-auth-example.yaml
+./bin/mcp-runtime server apply --use-kube --file examples/mcp-auth-sdk-ping.yaml
+./bin/mcp-runtime server apply --use-kube --file examples/mcp-auth-sdk-echo.yaml
+```
+
+The SDK verifier in the standalone examples is configured with the external
+issuer, canonical MCP resource, discovery URL, and required scope. Use a real
+development access token from the mcp-auth authorization server for testing.

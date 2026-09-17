@@ -23,6 +23,11 @@ Flags:
       --ingress string                      Ingress controller to install automatically during setup (traefik|none) (default "traefik")
       --ingress-manifest string             Manifest to apply when installing the ingress controller (default "config/ingress/overlays/http")
       --kubeconfig string                   Path to kubeconfig file (default: ~/.kube/config)
+      --mcp-auth-connector string           Provider connector name to activate (requires --mcp-auth-connectors-file)
+      --mcp-auth-connectors-file string     Provider connector JSON file for the external mcp-auth server
+      --mcp-auth-issuer-url string          Public HTTPS issuer URL for the bundled mcp-auth authorization server (required outside --test-mode)
+      --mcp-auth-server-image string        Container image for the optional bundled mcp-auth authorization server (default "docker.io/princekrroshan01/mcp-auth-server:latest")
+      --mcp-auth-tls-secret string          TLS Secret for the bundled mcp-auth ingress (required outside --test-mode)
       --mtls-cluster-issuer string          Enable the mTLS auth path with this cert-manager ClusterIssuer for gateway and adapter client certificates (requires --with-tls). Name an enterprise issuer, or the bundled mcp-runtime-ca to have setup provision it. Test mode defaults to mcp-runtime-ca. Overrides env MCP_SETUP_MTLS_CLUSTER_ISSUER
       --operator-leader-elect               Override operator leader election when set
       --operator-metrics-addr string        Operator metrics bind address (default: :8080 from manager.yaml)
@@ -37,6 +42,7 @@ Flags:
       --strict-prod                         Require production-style registry and TLS validation for non-test setup
       --test-mode                           Test mode for local Kind/dev installs; builds and pushes latest-tag runtime images, provisions a local workload mTLS issuer, and relaxes production guardrails
       --tls-cluster-issuer string           Use an existing cert-manager ClusterIssuer (e.g. internal CA; setup does not create it). Mutually exclusive with --acme-email. Overrides env MCP_SETUP_TLS_CLUSTER_ISSUER
+      --with-mcp-auth-server                Deploy the optional bundled mcp-auth authorization server; production requires HTTPS issuer, connector, and TLS Secret
       --with-tls                            Enable TLS overlays (ingress/registry). Use --acme-email for public Let's Encrypt, --tls-cluster-issuer for an org ClusterIssuer, or the bundled mcp-runtime-ca private CA (no ACME) when neither is set
       --without-sentinel                    Skip deploying the bundled mcp-sentinel stack
 

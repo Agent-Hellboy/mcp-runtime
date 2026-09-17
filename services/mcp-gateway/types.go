@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/MicahParks/keyfunc"
+	mcpauth "github.com/example/mcp-auth/auth-client/go/mcpauth"
 
 	"mcp-runtime/pkg/events"
 	policypkg "mcp-runtime/pkg/policy"
@@ -52,7 +52,7 @@ type rpcInspection struct {
 }
 
 type oauthProvider struct {
-	jwks *keyfunc.JWKS
+	verifier *mcpauth.JWTVerifier
 }
 
 type authServerMetadata struct {

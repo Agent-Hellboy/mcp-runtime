@@ -47,6 +47,55 @@ const (
 	kafkaKRaftReplicaCount   = int32(3)
 )
 
+func removeBundledOAuthServer(kubectl core.KubectlRunner) error {
+	resources := []struct{ kind, name string }{
+		{kind: "service", name: "mcp-oauth-server"},
+		{kind: "deployment", name: "mcp-oauth-server"},
+		{kind: "ingress", name: "mcp-oauth-server"},
+		{kind: "networkpolicy", name: "mcp-oauth-server-egress"},
+	}
+	for _, resource := range resources {
+		cmd, err := kubectl.CommandArgs([]string{"delete", resource.kind, resource.name, "-n", core.DefaultAnalyticsNamespace, "--ignore-not-found"})
+		if err != nil {
+			return err
+		}
+		cmd.SetStdout(os.Stdout)
+		cmd.SetStderr(os.Stderr)
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("remove bundled OAuth server %s/%s: %w", resource.kind, resource.name, err)
+		}
+	}
+	return nil
+}
+
+func removeBundledOAuthServerClientGo() error {
+	return removeBundledOAuthServer(core.DefaultKubectlClient())
+}
+
+func analyticsServiceManifests(postgresManifest string) []string {
+	manifests := []string{
+		postgresManifest,
+		"k8s/06-ingest.yaml",
+		"k8s/07-processor.yaml",
+		"k8s/08-platform-api.yaml",
+		"k8s/08-platform-api-rbac.yaml",
+		"k8s/08-runtime-api.yaml",
+		"k8s/08-runtime-api-rbac.yaml",
+		"k8s/08-analytics-api.yaml",
+		"k8s/22-split-api-networkpolicy.yaml",
+		"k8s/09-ui.yaml",
+		"k8s/10-gateway.yaml",
+		"k8s/11-prometheus.yaml",
+		"k8s/15-otel-collector.yaml",
+		"k8s/16-tempo.yaml",
+		"k8s/17-loki.yaml",
+		"k8s/18-promtail.yaml",
+		"k8s/19-grafana-datasources.yaml",
+		"k8s/12-grafana.yaml",
+	}
+	return manifests
+}
+
 func deployAnalyticsManifests(logger *zap.Logger, images AnalyticsImageSet, storageMode, platformMode string) error {
 	return deployAnalyticsManifestsClientGo(logger, images, storageMode, platformMode)
 }
@@ -56,6 +105,9 @@ func deployAnalyticsManifestsClientGo(logger *zap.Logger, images AnalyticsImageS
 	rolloutTimeout := rolloutTimeoutDuration.String()
 
 	if err := ensureRepoManagedTraefikMiddlewareResourcesClientGo(logger); err != nil {
+		return err
+	}
+	if err := removeBundledOAuthServerClientGo(); err != nil {
 		return err
 	}
 
@@ -146,27 +198,7 @@ func deployAnalyticsManifestsClientGo(logger *zap.Logger, images AnalyticsImageS
 	}
 
 	core.Info("Applying analytics services")
-	for _, manifest := range []string{
-		postgresManifest,
-		"k8s/06-ingest.yaml",
-		"k8s/07-processor.yaml",
-		"k8s/08-platform-api.yaml",
-		"k8s/08-platform-api-rbac.yaml",
-		"k8s/08-runtime-api.yaml",
-		"k8s/08-runtime-api-rbac.yaml",
-		"k8s/08-analytics-api.yaml",
-		"k8s/22-split-api-networkpolicy.yaml",
-		"k8s/14-oauth-server.yaml",
-		"k8s/09-ui.yaml",
-		"k8s/10-gateway.yaml",
-		"k8s/11-prometheus.yaml",
-		"k8s/15-otel-collector.yaml",
-		"k8s/16-tempo.yaml",
-		"k8s/17-loki.yaml",
-		"k8s/18-promtail.yaml",
-		"k8s/19-grafana-datasources.yaml",
-		"k8s/12-grafana.yaml",
-	} {
+	for _, manifest := range analyticsServiceManifests(postgresManifest) {
 		if err := applyRenderedManifestClientGo(manifest, images, imagePullSecretName, platformMode); err != nil {
 			return err
 		}
@@ -194,7 +226,6 @@ func deployAnalyticsManifestsClientGo(logger *zap.Logger, images AnalyticsImageS
 		{kind: "deployment", name: "mcp-platform-api"},
 		{kind: "deployment", name: "mcp-runtime-api"},
 		{kind: "deployment", name: "mcp-analytics-api"},
-		{kind: "deployment", name: "mcp-oauth-server"},
 		{kind: "deployment", name: "mcp-sentinel-ui"},
 		{kind: "deployment", name: "mcp-sentinel-gateway"},
 		{kind: "deployment", name: "prometheus"},
@@ -236,6 +267,9 @@ func deployAnalyticsManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap
 	rolloutTimeout := analyticsRolloutTimeoutString()
 
 	if err := ensureRepoManagedTraefikMiddlewareResources(kubectl, logger); err != nil {
+		return err
+	}
+	if err := removeBundledOAuthServer(kubectl); err != nil {
 		return err
 	}
 
@@ -318,27 +352,7 @@ func deployAnalyticsManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap
 	}
 
 	core.Info("Applying analytics services")
-	for _, manifest := range []string{
-		postgresManifest,
-		"k8s/06-ingest.yaml",
-		"k8s/07-processor.yaml",
-		"k8s/08-platform-api.yaml",
-		"k8s/08-platform-api-rbac.yaml",
-		"k8s/08-runtime-api.yaml",
-		"k8s/08-runtime-api-rbac.yaml",
-		"k8s/08-analytics-api.yaml",
-		"k8s/22-split-api-networkpolicy.yaml",
-		"k8s/14-oauth-server.yaml",
-		"k8s/09-ui.yaml",
-		"k8s/10-gateway.yaml",
-		"k8s/11-prometheus.yaml",
-		"k8s/15-otel-collector.yaml",
-		"k8s/16-tempo.yaml",
-		"k8s/17-loki.yaml",
-		"k8s/18-promtail.yaml",
-		"k8s/19-grafana-datasources.yaml",
-		"k8s/12-grafana.yaml",
-	} {
+	for _, manifest := range analyticsServiceManifests(postgresManifest) {
 		if err := applyRenderedManifest(kubectl, manifest, images, imagePullSecretName, platformMode); err != nil {
 			return err
 		}
@@ -359,7 +373,6 @@ func deployAnalyticsManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap
 		{kind: "deployment", name: "mcp-platform-api"},
 		{kind: "deployment", name: "mcp-runtime-api"},
 		{kind: "deployment", name: "mcp-analytics-api"},
-		{kind: "deployment", name: "mcp-oauth-server"},
 		{kind: "deployment", name: "mcp-sentinel-ui"},
 		{kind: "deployment", name: "mcp-sentinel-gateway"},
 		{kind: "deployment", name: "prometheus"},
@@ -702,9 +715,6 @@ func renderAnalyticsManifest(content string, images AnalyticsImageSet, imagePull
 	if strings.TrimSpace(images.UI) != "" {
 		replacements["image: mcp-sentinel-ui:latest"] = "image: " + images.UI
 	}
-	if strings.TrimSpace(images.OAuthServer) != "" {
-		replacements["image: mcp-oauth-server:latest"] = "image: " + images.OAuthServer
-	}
 	if strings.TrimSpace(images.Traefik) != "" {
 		replacements["image: traefik:v3.0"] = "image: " + images.Traefik
 	}
@@ -842,9 +852,6 @@ func renderAnalyticsConfigManifestWithReaders(content, platformMode string, imag
 		} else {
 			manifest.Data["OAUTH_ISSUER_URL"] = "http://localhost:18080/oauth"
 		}
-	}
-	if strings.TrimSpace(manifest.Data["OAUTH_INTERNAL_ISSUER_URL"]) == "" {
-		manifest.Data["OAUTH_INTERNAL_ISSUER_URL"] = "http://mcp-oauth-server.mcp-sentinel.svc.cluster.local:8086/oauth"
 	}
 	if strings.TrimSpace(manifest.Data["PLATFORM_TRAEFIK_NAMESPACE"]) == "" {
 		if namespace := resolveTraefikNamespace(); namespace != "" {
@@ -1337,7 +1344,6 @@ func analyticsImagePullSecretCandidates(images AnalyticsImageSet) []string {
 		images.AnalyticsAPI,
 		images.Processor,
 		images.UI,
-		images.OAuthServer,
 	}
 }
 
@@ -1684,7 +1690,6 @@ func restartAnalyticsDeploymentsClientGo() error {
 		"mcp-platform-api",
 		"mcp-runtime-api",
 		"mcp-analytics-api",
-		"mcp-oauth-server",
 		"mcp-sentinel-ui",
 		"mcp-sentinel-ingest",
 		"mcp-sentinel-processor",
