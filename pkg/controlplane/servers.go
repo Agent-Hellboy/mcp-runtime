@@ -47,6 +47,12 @@ func (m *Manager) ListServersWithOptions(ctx context.Context, namespace string, 
 		LabelSelector: opts.LabelSelector,
 	})
 	if crdErr == nil {
+		// There is no deployment status to join when the catalog is empty. Apart
+		// from avoiding an unnecessary API call, this keeps an empty catalog
+		// healthy when a caller can list MCPServers but cannot list Deployments.
+		if len(serverObjects.Items) == 0 {
+			return ListServersResult{Servers: []ServerInfo{}}, nil
+		}
 		deploymentStatus := map[string]ServerDeploymentStatus{}
 		if !opts.SkipDeploymentStatus {
 			deployments, deployErr := clients.Clientset.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{

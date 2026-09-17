@@ -78,6 +78,29 @@ func TestListServersProjectsMCPServerInventoryAndDeploymentStatus(t *testing.T) 
 	}
 }
 
+func TestListServersEmptyCatalogDoesNotRequireDeploymentList(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme: %v", err)
+	}
+	clientset := kubernetesfake.NewSimpleClientset()
+	clientset.PrependReactor("list", "deployments", func(kubetesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewForbidden(schema.GroupResource{Group: "apps", Resource: "deployments"}, "", nil)
+	})
+	mgr := New(&k8sclient.Clients{
+		Dynamic:   fake.NewSimpleDynamicClient(scheme),
+		Clientset: clientset,
+	})
+
+	result, err := mgr.ListServers(context.Background(), "mcp-servers")
+	if err != nil {
+		t.Fatalf("ListServers returned error for empty catalog: %v", err)
+	}
+	if len(result.Servers) != 0 {
+		t.Fatalf("servers = %#v, want empty", result.Servers)
+	}
+}
+
 func TestListServersWithOptionsFiltersMCPServersByLabel(t *testing.T) {
 	scheme := runtime.NewScheme()
 	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
