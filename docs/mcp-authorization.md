@@ -144,6 +144,9 @@ export KEYCLOAK_CLIENT_SECRET="$(tr -d '\n' < /secure/keycloak-client-secret)"
     "authorization_endpoint": "https://keycloak.example.com/realms/mcp-runtime/protocol/openid-connect/auth",
     "token_endpoint": "https://keycloak.example.com/realms/mcp-runtime/protocol/openid-connect/token",
     "jwks_uri": "https://keycloak.example.com/realms/mcp-runtime/protocol/openid-connect/certs",
+    "token_endpoint_internal": "https://keycloak.mcp-sentinel.svc.cluster.local:8443/realms/mcp-runtime/protocol/openid-connect/token",
+    "jwks_uri_internal": "https://keycloak.mcp-sentinel.svc.cluster.local:8443/realms/mcp-runtime/protocol/openid-connect/certs",
+    "token_endpoint_server_name": "keycloak.example.com",
     "client_id": "mcp-auth",
     "client_secret_env": "KEYCLOAK_CLIENT_SECRET",
     "exchange_client_id": "mcp-auth",
@@ -160,9 +163,12 @@ export KEYCLOAK_CLIENT_SECRET="$(tr -d '\n' < /secure/keycloak-client-secret)"
 ```
 
 All four provider endpoints must use HTTPS in production. Explicit endpoints
-are useful when the auth pod cannot hairpin through the public ingress. If an
-internal endpoint is used, it must still be HTTPS and use a certificate trusted
-by the auth server; an internal HTTP shortcut is test-only.
+are useful when the auth pod cannot hairpin through the public ingress. For an
+in-cluster provider, keep the public `token_endpoint` for discovery and add
+`token_endpoint_internal` with the private HTTPS Service URL plus
+`token_endpoint_server_name` matching the provider certificate. If an internal
+endpoint is used, it must still be HTTPS and use a certificate trusted by the
+auth server; an internal HTTP shortcut is test-only.
 
 ## Configure the MCPServer resource
 

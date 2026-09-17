@@ -25,6 +25,13 @@ func main() {
 		log.Fatal(err)
 	}
 	verifier := &mcpauth.JWTVerifier{JWKSURL: jwksURL, Issuer: issuer, Audience: resource, RequiredScopes: map[string]bool{"tools:read": true}}
+	if strings.HasPrefix(jwksURL, "http://") {
+		// The optional cluster-local JWKS URL is reached directly over the
+		// Service network. mcp-auth's HTTPS guard still applies; this header
+		// records that the request is the same trusted backchannel that an
+		// ingress would forward as HTTPS. Never use this for a public URL.
+		verifier.HTTPClient = &http.Client{Transport: forwardedHTTPSRoundTripper{base: http.DefaultTransport}}
+	}
 	server := mcp.NewServer(&mcp.Implementation{Name: "mcp-auth-sdk-ping", Version: "1.0.0"}, nil)
 	mcp.AddTool(server, &mcp.Tool{Name: "sdk-ping", Description: "Return pong after mcp-auth SDK verification"}, func(context.Context, *mcp.CallToolRequest, any) (*mcp.CallToolResult, any, error) {
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "pong"}}}, nil, nil
@@ -44,6 +51,14 @@ func main() {
 	mux.HandleFunc(metadataPath, metadataHandler)
 	mux.HandleFunc("/.well-known/oauth-protected-resource", metadataHandler)
 	log.Fatal(http.ListenAndServe(":"+envOr("PORT", "8088"), mux))
+}
+
+type forwardedHTTPSRoundTripper struct{ base http.RoundTripper }
+
+func (t forwardedHTTPSRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
+	copy := request.Clone(request.Context())
+	copy.Header.Set("X-Forwarded-Proto", "https")
+	return t.base.RoundTrip(copy)
 }
 
 // resolveJWKS returns the JWKS endpoint used to verify access tokens.

@@ -128,8 +128,8 @@ MCP_AUTH_INGRESS_TLS_BLOCK
 # old bundled OAuth-server egress policy that was removed with the bundled OAuth
 # server, and ships with the workload so it is applied by the same opt-in
 # --with-mcp-auth-server step rather than by the unconditional platform
-# manifests. SQLite is local to the pod; 443 is needed to reach an external
-# OIDC provider when a connector is configured.
+# manifests. SQLite is local to the pod; 8443 reaches the bundled Keycloak
+# HTTPS Service and 443 reaches an external OIDC provider when configured.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -148,7 +148,7 @@ spec:
               app: keycloak
       ports:
         - protocol: TCP
-          port: 8080
+          port: 8443
     - to:
         - namespaceSelector:
             matchLabels:
