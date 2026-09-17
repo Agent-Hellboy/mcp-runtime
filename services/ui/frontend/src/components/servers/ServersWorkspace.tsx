@@ -19,16 +19,29 @@ import { SignedOutServers } from "./SignedOutServers";
 import { ToolCatalog } from "./ToolCatalog";
 import { ToolDetail } from "./ToolDetail";
 import { Button } from "../../ui/Button";
+import { ConfirmDialog, type ConfirmRequest } from "../../ui/ConfirmDialog";
 import { SelectField, TextField } from "../../ui/Field";
 import { FilterBar, FilterSummary, type FilterChip } from "../../ui/FilterBar";
 import { MetricGrid } from "../../ui/MetricCard";
 import { PageHeader } from "../../ui/PageHeader";
 import { ErrorState, LoadingState } from "../../ui/States";
+import { PublicServersPreview } from "./PublicServersPreview";
+import { Icon } from "../../ui/Icon";
 import { useCatalog } from "../../hooks/useCatalog";
-import { isServerReady, serverKey, toolKey } from "../../api/types";
+import { retireServer } from "../../api/catalog";
+import { readRuntimeConfig } from "../../api/config";
+import {
+  formatPublishQuota,
+  isServerReady,
+  isTenantUser,
+  serverKey,
+  toolKey,
+  type AuthStatus,
+  type ServerSummary,
+} from "../../api/types";
 
 type ServersWorkspaceProps = {
-  authenticated: boolean;
+  auth: AuthStatus;
   onSignIn: () => void;
   // Supplied by the shell so a selected server or tool is shareable and
   // survives back/forward. Standalone renders fall back to local state.
@@ -43,11 +56,12 @@ const STATUS_OPTIONS: Array<{ value: ServerStatusFilter; label: string }> = [
 ];
 
 export function ServersWorkspace({
-  authenticated,
+  auth,
   onSignIn,
   params,
   onParamsChange,
 }: ServersWorkspaceProps) {
+  const authenticated = auth.authenticated;
   const [localParams, setLocalParams] = useState<Record<string, string>>({});
   const activeParams = params ?? localParams;
   const setParams = useCallback(
@@ -73,6 +87,10 @@ export function ServersWorkspace({
 
   const [serverFilters, setServerFilters] = useState<ServerFilters>(EMPTY_SERVER_FILTERS);
   const [toolFilters, setToolFilters] = useState<ToolFilters>(EMPTY_TOOL_FILTERS);
+  const [confirm, setConfirm] = useState<ConfirmRequest | null>(null);
+  const [retiringKey, setRetiringKey] = useState("");
+  const [actionError, setActionError] = useState("");
+  const [actionNotice, setActionNotice] = useState("");
 
   const catalog = useCatalog(authenticated, serverFilters.namespace);
 
@@ -136,6 +154,11 @@ export function ServersWorkspace({
   }, [setParams]);
 
   if (!authenticated) {
+    // A public-mode deployment shows its anonymous catalog instead of a
+    // sign-in wall (services/ui/public_catalog_proxy.go).
+    if (readRuntimeConfig().platformMode === "public") {
+      return <PublicServersPreview onSignIn={onSignIn} />;
+    }
     return <SignedOutServers onSignIn={onSignIn} />;
   }
 
@@ -180,6 +203,46 @@ export function ServersWorkspace({
         />
       </>
     );
+  }
+
+  function askRetire(server: ServerSummary) {
+    const key = serverKey(server);
+    setConfirm({
+      title: `Retire ${server.name}?`,
+      body: (
+        <>
+          The MCPServer object in <strong>{server.namespace}</strong> is deleted and its endpoint stops
+          answering. Tools it publishes leave the catalog. This cannot be undone from here; the server
+          would have to be published again.
+        </>
+      ),
+      confirmLabel: "Retire server",
+      destructive: true,
+      onConfirm: async () => {
+        setRetiringKey(key);
+        setActionError("");
+        setActionNotice("");
+        try {
+          await retireServer(server.namespace, server.name);
+          setActionNotice(`${server.name} retired.`);
+          // The retired server may have been the active tool scope. Leaving
+          // that key set would filter every remaining tool out and leave an
+          // apparently empty catalog.
+          setToolFilters((current) =>
+            current.serverKey === key ? { ...current, serverKey: "" } : current
+          );
+          setParams({ server: undefined, tool: undefined });
+          catalog.reload();
+        } catch (error) {
+          setActionError(
+            error instanceof Error ? error.message : `${server.name} could not be retired.`
+          );
+        } finally {
+          setRetiringKey("");
+          setConfirm(null);
+        }
+      },
+    });
   }
 
   const readyCount = visibleServers.filter(isServerReady).length;
@@ -259,8 +322,29 @@ export function ServersWorkspace({
             hint: "Missing or ungoverned",
             tone: driftCount > 0 ? "warning" : "default",
           },
+          // The runtime does not cap admin publishing, so the quota is only
+          // meaningful for a tenant principal.
+          ...(isTenantUser(auth)
+            ? [
+                {
+                  label: "Publish quota",
+                  value: formatPublishQuota(catalog.publishPolicy),
+                  icon: "inbox" as const,
+                  hint: "Active servers against your limit",
+                  testId: "server-quota",
+                },
+              ]
+            : []),
         ]}
       />
+
+      {actionNotice ? (
+        <p className="notice notice-success" role="status" data-testid="servers-action-notice">
+          <Icon name="check" />
+          <span className="notice-body">{actionNotice}</span>
+        </p>
+      ) : null}
+
 
       <div className={sheetOpen ? "servers-layout with-sheet" : "servers-layout"}>
         <div>
@@ -341,6 +425,9 @@ export function ServersWorkspace({
                 setParams({ tool: undefined });
               }}
               onInspect={(key) => setParams({ server: key, tool: undefined })}
+              onRetire={askRetire}
+              retiringKey={retiringKey}
+              retireError={actionError}
             />
           </section>
 
@@ -374,6 +461,17 @@ export function ServersWorkspace({
           />
         ) : null}
       </div>
+
+      {confirm ? (
+        <ConfirmDialog
+          {...confirm}
+          busy={retiringKey !== ""}
+          onCancel={() => setConfirm(null)}
+          testId="server-retire-confirm"
+          confirmTestId="server-retire-confirm-yes"
+          cancelTestId="server-retire-confirm-cancel"
+        />
+      ) : null}
     </>
   );
 }

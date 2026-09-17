@@ -149,6 +149,32 @@ describe("App", () => {
     expect(document.body.innerHTML).not.toContain("ui-key");
   });
 
+  it("signs in with a Google credential", async () => {
+    const user = userEvent.setup();
+    window.MCP_GOOGLE_CLIENT_ID = "test-client-id";
+    const initialize = vi.fn();
+    window.google = { accounts: { id: { initialize, renderButton: vi.fn() } } };
+    const { calls } = stubRoutes({
+      "/auth/status": SIGNED_OUT,
+      "/auth/login": ADMIN,
+      ...EMPTY_CATALOG,
+    });
+
+    renderApp();
+    await user.click(await screen.findByTestId("signin-button"));
+    await waitFor(() => expect(initialize).toHaveBeenCalledTimes(1));
+
+    const { callback } = initialize.mock.calls[0][0];
+    callback({ credential: "google-id-token" });
+
+    await waitFor(() => expect(screen.getByTestId("logout-button")).toBeInTheDocument());
+    const loginCall = calls.find((call) => call.url === "/auth/login");
+    expect(String(loginCall?.init.body)).toBe(JSON.stringify({ id_token: "google-id-token" }));
+
+    delete window.google;
+    delete window.MCP_GOOGLE_CLIENT_ID;
+  });
+
   it("shows a sign-in error without leaving the form", async () => {
     const user = userEvent.setup();
     stubRoutes({

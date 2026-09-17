@@ -34,19 +34,15 @@ export async function readAuthStatus(): Promise<AuthStatus> {
 export type LoginInput =
   | { email: string; password: string }
   | { apiKey: string }
-  // Google / OIDC: the browser only ever holds the ID token. The UI service
-  // verifies it upstream and mints the HttpOnly session.
   | { idToken: string };
 
 export async function login(input: LoginInput): Promise<AuthStatus> {
-  let body: Record<string, string>;
-  if ("apiKey" in input) {
-    body = { api_key: input.apiKey };
-  } else if ("idToken" in input) {
-    body = { id_token: input.idToken };
-  } else {
-    body = { email: input.email, password: input.password };
-  }
+  const body =
+    "apiKey" in input
+      ? { api_key: input.apiKey }
+      : "idToken" in input
+        ? { id_token: input.idToken }
+        : { email: input.email, password: input.password };
   return asAuthStatus(
     await fetchUIJSON("/auth/login", {
       method: "POST",

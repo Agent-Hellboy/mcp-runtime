@@ -1,7 +1,5 @@
 import { useCallback, useState } from "react";
 
-import { AccessControlPanel, type AccessSelection } from "./AccessControlPanel";
-import { AccessDetail } from "./AccessDetail";
 import { AdminGuard } from "./AdminGuard";
 import { ADMIN_GROUPS, ADMIN_SECTIONS, adminSection, type AdminSectionId } from "./adminSections";
 import { OperationsPanel } from "./OperationsPanel";
@@ -23,14 +21,11 @@ type AdminWorkspaceProps = {
 };
 
 export function AdminWorkspace({ auth, onSignIn, section, onSectionChange }: AdminWorkspaceProps) {
-  const [localSection, setLocalSection] = useState<AdminSectionId>("access");
+  const [localSection, setLocalSection] = useState<AdminSectionId>("teams");
   const active = section ?? localSection;
-  const [namespace, setNamespace] = useState("");
-  const [selection, setSelection] = useState<AccessSelection | null>(null);
 
   const select = useCallback(
     (next: AdminSectionId) => {
-      setSelection(null);
       if (onSectionChange) {
         onSectionChange(next);
       } else {
@@ -39,8 +34,6 @@ export function AdminWorkspace({ auth, onSignIn, section, onSectionChange }: Adm
     },
     [onSectionChange]
   );
-
-  const current = adminSection(active);
 
   return (
     <AdminGuard auth={auth} onSignIn={onSignIn}>
@@ -60,7 +53,7 @@ export function AdminWorkspace({ auth, onSignIn, section, onSectionChange }: Adm
                       <button
                         type="button"
                         className="admin-rail-item"
-                        aria-current={item.id === active && !selection ? "page" : undefined}
+                        aria-current={item.id === active ? "page" : undefined}
                         data-testid={`admin-section-${item.id}`}
                         onClick={() => select(item.id)}
                       >
@@ -88,20 +81,7 @@ export function AdminWorkspace({ auth, onSignIn, section, onSectionChange }: Adm
         </div>
 
         <div>
-          {selection ? (
-            <AccessDetail
-              selection={selection}
-              onBack={() => setSelection(null)}
-              sectionLabel={current.label}
-            />
-          ) : active === "access" ? (
-            <AccessControlPanel
-              namespace={namespace}
-              onNamespaceChange={setNamespace}
-              onSelect={setSelection}
-              onSignIn={onSignIn}
-            />
-          ) : active === "teams" ? (
+          {active === "teams" ? (
             <TeamsPanel onSignIn={onSignIn} />
           ) : active === "operations" ? (
             <OperationsPanel onSignIn={onSignIn} />

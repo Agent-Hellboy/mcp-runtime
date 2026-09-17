@@ -8,6 +8,7 @@ import { DataTable, buildColumns } from "../../ui/DataTable";
 import { PageHeader } from "../../ui/PageHeader";
 import { ErrorState, LoadingState } from "../../ui/States";
 import { expiryState, formatAbsolute, formatTimestamp } from "../../lib/format";
+import { ForbiddenError } from "../../api/client";
 import { useAccessActivity } from "../../hooks/useAdminData";
 import { subjectLabel } from "../../api/types";
 import type { GatewayEvent } from "../../api/types";
@@ -182,6 +183,12 @@ export function AccessDetail({ selection, onBack, sectionLabel }: AccessDetailPr
           <LoadingState
             label={isGrant ? "Loading activity…" : "Loading timeline…"}
             testId="access-activity-loading"
+          />
+        ) : activityQuery.error instanceof ForbiddenError ? (
+          <ErrorState
+            title="Admin access required."
+            detail="Gateway decision events are restricted to admin accounts on this cluster. The grant or session itself is shown above."
+            testId="access-activity-forbidden"
           />
         ) : activityQuery.error ? (
           <ErrorState

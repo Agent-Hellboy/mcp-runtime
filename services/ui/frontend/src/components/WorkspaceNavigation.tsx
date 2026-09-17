@@ -22,6 +22,15 @@ export const WORKSPACE_TABS: WorkspaceTab[] = [
     icon: "server",
   },
   {
+    id: "access",
+    label: "Access control",
+    description: "Grants and agent sessions enforced by the MCP gateway.",
+    icon: "shield",
+    // Any authenticated principal, not only admins: the backend registers
+    // /runtime/grants and /runtime/sessions with rr.auth, not rr.adminOnly.
+    visible: (auth) => auth.authenticated,
+  },
+  {
     id: "activity",
     label: "Activity",
     description: "Your MCP usage and team membership.",
@@ -39,7 +48,7 @@ export const WORKSPACE_TABS: WorkspaceTab[] = [
     id: "admin",
     label: "Administration",
     description: "Access control, teams, operations, and platform health.",
-    icon: "shield",
+    icon: "gauge",
     visible: isAdmin,
   },
 ];

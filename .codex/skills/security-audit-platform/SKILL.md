@@ -118,8 +118,28 @@ components,policy,observability/*}`, `/user/api-keys`,
 `/user/analytics/usage` — see `sessionProxyRuntimePrefixes` /
 `sessionProxyAnalyticsPrefixes` in `session_proxy.go` for the authoritative
 list) and confirm a missing/expired/invalid session returns 401 on each.
-Non-GET methods against `/api/ui/v1/*` must return 405 unless the branch
-under audit has landed a write allowlist with its own CSRF defense.
+A cookie-authenticated write allowlist already exists in `session_proxy.go`
+(`sessionProxyWriteRoutes`) — this is not a hypothetical a future branch
+might add. As of this audit it covers `/user/api-keys` (POST, DELETE),
+`/runtime/grants` (POST, PATCH, DELETE), `/runtime/sessions` (POST, PATCH,
+DELETE), `/runtime/teams` and its `/members`/`/users` sub-paths (POST, PUT,
+DELETE), and `/runtime/actions/restart` (POST) — re-check
+`sessionProxyWriteRoutes` for the current list, since branches regularly add
+routes here (e.g. server retire). Every non-GET request, allowlisted or not,
+goes through CSRF verification (`verifyCSRF`) before reaching the upstream.
+Audit both directions:
+
+- Non-GET methods **not** on the allowlist still return 405 (`sessionProxyWriteAllowed`
+  rejects them before the CSRF/session check even runs).
+- Non-GET methods **on** the allowlist reject a missing or invalid
+  `X-CSRF-Token` with 403 (`{"error":"csrf_failed"}`), and only succeed with
+  a valid session-bound token obtained from `/auth/login`/`/auth/status`.
+
+```bash
+# Missing CSRF token on an allowlisted write route must 403, not succeed.
+curl -sS -b "$JAR" -o /dev/null -w "%{http_code}\n" -X POST \
+  "$BASE/api/ui/v1/runtime/sessions" -H 'content-type: application/json' -d '{}'
+```
 
 ## Step 3 — Tenant and grant isolation probes
 

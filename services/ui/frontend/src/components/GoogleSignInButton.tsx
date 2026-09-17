@@ -1,93 +1,81 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 
-const GSI_SRC = "https://accounts.google.com/gsi/client";
+import { readRuntimeConfig } from "../api/config";
 
-type GoogleSignInButtonProps = {
-  clientId: string;
-  theme: "dark" | "light";
-  onCredential: (idToken: string) => void;
-  disabled?: boolean;
-};
+const GSI_SCRIPT_SRC = "https://accounts.google.com/gsi/client";
 
-function loadGSI(): Promise<void> {
+let gsiScriptPromise: Promise<void> | null = null;
+
+// Loads the Google Identity Services script at most once per page load,
+// regardless of how many times a SignInPanel mounts.
+function loadGoogleIdentityServices(): Promise<void> {
   if (window.google?.accounts?.id) {
     return Promise.resolve();
   }
-  const existing = document.querySelector<HTMLScriptElement>(`script[src="${GSI_SRC}"]`);
-  if (existing) {
-    return new Promise((resolve, reject) => {
-      existing.addEventListener("load", () => resolve());
-      existing.addEventListener("error", () => reject(new Error("gsi_load_failed")));
+  if (!gsiScriptPromise) {
+    gsiScriptPromise = new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = GSI_SCRIPT_SRC;
+      script.async = true;
+      script.defer = true;
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error("failed to load Google Identity Services"));
+      document.head.appendChild(script);
     });
   }
-  return new Promise((resolve, reject) => {
-    const script = document.createElement("script");
-    script.src = GSI_SRC;
-    script.async = true;
-    script.defer = true;
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error("gsi_load_failed"));
-    document.head.appendChild(script);
-  });
+  return gsiScriptPromise;
 }
 
-// Google sign-in was previously reachable only from the older dashboard. The
-// server still verifies the credential (services/ui/main.go POST /auth/login
-// with id_token), so this is the same flow in the redesigned form - the button
-// only produces the ID token.
-export function GoogleSignInButton({ clientId, theme, onCredential, disabled }: GoogleSignInButtonProps) {
-  const container = useRef<HTMLDivElement>(null);
-  const [failed, setFailed] = useState(false);
-  const callback = useRef(onCredential);
-  callback.current = onCredential;
+type GoogleSignInButtonProps = {
+  onCredential: (idToken: string) => void;
+};
+
+// Renders nothing when no client ID is configured for this deployment
+// (readRuntimeConfig().googleClientId, from window.MCP_GOOGLE_CLIENT_ID).
+export function GoogleSignInButton({ onCredential }: GoogleSignInButtonProps) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const clientId = readRuntimeConfig().googleClientId;
 
   useEffect(() => {
+    if (!clientId) {
+      return;
+    }
     let cancelled = false;
-    loadGSI()
+
+    loadGoogleIdentityServices()
       .then(() => {
-        if (cancelled || !container.current || !window.google?.accounts?.id) {
+        if (cancelled || !containerRef.current || !window.google?.accounts?.id) {
           return;
         }
         window.google.accounts.id.initialize({
           client_id: clientId,
           callback: (response) => {
-            const credential = response?.credential?.trim();
-            if (credential) {
-              callback.current(credential);
+            if (response.credential) {
+              onCredential(response.credential);
             }
           },
         });
-        window.google.accounts.id.renderButton(container.current, {
-          theme: theme === "dark" ? "filled_black" : "outline",
+        window.google.accounts.id.renderButton(containerRef.current, {
+          theme: "outline",
           size: "large",
-          text: "signin_with",
-          shape: "rectangular",
+          shape: "pill",
+          text: "continue_with",
+          width: 280,
         });
       })
       .catch(() => {
-        if (!cancelled) {
-          setFailed(true);
-        }
+        // No sign-in button is better than a broken one; email/password and
+        // API-key sign-in remain available regardless.
       });
+
     return () => {
       cancelled = true;
     };
-  }, [clientId, theme]);
+  }, [clientId, onCredential]);
 
-  if (failed) {
-    return (
-      <p className="field-error" data-testid="google-signin-error">
-        Google sign-in could not be loaded. Use your email and password or an API key.
-      </p>
-    );
+  if (!clientId) {
+    return null;
   }
 
-  return (
-    <div
-      className="google-signin"
-      ref={container}
-      data-testid="google-signin"
-      aria-busy={disabled || undefined}
-    />
-  );
+  return <div ref={containerRef} className="google-signin" data-testid="google-signin" />;
 }

@@ -7,6 +7,7 @@ import { ApiKeysWorkspace } from "./components/user/ApiKeysWorkspace";
 import { SignInPanel } from "./components/SignInPanel";
 import { ServersWorkspace } from "./components/servers/ServersWorkspace";
 import { AdminWorkspace } from "./components/admin/AdminWorkspace";
+import { AccessWorkspace } from "./components/access/AccessWorkspace";
 import { adminSection, type AdminSectionId } from "./components/admin/adminSections";
 import { visibleWorkspaceTabs } from "./components/WorkspaceNavigation";
 import { useHashRoute } from "./routing/useHashRoute";
@@ -161,7 +162,6 @@ export function App() {
         onCancel={() => navigate({ workspace: "servers" })}
         error={loginError}
         busy={authBusy}
-        theme={theme}
       />
     );
   } else if (route.workspace === "admin") {
@@ -173,6 +173,8 @@ export function App() {
         onSectionChange={(section: AdminSectionId) => navigate({ workspace: "admin", section })}
       />
     );
+  } else if (route.workspace === "access") {
+    content = <AccessWorkspace auth={auth} onSignIn={handleSignIn} />;
   } else if (route.workspace === "activity") {
     content = <ActivityWorkspace auth={auth} onSignIn={handleSignIn} />;
   } else if (route.workspace === "keys") {
@@ -180,7 +182,7 @@ export function App() {
   } else {
     content = (
       <ServersWorkspace
-        authenticated={auth.authenticated}
+        auth={auth}
         onSignIn={handleSignIn}
         params={route.params}
         onParamsChange={setParams}

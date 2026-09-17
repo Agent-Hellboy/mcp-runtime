@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useCallback, useState, type FormEvent } from "react";
 
 import { GoogleSignInButton } from "./GoogleSignInButton";
 import { Button } from "../ui/Button";
@@ -13,18 +13,26 @@ type SignInPanelProps = {
   onCancel?: () => void;
   error: string;
   busy: boolean;
-  theme: "dark" | "light";
 };
 
 type Mode = "account" | "api-key";
 
-export function SignInPanel({ onSubmit, onCancel, error, busy, theme }: SignInPanelProps) {
+export function SignInPanel({ onSubmit, onCancel, error, busy }: SignInPanelProps) {
   const [mode, setMode] = useState<Mode>("account");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [validation, setValidation] = useState<{ email?: string; password?: string; apiKey?: string }>({});
   const googleClientId = readRuntimeConfig().googleClientId;
+
+  // GoogleSignInButton re-initialises when this identity changes, so it has to
+  // be stable across renders or the GSI button is rebuilt on every keystroke.
+  const handleGoogleCredential = useCallback(
+    (idToken: string) => {
+      void onSubmit({ idToken });
+    },
+    [onSubmit]
+  );
 
   function switchMode(next: Mode) {
     setMode(next);
@@ -161,12 +169,7 @@ export function SignInPanel({ onSubmit, onCancel, error, busy, theme }: SignInPa
           {googleClientId ? (
             <>
               <div className="signin-divider">or</div>
-              <GoogleSignInButton
-                clientId={googleClientId}
-                theme={theme}
-                disabled={busy}
-                onCredential={(idToken) => void onSubmit({ idToken })}
-              />
+              <GoogleSignInButton onCredential={handleGoogleCredential} />
             </>
           ) : null}
         </div>

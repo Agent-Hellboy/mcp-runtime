@@ -1,4 +1,4 @@
-export type AdminSectionId = "access" | "teams" | "operations" | "platform" | "analytics";
+export type AdminSectionId = "teams" | "operations" | "platform" | "analytics";
 
 export type AdminSection = {
   id: AdminSectionId;
@@ -7,16 +7,11 @@ export type AdminSection = {
   description: string;
 };
 
-// Grouped so the rail reads as governance, then the organisation, then the
-// platform itself. Every section that existed before is still here and still
-// directly reachable.
+// Grouped so the rail reads as the organisation first, then the platform
+// itself. Access control is deliberately not here: the backend serves
+// /runtime/grants and /runtime/sessions to any authenticated principal, so it
+// is a top-level workspace rather than an admin section.
 export const ADMIN_SECTIONS: AdminSection[] = [
-  {
-    id: "access",
-    label: "Access control",
-    group: "Governance",
-    description: "Grants and agent sessions enforced by the MCP gateway.",
-  },
   {
     id: "teams",
     label: "Teams",
@@ -47,4 +42,4 @@ export function adminSection(id: string): AdminSection {
   return ADMIN_SECTIONS.find((section) => section.id === id) ?? ADMIN_SECTIONS[0];
 }
 
-export const ADMIN_GROUPS = ["Governance", "Organization", "Platform"];
+export const ADMIN_GROUPS = ["Organization", "Platform"];

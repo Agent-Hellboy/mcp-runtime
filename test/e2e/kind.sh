@@ -129,10 +129,13 @@ SESSION_ID="${SESSION_ID:-sess-ops-agent}"
 OAUTH_HUMAN_ID="${OAUTH_HUMAN_ID:-oauth-user-123}"
 OAUTH_AGENT_ID="${OAUTH_AGENT_ID:-oauth-client}"
 OAUTH_SESSION_ID="${OAUTH_SESSION_ID:-oauth-session-1}"
-OAUTH_AUDIENCE="${OAUTH_AUDIENCE:-mcp-runtime-e2e}"
 OAUTH_ISSUER_NAME="${OAUTH_ISSUER_NAME:-oauth-issuer}"
 OAUTH_ISSUER_URL="${OAUTH_ISSUER_URL:-}"
 TRAEFIK_PORT="${TRAEFIK_PORT:-18080}"
+# auth.audience doubles as the RFC 8707 resource identifier: the gateway
+# advertises it in protected resource metadata and validates the token audience
+# against it, so it must be the absolute URL clients connect to.
+OAUTH_AUDIENCE="${OAUTH_AUDIENCE:-http://${OAUTH_SERVER_HOST}:${TRAEFIK_PORT}/${OAUTH_SERVER_NAME}/mcp}"
 SENTINEL_PORT="${SENTINEL_PORT:-18083}"
 TEMPO_PORT="${TEMPO_PORT:-13200}"
 LOKI_PORT="${LOKI_PORT:-13100}"
@@ -4575,7 +4578,7 @@ EOF
   wait_http "${MCP_OAUTH_METADATA_URL}"
   MCP_OAUTH_METADATA_URL="${MCP_OAUTH_METADATA_URL}" \
   OAUTH_ISSUER_URL="${OAUTH_ISSUER_URL}" \
-  OAUTH_RESOURCE_URL="http://${OAUTH_SERVER_HOST}${OAUTH_INGRESS_PATH}" \
+  OAUTH_RESOURCE_URL="${OAUTH_AUDIENCE}" \
   python3 <<'PY'
 import json
 import os

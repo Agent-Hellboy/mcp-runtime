@@ -67,24 +67,34 @@ deep links and browser back/forward working against the unmodified server.
 | `#/servers?tool=<ns>/<server>/<tool>` | Servers home with the tool inspector open |
 | `#/activity` | Tenant activity |
 | `#/keys` | Personal API keys |
-| `#/admin/<section>` | access, teams, operations, platform, analytics |
+| `#/access` | Access control (any authenticated principal) |
+| `#/admin/<section>` | teams, operations, platform, analytics |
 | `#/signin` | Sign-in |
 
-Primary navigation is Servers, Activity, API keys, Administration, filtered by
-the same principal gates as before (`components/WorkspaceNavigation.tsx`).
+Primary navigation is Servers, Access control, Activity, API keys,
+Administration, filtered by the same principal gates as before
+(`components/WorkspaceNavigation.tsx`). Access control is deliberately not an
+admin section: the backend serves `/runtime/grants` and `/runtime/sessions`
+through plain `auth()`, not `adminOnly()`, so any authenticated principal sees
+its own scope. A non-admin is defaulted to their first visible namespace,
+because an empty namespace 403s for them.
 Hiding a tab is presentation only: every panel re-checks the principal, and the
 backend enforces it again. A deep link into a workspace the principal cannot use
 is replaced with `#/servers`.
 
-Administration uses a grouped rail (Governance / Organization / Platform) on
-desktop and a section select below 900px.
+Administration uses a grouped rail (Organization / Platform) on desktop and a
+section select below 900px.
 
 ## Screens
 
 - **Servers** — namespace-scoped summary (servers, ready, tools, tools with
-  drift), server search over server metadata, namespace and status filters,
-  server cards, and the tool catalog with its own scoped search, risk and drift
-  filters, sorting, and pagination. Selecting a server or tool opens an
+  drift, and the publish quota for a tenant principal), server search over
+  server metadata, namespace and status filters, server cards, and the tool
+  catalog with its own scoped search, risk and drift filters, sorting, and
+  pagination. Cards carry the protocol inventory, connect-config copy,
+  owner-scoped observability links, and a retire action behind a confirmation.
+  A signed-out visitor to a `PLATFORM_MODE=public` deployment gets the
+  read-only public catalog instead of a sign-in wall. Selecting a server or tool opens an
   inspector: docked beside the list on desktop, a modal full-screen view below
   900px.
 - **Activity** (tenant) and **Usage analytics** (admin) share the metric,
@@ -93,7 +103,7 @@ desktop and a section select below 900px.
   time-series chart because the usage API returns totals, not buckets.
 - **API keys** — create form, one-time secret notice, key table, and a named
   revoke confirmation.
-- **Access control** — grants and agent sessions with summary counts, search,
+- **Access control** (top-level, any authenticated principal) — grants and agent sessions with summary counts, search,
   namespace scope, create forms backed by the authorized catalog, and per-record
   enable/disable and revoke behind a confirmation dialog.
 - **Teams** — team directory with explicit selection driving a members panel.
@@ -117,6 +127,8 @@ desktop and a section select below 900px.
   most 100 rows per collection.
 - Declared risk is labelled as declared, with the server-side derivation rule
   explained rather than presented as an independent assessment.
+- A 403 on the gateway decision log reads "Admin access required", not
+  "analytics unavailable".
 
 ## Security invariants preserved
 
@@ -128,25 +140,15 @@ only in React state for the life of its notice.
 
 ## Legacy dashboard
 
-The "More workspaces" entry and the nested iframe are gone. The static assets at
-`/legacy/index.html` are still served, because one legacy view has no React
-equivalent yet:
+Already retired on `main` (#398): there are no `/legacy` assets, no iframe, and
+no "More workspaces" entry. The inventory that gated the removal is in
+[`ui-legacy-retirement-inventory.md`](./ui-legacy-retirement-inventory.md).
 
-| Legacy view | Status |
-| --- | --- |
-| Servers, tools | Servers |
-| My MCP Activity, My Teams | Activity |
-| Keys | API keys |
-| Team Directory, Team Members | Administration → Teams |
-| Usage Analytics, Policy Decisions | Administration → Usage analytics |
-| Access Grants, Agent Sessions, detail | Administration → Access control |
-| Admin Operations (users, audit, images) | Administration → Operations |
-| Platform Health, Fleet Health, Safe Platform Operations | Administration → Platform health |
-| Google Sign-In | Migrated into the React sign-in panel |
-| Per-user admin detail ("User" / "Recent Activity" drill-down) | **Not migrated** — still legacy-only |
-
-Retire `services/ui/static/legacy/` and `services/ui/frontend/public/legacy/`
-once the per-user admin detail has a React replacement.
+Google sign-in, which used to live only in that dashboard, is part of the React
+sign-in panel. It renders only when the deployment sets `GOOGLE_CLIENT_ID`
+(surfaced to the browser as `window.MCP_GOOGLE_CLIENT_ID` by `/config.js`);
+with no client ID configured the button is omitted and email/password plus
+API-key sign-in remain.
 
 ## Local development against a cluster
 

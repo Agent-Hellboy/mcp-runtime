@@ -4,6 +4,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ServersWorkspace } from "./ServersWorkspace";
 import { AppProviders } from "../../providers/AppProviders";
+import type { AuthStatus } from "../../api/types";
+
+const ADMIN: AuthStatus = {
+  authenticated: true,
+  principal: { role: "admin", email: "admin@mcpruntime.org" },
+};
 
 // Redesign behaviour: scoped search semantics, filter dependencies, pagination,
 // and inspector focus handling.
@@ -81,7 +87,7 @@ function stubCatalog() {
 function renderWorkspace() {
   return render(
     <AppProviders>
-      <ServersWorkspace authenticated onSignIn={() => {}} />
+      <ServersWorkspace auth={ADMIN} onSignIn={() => {}} />
     </AppProviders>
   );
 }

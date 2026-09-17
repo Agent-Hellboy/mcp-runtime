@@ -89,16 +89,16 @@ describe("visibleWorkspaceTabs", () => {
   });
 
   it("shows Activity and Keys to a tenant user", () => {
-    expect(ids(TENANT as AuthStatus)).toEqual(["servers", "activity", "keys"]);
+    expect(ids(TENANT as AuthStatus)).toEqual(["servers", "access", "activity", "keys"]);
   });
 
   it("hides Activity from admins but keeps Keys when they have an identity", () => {
     // Legacy: Activity is data-user-only; Keys needs a user subject.
-    expect(ids(ADMIN as AuthStatus)).toEqual(["servers", "keys", "admin"]);
+    expect(ids(ADMIN as AuthStatus)).toEqual(["servers", "access", "keys", "admin"]);
   });
 
   it("hides both from a session with no user identity", () => {
-    expect(ids(API_KEY_SESSION as AuthStatus)).toEqual(["servers", "admin"]);
+    expect(ids(API_KEY_SESSION as AuthStatus)).toEqual(["servers", "access", "admin"]);
   });
 });
 

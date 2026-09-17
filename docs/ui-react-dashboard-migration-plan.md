@@ -261,18 +261,15 @@ The migration is complete when all five phases have passed their acceptance crit
 
 ## Status after `ui/servers_console_redesign`
 
-The redesign pass completed the Phase 5 user-facing work ahead of the branch
-sequence above. What is true now:
+The console-wide redesign landed on top of the completed Phase 5 work. What is
+true now:
 
-- The "More workspaces" navigation entry and the nested iframe are removed;
-  `components/LegacyWorkspace.tsx` and `LegacyDashboard.tsx` no longer exist.
-- Every workflow this plan listed has a React replacement, verified against the
-  Kind contributor cluster, **except** the per-user admin detail drill-down.
-- Google sign-in, previously reachable only from the legacy dashboard, is part
-  of the React sign-in panel and still verified server-side.
-- The legacy static assets stay in the tree and stay served, because of the one
-  outstanding drill-down. Deleting them is still gated on the criteria in
-  "Phase 5" above.
-
-The implemented structure, tokens, routes, and the full legacy parity inventory
-are documented in [`ui-console-design-system.md`](./ui-console-design-system.md).
+- The legacy dashboard, its assets, and the "More workspaces" entry are gone
+  (#398); this branch did not re-add them.
+- Every screen uses one design system, documented in
+  [`ui-console-design-system.md`](./ui-console-design-system.md).
+- Access control stays a top-level workspace for any authenticated principal,
+  as #396 established; the redesign did not move it back under Administration.
+- Google sign-in, the publish quota, server retire, the connect-config copy,
+  the protocol inventory, the owner-scoped observability links, and the
+  public-mode catalog preview all carried forward into the new components.

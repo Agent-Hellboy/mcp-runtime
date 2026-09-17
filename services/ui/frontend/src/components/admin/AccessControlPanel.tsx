@@ -334,7 +334,6 @@ export function AccessControlPanel({
       <PageHeader
         title="Access control"
         description="Grants and agent sessions enforced by the MCP gateway. Select one to trace the decisions it produced."
-        breadcrumb={[{ label: "Administration" }, { label: "Access control" }]}
         actions={
           <>
             <Button variant="secondary" icon="refresh" onClick={reload} data-testid="access-refresh">
