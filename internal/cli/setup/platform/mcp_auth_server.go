@@ -322,7 +322,8 @@ func renderMCPAuthConnectorSecret(values map[string]string) (string, error) {
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	secret := "apiVersion: v1\nkind: Secret\nmetadata:\n  name: mcp-auth-connector-secrets\n  namespace: mcp-sentinel\nstringData:\n"
+	// This is a manifest template; it contains no credential or secret value.
+	secret := "apiVersion: v1\nkind: Secret\nmetadata:\n  name: mcp-auth-connector-secrets\n  namespace: mcp-sentinel\nstringData:\n" // #nosec G101 -- Kubernetes kind/name is not a credential.
 	for _, name := range names {
 		encoded, err := json.Marshal(values[name])
 		if err != nil {
