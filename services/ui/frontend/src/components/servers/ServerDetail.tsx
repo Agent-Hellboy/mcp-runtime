@@ -1,9 +1,20 @@
-import { StatusBadge } from "../../ui/Badge";
+import { useMemo } from "react";
+
+import { StatusBadge, riskTone } from "../../ui/Badge";
 import { Button } from "../../ui/Button";
 import { CopyButton } from "../../ui/CopyButton";
 import { DetailSheet } from "../../ui/DetailSheet";
 import { formatAbsolute, formatAge } from "../../lib/format";
-import { isServerReady, type ServerSummary, type ToolRow } from "../../api/types";
+import {
+  authModeInfo,
+  isServerReady,
+  serverPrompts,
+  serverResources,
+  serverTasks,
+  toolKey,
+  type ServerSummary,
+  type ToolRow,
+} from "../../api/types";
 
 type ServerDetailProps = {
   server: ServerSummary;
@@ -15,6 +26,47 @@ type ServerDetailProps = {
 
 export function ServerDetail({ server, tools, onClose, onShowTools, onSelectTool }: ServerDetailProps) {
   const ready = isServerReady(server);
+  const auth = authModeInfo(server.authMode);
+  const prompts = serverPrompts(server);
+  const resources = serverResources(server);
+  const tasks = serverTasks(server);
+
+  // The runtime hands back a complete MCP client config for this server. It is
+  // shown in full and selectable, so it is usable even if the clipboard is
+  // blocked.
+  const connectConfig = useMemo(
+    () =>
+      server.access_json && Object.keys(server.access_json).length
+        ? JSON.stringify(server.access_json, null, 2)
+        : "",
+    [server.access_json]
+  );
+
+  // Prefer the catalog rows (they carry drift and the resolved risk); fall back
+  // to the declared tools on the server record when the catalog read is scoped
+  // elsewhere.
+  const toolRows = useMemo(() => {
+    if (tools.length > 0) {
+      return tools.map((tool) => ({
+        key: toolKey(tool),
+        name: tool.tool_name,
+        description: tool.description,
+        trust: tool.required_trust,
+        sideEffect: tool.side_effect,
+        risk: tool.risk_level,
+        selectable: true,
+      }));
+    }
+    return (server.tools || []).map((tool) => ({
+      key: `${server.namespace}/${server.name}/${tool.name || ""}`,
+      name: tool.name || "—",
+      description: tool.description,
+      trust: tool.requiredTrust,
+      sideEffect: tool.sideEffect,
+      risk: tool.riskLevel,
+      selectable: false,
+    }));
+  }, [tools, server]);
 
   return (
     <DetailSheet
@@ -29,18 +81,46 @@ export function ServerDetail({ server, tools, onClose, onShowTools, onSelectTool
         <StatusBadge tone={ready ? "ready" : "attention"}>
           {ready ? "Ready" : server.status || "Not ready"}
         </StatusBadge>
-        <span className="section-note">
-          Kubernetes readiness for the workload. It is not a check of the MCP endpoint.
-        </span>
+        <StatusBadge tone={auth.tone}>{auth.label}</StatusBadge>
       </div>
 
       {server.description ? <p className="muted">{server.description}</p> : null}
 
-      <dl className="detail-rows">
+      <div>
+        <p className="detail-label">Authentication</p>
+        <p className="section-note" data-testid="server-detail-auth">
+          {auth.detail}
+        </p>
+      </div>
+
+      {connectConfig ? (
         <div>
-          <dt>Namespace</dt>
-          <dd>{server.namespace}</dd>
+          <div className="section-head">
+            <p className="detail-label">Connect from an MCP client</p>
+            <CopyButton
+              value={connectConfig}
+              label={`Copy the MCP client config for ${server.name}`}
+              testId="server-detail-copy-config"
+            />
+          </div>
+          <p className="section-note" style={{ marginBottom: "var(--space-2)" }}>
+            Paste this into your client&rsquo;s MCP server configuration.
+            {auth.label === "OAuth" || auth.label === "mTLS"
+              ? ` The client must also satisfy ${auth.label} before calls are allowed.`
+              : ""}
+          </p>
+          <code className="code-block" data-testid="server-detail-config">
+            {connectConfig}
+          </code>
         </div>
+      ) : (
+        <p className="section-note" data-testid="server-detail-no-config">
+          The runtime did not resolve a public connect endpoint for this server, so there is no client
+          config to copy.
+        </p>
+      )}
+
+      <dl className="detail-rows">
         <div>
           <dt>Replicas ready</dt>
           <dd className="num">{server.ready || "—"}</dd>
@@ -53,12 +133,6 @@ export function ServerDetail({ server, tools, onClose, onShowTools, onSelectTool
           <div>
             <dt>Age</dt>
             <dd title={formatAbsolute(server.age)}>{formatAge(server.age)}</dd>
-          </div>
-        ) : null}
-        {server.authMode ? (
-          <div>
-            <dt>Authentication</dt>
-            <dd>{server.authMode}</dd>
           </div>
         ) : null}
         {server.image ? (
@@ -91,6 +165,20 @@ export function ServerDetail({ server, tools, onClose, onShowTools, onSelectTool
             </dd>
           </div>
         ) : null}
+        {prompts.length || resources.length || tasks.length ? (
+          <div>
+            <dt>Also serves</dt>
+            <dd>
+              {[
+                prompts.length ? `${prompts.length} prompts` : "",
+                resources.length ? `${resources.length} resources` : "",
+                tasks.length ? `${tasks.length} tasks` : "",
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </dd>
+          </div>
+        ) : null}
         {server.uid ? (
           <div>
             <dt>UID</dt>
@@ -101,31 +189,57 @@ export function ServerDetail({ server, tools, onClose, onShowTools, onSelectTool
 
       <div>
         <div className="section-head">
-          <p className="detail-label">Tools ({tools.length})</p>
+          <p className="detail-label">Tools ({toolRows.length})</p>
           <Button variant="ghost" size="sm" onClick={onShowTools} data-testid="server-detail-show-tools">
             Filter catalog to this server
           </Button>
         </div>
-        {tools.length === 0 ? (
+        {toolRows.length === 0 ? (
           <p className="section-note">This server publishes no tools in the current catalog read.</p>
         ) : (
-          <ul className="label-list">
-            {tools.slice(0, 40).map((tool) => (
-              <li key={`${tool.namespace}/${tool.server_name}/${tool.tool_name}`}>
+          <div className="tool-scroll-list" data-testid="server-detail-tools" tabIndex={0}>
+            {toolRows.map((tool) => {
+              const body = (
+                <>
+                  <span className="tool-scroll-name">
+                    {tool.name}
+                    {tool.risk ? (
+                      <StatusBadge tone={riskTone(tool.risk)} dot={false}>
+                        {tool.risk}
+                      </StatusBadge>
+                    ) : null}
+                    {tool.trust ? (
+                      <StatusBadge tone="neutral" dot={false}>
+                        {`trust: ${tool.trust}`}
+                      </StatusBadge>
+                    ) : null}
+                    {tool.sideEffect ? (
+                      <StatusBadge tone="neutral" dot={false}>
+                        {tool.sideEffect}
+                      </StatusBadge>
+                    ) : null}
+                  </span>
+                  {tool.description ? <span className="tool-scroll-desc">{tool.description}</span> : null}
+                </>
+              );
+              return tool.selectable ? (
                 <button
+                  key={tool.key}
                   type="button"
-                  className="link-button"
-                  onClick={() => onSelectTool(`${tool.namespace}/${tool.server_name}/${tool.tool_name}`)}
+                  className="tool-scroll-item"
+                  data-testid="server-detail-tool"
+                  onClick={() => onSelectTool(tool.key)}
                 >
-                  {tool.tool_name}
+                  {body}
                 </button>
-              </li>
-            ))}
-          </ul>
+              ) : (
+                <div key={tool.key} className="tool-scroll-item" data-testid="server-detail-tool">
+                  {body}
+                </div>
+              );
+            })}
+          </div>
         )}
-        {tools.length > 40 ? (
-          <p className="section-note">Showing the first 40. Use the catalog below for the full list.</p>
-        ) : null}
       </div>
     </DetailSheet>
   );

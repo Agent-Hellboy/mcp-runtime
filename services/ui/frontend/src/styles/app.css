@@ -811,3 +811,76 @@
     gap: 2px;
   }
 }
+
+.server-card-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+/* Connect config and the full tool list inside the server inspector. */
+.code-block {
+  display: block;
+  max-height: 260px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  line-height: 1.55;
+  /* Keep the JSON indentation but wrap long endpoint URLs, so the whole value
+     is readable without a horizontal scroll. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.tool-scroll-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 340px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+}
+
+.tool-scroll-item {
+  appearance: none;
+  display: block;
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transition);
+}
+
+.tool-scroll-item:hover {
+  background: var(--surface-hover);
+}
+
+.tool-scroll-name {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+  font-weight: 600;
+}
+
+.tool-scroll-desc {
+  margin-top: 2px;
+  font-size: var(--fs-meta);
+  color: var(--text-secondary);
+}

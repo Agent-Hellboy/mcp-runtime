@@ -26,6 +26,15 @@ const SERVERS = {
       description: "Workspace helper",
       endpoint: "http://localhost:18080/workspace-assistant-mcp/mcp",
       image: "registry/workspace-assistant:1.2.0",
+      authMode: "oauth",
+      access_json: {
+        mcpServers: {
+          "workspace-assistant": {
+            type: "http",
+            url: "http://localhost:18080/workspace-assistant-mcp/mcp",
+          },
+        },
+      },
     },
     {
       name: "billing-bridge",
@@ -261,5 +270,71 @@ describe("inspector overlay", () => {
 
     await user.click(screen.getByTestId("server-detail-close"));
     expect(screen.queryByTestId("server-detail")).not.toBeInTheDocument();
+  });
+});
+
+describe("server inspector", () => {
+  it("states the auth mode on the card and explains it in the inspector", async () => {
+    const user = userEvent.setup();
+    stubCatalog();
+
+    renderWorkspace();
+    await screen.findByTestId("server-list");
+
+    const cards = screen.getAllByTestId("server-card");
+    const oauthCard = cards.find((card) => card.dataset.serverKey === "mcp-servers/workspace-assistant");
+    expect(within(oauthCard as HTMLElement).getByText("OAuth")).toBeInTheDocument();
+
+    // A server whose runtime-api build did not report a mode must not be
+    // presented as unauthenticated.
+    const unknownCard = cards.find((card) => card.dataset.serverKey === "mcp-servers/billing-bridge");
+    expect(within(unknownCard as HTMLElement).getByText("Auth not reported")).toBeInTheDocument();
+
+    await user.click(within(oauthCard as HTMLElement).getByTestId("server-card-details"));
+    expect(await screen.findByTestId("server-detail-auth")).toHaveTextContent("bearer token");
+  });
+
+  it("offers the full MCP client config, selectable and copyable", async () => {
+    const user = userEvent.setup();
+    stubCatalog();
+
+    renderWorkspace();
+    await screen.findByTestId("server-list");
+    await user.click(screen.getAllByTestId("server-card-details")[0]);
+
+    const config = await screen.findByTestId("server-detail-config");
+    expect(config).toHaveTextContent('"mcpServers"');
+    expect(config).toHaveTextContent("workspace-assistant");
+    expect(screen.getByTestId("server-detail-copy-config")).toBeInTheDocument();
+  });
+
+  it("lists every tool the server publishes in one scrollable region", async () => {
+    const user = userEvent.setup();
+    stubCatalog();
+
+    renderWorkspace();
+    await screen.findByTestId("server-list");
+
+    // Narrow the catalog first: the inspector must still show all 30 tools for
+    // the server, not just the ones matching the active tool filter.
+    await user.type(screen.getByTestId("tool-search"), "tool_01");
+    await user.click(screen.getAllByTestId("server-card-details")[0]);
+
+    const list = await screen.findByTestId("server-detail-tools");
+    expect(within(list).getAllByTestId("server-detail-tool")).toHaveLength(30);
+  });
+
+  it("says so honestly when there is no connect config", async () => {
+    const user = userEvent.setup();
+    stubCatalog();
+
+    renderWorkspace();
+    await screen.findByTestId("server-list");
+
+    const cards = screen.getAllByTestId("server-card");
+    const plain = cards.find((card) => card.dataset.serverKey === "mcp-servers/billing-bridge");
+    await user.click(within(plain as HTMLElement).getByTestId("server-card-details"));
+
+    expect(await screen.findByTestId("server-detail-no-config")).toBeInTheDocument();
   });
 });

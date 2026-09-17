@@ -7,6 +7,7 @@ import { Icon } from "../../ui/Icon";
 import { EmptyState } from "../../ui/States";
 import { formatAbsolute, formatAge } from "../../lib/format";
 import {
+  authModeInfo,
   isServerReady,
   serverKey,
   serverPrompts,
@@ -114,6 +115,7 @@ export function ServerList({
           const prompts = serverPrompts(server);
           const resources = serverResources(server);
           const tasks = serverTasks(server);
+          const auth = authModeInfo(server.authMode);
           const hasConnectConfig = Boolean(
             server.access_json && Object.keys(server.access_json).length
           );
@@ -134,11 +136,17 @@ export function ServerList({
                     <h3 className="server-card-name">{server.name}</h3>
                     <p className="server-card-namespace">{server.namespace}</p>
                   </div>
-                  {/* Kubernetes readiness only: it says the replicas are up, not
-                      that the MCP endpoint answered. */}
-                  <StatusBadge tone={ready ? "ready" : "attention"}>
-                    {ready ? "Ready" : server.status || "Not ready"}
-                  </StatusBadge>
+                  <div className="server-card-badges">
+                    {/* Kubernetes readiness only: it says the replicas are up, not
+                        that the MCP endpoint answered. */}
+                    <StatusBadge tone={ready ? "ready" : "attention"}>
+                      {ready ? "Ready" : server.status || "Not ready"}
+                    </StatusBadge>
+                    {/* What a client must present to reach this server. */}
+                    <StatusBadge tone={auth.tone} label={auth.detail}>
+                      {auth.label}
+                    </StatusBadge>
+                  </div>
                 </div>
 
                 {server.description ? (
