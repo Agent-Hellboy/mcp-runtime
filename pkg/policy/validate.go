@@ -2,6 +2,7 @@ package policy
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 )
 
@@ -63,8 +64,35 @@ func validateAuth(auth *Auth) error {
 	if mode == "oauth" && strings.TrimSpace(auth.IssuerURL) == "" {
 		return fmt.Errorf("policy: auth mode %q requires issuer_url", auth.Mode)
 	}
+	if mode == "oauth" {
+		if strings.TrimSpace(auth.Audience) == "" {
+			return fmt.Errorf("policy: auth mode %q requires audience", auth.Mode)
+		}
+		if err := validateResourceURI(auth.Audience); err != nil {
+			return fmt.Errorf("policy: auth audience: %w", err)
+		}
+	}
 	if mode == "mtls" && strings.TrimSpace(auth.TrustDomain) == "" {
 		return fmt.Errorf("policy: auth mode %q requires trust_domain", auth.Mode)
+	}
+	return nil
+}
+
+// validateResourceURI checks a value used as an OAuth resource identifier. The
+// audience doubles as the resource the gateway advertises in protected resource
+// metadata and that clients send as the RFC 8707 resource parameter, so it has
+// to be an absolute URI without a fragment (RFC 8707 section 2).
+func validateResourceURI(value string) error {
+	trimmed := strings.TrimSpace(value)
+	parsed, err := url.Parse(trimmed)
+	if err != nil {
+		return fmt.Errorf("%q is not a valid URI: %w", trimmed, err)
+	}
+	if parsed.Scheme == "" || parsed.Host == "" {
+		return fmt.Errorf("%q must be an absolute URI, for example https://mcp.example.com/server/mcp", trimmed)
+	}
+	if parsed.Fragment != "" {
+		return fmt.Errorf("%q must not contain a fragment", trimmed)
 	}
 	return nil
 }

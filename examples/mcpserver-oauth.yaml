@@ -10,9 +10,8 @@
 #
 # Two fields have to agree with the deployment or discovery breaks:
 #
-#   auth.issuerURL  must match OAUTH_ISSUER_URL in mcp-sentinel-config. The
-#                   ingress routes the OAuth server by path on the platform
-#                   host, so the issuer keeps its /oauth path component.
+#   auth.issuerURL  must match the public mcp-auth issuer configured during
+#                   setup, for example https://auth.example.com/mcp-auth.
 #
 #   auth.audience   must be the canonical MCP resource URI of THIS server -
 #                   scheme, host and the full route path. The gateway rejects
@@ -44,7 +43,7 @@ spec:
     humanIDHeader: X-MCP-Human-ID
     agentIDHeader: X-MCP-Agent-ID
     sessionIDHeader: X-MCP-Agent-Session
-    issuerURL: https://platform.example.org/oauth
+    issuerURL: https://auth.example.com/mcp-auth
     audience: https://mcp.example.org/oauth-workspace-assistant/mcp
   policy:
     mode: allow-list

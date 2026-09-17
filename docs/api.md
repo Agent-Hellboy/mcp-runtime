@@ -213,16 +213,18 @@ spec:
 
 - **Header-based identity** at the gateway (default path).
 - **Optional bearer-token validation** against JWKS / issuer / audience on the split Sentinel API services (`platform-api`, `runtime-api`, `analytics-api`) and on ingest.
-- `spec.auth.mode: oauth` enables the gateway as an MCP OAuth protected resource. It publishes Protected Resource Metadata, validates issuer and audience/resource binding (using `auth.audience` or the canonical public MCP URL), and strips the client bearer token before forwarding upstream.
+- `spec.auth.mode: oauth` enables the gateway as an MCP OAuth protected resource. It publishes Protected Resource Metadata, validates issuer and audience/resource binding (against the configured `auth.audience`), and strips the client bearer token before forwarding upstream.
 - OAuth authentication failures return `401` with an authorization challenge. Authenticated OAuth policy denials return `403` without an `insufficient_scope` challenge because Runtime policy decisions are not OAuth scope negotiation. See the [MCP Authorization specification](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization).
 
-### First-party authorization server
+### Optional bundled authorization server
 
-The bundled `mcp-oauth-server` is the first-party OAuth 2.1 authorization
-server for MCP clients. It is deployed separately from the gateway and uses
-the platform Postgres identity store for the resource-owner login.
+The optional bundled `mcp-auth-server` image is an OAuth authorization server for MCP
+clients. Enable it explicitly with `mcp-runtime setup --with-mcp-auth-server`
+in test or production mode, or deploy an equivalent authorization server
+separately. Production mode requires an HTTPS issuer and resource, a selected
+OIDC connector, a TLS Secret, and a persistent signing-key Secret.
 
-When the platform issuer is `https://platform.example.com/oauth`, it exposes:
+When its public issuer is `https://auth.example.com/mcp-auth`, it exposes:
 
 - `GET /.well-known/oauth-authorization-server/oauth` (and OIDC discovery compatibility paths)
 - `GET /oauth/jwks.json`
@@ -251,9 +253,15 @@ before forwarding a request to the SDK-backed application. Do not add a
 second bearer-token gate to the upstream application unless that application
 is intentionally exposed outside the gateway.
 
-Configure `OAUTH_ISSUER_URL` and persist `OAUTH_PRIVATE_KEY` through the
-deployment secret. `mcp-runtime setup` generates and preserves that key. Do
-not enable insecure HTTP or ephemeral signing keys outside local development.
+Configure the MCP server's external `auth.issuerURL` and explicit
+`auth.audience` to match the authorization server and canonical MCP resource.
+`auth.audience` is the single resource identifier for the server: it must be an
+absolute URI without a fragment, it is what the gateway publishes as `resource`
+in Protected Resource Metadata, and it is what the gateway validates the token's
+audience against. A client that follows the metadata therefore always requests a
+token the gateway accepts.
+Do not enable insecure HTTP or ephemeral signing keys outside local
+development.
 
 For local Cursor testing, set `OAUTH_ALLOWED_REDIRECT_URI_SCHEMES=cursor`.
 This is an explicit interoperability allow-list for Cursor's native
@@ -262,9 +270,9 @@ schemes remain rejected, and the setting should remain empty in production.
 
 Gateway pods use `OAUTH_INTERNAL_ISSUER_URL` for authorization-server
 discovery and JWKS retrieval when the public issuer is reachable only through a
-workstation port-forward. The public `issuer_url` remains unchanged for JWT
-issuer validation. Setup defaults this backchannel to
-`http://mcp-oauth-server.mcp-sentinel.svc.cluster.local:8086/oauth`.
+workstation port-forward. The public issuer remains unchanged for JWT issuer
+validation. Setup sets this backchannel to the in-cluster `mcp-auth-server`
+service when its opt-in fixture is enabled.
 
 ### Practical model
 

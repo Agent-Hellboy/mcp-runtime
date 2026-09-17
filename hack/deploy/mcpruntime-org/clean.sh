@@ -41,9 +41,11 @@ Platform backup scope (platform functioning only):
   - TLS Secrets + cert-manager Certificate CRs + letsencrypt-prod ClusterIssuer
   - mcp-sentinel-config (OIDC, Traefik namespace, registry host, platform flags)
   - mcp-sentinel-secrets bootstrap keys (API/UI/ingest/Grafana/DB passwords)
+  - mcp-auth connector/signing/TLS secrets and Keycloak admin/TLS secrets when present
 
 NOT backed up (intentional reset on clean):
   - Tenant teams, platform users, issued API keys in Postgres
+  - Keycloak realm/database state (export it with Keycloak before the reset)
   - MCPServer / MCPAccessGrant / MCPAgentSession CRs
   - Registry image blobs, ClickHouse/Tempo/Prometheus history
 

@@ -90,8 +90,13 @@ func setupWorkloadPKI(logger *zap.Logger, plan setupplan.Plan) error {
 		if _, err := ensureCASecretClientGo(); err != nil {
 			return core.WrapWithSentinel(core.ErrCASecretNotFound, err, "create managed workload CA")
 		}
-		if err := applyManifestFile("config/cert-manager/cluster-issuer.yaml", "", os.Stdout); err != nil {
-			return core.WrapWithSentinel(core.ErrClusterIssuerApplyFailed, err, "apply managed workload ClusterIssuer")
+		// Reusing an already-ready managed issuer is important on long-lived
+		// contributor clusters: client-go's generic merge can reject an
+		// otherwise harmless re-apply of cert-manager's ClusterIssuer.
+		if err := checkNamedClusterIssuerClientGo(issuer); err != nil {
+			if applyErr := applyManifestFile("config/cert-manager/cluster-issuer.yaml", "", os.Stdout); applyErr != nil {
+				return core.WrapWithSentinel(core.ErrClusterIssuerApplyFailed, applyErr, "apply managed workload ClusterIssuer")
+			}
 		}
 	} else if err := checkNamedClusterIssuerClientGo(issuer); err != nil {
 		return err

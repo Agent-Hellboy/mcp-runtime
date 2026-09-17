@@ -103,6 +103,7 @@ func (s *InventoryService) visibleServers(ctx context.Context, control *controlp
 		}
 		result, err := control.ListServers(ctx, namespace)
 		if err != nil {
+			log.Printf("runtime servers: list MCPServers and deployment status failed in namespace %q: %v", namespace, err)
 			return nil, err
 		}
 		if result.CRDError != nil && !apierrors.IsNotFound(result.CRDError) {

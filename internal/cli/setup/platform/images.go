@@ -353,6 +353,7 @@ func prepareGatewayProxyImage(logger *zap.Logger, extRegistry *config.ExternalRe
 
 func prepareAnalyticsImages(logger *zap.Logger, extRegistry *config.ExternalRegistryConfig, usingExternalRegistry, testMode, parallelBuilds bool, deps SetupDeps) (AnalyticsImageSet, error) {
 	core.Step("Step 5a: Publish analytics images")
+	components := analyticsComponentsForSetup(testMode)
 
 	images := AnalyticsImageSet{
 		Ingest:       analyticsImageFor(extRegistry, analyticsComponents[0].Repository),
@@ -361,7 +362,8 @@ func prepareAnalyticsImages(logger *zap.Logger, extRegistry *config.ExternalRegi
 		AnalyticsAPI: analyticsImageFor(extRegistry, analyticsComponents[3].Repository),
 		Processor:    analyticsImageFor(extRegistry, analyticsComponents[4].Repository),
 		UI:           analyticsImageFor(extRegistry, analyticsComponents[5].Repository),
-		OAuthServer:  analyticsImageFor(extRegistry, analyticsComponents[6].Repository),
+	}
+	if !testMode {
 	}
 
 	if parallelBuilds {
@@ -369,7 +371,7 @@ func prepareAnalyticsImages(logger *zap.Logger, extRegistry *config.ExternalRegi
 		return prepareAnalyticsImagesParallel(logger, extRegistry, usingExternalRegistry, testMode, deps, images)
 	}
 
-	for _, component := range analyticsComponents {
+	for _, component := range components {
 		image, err := buildAndPublishAnalyticsComponent(logger, extRegistry, usingExternalRegistry, testMode, deps, component)
 		if err != nil {
 			return AnalyticsImageSet{}, err
@@ -392,11 +394,12 @@ func prepareAnalyticsImagesParallel(logger *zap.Logger, extRegistry *config.Exte
 		err        error
 	}
 
-	results := make(chan analyticsResult, len(analyticsComponents))
+	components := analyticsComponentsForSetup(testMode)
+	results := make(chan analyticsResult, len(components))
 	var wg sync.WaitGroup
-	wg.Add(len(analyticsComponents))
+	wg.Add(len(components))
 
-	for _, component := range analyticsComponents {
+	for _, component := range components {
 		component := component
 		go func() {
 			defer wg.Done()
@@ -510,8 +513,6 @@ func assignAnalyticsImage(images *AnalyticsImageSet, repository, image string) {
 		images.Processor = image
 	case "mcp-sentinel-ui":
 		images.UI = image
-	case "mcp-oauth-server":
-		images.OAuthServer = image
 	}
 }
 

@@ -1,0 +1,303 @@
+package platform
+
+import (
+	"bytes"
+	"encoding/json"
+	"io"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"testing"
+
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/util/yaml"
+)
+
+// mcpAuthManifestTemplate reads the shipped manifest. The path is derived from
+// this file's compile-time location rather than the working directory, because
+// other tests in this package change directories.
+func mcpAuthManifestTemplate(t *testing.T) string {
+	t.Helper()
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("cannot resolve test file location")
+	}
+	repoRoot := filepath.Join(filepath.Dir(thisFile), "..", "..", "..", "..")
+	raw, err := os.ReadFile(filepath.Join(repoRoot, "k8s", "23-mcp-auth-server.yaml"))
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	return string(raw)
+}
+
+func TestRenderMCPAuthServerManifestTestModeDefaults(t *testing.T) {
+	manifest, err := renderMCPAuthServerManifest(mcpAuthManifestTemplate(t), mcpAuthServerOptions{
+		Image:    "registry.local/mcp-auth-server:dev",
+		TestMode: true,
+	})
+	if err != nil {
+		t.Fatalf("renderMCPAuthServerManifest() error = %v", err)
+	}
+	for _, want := range []string{
+		"image: registry.local/mcp-auth-server:dev",
+		`{name: MCP_AUTH_ISSUER, value: "http://localhost:18080/mcp-auth"}`,
+		`{name: MCP_AUTH_LOCAL_DEVELOPMENT, value: "true"}`,
+		`{name: MCP_AUTH_LOCAL_TOKEN_EXCHANGE, value: "true"}`,
+		`{name: MCP_AUTH_REQUIRE_HTTPS, value: "false"}`,
+		`{name: MCP_AUTH_STORE, value: memory}`,
+		"- host: localhost:18080",
+		"kind: NetworkPolicy",
+	} {
+		if !strings.Contains(manifest, want) {
+			t.Errorf("manifest missing %q", want)
+		}
+	}
+	if strings.Contains(manifest, "tls:") {
+		t.Error("test-mode manifest should not carry an ingress TLS block")
+	}
+}
+
+// Outside --test-mode the local-development and local-token-exchange shortcuts
+// must be off and HTTPS must be required, otherwise a public install would run
+// a non-conforming authorization server.
+func TestRenderMCPAuthServerManifestProductionHardensDevSwitches(t *testing.T) {
+	manifest, err := renderMCPAuthServerManifest(mcpAuthManifestTemplate(t), mcpAuthServerOptions{
+		Image:            "registry.example.com/mcp-auth-server:1.0.0",
+		IssuerURL:        "https://auth.example.com/mcp-auth",
+		ResourceURLs:     []string{"https://mcp.example.com/demo/mcp"},
+		TLSSecret:        "mcp-auth-tls",
+		SigningKeySecret: "mcp-auth-signing-key",
+		ConnectorsFile:   "connectors.json",
+		Connector:        "keycloak",
+	})
+	if err != nil {
+		t.Fatalf("renderMCPAuthServerManifest() error = %v", err)
+	}
+	for _, want := range []string{
+		`{name: MCP_AUTH_LOCAL_DEVELOPMENT, value: "false"}`,
+		`{name: MCP_AUTH_LOCAL_TOKEN_EXCHANGE, value: "false"}`,
+		`{name: MCP_AUTH_REQUIRE_HTTPS, value: "true"}`,
+		`{name: MCP_AUTH_RESOURCE, value: "https://mcp.example.com/demo/mcp"}`,
+		"- host: auth.example.com",
+		`secretName: mcp-auth-tls`,
+		`{name: MCP_AUTH_CONNECTOR, value: "keycloak"}`,
+		`{name: MCP_AUTH_PRIVATE_KEY_FILE, value: /etc/mcp-auth-key/private-key.pem}`,
+		`fsGroup: 65532`,
+		`secret: {secretName: "mcp-auth-signing-key", defaultMode: 0440}`,
+		`name: X-Forwarded-Proto`,
+		`value: https`,
+		`{name: MCP_AUTH_STORE, value: sqlite}`,
+		"- secretRef: {name: mcp-auth-connector-secrets}",
+		"mcp-auth-server-discovery-rewrite@kubernetescrd",
+		"/.well-known/oauth-authorization-server/mcp-auth",
+		"/.well-known/openid-configuration/mcp-auth",
+	} {
+		if !strings.Contains(manifest, want) {
+			t.Errorf("manifest missing %q", want)
+		}
+	}
+}
+
+func TestRenderMCPAuthServerManifestProductionGuards(t *testing.T) {
+	base := mcpAuthServerOptions{
+		Image:            "img",
+		IssuerURL:        "https://auth.example.com/mcp-auth",
+		ResourceURLs:     []string{"https://mcp.example.com/demo/mcp"},
+		TLSSecret:        "tls",
+		SigningKeySecret: "mcp-auth-signing-key",
+		ConnectorsFile:   "connectors.json",
+		Connector:        "keycloak",
+	}
+	tests := []struct {
+		name    string
+		mutate  func(*mcpAuthServerOptions)
+		wantErr string
+	}{
+		{"plaintext issuer", func(o *mcpAuthServerOptions) { o.IssuerURL = "http://auth.example.com/mcp-auth" }, "HTTPS issuer"},
+		{"no connector", func(o *mcpAuthServerOptions) { o.ConnectorsFile = "" }, "connector file"},
+		{"no tls secret", func(o *mcpAuthServerOptions) { o.TLSSecret = "" }, "TLS Secret"},
+		{"no signing key", func(o *mcpAuthServerOptions) { o.SigningKeySecret = "" }, "signing key Secret"},
+		{"no resource", func(o *mcpAuthServerOptions) { o.ResourceURLs = nil }, "resource URL"},
+		{"plaintext resource", func(o *mcpAuthServerOptions) { o.ResourceURLs = []string{"http://mcp.example.com/demo/mcp"} }, "must use https"},
+		{"relative resource", func(o *mcpAuthServerOptions) { o.ResourceURLs = []string{"/demo/mcp"} }, "absolute URL"},
+		{"duplicate resource", func(o *mcpAuthServerOptions) {
+			o.ResourceURLs = []string{"https://mcp.example.com/a/mcp", "https://mcp.example.com/a/mcp"}
+		}, "listed twice"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := base
+			tc.mutate(&opts)
+			_, err := renderMCPAuthServerManifest(mcpAuthManifestTemplate(t), opts)
+			if err == nil {
+				t.Fatalf("renderMCPAuthServerManifest() error = nil, want %q", tc.wantErr)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("error = %v, want it to mention %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// One authorization server has to cover every bundled fixture, otherwise the
+// standalone SDK examples receive tokens whose audience they reject.
+func TestMCPAuthResourceURLsTestModeCoversEveryBundledExample(t *testing.T) {
+	got, err := mcpAuthResourceURLs(nil, "http://localhost:18080/mcp-auth", true)
+	if err != nil {
+		t.Fatalf("mcpAuthResourceURLs() error = %v", err)
+	}
+	want := []string{
+		"http://localhost:18080/mcp-auth-sdk-ping/mcp",
+		"http://localhost:18080/mcp-auth-sdk-echo/mcp",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("mcpAuthResourceURLs() = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("mcpAuthResourceURLs()[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+// Every bundled example manifest's auth.audience must appear in the test-mode
+// resource set, or that example cannot complete an authenticated tool call.
+func TestTestModeResourcesMatchBundledExampleAudiences(t *testing.T) {
+	resources, err := mcpAuthResourceURLs(nil, "http://localhost:18080/mcp-auth", true)
+	if err != nil {
+		t.Fatalf("mcpAuthResourceURLs() error = %v", err)
+	}
+	indexed := map[string]bool{}
+	for _, resource := range resources {
+		indexed[resource] = true
+	}
+	_, thisFile, _, _ := runtime.Caller(0)
+	examples := filepath.Join(filepath.Dir(thisFile), "..", "..", "..", "..", "examples")
+	for _, name := range []string{"mcp-auth-sdk-ping.yaml", "mcp-auth-sdk-echo.yaml"} {
+		raw, err := os.ReadFile(filepath.Join(examples, name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		audience := ""
+		for _, line := range strings.Split(string(raw), "\n") {
+			if trimmed := strings.TrimSpace(line); strings.HasPrefix(trimmed, "audience:") {
+				audience = strings.TrimSpace(strings.TrimPrefix(trimmed, "audience:"))
+				break
+			}
+		}
+		if audience == "" {
+			t.Errorf("%s has no auth.audience", name)
+			continue
+		}
+		if !indexed[audience] {
+			t.Errorf("%s audience %q is not in the test-mode resource set %v", name, audience, resources)
+		}
+	}
+}
+
+func TestRenderMCPAuthConnectorSecretRejectsInvalidKey(t *testing.T) {
+	if _, err := renderMCPAuthConnectorSecret(map[string]string{"BAD NAME": "x"}); err == nil {
+		t.Fatal("renderMCPAuthConnectorSecret() error = nil, want invalid key error")
+	}
+	secret, err := renderMCPAuthConnectorSecret(map[string]string{"KEYCLOAK_CLIENT_SECRET": "s3cr3t\nvalue"})
+	if err != nil {
+		t.Fatalf("renderMCPAuthConnectorSecret() error = %v", err)
+	}
+	if !strings.Contains(secret, `KEYCLOAK_CLIENT_SECRET: "s3cr3t\nvalue"`) {
+		t.Fatalf("secret did not quote the credential value: %s", secret)
+	}
+}
+
+func TestReadMCPAuthConnectorRequiresExchangeClientID(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "connectors.json")
+	withoutExchange, err := json.Marshal(map[string]any{"keycloak": map[string]any{
+		"client_id": "mcp-auth", "token_endpoint_auth_method": "none",
+	}})
+	if err != nil {
+		t.Fatalf("marshal connector: %v", err)
+	}
+	if err := os.WriteFile(path, withoutExchange, 0600); err != nil {
+		t.Fatalf("write connector: %v", err)
+	}
+	if _, _, err := readMCPAuthConnector(path, "keycloak"); err == nil || !strings.Contains(err.Error(), "exchange_client_id") {
+		t.Fatalf("readMCPAuthConnector() error = %v, want exchange_client_id validation", err)
+	}
+}
+
+// A placeholder that survives rendering would be applied to the cluster as a
+// literal container env value.
+func TestUnresolvedManifestPlaceholders(t *testing.T) {
+	if remaining := unresolvedManifestPlaceholders("env: MCP_AUTH_ISSUER_VALUE"); len(remaining) != 1 {
+		t.Fatalf("unresolvedManifestPlaceholders() = %v, want one entry", remaining)
+	}
+	if remaining := unresolvedManifestPlaceholders("env: resolved"); len(remaining) != 0 {
+		t.Fatalf("unresolvedManifestPlaceholders() = %v, want none", remaining)
+	}
+}
+
+// Decode the rendered manifest exactly as the apply path does. This catches
+// type errors the string assertions cannot see: an unquoted true/false renders
+// as a YAML boolean, and the API server rejects it on EnvVar.Value, which is a
+// string.
+func TestRenderMCPAuthServerManifestDecodesAsKubernetesObjects(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		opts mcpAuthServerOptions
+	}{
+		{"test mode", mcpAuthServerOptions{Image: "img", TestMode: true}},
+		{"production", mcpAuthServerOptions{
+			Image:            "img",
+			IssuerURL:        "https://auth.example.com/mcp-auth",
+			ResourceURLs:     []string{"https://mcp.example.com/demo/mcp"},
+			TLSSecret:        "tls",
+			SigningKeySecret: "mcp-auth-signing-key",
+			ConnectorsFile:   "connectors.json",
+			Connector:        "keycloak",
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			manifest, err := renderMCPAuthServerManifest(mcpAuthManifestTemplate(t), tc.opts)
+			if err != nil {
+				t.Fatalf("renderMCPAuthServerManifest() error = %v", err)
+			}
+			decoder := yaml.NewYAMLOrJSONDecoder(bytes.NewReader([]byte(manifest)), 4096)
+			kinds := map[string]bool{}
+			for {
+				obj := &unstructured.Unstructured{}
+				err := decoder.Decode(obj)
+				if err == io.EOF {
+					break
+				}
+				if err != nil {
+					t.Fatalf("decode manifest: %v", err)
+				}
+				if obj.Object == nil {
+					continue
+				}
+				kinds[obj.GetKind()] = true
+				if obj.GetKind() != "Deployment" {
+					continue
+				}
+				containers, found, err := unstructured.NestedSlice(obj.Object, "spec", "template", "spec", "containers")
+				if err != nil || !found {
+					t.Fatalf("containers not found: %v", err)
+				}
+				for _, container := range containers {
+					envs, _ := container.(map[string]any)["env"].([]any)
+					for _, entry := range envs {
+						env, _ := entry.(map[string]any)
+						if _, ok := env["value"].(string); !ok {
+							t.Errorf("env %v value is %T, want string; Kubernetes rejects non-string EnvVar.Value", env["name"], env["value"])
+						}
+					}
+				}
+			}
+			for _, want := range []string{"Deployment", "Service", "Ingress", "NetworkPolicy", "Middleware"} {
+				if !kinds[want] {
+					t.Errorf("manifest is missing a %s", want)
+				}
+			}
+		})
+	}
+}

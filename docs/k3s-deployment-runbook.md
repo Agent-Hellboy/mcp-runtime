@@ -99,29 +99,116 @@ MCP clients use.
 
 | Variable | Required | Purpose |
 |----------|----------|---------|
-| `OAUTH_ISSUER_URL` | optional | Public issuer. Defaults to `https://<platform host>/oauth`. |
-| `OAUTH_INTERNAL_ISSUER_URL` | optional | In-cluster issuer for the gateway. Defaults to the `mcp-oauth-server` service URL. |
-| `OAUTH_ALLOWED_REDIRECT_URI_SCHEMES` | optional | Extra `redirect_uri` schemes beyond https and http-loopback, comma-separated. Native MCP clients need this: Cursor registers `cursor://anysphere.cursor-mcp/oauth/callback`, so set `cursor`. |
-| `OAUTH_ALLOW_INSECURE_HTTP` | **never set in public** | Local Kind only. Unset, redirect URIs must be https or loopback. |
+| `MCP_SETUP_MCP_AUTH_ISSUER_URL` | required when enabled | Public HTTPS issuer URL, for example `https://auth.<domain>/mcp-auth`. |
+| `MCP_SETUP_MCP_AUTH_RESOURCE_URL` | required when enabled | Canonical MCP resource URL; must exactly match the protected server's `spec.auth.audience`. |
+| `MCP_SETUP_MCP_AUTH_CONNECTORS_FILE` | required when enabled | Provider-neutral connector JSON; client secrets are referenced by environment variable, never stored in this file. |
+| `MCP_SETUP_MCP_AUTH_CONNECTOR` | required when enabled | Named connector selected by the mcp-auth server. |
+| `MCP_SETUP_MCP_AUTH_TLS_SECRET` | required when enabled | TLS Secret for the authorization-server hostname. |
+| `MCP_SETUP_MCP_AUTH_SIGNING_KEY_SECRET` | required when enabled | Persistent RSA signing-key Secret containing `private-key.pem`. |
 
-The issuer **must keep its `/oauth` path**. The ingress routes the OAuth server
-by path on the platform host and there is no dedicated `oauth.` hostname
-(`internal/cli/setup/ingressmanifest/paths.go`), so a path-free issuer such as
-`https://oauth.<domain>` resolves to nothing and discovery fails.
+The issuer must be the exact public URL configured for the optional
+`mcp-auth-server`, normally `https://auth.<domain>/mcp-auth`. It is a separate
+authorization-server hostname and must not be confused with dashboard OIDC or
+the Runtime gateway. The identity provider hostname, realm, client, users,
+redirect URI, scopes, and certificates are operated by the platform user.
 
-Discovery is served at the RFC 8414 path-insertion URL:
+Discovery is served at the authorization-server metadata URL:
 
 ```bash
-curl -s https://platform.<domain>/.well-known/oauth-authorization-server/oauth
+curl -s https://auth.<domain>/mcp-auth/.well-known/oauth-authorization-server
 ```
 
-The bare `/.well-known/oauth-authorization-server` is **not** routed to the
-OAuth server by this ingress, even though the server itself answers it.
+The protected MCP resource separately publishes Protected Resource Metadata;
+clients should follow its `WWW-Authenticate` challenge or query the resource
+metadata URL generated for that server.
 
 A ready-to-adapt protected server is in `examples/mcpserver-oauth.yaml`. Its
-`auth.issuerURL` must match `OAUTH_ISSUER_URL`, and `auth.audience` must be the
+`auth.issuerURL` must match `MCP_SETUP_MCP_AUTH_ISSUER_URL`, and `auth.audience` must be the
 server's canonical resource URI (`https://mcp.<domain>/<prefix>/mcp`) — the
 gateway fails closed with 401 when a token's `aud` does not match.
+
+#### Optional bundled MCP authorization server
+
+MCP authorization is optional: an MCP client may connect to a server without
+OAuth when the deployment does not require bearer tokens. Enable this feature
+when the server needs standards-based user login, PKCE, token issuance, and
+Protected Resource Metadata discovery. The bundled `mcp-auth-server` is the
+OAuth authorization server; it authenticates users through one external OIDC
+identity provider such as Keycloak and issues MCP access tokens. It does not
+make Runtime governance decisions.
+
+The Runtime gateway remains the protected-resource boundary. It verifies the
+issuer, signature, audience/resource, expiry, and scope, then applies grants,
+agent sessions, trust, and tool policy. This separation is required because an
+authorization server sees login/token requests, while Runtime policy needs the
+actual MCP JSON-RPC tool call and current grant/session state.
+
+For a public test deployment, create DNS records for two hosts pointing to the
+ingress node:
+
+```text
+keycloak.<domain>  -> <public ingress IP>
+auth.<domain>      -> <public ingress IP>
+```
+
+Deploy Keycloak with a realm such as `mcp-runtime` and a confidential client
+named `mcp-auth`. Configure this exact upstream callback URI:
+
+```text
+https://auth.<domain>/mcp-auth/identity/callback
+```
+
+The connector file references the Keycloak issuer and client but never stores
+the client secret:
+
+```json
+{
+  "keycloak": {
+    "issuer": "https://keycloak.<domain>/realms/mcp-runtime",
+    "authorization_endpoint": "https://keycloak.<domain>/realms/mcp-runtime/protocol/openid-connect/auth",
+    "token_endpoint": "https://keycloak.<domain>/realms/mcp-runtime/protocol/openid-connect/token",
+    "jwks_uri": "https://keycloak.<domain>/realms/mcp-runtime/protocol/openid-connect/certs",
+    "client_id": "mcp-auth",
+    "client_secret_env": "KEYCLOAK_CLIENT_SECRET",
+    "exchange_client_id": "mcp-auth",
+    "scopes": ["openid", "profile", "email"],
+    "mcp_scopes": ["tools:read"],
+    "identity_claims": ["preferred_username"],
+    "token_endpoint_auth_method": "client_secret_post",
+    "allowed_upstream_callback_uris": [
+      "https://auth.<domain>/mcp-auth/identity/callback"
+    ],
+    "downstream_token_strategy": "upstream_session"
+  }
+}
+```
+
+Deploy the optional bundled server through normal setup:
+
+```bash
+./bin/mcp-runtime setup \
+  --with-tls --tls-cluster-issuer letsencrypt-prod \
+  --with-mcp-auth-server \
+  --mcp-auth-issuer-url https://auth.<domain>/mcp-auth \
+  --mcp-auth-resource-url https://mcp.<domain>/<server-prefix>/mcp \
+  --mcp-auth-tls-secret mcp-auth-server-tls \
+  --mcp-auth-signing-key-secret mcp-auth-signing-key \
+  --mcp-auth-connectors-file /secure/mcp-auth-connectors.json \
+  --mcp-auth-connector keycloak
+```
+
+`--mcp-auth-resource-url` must exactly match the MCPServer's
+`spec.auth.audience`. Production setup requires HTTPS issuer/resource URLs, a
+TLS Secret covering the auth host, a selected connector, and a persistent RSA
+signing key stored in the Secret key `private-key.pem`. The connector's
+`KEYCLOAK_CLIENT_SECRET` value is read from the environment and converted into
+a Kubernetes Secret; it must not be committed to Git.
+
+The bundled server uses SQLite on a PVC in production and memory storage only
+in `--test-mode`. Test mode also permits the loopback development issuer and an
+ephemeral signing key. A public deployment must use HTTPS for Keycloak's
+issuer, authorization endpoint, token endpoint, and JWKS endpoint; an internal
+HTTP shortcut is only suitable for local testing.
 
 #### Platform-runtime backup (`hack/deploy/mcpruntime-org/clean.sh`)
 

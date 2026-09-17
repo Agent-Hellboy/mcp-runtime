@@ -1,0 +1,169 @@
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata: {name: mcp-auth-server-strip-prefix, namespace: mcp-sentinel}
+spec:
+  stripPrefix:
+    prefixes: [/mcp-auth]
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata: {name: mcp-auth-server-discovery-rewrite, namespace: mcp-sentinel}
+spec:
+  replacePathRegex:
+    regex: ^/\.well-known/(oauth-authorization-server|openid-configuration)/mcp-auth$
+    replacement: /.well-known/$1
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-auth-server
+  namespace: mcp-sentinel
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: mcp-auth-server}}
+  template:
+    metadata: {labels: {app: mcp-auth-server}}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: auth-server
+          image: docker.io/princekrroshan01/mcp-auth-server:latest
+          imagePullPolicy: IfNotPresent
+          ports: [{containerPort: 8080}]
+          env:
+            - {name: MCP_AUTH_ISSUER, value: "MCP_AUTH_ISSUER_VALUE"}
+            - {name: MCP_AUTH_RESOURCE, value: MCP_AUTH_RESOURCE_VALUE}
+            - {name: MCP_AUTH_LISTEN_ADDR, value: ":8080"}
+            - {name: MCP_AUTH_LOCAL_DEVELOPMENT, value: "MCP_AUTH_LOCAL_DEVELOPMENT_VALUE"}
+            - {name: MCP_AUTH_LOCAL_TOKEN_EXCHANGE, value: "MCP_AUTH_LOCAL_TOKEN_EXCHANGE_VALUE"}
+            - {name: MCP_AUTH_LOCAL_CLIENT_ID, value: mcp-auth-sdk-client}
+            - {name: MCP_AUTH_REGISTRATION_ENABLED, value: "true"}
+            - {name: MCP_AUTH_REQUIRE_HTTPS, value: "MCP_AUTH_REQUIRE_HTTPS_VALUE"}
+            - {name: MCP_AUTH_STORE, value: MCP_AUTH_STORE_VALUE}
+            - {name: MCP_AUTH_DATABASE_URL, value: MCP_AUTH_DATABASE_URL_VALUE}
+            MCP_AUTH_SIGNING_KEY_ENV_BLOCK
+            MCP_AUTH_CONNECTOR_ENV_BLOCK
+          envFrom:
+            MCP_AUTH_CONNECTOR_ENVFROM_BLOCK
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            MCP_AUTH_SIGNING_KEY_VOLUME_MOUNT_BLOCK
+            MCP_AUTH_CONNECTOR_VOLUME_MOUNT_BLOCK
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+              httpHeaders:
+                - name: X-Forwarded-Proto
+                  value: https
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+              httpHeaders:
+                - name: X-Forwarded-Proto
+                  value: https
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, capabilities: {drop: [ALL]}}
+      volumes:
+        - name: data
+          MCP_AUTH_DATA_VOLUME_BLOCK
+        MCP_AUTH_SIGNING_KEY_POD_VOLUME_BLOCK
+        MCP_AUTH_CONNECTOR_POD_VOLUME_BLOCK
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mcp-auth-server-data
+  namespace: mcp-sentinel
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-auth-server
+  namespace: mcp-sentinel
+spec:
+  selector: {app: mcp-auth-server}
+  ports: [{name: http, port: 8080, targetPort: 8080}]
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: mcp-auth-server
+  namespace: mcp-sentinel
+  annotations:
+    traefik.ingress.kubernetes.io/router.middlewares: mcp-sentinel-mcp-auth-server-discovery-rewrite@kubernetescrd,mcp-sentinel-mcp-auth-server-strip-prefix@kubernetescrd
+spec:
+  ingressClassName: traefik
+# Rendered by internal/cli/setup/platform/mcp_auth_server.go. The placeholder
+# starts at column 0 and owns its whole line: the renderer supplies the block's
+# own indentation, and drops the entire line in test mode. Do not indent it.
+MCP_AUTH_INGRESS_TLS_BLOCK
+  rules:
+    - host: MCP_AUTH_INGRESS_HOST_VALUE
+      http:
+        paths:
+          - path: /mcp-auth
+            pathType: Prefix
+            backend: {service: {name: mcp-auth-server, port: {number: 8080}}}
+          - path: /.well-known/oauth-authorization-server/mcp-auth
+            pathType: Exact
+            backend: {service: {name: mcp-auth-server, port: {number: 8080}}}
+          - path: /.well-known/openid-configuration/mcp-auth
+            pathType: Exact
+            backend: {service: {name: mcp-auth-server, port: {number: 8080}}}
+---
+# Least-privilege egress for the authorization server. It replaces the
+# old bundled OAuth-server egress policy that was removed with the bundled OAuth
+# server, and ships with the workload so it is applied by the same opt-in
+# --with-mcp-auth-server step rather than by the unconditional platform
+# manifests. SQLite is local to the pod; 8443 reaches the bundled Keycloak
+# HTTPS Service and 443 reaches an external OIDC provider when configured.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mcp-auth-server-egress
+  namespace: mcp-sentinel
+spec:
+  podSelector:
+    matchLabels:
+      app: mcp-auth-server
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: keycloak
+      ports:
+        - protocol: TCP
+          port: 8443
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 443

@@ -120,6 +120,14 @@ mcpruntime_org_backup_platform_runtime() {
   mcpruntime_org_backup_resource "$MCP_TLS_SNAPSHOT_DIR/letsencrypt-prod-clusterissuer.yaml" get clusterissuer letsencrypt-prod
   mcpruntime_org_backup_resource "$MCP_TLS_SNAPSHOT_DIR/mcp-sentinel-config.yaml" get configmap mcp-sentinel-config -n mcp-sentinel
   mcpruntime_org_backup_resource "$MCP_TLS_SNAPSHOT_DIR/mcp-sentinel-secrets.yaml" get secret mcp-sentinel-secrets -n mcp-sentinel
+  # Optional authorization-server and identity-provider credentials. Provider
+  # database/realm state still requires the provider's own export workflow.
+  mcpruntime_org_backup_resource "$MCP_TLS_SNAPSHOT_DIR/mcp-auth-connectors.yaml" get configmap mcp-auth-connectors -n mcp-sentinel
+  mcpruntime_org_backup_resource "$MCP_TLS_SNAPSHOT_DIR/mcp-auth-connector-secrets.yaml" get secret mcp-auth-connector-secrets -n mcp-sentinel
+  mcpruntime_org_backup_resource "$MCP_TLS_SNAPSHOT_DIR/mcp-auth-signing-key.yaml" get secret mcp-auth-signing-key -n mcp-sentinel
+  mcpruntime_org_backup_resource "$MCP_TLS_SNAPSHOT_DIR/mcp-auth-server-tls.yaml" get secret mcp-auth-server-tls -n mcp-sentinel
+  mcpruntime_org_backup_resource "$MCP_TLS_SNAPSHOT_DIR/keycloak-admin.yaml" get secret keycloak-admin -n mcp-sentinel
+  mcpruntime_org_backup_resource "$MCP_TLS_SNAPSHOT_DIR/keycloak-tls.yaml" get secret keycloak-tls -n mcp-sentinel
   mcpruntime_org_backup_platform_auth_env
 }
 
@@ -194,6 +202,12 @@ mcpruntime_org_restore_platform_runtime() {
   mcpruntime_org_backup_strip_and_apply "$MCP_TLS_SNAPSHOT_DIR/mcp-sentinel-platform-cert.yaml" "platform UI Certificate"
   mcpruntime_org_backup_strip_and_apply "$MCP_TLS_SNAPSHOT_DIR/mcp-sentinel-config.yaml" "mcp-sentinel-config"
   mcpruntime_org_backup_strip_and_apply "$MCP_TLS_SNAPSHOT_DIR/mcp-sentinel-secrets.yaml" "mcp-sentinel-secrets"
+  mcpruntime_org_backup_strip_and_apply "$MCP_TLS_SNAPSHOT_DIR/mcp-auth-connectors.yaml" "mcp-auth connectors"
+  mcpruntime_org_backup_strip_and_apply "$MCP_TLS_SNAPSHOT_DIR/mcp-auth-connector-secrets.yaml" "mcp-auth connector secrets"
+  mcpruntime_org_backup_strip_and_apply "$MCP_TLS_SNAPSHOT_DIR/mcp-auth-signing-key.yaml" "mcp-auth signing key"
+  mcpruntime_org_backup_strip_and_apply "$MCP_TLS_SNAPSHOT_DIR/mcp-auth-server-tls.yaml" "mcp-auth TLS secret"
+  mcpruntime_org_backup_strip_and_apply "$MCP_TLS_SNAPSHOT_DIR/keycloak-admin.yaml" "Keycloak admin secret"
+  mcpruntime_org_backup_strip_and_apply "$MCP_TLS_SNAPSHOT_DIR/keycloak-tls.yaml" "Keycloak TLS secret"
 
   mcpruntime_org_backup_warn_certificates
 
@@ -205,7 +219,14 @@ mcpruntime_org_restore_platform_runtime() {
 
   if [[ "$MCP_TLS_DRY_RUN" != "1" ]]; then
     echo ""
-    echo "Restart Sentinel API/UI so restored platform secrets and config take effect:"
-    echo "  kubectl --kubeconfig \"$KUBECONFIG\" rollout restart deployment/mcp-platform-api deployment/mcp-runtime-api deployment/mcp-analytics-api deployment/mcp-sentinel-ui -n mcp-sentinel"
+    echo "Restarting Sentinel API/UI so restored platform secrets and config take effect ..."
+    local deployment
+    for deployment in mcp-platform-api mcp-runtime-api mcp-analytics-api mcp-sentinel-ui; do
+      if mcpruntime_org_kubectl get deployment "$deployment" -n mcp-sentinel >/dev/null 2>&1; then
+        mcpruntime_org_kubectl rollout restart deployment "$deployment" -n mcp-sentinel >/dev/null
+        mcpruntime_org_kubectl rollout status deployment "$deployment" -n mcp-sentinel --timeout="${MCP_DEPLOYMENT_TIMEOUT:-180s}" >/dev/null
+        echo "restarted $deployment"
+      fi
+    done
   fi
 }

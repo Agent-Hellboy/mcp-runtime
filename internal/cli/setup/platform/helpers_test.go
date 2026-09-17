@@ -652,6 +652,14 @@ func TestOperatorEnvOverrides(t *testing.T) {
 	t.Cleanup(func() {
 		core.DefaultCLIConfig = orig
 	})
+	t.Setenv("OAUTH_INTERNAL_ISSUER_URL", "")
+
+	t.Run("includes explicit internal OAuth issuer", func(t *testing.T) {
+		t.Setenv("OAUTH_INTERNAL_ISSUER_URL", "http://mcp-auth-server.mcp-sentinel.svc.cluster.local:8080")
+		core.DefaultCLIConfig = &core.CLIConfig{}
+		got := operatorEnvOverrides("", "")
+		requireOperatorEnvVar(t, got, "OAUTH_INTERNAL_ISSUER_URL", "http://mcp-auth-server.mcp-sentinel.svc.cluster.local:8080")
+	})
 
 	t.Run("returns empty when no gateway override is set", func(t *testing.T) {
 		core.DefaultCLIConfig = &core.CLIConfig{}
@@ -1890,21 +1898,20 @@ func TestPrepareAnalyticsImagesUsesTestModeImageSet(t *testing.T) {
 		AnalyticsAPI: "registry.example.com/mcp-analytics-api:latest",
 		Processor:    "registry.example.com/mcp-sentinel-processor:latest",
 		UI:           "registry.example.com/mcp-sentinel-ui:latest",
-		OAuthServer:  "registry.example.com/mcp-oauth-server:latest",
 	}
 	if got != want {
 		t.Fatalf("prepareAnalyticsImages() = %+v, want %+v", got, want)
 	}
-	if atomic.LoadInt32(&buildCalls) != int32(len(analyticsComponents)) {
-		t.Fatalf("expected %d builds in test mode, got %d", len(analyticsComponents), buildCalls)
+	if atomic.LoadInt32(&buildCalls) != int32(len(analyticsComponentsForSetup(true))) {
+		t.Fatalf("expected %d builds in test mode, got %d", len(analyticsComponentsForSetup(true)), buildCalls)
 	}
 	// Sentinel service Dockerfiles need the repo root context for shared packages and service modules.
-	wantBuildContexts := []string{".", ".", ".", ".", ".", ".", "."}
+	wantBuildContexts := []string{".", ".", ".", ".", ".", "."}
 	if !slices.Equal(buildContexts, wantBuildContexts) {
 		t.Fatalf("build contexts = %v, want %v", buildContexts, wantBuildContexts)
 	}
-	if atomic.LoadInt32(&pushCalls) != int32(len(analyticsComponents)) {
-		t.Fatalf("expected %d pushes in test mode, got %d", len(analyticsComponents), pushCalls)
+	if atomic.LoadInt32(&pushCalls) != int32(len(analyticsComponentsForSetup(true))) {
+		t.Fatalf("expected %d pushes in test mode, got %d", len(analyticsComponentsForSetup(true)), pushCalls)
 	}
 }
 
@@ -2002,7 +2009,7 @@ func TestPrepareDeploymentImagesParallelBuildsPreparesInternalRegistryOnce(t *te
 }
 
 func TestPrepareAnalyticsImagesParallelBuildsStartsAllBuilds(t *testing.T) {
-	started := make(chan string, len(analyticsComponents))
+	started := make(chan string, len(analyticsComponentsForSetup(true)))
 	release := make(chan struct{})
 	errCh := make(chan error, 1)
 
@@ -2022,12 +2029,12 @@ func TestPrepareAnalyticsImagesParallelBuildsStartsAllBuilds(t *testing.T) {
 
 	seen := map[string]bool{}
 	timeout := time.After(2 * time.Second)
-	for len(seen) < len(analyticsComponents) {
+	for len(seen) < len(analyticsComponentsForSetup(true)) {
 		select {
 		case image := <-started:
 			seen[image] = true
 		case <-timeout:
-			t.Fatalf("timed out waiting for parallel analytics image builds, saw %d of %d", len(seen), len(analyticsComponents))
+			t.Fatalf("timed out waiting for parallel analytics image builds, saw %d of %d", len(seen), len(analyticsComponentsForSetup(true)))
 		}
 	}
 
@@ -2067,7 +2074,6 @@ func TestPrepareAnalyticsImagesParallelBuildsPreparesInternalRegistryOnce(t *tes
 		AnalyticsAPI: "registry.local:5000/mcp-analytics-api:latest",
 		Processor:    "registry.local:5000/mcp-sentinel-processor:latest",
 		UI:           "registry.local:5000/mcp-sentinel-ui:latest",
-		OAuthServer:  "registry.local:5000/mcp-oauth-server:latest",
 	}
 	if got != want {
 		t.Fatalf("prepareAnalyticsImages() = %+v, want %+v", got, want)
@@ -2160,7 +2166,6 @@ func TestDeployAnalyticsManifestsWithKubectl_RecreatesInitializationJobs(t *test
 		"08-runtime-api-rbac.yaml",
 		"08-analytics-api.yaml",
 		"22-split-api-networkpolicy.yaml",
-		"14-oauth-server.yaml",
 		"09-ui.yaml",
 		"10-gateway.yaml",
 		"11-prometheus.yaml",
@@ -2434,7 +2439,6 @@ func TestDeployAnalyticsManifestsReturnsRolloutFailures(t *testing.T) {
 		"08-runtime-api-rbac.yaml",
 		"08-analytics-api.yaml",
 		"22-split-api-networkpolicy.yaml",
-		"14-oauth-server.yaml",
 		"09-ui.yaml",
 		"10-gateway.yaml",
 		"11-prometheus.yaml",
@@ -2604,7 +2608,6 @@ func TestDeployAnalyticsManifestsWithKubectl_WaitsForPostgresStatefulSet(t *test
 		"08-runtime-api-rbac.yaml",
 		"08-analytics-api.yaml",
 		"22-split-api-networkpolicy.yaml",
-		"14-oauth-server.yaml",
 		"09-ui.yaml",
 		"10-gateway.yaml",
 		"11-prometheus.yaml",

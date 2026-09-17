@@ -17,6 +17,25 @@ documented user-facing commands and scripts over private shortcuts.
 - Scripts (canonical): `hack/deploy/mcpruntime-org/{setup,clean,restore,rollout,multitenancy-test}.sh`
 - Script index: `hack/README.md`
 
+## Current production VM
+
+- SSH host: `root@${MCP_PRODUCTION_SSH_HOST}` from `config/deployments/mcpruntime-org.env`
+- Preferred workstation key: `~/.ssh/id_ed25519`
+- Production kubeconfig: obtain it through the approved operator procedure;
+  do not assume the contributor path `/private/tmp/mcpruntime-k3s.yaml` exists.
+
+Use the VM password only for a one-time interactive SSH-key installation. Never
+store that password in this skill, `AGENTS.md`, repository env files, shell
+history, or command arguments. After key installation, verify:
+
+```bash
+source config/deployments/mcpruntime-org.env
+ssh root@"${MCP_PRODUCTION_SSH_HOST}" 'hostname && kubectl config current-context'
+```
+
+Then copy or provision the approved kubeconfig locally, set `KUBECONFIG`, and
+run `cluster doctor` before any production mutation.
+
 ## Non-Negotiables
 
 - Rebuild `./bin/mcp-runtime` before setup or rollout validation. Stale CLI

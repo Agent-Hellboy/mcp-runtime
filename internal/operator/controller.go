@@ -76,6 +76,10 @@ type MCPServerReconciler struct {
 	// ClusterName is the cluster label attached to policy and audit events.
 	ClusterName string
 
+	// OAuthInternalIssuerURL is the in-cluster URL used by gateway sidecars for
+	// OAuth metadata and JWKS discovery.
+	OAuthInternalIssuerURL string
+
 	// MTLSClusterIssuer is the pre-existing cert-manager ClusterIssuer used for
 	// gateway and adapter workload certificates.
 	MTLSClusterIssuer string

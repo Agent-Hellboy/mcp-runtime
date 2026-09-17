@@ -64,6 +64,13 @@ func (s clusterStep) Run(logger *zap.Logger, deps SetupDeps, ctx *SetupContext) 
 	return setupClusterSteps(logger, ctx.Plan.Kubeconfig, ctx.Plan.Context, ctx.Plan.Ingress, deps)
 }
 
+type mcpAuthPrerequisiteStep struct{}
+
+func (s mcpAuthPrerequisiteStep) Name() string { return "mcp-auth-prerequisites" }
+func (s mcpAuthPrerequisiteStep) Run(_ *zap.Logger, _ SetupDeps, ctx *SetupContext) error {
+	return checkMCPAuthPrerequisites(ctx.Plan.MCPAuthTLSSecret, ctx.Plan.MCPAuthSigningKeySecret, ctx.Plan.TestMode)
+}
+
 type tlsStep struct{}
 
 func (s tlsStep) Name() string { return "tls" }
@@ -180,6 +187,19 @@ func (s deployAnalyticsStep) Run(logger *zap.Logger, deps SetupDeps, ctx *SetupC
 
 type verifyStep struct{}
 
+type mcpAuthServerStep struct{}
+
+func (s mcpAuthServerStep) Name() string { return "mcp-auth-server" }
+func (s mcpAuthServerStep) Run(logger *zap.Logger, deps SetupDeps, ctx *SetupContext) error {
+	if err := deployMCPAuthServer(ctx.Plan.MCPAuthServerImage, ctx.Plan.MCPAuthIssuerURL, ctx.Plan.MCPAuthResourceURLs, ctx.Plan.MCPAuthTLSSecret, ctx.Plan.MCPAuthSigningKeySecret, ctx.Plan.MCPAuthConnectorsFile, ctx.Plan.MCPAuthConnector, ctx.Plan.TestMode, deps); err != nil {
+		return err
+	}
+	if err := deps.WaitForDeploymentAvailable(logger, "mcp-auth-server", core.DefaultAnalyticsNamespace, "app=mcp-auth-server", analyticsRolloutTimeoutDuration()); err != nil {
+		return err
+	}
+	return deps.WaitForDeploymentAvailable(logger, "mcp-runtime-operator-controller-manager", core.NamespaceMCPRuntime, "control-plane=controller-manager", deps.GetDeploymentTimeout())
+}
+
 func (s verifyStep) Name() string { return "verify" }
 func (s verifyStep) Run(logger *zap.Logger, deps SetupDeps, ctx *SetupContext) error {
 	if err := verifySetup(logger, ctx.UsingExternalRegistry, deps); err != nil {
@@ -199,6 +219,7 @@ func buildSetupSteps(ctx *SetupContext) []SetupStep {
 	return NewSetupPipeline().
 		With(preflightStep{}).
 		With(clusterStep{}).
+		WithIf(ctx.Plan.DeployMCPAuthServer, mcpAuthPrerequisiteStep{}).
 		WithIf(catalogMode, catalogNamespaceStep{}).
 		WithIf(ctx.Plan.TLSEnabled, tlsStep{}).
 		WithIf(strings.TrimSpace(ctx.Plan.MTLSClusterIssuer) != "", workloadPKIStep{}).
@@ -208,6 +229,7 @@ func buildSetupSteps(ctx *SetupContext) []SetupStep {
 		WithIf(ctx.Plan.DeployAnalytics, analyticsImageStep{}).
 		With(deployOperatorStepCmd{}).
 		WithIf(ctx.Plan.DeployAnalytics, deployAnalyticsStep{}).
+		WithIf(ctx.Plan.DeployMCPAuthServer, mcpAuthServerStep{}).
 		With(verifyStep{}).
 		Build()
 }

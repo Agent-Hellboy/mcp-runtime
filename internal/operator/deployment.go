@@ -482,7 +482,7 @@ func (r *MCPServerReconciler) buildGatewayContainer(mcpServer *mcpv1alpha1.MCPSe
 		// The public issuer is retained in the policy for JWT validation, while
 		// this in-cluster URL keeps gateway JWKS discovery off the workstation
 		// port-forward used by local clients.
-		{Name: "OAUTH_INTERNAL_ISSUER_URL", Value: "http://mcp-oauth-server.mcp-sentinel.svc.cluster.local:8086/oauth"},
+		{Name: "OAUTH_INTERNAL_ISSUER_URL", Value: r.oauthInternalIssuerURL()},
 	}
 	if externalBaseURL := r.gatewayExternalBaseURL(mcpServer); externalBaseURL != "" {
 		envVars = append(envVars, corev1.EnvVar{Name: "EXTERNAL_BASE_URL", Value: externalBaseURL})
@@ -758,6 +758,10 @@ func gatewayEnabled(mcpServer *mcpv1alpha1.MCPServer) bool {
 
 func serverUsesOAuth(mcpServer *mcpv1alpha1.MCPServer) bool {
 	return mcpServer != nil && mcpServer.Spec.Auth != nil && mcpServer.Spec.Auth.Mode == mcpv1alpha1.AuthModeOAuth
+}
+
+func (r *MCPServerReconciler) oauthInternalIssuerURL() string {
+	return strings.TrimSpace(r.OAuthInternalIssuerURL)
 }
 
 // analyticsEnabled reports whether the gateway sidecar should emit analytics

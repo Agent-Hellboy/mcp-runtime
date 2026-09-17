@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MicahParks/keyfunc"
+	mcpauth "github.com/Agent-Hellboy/mcp-auth/auth-client/go/mcpauth"
 	"github.com/golang-jwt/jwt/v4"
 
 	policypkg "mcp-runtime/pkg/policy"
@@ -42,14 +42,33 @@ func (s *gatewayServer) handleOAuthProtectedResource(w http.ResponseWriter, r *h
 		return true
 	}
 
-	resourcePath := oauthResourcePath(r.URL.Path)
+	// auth.audience is the single resource identifier for this server: it is
+	// what RFC 9728 metadata advertises here, what a conforming client sends as
+	// the RFC 8707 resource parameter, and what authenticateOAuth validates the
+	// token's audience against. Deriving it from the request instead would let
+	// the advertised resource and the validated audience drift apart, and a
+	// client that did exactly what the metadata told it would be rejected with
+	// an opaque invalid_token.
+	audience := strings.TrimSpace(policy.Auth.Audience)
+	if audience == "" {
+		w.Header().Set("content-type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		if r.Method != http.MethodHead {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error":   "oauth_audience_missing",
+				"message": "This MCP server has auth.mode oauth but no auth.audience. Set spec.auth.audience to the canonical resource URI.",
+			})
+		}
+		return true
+	}
+
 	w.Header().Set("content-type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if r.Method == http.MethodHead {
 		return true
 	}
 	payload := map[string]any{
-		"resource":                 s.publicRequestURL(r, resourcePath),
+		"resource":                 audience,
 		"authorization_servers":    []string{strings.TrimSpace(policy.Auth.IssuerURL)},
 		"bearer_methods_supported": []string{"header"},
 	}
@@ -96,7 +115,15 @@ func (s *gatewayServer) authenticateOAuth(r *http.Request, policy *policypkg.Doc
 		}
 	}
 
-	provider, err := s.oauthProviderForIssuer(r.Context(), issuerURL)
+	// Fail closed rather than deriving the audience from the request. A derived
+	// audience is only as trustworthy as the forwarded host headers behind it,
+	// and it would no longer match the resource advertised in the protected
+	// resource metadata above.
+	audience := strings.TrimSpace(policy.Auth.Audience)
+	if audience == "" {
+		return oauthAuthResult{Status: http.StatusServiceUnavailable, Reason: "oauth_audience_missing", Identity: result.Identity}
+	}
+	provider, err := s.oauthProviderForIssuer(r.Context(), issuerURL, audience)
 	if err != nil {
 		log.Printf("oauth provider lookup failed for %s: %v", issuerURL, err)
 		return oauthAuthResult{
@@ -106,52 +133,25 @@ func (s *gatewayServer) authenticateOAuth(r *http.Request, policy *policypkg.Doc
 		}
 	}
 
-	claims := jwt.MapClaims{}
-	parser := jwt.NewParser(jwt.WithValidMethods([]string{"RS256", "RS384", "RS512", "ES256", "ES384", "ES512", "EdDSA"}))
-	parsed, err := parser.ParseWithClaims(token, claims, provider.jwks.Keyfunc)
-	if err != nil || !parsed.Valid {
+	// VerifyContext so a client disconnect or upstream deadline cancels an
+	// in-flight JWKS fetch instead of holding the request open.
+	claims, err := provider.verifier.VerifyContext(r.Context(), token)
+	if err != nil {
 		return oauthAuthResult{
 			Status:   http.StatusUnauthorized,
 			Reason:   "invalid_token",
 			Identity: result.Identity,
 		}
 	}
-	if !claims.VerifyIssuer(issuerURL, true) {
-		return oauthAuthResult{
-			Status:   http.StatusUnauthorized,
-			Reason:   "invalid_token",
-			Identity: result.Identity,
-		}
-	}
-	audience := strings.TrimSpace(policy.Auth.Audience)
-	if audience == "" {
-		var ok bool
-		audience, ok = s.canonicalOAuthResource(r)
-		if !ok {
-			return oauthAuthResult{
-				Status:   http.StatusServiceUnavailable,
-				Reason:   "oauth_resource_unavailable",
-				Identity: result.Identity,
-			}
-		}
-	}
-	if !serviceutil.AudienceMatches(claims["aud"], audience) {
-		return oauthAuthResult{
-			Status:   http.StatusUnauthorized,
-			Reason:   "invalid_token",
-			Identity: result.Identity,
-		}
-	}
-
 	return oauthAuthResult{
 		Allowed: true,
 		Status:  http.StatusOK,
 		Token:   token,
 		Identity: identityContext{
-			HumanID:   stringClaim(claims, "sub"),
-			AgentID:   policypkg.FirstNonEmpty(stringClaim(claims, "azp"), stringClaim(claims, "client_id")),
-			TeamID:    oauthTeamID(claims, policy),
-			SessionID: policypkg.FirstNonEmpty(stringClaim(claims, "sid"), headerIdentity.SessionID),
+			HumanID:   claims.Subject,
+			AgentID:   policypkg.FirstNonEmpty(stringClaim(claims.Raw, "azp"), stringClaim(claims.Raw, "client_id")),
+			TeamID:    oauthTeamID(jwt.MapClaims(claims.Raw), policy),
+			SessionID: policypkg.FirstNonEmpty(stringClaim(claims.Raw, "sid"), headerIdentity.SessionID),
 		},
 	}
 }
@@ -193,14 +193,15 @@ func stringClaims(claims jwt.MapClaims, name string) []string {
 	return values
 }
 
-func (s *gatewayServer) oauthProviderForIssuer(ctx context.Context, issuerURL string) (*oauthProvider, error) {
+func (s *gatewayServer) oauthProviderForIssuer(ctx context.Context, issuerURL, audience string) (*oauthProvider, error) {
 	issuerURL = strings.TrimSpace(issuerURL)
 	if issuerURL == "" {
 		return nil, errors.New("issuer URL is required")
 	}
 
+	cacheKey := issuerURL + "\x00" + audience
 	s.oauthMu.Lock()
-	provider, ok := s.oauthProviders[issuerURL]
+	provider, ok := s.oauthProviders[cacheKey]
 	s.oauthMu.Unlock()
 	if ok {
 		return provider, nil
@@ -216,18 +217,19 @@ func (s *gatewayServer) oauthProviderForIssuer(ctx context.Context, issuerURL st
 			return nil, err
 		}
 	}
-	jwks, err := keyfunc.Get(metadata.JWKSURI, keyfunc.Options{RefreshInterval: 10 * time.Minute})
-	if err != nil {
-		return nil, err
-	}
-
-	provider = &oauthProvider{jwks: jwks}
+	provider = &oauthProvider{verifier: &mcpauth.JWTVerifier{
+		JWKSURL:      metadata.JWKSURI,
+		Issuer:       issuerURL,
+		Audience:     audience,
+		HTTPClient:   s.httpClient,
+		JWKSCacheTTL: 10 * time.Minute,
+	}}
 	s.oauthMu.Lock()
-	if existing, ok := s.oauthProviders[issuerURL]; ok {
+	if existing, ok := s.oauthProviders[cacheKey]; ok {
 		s.oauthMu.Unlock()
 		return existing, nil
 	}
-	s.oauthProviders[issuerURL] = provider
+	s.oauthProviders[cacheKey] = provider
 	s.oauthMu.Unlock()
 	return provider, nil
 }
@@ -245,6 +247,8 @@ func (s *gatewayServer) fetchAuthServerMetadataWithFallback(ctx context.Context,
 
 	if metadata, err := s.fetchAuthServerMetadataForIssuer(ctx, internalIssuerURL, issuerURL); err == nil {
 		return metadata, true, nil
+	} else {
+		log.Printf("oauth internal provider lookup failed for %s: %v", internalIssuerURL, err)
 	}
 
 	// The internal issuer is only a transport optimization. It must not prevent
@@ -390,17 +394,6 @@ func isOAuthProtectedMetadataPath(value string) bool {
 	return value == oauthProtectedPrefix || strings.HasPrefix(value, oauthProtectedPrefix+"/")
 }
 
-func oauthResourcePath(value string) string {
-	if !isOAuthProtectedMetadataPath(value) {
-		return "/"
-	}
-	suffix := strings.TrimPrefix(value, oauthProtectedPrefix)
-	if suffix == "" {
-		return "/"
-	}
-	return normalizeURLPath(suffix)
-}
-
 func oauthMetadataPath(value string) string {
 	value = normalizeURLPath(value)
 	if value == "/" {
@@ -450,24 +443,6 @@ func (s *gatewayServer) oauthAuthenticateHeader(r *http.Request, originalPath, r
 		values = append(values, fmt.Sprintf(`error_description="%s"`, oauthScopeDescription(decision.Reason)))
 	}
 	return "Bearer " + strings.Join(values, ", ")
-}
-
-func (s *gatewayServer) canonicalOAuthResource(r *http.Request) (string, bool) {
-	if r == nil || r.URL == nil {
-		return "", false
-	}
-	resource := s.publicRequestURL(r, normalizeURLPath(r.URL.Path))
-	parsed, err := url.Parse(resource)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return "", false
-	}
-	parsed.RawQuery = ""
-	parsed.Fragment = ""
-	if parsed.Path == "/" {
-		parsed.Path = ""
-	}
-	parsed.RawPath = ""
-	return parsed.String(), true
 }
 
 func oauthRequiredScopes(decision policypkg.Decision, toolName string) []string {

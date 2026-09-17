@@ -58,6 +58,9 @@ func TestHandleProxyOAuthProtectedResourceMetadata(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("Unmarshal() error = %v", err)
 	}
+	// The advertised resource is auth.audience verbatim, not a value derived
+	// from the request, so a client that echoes it back as the RFC 8707
+	// resource parameter gets a token this gateway will accept.
 	if payload.Resource != "http://proxy.example.com/mcp" {
 		t.Fatalf("resource = %q, want %q", payload.Resource, "http://proxy.example.com/mcp")
 	}
@@ -221,12 +224,12 @@ func TestRewriteOAuthEndpointUsesInternalIssuer(t *testing.T) {
 	got, err := rewriteOAuthEndpoint(
 		"https://public.example.com/oauth/jwks.json",
 		"https://public.example.com/oauth",
-		"http://mcp-oauth-server.mcp-sentinel.svc.cluster.local:8086/oauth",
+		"http://mcp-auth-server.mcp-sentinel.svc.cluster.local:8080/mcp-auth",
 	)
 	if err != nil {
 		t.Fatalf("rewriteOAuthEndpoint() error = %v", err)
 	}
-	want := "http://mcp-oauth-server.mcp-sentinel.svc.cluster.local:8086/oauth/jwks.json"
+	want := "http://mcp-auth-server.mcp-sentinel.svc.cluster.local:8080/mcp-auth/jwks.json"
 	if got != want {
 		t.Fatalf("rewriteOAuthEndpoint() = %q, want %q", got, want)
 	}
@@ -274,7 +277,7 @@ func TestHandleProxyOAuthValidatesJWTAndAppliesIdentityHeaders(t *testing.T) {
 
 	token := issuer.sign(t, jwt.MapClaims{
 		"iss":     issuer.url,
-		"aud":     "mcp-runtime",
+		"aud":     "http://proxy.example.com/mcp",
 		"sub":     "human-1",
 		"azp":     "client-1",
 		"team_id": "team-acme",
@@ -313,39 +316,9 @@ func TestHandleProxyOAuthValidatesJWTAndAppliesIdentityHeaders(t *testing.T) {
 	}
 }
 
-func TestHandleProxyOAuthDerivesCanonicalAudience(t *testing.T) {
+func TestHandleProxyOAuthRejectsWrongAudience(t *testing.T) {
 	issuer := newTestJWTIssuer(t)
-	policy := oauthPolicy(issuer.url)
-	policy.Auth.Audience = ""
-	proxy := newTestGatewayServer(t, policy, func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
-	})
-
-	token := issuer.sign(t, jwt.MapClaims{
-		"iss": issuer.url,
-		"aud": "http://proxy.example.com/mcp",
-		"sub": "human-1",
-		"azp": "client-1",
-		"sid": "session-1",
-		"exp": time.Now().Add(time.Hour).Unix(),
-	})
-	req := httptest.NewRequest(http.MethodPost, "http://proxy.example.com/mcp", strings.NewReader(`{"method":"tools/call","params":{"name":"echo"}}`))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+token)
-	recorder := httptest.NewRecorder()
-
-	proxy.handleGateway(recorder, req)
-
-	if recorder.Code != http.StatusNoContent {
-		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusNoContent)
-	}
-}
-
-func TestHandleProxyOAuthRejectsWrongDerivedAudience(t *testing.T) {
-	issuer := newTestJWTIssuer(t)
-	policy := oauthPolicy(issuer.url)
-	policy.Auth.Audience = ""
-	proxy := newTestGatewayServer(t, policy, func(w http.ResponseWriter, _ *http.Request) {
+	proxy := newTestGatewayServer(t, oauthPolicy(issuer.url), func(w http.ResponseWriter, _ *http.Request) {
 		t.Fatal("wrong-audience request reached upstream")
 	})
 
@@ -372,6 +345,102 @@ func TestHandleProxyOAuthRejectsWrongDerivedAudience(t *testing.T) {
 	}
 }
 
+// A policy with auth.mode oauth but no audience is a misconfiguration the
+// gateway must not paper over by deriving the audience from the request: a
+// derived audience is only as trustworthy as the forwarded host headers behind
+// it, and it would not match the resource advertised in the metadata document.
+func TestHandleProxyOAuthMissingAudienceFailsClosed(t *testing.T) {
+	issuer := newTestJWTIssuer(t)
+	policy := oauthPolicy(issuer.url)
+	policy.Auth.Audience = ""
+	proxy := newTestGatewayServer(t, policy, func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("request reached upstream with no configured audience")
+	})
+
+	token := issuer.sign(t, jwt.MapClaims{
+		"iss": issuer.url,
+		"aud": "http://proxy.example.com/mcp",
+		"sub": "human-1",
+		"azp": "client-1",
+		"sid": "session-1",
+		"exp": time.Now().Add(time.Hour).Unix(),
+	})
+	req := httptest.NewRequest(http.MethodPost, "http://proxy.example.com/mcp", strings.NewReader(`{"method":"tools/call","params":{"name":"echo"}}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	recorder := httptest.NewRecorder()
+
+	proxy.handleGateway(recorder, req)
+
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusServiceUnavailable)
+	}
+}
+
+// The resource in protected resource metadata and the audience the gateway
+// validates must be the same string, or a client that follows the metadata is
+// rejected with an opaque invalid_token it cannot act on.
+func TestOAuthMetadataResourceMatchesValidatedAudience(t *testing.T) {
+	issuer := newTestJWTIssuer(t)
+	policy := oauthPolicy(issuer.url)
+	policy.Auth.Audience = "https://public.example.com/team/mcp"
+	proxy := newTestGatewayServer(t, policy, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "http://proxy.example.com/.well-known/oauth-protected-resource/mcp", nil)
+	recorder := httptest.NewRecorder()
+	proxy.handleGateway(recorder, req)
+
+	var payload struct {
+		Resource string `json:"resource"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if payload.Resource != policy.Auth.Audience {
+		t.Fatalf("resource = %q, want %q", payload.Resource, policy.Auth.Audience)
+	}
+
+	// A token minted for exactly that advertised resource is accepted.
+	token := issuer.sign(t, jwt.MapClaims{
+		"iss": issuer.url,
+		"aud": payload.Resource,
+		"sub": "human-1",
+		"azp": "client-1",
+		"sid": "session-1",
+		"exp": time.Now().Add(time.Hour).Unix(),
+	})
+	call := httptest.NewRequest(http.MethodPost, "http://proxy.example.com/mcp", strings.NewReader(`{"method":"tools/call","params":{"name":"echo"}}`))
+	call.Header.Set("Content-Type", "application/json")
+	call.Header.Set("Authorization", "Bearer "+token)
+	callRecorder := httptest.NewRecorder()
+	proxy.handleGateway(callRecorder, call)
+
+	if callRecorder.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", callRecorder.Code, http.StatusNoContent)
+	}
+}
+
+// Metadata for an oauth policy with no audience must not advertise a resource
+// identifier that token validation would then reject.
+func TestOAuthMetadataMissingAudienceFailsClosed(t *testing.T) {
+	issuer := newTestJWTIssuer(t)
+	policy := oauthPolicy(issuer.url)
+	policy.Auth.Audience = ""
+	proxy := newTestGatewayServer(t, policy, func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("metadata request reached upstream")
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "http://proxy.example.com/.well-known/oauth-protected-resource/mcp", nil)
+	recorder := httptest.NewRecorder()
+	proxy.handleGateway(recorder, req)
+
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusServiceUnavailable)
+	}
+}
+
 func TestHandleProxyOAuthPolicyDenialOmitsInsufficientScopeChallenge(t *testing.T) {
 	issuer := newTestJWTIssuer(t)
 	policy := oauthPolicy(issuer.url)
@@ -382,7 +451,7 @@ func TestHandleProxyOAuthPolicyDenialOmitsInsufficientScopeChallenge(t *testing.
 
 	token := issuer.sign(t, jwt.MapClaims{
 		"iss": issuer.url,
-		"aud": "mcp-runtime",
+		"aud": "http://proxy.example.com/mcp",
 		"sub": "human-1",
 		"azp": "client-1",
 		"sid": "session-1",
@@ -1521,7 +1590,7 @@ func oauthPolicy(issuerURL string) *policypkg.Document {
 			SessionIDHeader: defaultSessionHeader,
 			TokenHeader:     "Authorization",
 			IssuerURL:       issuerURL,
-			Audience:        "mcp-runtime",
+			Audience:        "http://proxy.example.com/mcp",
 		},
 		Policy: &policypkg.Config{
 			Mode:            "allow-list",

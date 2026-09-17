@@ -54,6 +54,10 @@ type OperatorConfig struct {
 	// AnalyticsIngestURL is the default analytics ingest endpoint for gateway sidecars.
 	AnalyticsIngestURL string
 
+	// OAuthInternalIssuerURL is the in-cluster URL used by gateway sidecars for
+	// OAuth metadata and JWKS discovery.
+	OAuthInternalIssuerURL string
+
 	// ClusterName is the cluster label attached to emitted audit events.
 	ClusterName string
 }
@@ -77,6 +81,7 @@ func LoadOperatorConfig() *OperatorConfig {
 		GatewayProxyImage:             os.Getenv("MCP_GATEWAY_PROXY_IMAGE"),
 		GatewayOTLPEndpoint:           os.Getenv("MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT"),
 		AnalyticsIngestURL:            getEnvCompat("MCP_SENTINEL_INGEST_URL", "MCP_ANALYTICS_INGEST_URL"),
+		OAuthInternalIssuerURL:        strings.TrimSpace(os.Getenv("OAUTH_INTERNAL_ISSUER_URL")),
 		ClusterName:                   getEnvOrDefault("MCP_CLUSTER_NAME", "local"),
 	}
 	return cfg

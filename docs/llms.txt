@@ -41,6 +41,7 @@
 
 - Contributor overview: https://docs.mcpruntime.org/contributor/ — How to contribute, repo structure, PR process.
 - Local Kind and Test Mode: https://docs.mcpruntime.org/contributor/local-kind/ — Kind cluster setup, test-mode install, local registry, port-forward.
+- MCP authorization: https://docs.mcpruntime.org/mcp-authorization/ — Optional bundled authorization server, Keycloak/OIDC connector setup, DNS/TLS, setup flags, and end-to-end verification.
 - Service Iteration: https://docs.mcpruntime.org/contributor/service-iteration/ — Iterating on API/UI/gateway services without full rebuild.
 - Runtime MCP Testing: https://docs.mcpruntime.org/contributor/runtime-mcp-testing/ — Smoke tests and governed-access verification on a local cluster.
 - Troubleshooting (contributor): https://docs.mcpruntime.org/contributor/troubleshooting/ — Development-environment specific issues.
