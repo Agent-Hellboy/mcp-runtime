@@ -79,7 +79,7 @@ describe("admin workspace navigation", () => {
     await screen.findByTestId("workspace-tab-servers");
 
     expect(screen.queryByTestId("workspace-tab-admin")).not.toBeInTheDocument();
-    expect(screen.getByTestId("workspace-tab-legacy")).toBeInTheDocument();
+    expect(screen.getByTestId("workspace-tab-servers")).toBeInTheDocument();
   });
 
   it("hides the Administration tab from a signed-out visitor", async () => {
@@ -112,16 +112,26 @@ describe("admin workspace navigation", () => {
     expect(screen.queryByTestId("workspace-tab-admin")).not.toBeInTheDocument();
   });
 
-  it("keeps the legacy fallback reachable for unmigrated admin actions", async () => {
+  it("refuses a deep link into administration for a tenant user", async () => {
+    window.location.hash = "#/admin/access";
+    stub("user");
+
+    renderApp();
+    await screen.findByTestId("workspace-tab-servers");
+
+    // The guard and the route both fail closed, so nothing admin renders.
+    expect(screen.queryByTestId("admin-section-access")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("grants-table")).not.toBeInTheDocument();
+  });
+
+  it("puts the administration section in the URL", async () => {
     const user = userEvent.setup();
     stub("admin");
 
     renderApp();
-    await user.click(await screen.findByTestId("workspace-tab-legacy"));
+    await user.click(await screen.findByTestId("workspace-tab-admin"));
+    await user.click(await screen.findByTestId("admin-section-teams"));
 
-    expect(screen.getByTitle("MCP Sentinel dashboard")).toHaveAttribute(
-      "src",
-      "/legacy/index.html"
-    );
+    expect(window.location.hash).toBe("#/admin/teams");
   });
 });

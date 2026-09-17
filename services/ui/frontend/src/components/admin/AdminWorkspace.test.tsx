@@ -302,15 +302,23 @@ describe("AdminWorkspace access control", () => {
     );
   });
 
-  it("exposes CSRF-backed grant and session mutation controls", async () => {
+  it("exposes CSRF-backed grant and session mutation controls behind a confirmation", async () => {
+    const user = userEvent.setup();
     const fetchMock = stubAdminApi();
-    vi.spyOn(window, "confirm").mockReturnValue(true);
 
     renderAdmin(ADMIN);
     await screen.findByTestId("grants-table");
 
-    await userEvent.click(screen.getAllByTestId("grant-toggle")[0]);
-    await userEvent.click(screen.getAllByTestId("session-toggle")[0]);
+    await user.click(screen.getAllByTestId("grant-toggle")[0]);
+    const dialog = await screen.findByTestId("access-confirm");
+    expect(dialog).toHaveTextContent('Disable grant "acme-readonly"?');
+    // Nothing is written until the operator confirms.
+    expect(fetchMock.mock.calls.filter((call) => (call[1] as RequestInit)?.method)).toHaveLength(0);
+    await user.click(screen.getByTestId("access-confirm-yes"));
+
+    await user.click(screen.getAllByTestId("session-toggle")[0]);
+    await screen.findByTestId("access-confirm");
+    await user.click(screen.getByTestId("access-confirm-yes"));
 
     await waitFor(() => {
       const writes = fetchMock.mock.calls.filter((call) => (call[1] as RequestInit)?.method);
@@ -318,6 +326,47 @@ describe("AdminWorkspace access control", () => {
         expect.arrayContaining(["PATCH", "PATCH"])
       );
     });
+  });
+
+  it("cancels a destructive access change without writing", async () => {
+    const user = userEvent.setup();
+    const fetchMock = stubAdminApi();
+
+    renderAdmin(ADMIN);
+    await screen.findByTestId("grants-table");
+
+    await user.click(screen.getAllByTestId("grant-toggle")[0]);
+    await screen.findByTestId("access-confirm");
+    await user.click(screen.getByTestId("access-confirm-cancel"));
+
+    expect(screen.queryByTestId("access-confirm")).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.filter((call) => (call[1] as RequestInit)?.method)).toHaveLength(0);
+  });
+
+  it("does not call an expired session active just because it is not revoked", async () => {
+    stubAdminApi({
+      "/runtime/sessions": {
+        body: {
+          sessions: [
+            {
+              name: "sess-old",
+              namespace: "mcp-servers",
+              serverRef: { name: "workspace-assistant" },
+              subject: { humanID: "alice@example.com" },
+              consentedTrust: "low",
+              revoked: false,
+              expiresAt: "2020-01-01T00:00:00Z",
+            },
+          ],
+        },
+      },
+    });
+
+    renderAdmin(ADMIN);
+    const table = await screen.findByTestId("sessions-table");
+
+    expect(within(table).getByText("Expired")).toBeInTheDocument();
+    expect(within(table).queryByText("Active")).not.toBeInTheDocument();
   });
 });
 
@@ -397,8 +446,13 @@ describe("AdminWorkspace sections", () => {
     expect(await screen.findByTestId("operations-users-table")).toHaveTextContent(
       "admin@mcpruntime.org"
     );
-    expect(screen.getByTestId("operations-audit-table")).toHaveTextContent("server_publish");
-    expect(screen.getByTestId("operations-images-table")).toHaveTextContent("registry/demo:1");
+
+    // Users, the audit trail, and image activity are separate local sections.
+    await user.click(screen.getByTestId("operations-tab-audit"));
+    expect(await screen.findByTestId("operations-audit-table")).toHaveTextContent("server_publish");
+
+    await user.click(screen.getByTestId("operations-tab-images"));
+    expect(await screen.findByTestId("operations-images-table")).toHaveTextContent("registry/demo:1");
   });
 
   it("refetches operations scoped to the applied user filter", async () => {
@@ -427,10 +481,12 @@ describe("AdminWorkspace sections", () => {
     await screen.findByTestId("grants-table");
     await user.click(screen.getByTestId("admin-section-platform"));
 
-    const table = await screen.findByTestId("platform-table");
-    expect(within(table).getByText("Operator")).toBeInTheDocument();
-    expect(within(table).getByText("CrashLoopBackOff")).toBeInTheDocument();
+    const grid = await screen.findByTestId("platform-components");
+    expect(within(grid).getByText("Operator")).toBeInTheDocument();
+    expect(within(grid).getByText("CrashLoopBackOff")).toBeInTheDocument();
     expect(screen.getByTestId("platform-stats")).toHaveTextContent("1");
+    // Restart all is separated from the safe read actions.
+    expect(screen.getByTestId("restart-all")).toBeInTheDocument();
 
     // Must stay a direct href so the platform ingress forward-auth still applies.
     expect(screen.getByTestId("grafana-link")).toHaveAttribute("href", "/grafana");

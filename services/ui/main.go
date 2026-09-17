@@ -1210,11 +1210,11 @@ func securityHeadersMiddleware(next http.Handler) http.Handler {
 				"font-src 'self' data: https://fonts.gstatic.com; "+
 				"connect-src 'self' https://accounts.google.com; "+
 				"frame-src 'self' https://accounts.google.com; "+
-				// 'self', not 'none': the dashboard shell renders the legacy
-				// dashboard in a same-origin iframe (src="/legacy/index.html"),
-				// and 'none' forbids every ancestor including same-origin, so
-				// the app blocked its own UI. 'self' keeps cross-origin
-				// framing (clickjacking) blocked.
+				// 'self', not 'none': the retired dashboard is still served at
+				// /legacy/index.html for the one drill-down that has no React
+				// equivalent yet, and 'none' would forbid every ancestor
+				// including same-origin. 'self' keeps cross-origin framing
+				// (clickjacking) blocked.
 				"frame-ancestors 'self'; "+
 				"base-uri 'self'; "+
 				"form-action 'self'")

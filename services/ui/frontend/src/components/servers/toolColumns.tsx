@@ -1,22 +1,6 @@
-import {
-  createColumnHelper,
-  createSortedRowModel,
-  rowSortingFeature,
-  sortFns,
-  tableFeatures,
-} from "@tanstack/react-table";
-
-import { StatusBadge, riskTone } from "../StatusBadge";
-import type { ToolRow } from "../../api/types";
-
-// Only the features this table uses are registered, so the rest tree-shakes out.
-export const toolTableFeatures = tableFeatures({
-  rowSortingFeature,
-  sortedRowModel: createSortedRowModel(),
-  sortFns,
-});
-
-const helper = createColumnHelper<typeof toolTableFeatures, ToolRow>();
+import { StatusBadge, driftTone, riskTone } from "../../ui/Badge";
+import { dataColumnHelper, type DataColumn } from "../../ui/DataTable";
+import { toolKey, type ToolRow } from "../../api/types";
 
 // Risk and trust are ordinal, not alphabetical: sorting them as text would put
 // "high" before "low". Rank them explicitly instead.
@@ -27,32 +11,25 @@ function rank(order: Record<string, number>, value: unknown): number {
   return order[String(value || "").toLowerCase()] ?? 0;
 }
 
-function driftTone(drift: string): "ready" | "attention" | "neutral" {
-  switch (drift) {
-    case "declared":
-      return "ready";
-    case "missing":
-    case "ungoverned":
-      return "attention";
-    default:
-      return "neutral";
-  }
-}
-
 type ToolColumnOptions = {
   selectedToolKey: string;
   onSelectTool: (key: string) => void;
 };
 
-export function buildToolColumns({ selectedToolKey, onSelectTool }: ToolColumnOptions) {
+export function buildToolColumns({
+  selectedToolKey,
+  onSelectTool,
+}: ToolColumnOptions): Array<DataColumn<ToolRow>> {
+  const helper = dataColumnHelper<ToolRow>();
   return helper.columns([
     helper.accessor("tool_name", {
       id: "tool_name",
       header: "Tool",
       sortFn: "alphanumeric",
+      meta: { rowHeader: true },
       cell: ({ row }) => {
         const tool = row.original;
-        const key = `${tool.namespace}/${tool.server_name}/${tool.tool_name}`;
+        const key = toolKey(tool);
         const selected = key === selectedToolKey;
         return (
           <>
@@ -65,7 +42,11 @@ export function buildToolColumns({ selectedToolKey, onSelectTool }: ToolColumnOp
             >
               {tool.tool_name}
             </button>
-            {tool.description ? <span className="cell-detail">{tool.description}</span> : null}
+            {tool.description ? (
+              <span className="cell-detail clamp-2" title={tool.description}>
+                {tool.description}
+              </span>
+            ) : null}
           </>
         );
       },
@@ -115,5 +96,5 @@ export function buildToolColumns({ selectedToolKey, onSelectTool }: ToolColumnOp
         </StatusBadge>
       ),
     }),
-  ]);
+  ]) as Array<DataColumn<ToolRow>>;
 }

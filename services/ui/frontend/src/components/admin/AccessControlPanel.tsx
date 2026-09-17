@@ -1,10 +1,21 @@
-import { useId, useState } from "react";
+import { useMemo, useState } from "react";
 
-import { AdminTable, type AdminColumn } from "./AdminTable";
+import { GrantForm, SessionForm, type GrantDraft, type SessionDraft } from "./accessForms";
 import { AsyncSection } from "./AsyncSection";
-import { StatusBadge } from "../StatusBadge";
+import { StatusBadge } from "../../ui/Badge";
+import { Button } from "../../ui/Button";
+import { ConfirmDialog, type ConfirmRequest } from "../../ui/ConfirmDialog";
+import { DataTable, buildColumns } from "../../ui/DataTable";
+import { SelectField, TextField } from "../../ui/Field";
+import { FilterBar, FilterSummary, type FilterChip } from "../../ui/FilterBar";
+import { Icon } from "../../ui/Icon";
+import { MetricGrid } from "../../ui/MetricCard";
+import { PageHeader } from "../../ui/PageHeader";
+import { expiryState, formatAbsolute, formatTimestamp } from "../../lib/format";
 import { useAdminReload, useGrants, useSessions } from "../../hooks/useAdminData";
+import { useCatalog } from "../../hooks/useCatalog";
 import { createGrant, createSession, setGrantDisabled, setSessionRevoked } from "../../api/admin";
+import { readRuntimeConfig } from "../../api/config";
 import { accessKey, subjectLabel } from "../../api/types";
 import type { GrantSummary, SessionSummary } from "../../api/types";
 
@@ -19,6 +30,63 @@ type AccessControlPanelProps = {
   onSignIn: () => void;
 };
 
+function defaultNamespace(current: string): string {
+  return current.trim() || readRuntimeConfig().defaults.namespace || "mcp-servers";
+}
+
+function emptyGrantDraft(namespace: string): GrantDraft {
+  return {
+    name: "",
+    namespace: defaultNamespace(namespace),
+    server: "",
+    humanID: "",
+    agentID: "",
+    teamID: "",
+    maxTrust: "low",
+    allowedSideEffects: ["read"],
+  };
+}
+
+function emptySessionDraft(namespace: string): SessionDraft {
+  return {
+    name: "",
+    namespace: defaultNamespace(namespace),
+    server: "",
+    humanID: "",
+    agentID: "",
+    teamID: "",
+    consentedTrust: "low",
+    expiresAt: "",
+  };
+}
+
+// revoked=false alone does not mean a session can still be used: an expiry in
+// the past ends it, and an expiry we cannot parse is reported as unknown.
+export function sessionState(session: SessionSummary, now = Date.now()) {
+  if (session.revoked) {
+    return { tone: "attention" as const, label: "Revoked" };
+  }
+  switch (expiryState(session.expiresAt, now)) {
+    case "expired":
+      return { tone: "attention" as const, label: "Expired" };
+    case "unparseable":
+      return { tone: "unknown" as const, label: "Unknown expiry" };
+    default:
+      return { tone: "ready" as const, label: "Active" };
+  }
+}
+
+function expiryText(session: SessionSummary): string {
+  switch (expiryState(session.expiresAt)) {
+    case "none":
+      return "No expiry";
+    case "unparseable":
+      return `Unreadable (${session.expiresAt})`;
+    default:
+      return formatTimestamp(session.expiresAt);
+  }
+}
+
 export function AccessControlPanel({
   namespace,
   onNamespaceChange,
@@ -28,14 +96,17 @@ export function AccessControlPanel({
   const [filter, setFilter] = useState("");
   const [busyKey, setBusyKey] = useState("");
   const [actionError, setActionError] = useState("");
-  const [showGrantForm, setShowGrantForm] = useState(false);
-  const [showSessionForm, setShowSessionForm] = useState(false);
-  const filterId = useId();
-  const namespaceId = useId();
+  const [actionNotice, setActionNotice] = useState("");
+  const [confirm, setConfirm] = useState<ConfirmRequest | null>(null);
+  const [grantDraft, setGrantDraft] = useState<GrantDraft | null>(null);
+  const [sessionDraft, setSessionDraft] = useState<SessionDraft | null>(null);
   const reload = useAdminReload();
 
   const grantsQuery = useGrants(true, namespace);
   const sessionsQuery = useSessions(true, namespace);
+  // The same authorized catalog the Servers screen reads, so the create forms
+  // can offer real server and namespace choices instead of free text.
+  const catalog = useCatalog(true, namespace);
 
   const grants = grantsQuery.data ?? [];
   const sessions = sessionsQuery.data ?? [];
@@ -48,273 +119,449 @@ export function AccessControlPanel({
     matches([grant.name, grant.namespace, grant.serverRef?.name, subjectLabel(grant.subject)])
   );
   const visibleSessions = sessions.filter((session) =>
-    matches([
-      session.name,
-      session.namespace,
-      session.serverRef?.name,
-      subjectLabel(session.subject),
-    ])
+    matches([session.name, session.namespace, session.serverRef?.name, subjectLabel(session.subject)])
   );
 
   const activeGrants = grants.filter((grant) => !grant.disabled).length;
-  const activeSessions = sessions.filter((session) => !session.revoked).length;
+  const activeSessions = sessions.filter((session) => sessionState(session).label === "Active").length;
+  const namespaceOptions = useMemo(() => {
+    const names = new Set(catalog.namespaces.map((entry) => entry.namespace));
+    names.add(defaultNamespace(namespace));
+    return [...names].filter(Boolean).sort();
+  }, [catalog.namespaces, namespace]);
 
-  async function toggleGrant(grant: GrantSummary): Promise<void> {
-    const disabled = !grant.disabled;
-    if (!window.confirm(`${disabled ? "Disable" : "Enable"} grant \"${grant.name}\"?`)) return;
-    const key = `grant:${accessKey(grant)}`;
+  async function runAction(key: string, label: string, action: () => Promise<void>) {
     setBusyKey(key);
     setActionError("");
+    setActionNotice("");
     try {
-      await setGrantDisabled(grant.namespace, grant.name, disabled);
+      await action();
+      setActionNotice(label);
       reload();
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : "Grant update failed.");
+      setActionError(error instanceof Error ? error.message : "The change could not be applied.");
     } finally {
       setBusyKey("");
+      setConfirm(null);
     }
   }
 
-  async function toggleSession(session: SessionSummary): Promise<void> {
-    const revoked = !session.revoked;
-    if (!window.confirm(`${revoked ? "Revoke" : "Unrevoke"} session \"${session.name}\"?`)) return;
-    const key = `session:${accessKey(session)}`;
-    setBusyKey(key);
-    setActionError("");
-    try {
-      await setSessionRevoked(session.namespace, session.name, revoked);
-      reload();
-    } catch (error) {
-      setActionError(error instanceof Error ? error.message : "Session update failed.");
-    } finally {
-      setBusyKey("");
-    }
+  function askToggleGrant(grant: GrantSummary) {
+    const disable = !grant.disabled;
+    setConfirm({
+      title: `${disable ? "Disable" : "Enable"} grant "${grant.name}"?`,
+      body: disable
+        ? `The gateway will stop matching this grant, so ${subjectLabel(grant.subject)} loses access to ${grant.serverRef?.name || "its server"} unless another grant allows it.`
+        : `The gateway will match this grant again, restoring ${subjectLabel(grant.subject)}'s access up to ${grant.maxTrust || "its"} trust.`,
+      confirmLabel: disable ? "Disable grant" : "Enable grant",
+      destructive: disable,
+      onConfirm: () =>
+        runAction(
+          `grant:${accessKey(grant)}`,
+          `Grant "${grant.name}" ${disable ? "disabled" : "enabled"}.`,
+          () => setGrantDisabled(grant.namespace, grant.name, disable)
+        ),
+    });
   }
 
-  async function applyGrant(event: React.FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const name = String(form.get("name") || "").trim();
-    const server = String(form.get("server") || "").trim();
-    const humanID = String(form.get("humanID") || "").trim();
-    const teamID = String(form.get("teamID") || "").trim();
-    if (!name || !server || (!humanID && !teamID)) { setActionError("Grant name, server, and a human or team subject are required."); return; }
-    setBusyKey("create-grant"); setActionError("");
-    try {
-      await createGrant({ name, namespace: String(form.get("namespace") || namespace || "mcp-servers").trim(), serverRef: { name: server }, subject: { humanID, teamID }, maxTrust: String(form.get("maxTrust") || "low"), allowedSideEffects: ["read"] });
-      setShowGrantForm(false); event.currentTarget.reset(); reload();
-    } catch (error) { setActionError(error instanceof Error ? error.message : "Grant creation failed."); }
-    finally { setBusyKey(""); }
+  function askToggleSession(session: SessionSummary) {
+    const revoke = !session.revoked;
+    setConfirm({
+      title: `${revoke ? "Revoke" : "Restore"} session "${session.name}"?`,
+      body: revoke
+        ? `In-flight and future tool calls made with this session are denied immediately.`
+        : `The session becomes usable again until its expiry (${expiryText(session)}).`,
+      confirmLabel: revoke ? "Revoke session" : "Restore session",
+      destructive: revoke,
+      onConfirm: () =>
+        runAction(
+          `session:${accessKey(session)}`,
+          `Session "${session.name}" ${revoke ? "revoked" : "restored"}.`,
+          () => setSessionRevoked(session.namespace, session.name, revoke)
+        ),
+    });
   }
 
-  async function applySession(event: React.FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const name = String(form.get("name") || "").trim();
-    const server = String(form.get("server") || "").trim();
-    const humanID = String(form.get("humanID") || "").trim();
-    const teamID = String(form.get("teamID") || "").trim();
-    if (!name || !server || (!humanID && !teamID)) { setActionError("Session name, server, and a human or team subject are required."); return; }
-    const rawExpiry = String(form.get("expiresAt") || "");
-    setBusyKey("create-session"); setActionError("");
-    try {
-      await createSession({ name, namespace: String(form.get("namespace") || namespace || "mcp-servers").trim(), serverRef: { name: server }, subject: { humanID, teamID }, consentedTrust: String(form.get("trust") || "low"), expiresAt: rawExpiry ? new Date(rawExpiry).toISOString() : undefined });
-      setShowSessionForm(false); event.currentTarget.reset(); reload();
-    } catch (error) { setActionError(error instanceof Error ? error.message : "Session creation failed."); }
-    finally { setBusyKey(""); }
+  const grantColumns = useMemo(
+    () =>
+      buildColumns<GrantSummary>([
+        {
+          id: "name",
+          header: "Grant",
+          rowHeader: true,
+          sortValue: (grant) => grant.name,
+          cell: (grant) => (
+            <>
+              <button
+                type="button"
+                className="link-button"
+                data-testid="grant-drilldown"
+                onClick={() => onSelect({ kind: "grant", item: grant })}
+              >
+                {grant.name}
+              </button>
+              <span className="cell-detail">{grant.namespace}</span>
+            </>
+          ),
+        },
+        {
+          id: "server",
+          header: "Server",
+          sortValue: (grant) => grant.serverRef?.name || "",
+          cell: (grant) => grant.serverRef?.name || "—",
+        },
+        { id: "subject", header: "Subject", cell: (grant) => subjectLabel(grant.subject) },
+        {
+          id: "trust",
+          header: "Trust ceiling",
+          sortValue: (grant) => grant.maxTrust || "",
+          cell: (grant) => grant.maxTrust || "—",
+        },
+        {
+          id: "effects",
+          header: "Side effects",
+          cell: (grant) => (grant.allowedSideEffects || []).join(", ") || "—",
+        },
+        {
+          id: "status",
+          header: "Status",
+          sortValue: (grant) => (grant.disabled ? 1 : 0),
+          cell: (grant) => (
+            <div className="cell-actions">
+              <StatusBadge tone={grant.disabled ? "attention" : "ready"}>
+                {grant.disabled ? "Disabled" : "Active"}
+              </StatusBadge>
+              <Button
+                variant="ghost"
+                size="sm"
+                data-testid="grant-toggle"
+                busy={busyKey === `grant:${accessKey(grant)}`}
+                onClick={() => askToggleGrant(grant)}
+              >
+                {grant.disabled ? "Enable" : "Disable"}
+              </Button>
+            </div>
+          ),
+        },
+      ]),
+    // askToggleGrant and onSelect close over current state.
+    [busyKey, onSelect]
+  );
+
+  const sessionColumns = useMemo(
+    () =>
+      buildColumns<SessionSummary>([
+        {
+          id: "name",
+          header: "Session",
+          rowHeader: true,
+          sortValue: (session) => session.name,
+          cell: (session) => (
+            <>
+              <button
+                type="button"
+                className="link-button"
+                data-testid="session-drilldown"
+                onClick={() => onSelect({ kind: "session", item: session })}
+              >
+                {session.name}
+              </button>
+              <span className="cell-detail">{session.namespace}</span>
+            </>
+          ),
+        },
+        {
+          id: "server",
+          header: "Server",
+          sortValue: (session) => session.serverRef?.name || "",
+          cell: (session) => session.serverRef?.name || "—",
+        },
+        { id: "subject", header: "Subject", cell: (session) => subjectLabel(session.subject) },
+        {
+          id: "trust",
+          header: "Consented trust",
+          sortValue: (session) => session.consentedTrust || "",
+          cell: (session) => session.consentedTrust || "—",
+        },
+        {
+          id: "expires",
+          header: "Expires",
+          sortValue: (session) => Date.parse(session.expiresAt || "") || 0,
+          cell: (session) => (
+            <span title={formatAbsolute(session.expiresAt)}>{expiryText(session)}</span>
+          ),
+        },
+        {
+          id: "status",
+          header: "Status",
+          cell: (session) => {
+            const state = sessionState(session);
+            return (
+              <div className="cell-actions">
+                <StatusBadge tone={state.tone}>{state.label}</StatusBadge>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  data-testid="session-toggle"
+                  busy={busyKey === `session:${accessKey(session)}`}
+                  onClick={() => askToggleSession(session)}
+                >
+                  {session.revoked ? "Restore" : "Revoke"}
+                </Button>
+              </div>
+            );
+          },
+        },
+      ]),
+    [busyKey, onSelect]
+  );
+
+  const chips: FilterChip[] = [];
+  if (filter.trim()) {
+    chips.push({ id: "filter", label: "Search", value: filter.trim(), onRemove: () => setFilter("") });
   }
-
-  const grantColumns: Array<AdminColumn<GrantSummary>> = [
-    {
-      id: "name",
-      header: "Grant",
-      rowHeader: true,
-      cell: (grant) => (
-        <button
-          type="button"
-          className="link-button"
-          data-testid="grant-drilldown"
-          onClick={() => onSelect({ kind: "grant", item: grant })}
-        >
-          {grant.name}
-        </button>
-      ),
-    },
-    { id: "server", header: "Server", cell: (grant) => grant.serverRef?.name || "—" },
-    { id: "subject", header: "Subject", cell: (grant) => subjectLabel(grant.subject) },
-    { id: "trust", header: "Max trust", cell: (grant) => grant.maxTrust || "—" },
-    {
-      id: "effects",
-      header: "Side effects",
-      cell: (grant) => (grant.allowedSideEffects || []).join(", ") || "—",
-    },
-    {
-      id: "status",
-      header: "Status",
-      cell: (grant) => (
-        <div className="admin-action-cell">
-          <StatusBadge tone={grant.disabled ? "attention" : "ready"}>
-            {grant.disabled ? "Disabled" : "Active"}
-          </StatusBadge>
-          <button
-            type="button"
-            className="button ghost compact"
-            data-testid="grant-toggle"
-            disabled={busyKey === `grant:${accessKey(grant)}`}
-            onClick={() => void toggleGrant(grant)}
-          >
-            {busyKey === `grant:${accessKey(grant)}` ? "Saving…" : grant.disabled ? "Enable" : "Disable"}
-          </button>
-        </div>
-      ),
-    },
-  ];
-
-  const sessionColumns: Array<AdminColumn<SessionSummary>> = [
-    {
-      id: "name",
-      header: "Session",
-      rowHeader: true,
-      cell: (session) => (
-        <button
-          type="button"
-          className="link-button"
-          data-testid="session-drilldown"
-          onClick={() => onSelect({ kind: "session", item: session })}
-        >
-          {session.name}
-        </button>
-      ),
-    },
-    { id: "server", header: "Server", cell: (session) => session.serverRef?.name || "—" },
-    { id: "subject", header: "Subject", cell: (session) => subjectLabel(session.subject) },
-    { id: "trust", header: "Trust", cell: (session) => session.consentedTrust || "—" },
-    { id: "expires", header: "Expires", cell: (session) => session.expiresAt || "—" },
-    {
-      id: "status",
-      header: "Status",
-      cell: (session) => (
-        <div className="admin-action-cell">
-          <StatusBadge tone={session.revoked ? "attention" : "ready"}>
-            {session.revoked ? "Revoked" : "Active"}
-          </StatusBadge>
-          <button
-            type="button"
-            className="button ghost compact"
-            data-testid="session-toggle"
-            disabled={busyKey === `session:${accessKey(session)}`}
-            onClick={() => void toggleSession(session)}
-          >
-            {busyKey === `session:${accessKey(session)}` ? "Saving…" : session.revoked ? "Unrevoke" : "Revoke"}
-          </button>
-        </div>
-      ),
-    },
-  ];
+  if (namespace.trim()) {
+    chips.push({
+      id: "namespace",
+      label: "Namespace",
+      value: namespace.trim(),
+      onRemove: () => onNamespaceChange(""),
+    });
+  }
 
   return (
-    <section className="panel" aria-labelledby="access-control-title">
-      <div className="panel-head">
-        <div>
-          <h2 id="access-control-title">Access control</h2>
-          <p className="panel-lede">
-            Grants and agent sessions enforced by the MCP gateway. Select one to trace the
-            decisions it produced.
-          </p>
-        </div>
-        <ul className="stat-row" aria-label="Access control summary" data-testid="access-stats">
-          <li>
-            <strong>{activeGrants}</strong> active grants
-          </li>
-          <li>
-            <strong>{grants.length - activeGrants}</strong> disabled
-          </li>
-          <li>
-            <strong>{activeSessions}</strong> active sessions
-          </li>
-          <li>
-            <strong>{sessions.length - activeSessions}</strong> revoked
-          </li>
-        </ul>
-      </div>
+    <>
+      <PageHeader
+        title="Access control"
+        description="Grants and agent sessions enforced by the MCP gateway. Select one to trace the decisions it produced."
+        breadcrumb={[{ label: "Administration" }, { label: "Access control" }]}
+        actions={
+          <>
+            <Button variant="secondary" icon="refresh" onClick={reload} data-testid="access-refresh">
+              Refresh
+            </Button>
+            <Button
+              variant="primary"
+              icon="plus"
+              data-testid="grant-create-toggle"
+              onClick={() => {
+                setSessionDraft(null);
+                setGrantDraft((current) => (current ? null : emptyGrantDraft(namespace)));
+              }}
+            >
+              New grant
+            </Button>
+            <Button
+              variant="secondary"
+              icon="plus"
+              data-testid="session-create-toggle"
+              onClick={() => {
+                setGrantDraft(null);
+                setSessionDraft((current) => (current ? null : emptySessionDraft(namespace)));
+              }}
+            >
+              New session
+            </Button>
+          </>
+        }
+      />
 
-      <form className="toolbar" role="search" onSubmit={(event) => event.preventDefault()}>
-        <div className="field grow">
-          <label htmlFor={filterId}>Filter</label>
-          <input
-            id={filterId}
-            type="search"
-            placeholder="Name, server, or subject"
-            value={filter}
-            onChange={(event) => setFilter(event.target.value)}
-            data-testid="access-filter"
-          />
-        </div>
-        <div className="field">
-          <label htmlFor={namespaceId}>Namespace</label>
-          <input
-            id={namespaceId}
-            type="search"
-            placeholder="All namespaces"
-            value={namespace}
-            onChange={(event) => onNamespaceChange(event.target.value)}
-            data-testid="access-namespace"
-          />
-        </div>
-        <button type="button" className="button ghost" onClick={reload} data-testid="access-refresh">
-          Refresh
-        </button>
-      </form>
+      <MetricGrid
+        label="Access control summary"
+        testId="access-stats"
+        metrics={[
+          { label: "Active grants", value: activeGrants, icon: "shield" },
+          {
+            label: "Disabled grants",
+            value: grants.length - activeGrants,
+            icon: "close",
+            tone: grants.length - activeGrants > 0 ? "warning" : "default",
+          },
+          { label: "Active sessions", value: activeSessions, icon: "clock" },
+          {
+            label: "Revoked or expired",
+            value: sessions.length - activeSessions,
+            icon: "alert",
+            tone: sessions.length - activeSessions > 0 ? "warning" : "default",
+          },
+        ]}
+      />
 
-      <div className="admin-links" aria-label="Access control actions">
-        <button type="button" className="button" data-testid="grant-create-toggle" onClick={() => setShowGrantForm((value) => !value)}>Create grant</button>
-        <button type="button" className="button ghost" data-testid="session-create-toggle" onClick={() => setShowSessionForm((value) => !value)}>Create session</button>
-      </div>
-      {showGrantForm ? <form className="toolbar admin-form" onSubmit={(event) => void applyGrant(event)} data-testid="grant-create-form"><div className="field"><label htmlFor="grant-name">Name</label><input id="grant-name" name="name" required /></div><div className="field"><label htmlFor="grant-server">Server</label><input id="grant-server" name="server" required /></div><div className="field"><label htmlFor="grant-human">Human ID</label><input id="grant-human" name="humanID" /></div><div className="field"><label htmlFor="grant-team">Team ID</label><input id="grant-team" name="teamID" /></div><div className="field"><label htmlFor="grant-trust">Max trust</label><select id="grant-trust" name="maxTrust" defaultValue="low"><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></div><button className="button" disabled={busyKey === "create-grant"}>{busyKey === "create-grant" ? "Creating…" : "Create"}</button></form> : null}
-      {showSessionForm ? <form className="toolbar admin-form" onSubmit={(event) => void applySession(event)} data-testid="session-create-form"><div className="field"><label htmlFor="session-name">Name</label><input id="session-name" name="name" required /></div><div className="field"><label htmlFor="session-server">Server</label><input id="session-server" name="server" required /></div><div className="field"><label htmlFor="session-human">Human ID</label><input id="session-human" name="humanID" /></div><div className="field"><label htmlFor="session-team">Team ID</label><input id="session-team" name="teamID" /></div><div className="field"><label htmlFor="session-trust">Trust</label><select id="session-trust" name="trust" defaultValue="low"><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></div><div className="field"><label htmlFor="session-expires">Expires</label><input id="session-expires" name="expiresAt" type="datetime-local" /></div><button className="button" disabled={busyKey === "create-session"}>{busyKey === "create-session" ? "Creating…" : "Create"}</button></form> : null}
-
-      <h3 className="subsection-title">Access grants</h3>
-      <AsyncSection
-        query={grantsQuery}
-        loadingLabel="Loading access grants…"
-        errorTitle="Access grants could not be loaded."
-        onRetry={reload}
-        onSignIn={onSignIn}
-        testId="grants"
-      >
-        <AdminTable
-          caption="Access grants with server, subject, trust ceiling, allowed side effects, and status."
-          columns={grantColumns}
-          rows={visibleGrants}
-          rowKey={accessKey}
-          emptyMessage={
-            grants.length === 0 ? "No access grants found." : "No grants match this filter."
-          }
-          testId="grants-table"
+      <FilterBar label="Filter access records">
+        <TextField
+          label="Search"
+          type="search"
+          fieldClassName="grow"
+          leadingIcon
+          placeholder="Name, server, or subject"
+          value={filter}
+          data-testid="access-filter"
+          onChange={(event) => setFilter(event.target.value)}
         />
-      </AsyncSection>
-
-      <h3 className="subsection-title">Agent sessions</h3>
-      <AsyncSection
-        query={sessionsQuery}
-        loadingLabel="Loading agent sessions…"
-        errorTitle="Agent sessions could not be loaded."
-        onRetry={reload}
-        onSignIn={onSignIn}
-        testId="sessions"
-      >
-        <AdminTable
-          caption="Agent sessions with server, subject, consented trust, expiry, and status."
-          columns={sessionColumns}
-          rows={visibleSessions}
-          rowKey={accessKey}
-          emptyMessage={
-            sessions.length === 0 ? "No agent sessions found." : "No sessions match this filter."
-          }
-          testId="sessions-table"
+        <SelectField
+          label="Namespace"
+          value={namespace}
+          data-testid="access-namespace"
+          hint="Scopes the reads below."
+          options={[
+            { value: "", label: "All namespaces" },
+            ...namespaceOptions.map((ns) => ({ value: ns, label: ns })),
+          ]}
+          onChange={(event) => onNamespaceChange(event.target.value)}
         />
-      </AsyncSection>
-      {actionError ? <p className="inline-error" role="alert" data-testid="access-action-error">{actionError}</p> : null}
-    </section>
+      </FilterBar>
+
+      <FilterSummary
+        chips={chips}
+        count={`${visibleGrants.length} grants · ${visibleSessions.length} sessions`}
+        onClear={() => {
+          setFilter("");
+          onNamespaceChange("");
+        }}
+        testId="access-summary"
+      />
+
+      {actionNotice ? (
+        <p className="notice notice-success" role="status" data-testid="access-action-notice">
+          <Icon name="check" />
+          <span className="notice-body">{actionNotice}</span>
+        </p>
+      ) : null}
+      {actionError ? (
+        <p className="notice notice-danger" role="alert" data-testid="access-action-error">
+          <Icon name="alert" />
+          <span className="notice-body">{actionError}</span>
+        </p>
+      ) : null}
+
+      {grantDraft ? (
+        <GrantForm
+          draft={grantDraft}
+          servers={catalog.servers}
+          namespaces={namespaceOptions}
+          busy={busyKey === "create-grant"}
+          submitError={actionError}
+          onChange={setGrantDraft}
+          onCancel={() => setGrantDraft(null)}
+          onSubmit={() =>
+            void runAction("create-grant", `Grant "${grantDraft.name}" created.`, async () => {
+              await createGrant({
+                name: grantDraft.name.trim(),
+                namespace: grantDraft.namespace.trim(),
+                serverRef: { name: grantDraft.server.trim() },
+                subject: {
+                  humanID: grantDraft.humanID.trim() || undefined,
+                  agentID: grantDraft.agentID.trim() || undefined,
+                  teamID: grantDraft.teamID.trim() || undefined,
+                },
+                maxTrust: grantDraft.maxTrust,
+                allowedSideEffects: grantDraft.allowedSideEffects,
+              });
+              setGrantDraft(null);
+            })
+          }
+        />
+      ) : null}
+
+      {sessionDraft ? (
+        <SessionForm
+          draft={sessionDraft}
+          servers={catalog.servers}
+          namespaces={namespaceOptions}
+          busy={busyKey === "create-session"}
+          submitError={actionError}
+          onChange={setSessionDraft}
+          onCancel={() => setSessionDraft(null)}
+          onSubmit={() =>
+            void runAction("create-session", `Session "${sessionDraft.name}" created.`, async () => {
+              await createSession({
+                name: sessionDraft.name.trim(),
+                namespace: sessionDraft.namespace.trim(),
+                serverRef: { name: sessionDraft.server.trim() },
+                subject: {
+                  humanID: sessionDraft.humanID.trim() || undefined,
+                  agentID: sessionDraft.agentID.trim() || undefined,
+                  teamID: sessionDraft.teamID.trim() || undefined,
+                },
+                consentedTrust: sessionDraft.consentedTrust,
+                expiresAt: sessionDraft.expiresAt
+                  ? new Date(sessionDraft.expiresAt).toISOString()
+                  : undefined,
+              });
+              setSessionDraft(null);
+            })
+          }
+        />
+      ) : null}
+
+      <section className="section">
+        <div className="section-head">
+          <h2 className="section-title" id="grants-title">
+            Access grants
+          </h2>
+          <p className="section-note">What a subject is allowed to do on a server.</p>
+        </div>
+        <AsyncSection
+          query={grantsQuery}
+          loadingLabel="Loading access grants…"
+          errorTitle="Access grants could not be loaded."
+          onRetry={reload}
+          onSignIn={onSignIn}
+          testId="grants"
+        >
+          <DataTable
+            columns={grantColumns}
+            rows={visibleGrants}
+            rowKey={accessKey}
+            caption="Access grants with server, subject, trust ceiling, allowed side effects, and status."
+            regionLabel="Access grants"
+            testId="grants-table"
+            emptyMessage={
+              grants.length === 0 ? "No access grants found." : "No grants match this filter."
+            }
+          />
+        </AsyncSection>
+      </section>
+
+      <section className="section">
+        <div className="section-head">
+          <h2 className="section-title" id="sessions-title">
+            Agent sessions
+          </h2>
+          <p className="section-note">What an agent consented to for a bounded period.</p>
+        </div>
+        <AsyncSection
+          query={sessionsQuery}
+          loadingLabel="Loading agent sessions…"
+          errorTitle="Agent sessions could not be loaded."
+          onRetry={reload}
+          onSignIn={onSignIn}
+          testId="sessions"
+        >
+          <DataTable
+            columns={sessionColumns}
+            rows={visibleSessions}
+            rowKey={accessKey}
+            caption="Agent sessions with server, subject, consented trust, expiry, and status."
+            regionLabel="Agent sessions"
+            testId="sessions-table"
+            emptyMessage={
+              sessions.length === 0 ? "No agent sessions found." : "No sessions match this filter."
+            }
+          />
+        </AsyncSection>
+      </section>
+
+      {confirm ? (
+        <ConfirmDialog
+          {...confirm}
+          busy={busyKey !== ""}
+          onCancel={() => setConfirm(null)}
+          testId="access-confirm"
+          confirmTestId="access-confirm-yes"
+          cancelTestId="access-confirm-cancel"
+        />
+      ) : null}
+    </>
   );
 }

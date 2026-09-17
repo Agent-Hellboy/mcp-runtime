@@ -1,14 +1,16 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { AppShell } from "./components/AppShell";
 import { ActivityWorkspace } from "./components/user/ActivityWorkspace";
 import { ApiKeysWorkspace } from "./components/user/ApiKeysWorkspace";
-import { LegacyWorkspace } from "./components/LegacyWorkspace";
 import { SignInPanel } from "./components/SignInPanel";
 import { ServersWorkspace } from "./components/servers/ServersWorkspace";
 import { AdminWorkspace } from "./components/admin/AdminWorkspace";
-import { visibleWorkspaceTabs, type WorkspaceId } from "./components/WorkspaceNavigation";
+import { adminSection, type AdminSectionId } from "./components/admin/adminSections";
+import { visibleWorkspaceTabs } from "./components/WorkspaceNavigation";
+import { useHashRoute } from "./routing/useHashRoute";
+import type { WorkspaceId } from "./routing/route";
 import { login, logout, readAuthStatus, type LoginInput } from "./api/auth";
 import { isAdmin, type AuthStatus } from "./api/types";
 
@@ -37,24 +39,13 @@ function loginErrorMessage(err: unknown): string {
   return "Sign-in failed. Try again.";
 }
 
-function authCacheKey(status: AuthStatus): string {
-  if (!status.authenticated) {
-    return "signed-out";
-  }
-  const principal = status.principal;
-  return [principal?.role, principal?.subject, principal?.email, principal?.auth_type]
-    .map((value) => value || "")
-    .join("|");
-}
-
 export function App() {
   const queryClient = useQueryClient();
+  const { route, navigate, setParams } = useHashRoute();
   const [auth, setAuth] = useState<AuthStatus>({ authenticated: false });
   const [authReady, setAuthReady] = useState(false);
   const [authBusy, setAuthBusy] = useState(false);
-  const [showSignIn, setShowSignIn] = useState(false);
   const [loginError, setLoginError] = useState("");
-  const [workspace, setWorkspace] = useState<WorkspaceId>("servers");
   const [theme, setTheme] = useState<ThemeMode>(initialTheme);
 
   useEffect(() => {
@@ -90,36 +81,51 @@ export function App() {
     };
   }, []);
 
-  // Second line of defence behind AdminGuard: if the session is not (or is no
-  // longer) an admin, the admin workspace is not a reachable route at all.
+  const allowedTabs = useMemo(() => visibleWorkspaceTabs(auth), [auth]);
+
+  // A workspace that role gating no longer permits must not stay rendered, and
+  // a shared deep link into one must not either. Both fall back to Servers.
   useEffect(() => {
-    if (authReady && workspace === "admin" && !isAdmin(auth)) {
-      setWorkspace("servers");
+    if (!authReady || route.workspace === "signin") {
+      return;
     }
-  }, [authReady, workspace, auth]);
+    const allowed = allowedTabs.some((tab) => tab.id === route.workspace);
+    if (!allowed) {
+      navigate({ workspace: "servers" }, { replace: true });
+    }
+  }, [authReady, allowedTabs, route.workspace, navigate]);
+
+  // Second line of defence behind AdminGuard.
+  useEffect(() => {
+    if (authReady && route.workspace === "admin" && !isAdmin(auth)) {
+      navigate({ workspace: "servers" }, { replace: true });
+    }
+  }, [authReady, route.workspace, auth, navigate]);
 
   const handleSignIn = useCallback(() => {
     setLoginError("");
     queryClient.clear();
     setAuth({ authenticated: false });
-    setShowSignIn(true);
-    setWorkspace("servers");
-  }, [queryClient]);
+    navigate({ workspace: "signin" });
+  }, [queryClient, navigate]);
 
-  const handleSubmit = useCallback(async (input: LoginInput) => {
-    setAuthBusy(true);
-    setLoginError("");
-    try {
-      const status = await login(input);
-      queryClient.clear();
-      setAuth(status);
-      setShowSignIn(false);
-    } catch (err) {
-      setLoginError(loginErrorMessage(err));
-    } finally {
-      setAuthBusy(false);
-    }
-  }, [queryClient]);
+  const handleSubmit = useCallback(
+    async (input: LoginInput) => {
+      setAuthBusy(true);
+      setLoginError("");
+      try {
+        const status = await login(input);
+        queryClient.clear();
+        setAuth(status);
+        navigate({ workspace: "servers" }, { replace: true });
+      } catch (err) {
+        setLoginError(loginErrorMessage(err));
+      } finally {
+        setAuthBusy(false);
+      }
+    },
+    [queryClient, navigate]
+  );
 
   const handleSignOut = useCallback(async () => {
     setAuthBusy(true);
@@ -128,54 +134,58 @@ export function App() {
     } finally {
       queryClient.clear();
       setAuth({ authenticated: false });
-      setShowSignIn(false);
-      setWorkspace("servers");
+      navigate({ workspace: "servers" }, { replace: true });
       setAuthBusy(false);
     }
-  }, [queryClient]);
+  }, [queryClient, navigate]);
 
-  const openLegacy = useCallback(() => {
-    setShowSignIn(false);
-    setWorkspace("legacy");
-  }, []);
-
-  // A workspace that role gating no longer permits must not stay rendered; this
-  // mirrors the legacy resolveActiveTab() fallback to Servers.
-  useEffect(() => {
-    const allowed = visibleWorkspaceTabs(auth).some((tab) => tab.id === workspace);
-    if (!allowed) {
-      setWorkspace("servers");
-    }
-  }, [auth, workspace]);
+  const selectWorkspace = useCallback(
+    (id: WorkspaceId) => {
+      navigate({ workspace: id });
+    },
+    [navigate]
+  );
 
   let content;
   if (!authReady) {
     content = (
-      <div className="state-block state-loading" role="status" aria-live="polite">
-        <span className="state-spinner" aria-hidden="true" />
+      <div className="state state-loading" role="status" aria-live="polite">
+        <span className="skeleton" style={{ width: 18, height: 18, borderRadius: "50%" }} />
         <p className="state-title">Checking your session…</p>
       </div>
     );
-  } else if (showSignIn) {
+  } else if (route.workspace === "signin") {
     content = (
       <SignInPanel
         onSubmit={handleSubmit}
-        onCancel={() => setShowSignIn(false)}
-        onOpenLegacy={openLegacy}
+        onCancel={() => navigate({ workspace: "servers" })}
         error={loginError}
         busy={authBusy}
+        theme={theme}
       />
     );
-  } else if (workspace === "legacy") {
-    content = <LegacyWorkspace />;
-  } else if (workspace === "admin") {
-    content = <AdminWorkspace auth={auth} onSignIn={handleSignIn} />;
-  } else if (workspace === "activity") {
+  } else if (route.workspace === "admin") {
+    content = (
+      <AdminWorkspace
+        auth={auth}
+        onSignIn={handleSignIn}
+        section={adminSection(route.section).id}
+        onSectionChange={(section: AdminSectionId) => navigate({ workspace: "admin", section })}
+      />
+    );
+  } else if (route.workspace === "activity") {
     content = <ActivityWorkspace auth={auth} onSignIn={handleSignIn} />;
-  } else if (workspace === "keys") {
+  } else if (route.workspace === "keys") {
     content = <ApiKeysWorkspace auth={auth} onSignIn={handleSignIn} />;
   } else {
-    content = <ServersWorkspace authenticated={auth.authenticated} onSignIn={handleSignIn} />;
+    content = (
+      <ServersWorkspace
+        authenticated={auth.authenticated}
+        onSignIn={handleSignIn}
+        params={route.params}
+        onParamsChange={setParams}
+      />
+    );
   }
 
   return (
@@ -184,24 +194,8 @@ export function App() {
       authBusy={authBusy}
       theme={theme}
       onToggleTheme={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}
-      workspace={workspace}
-      onSelectWorkspace={(id) => {
-        setShowSignIn(false);
-        setWorkspace(id);
-        if (workspace === "legacy" && id !== "legacy") {
-          void readAuthStatus()
-            .then((status) => {
-              if (authCacheKey(auth) !== authCacheKey(status)) {
-                queryClient.clear();
-              }
-              setAuth(status);
-            })
-            .catch(() => {
-              queryClient.clear();
-              setAuth({ authenticated: false });
-            });
-        }
-      }}
+      workspace={route.workspace}
+      onSelectWorkspace={selectWorkspace}
       onSignIn={handleSignIn}
       onSignOut={handleSignOut}
     >

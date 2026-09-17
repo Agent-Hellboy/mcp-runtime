@@ -258,3 +258,21 @@ For each phase, run the narrowest checks first and then the relevant full checks
 ## Definition of done for the full migration
 
 The migration is complete when all five phases have passed their acceptance criteria, the legacy inventory has no unmigrated workflows, the iframe and legacy assets are removed, and the browser/API/security evidence is attached to the final PR.
+
+## Status after `ui/servers_console_redesign`
+
+The redesign pass completed the Phase 5 user-facing work ahead of the branch
+sequence above. What is true now:
+
+- The "More workspaces" navigation entry and the nested iframe are removed;
+  `components/LegacyWorkspace.tsx` and `LegacyDashboard.tsx` no longer exist.
+- Every workflow this plan listed has a React replacement, verified against the
+  Kind contributor cluster, **except** the per-user admin detail drill-down.
+- Google sign-in, previously reachable only from the legacy dashboard, is part
+  of the React sign-in panel and still verified server-side.
+- The legacy static assets stay in the tree and stay served, because of the one
+  outstanding drill-down. Deleting them is still gated on the criteria in
+  "Phase 5" above.
+
+The implemented structure, tokens, routes, and the full legacy parity inventory
+are documented in [`ui-console-design-system.md`](./ui-console-design-system.md).

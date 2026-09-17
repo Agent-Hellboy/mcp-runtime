@@ -1,21 +1,49 @@
-import { EmptyState } from "../EmptyState";
-import { StatusBadge } from "../StatusBadge";
+import { Button } from "../../ui/Button";
+import { CopyButton } from "../../ui/CopyButton";
+import { StatusBadge } from "../../ui/Badge";
+import { EmptyState } from "../../ui/States";
+import { formatAbsolute, formatAge } from "../../lib/format";
 import { isServerReady, serverKey, type ServerSummary } from "../../api/types";
 
 type ServerListProps = {
   servers: ServerSummary[];
   toolCounts: Record<string, number>;
-  selectedKey: string;
-  onSelect: (key: string) => void;
+  scopedServerKey: string;
+  inspectedServerKey: string;
+  onScope: (key: string) => void;
+  onInspect: (key: string) => void;
+  onClearFilters: () => void;
+  filtered: boolean;
 };
 
-export function ServerList({ servers, toolCounts, selectedKey, onSelect }: ServerListProps) {
+export function ServerList({
+  servers,
+  toolCounts,
+  scopedServerKey,
+  inspectedServerKey,
+  onScope,
+  onInspect,
+  onClearFilters,
+  filtered,
+}: ServerListProps) {
   if (servers.length === 0) {
     return (
       <EmptyState
-        title="No MCP servers match this scope."
-        detail="Publish a server, or widen the namespace and status filters."
+        icon="server"
+        title={filtered ? "No servers match these filters." : "No MCP servers in this scope."}
+        detail={
+          filtered
+            ? "Widen the namespace, status, or search filters to see more servers."
+            : "Publish a server with `mcp-runtime server deploy`, or switch to a namespace that has one."
+        }
         testId="server-list-empty"
+        action={
+          filtered ? (
+            <Button variant="secondary" onClick={onClearFilters}>
+              Clear filters
+            </Button>
+          ) : undefined
+        }
       />
     );
   }
@@ -25,52 +53,81 @@ export function ServerList({ servers, toolCounts, selectedKey, onSelect }: Serve
       {servers.map((server) => {
         const key = serverKey(server);
         const ready = isServerReady(server);
-        const selected = key === selectedKey;
+        const scoped = key === scopedServerKey;
+        const inspected = key === inspectedServerKey;
         const toolCount = toolCounts[key] ?? 0;
+
         return (
           <li key={key}>
             <article
-              className={selected ? "server-card selected" : "server-card"}
+              className={scoped || inspected ? "server-card is-selected" : "server-card"}
               data-testid="server-card"
               data-server-key={key}
             >
-              <header className="server-card-head">
-                <h3>{server.name}</h3>
+              <div className="server-card-head">
+                <div>
+                  <h3 className="server-card-name">{server.name}</h3>
+                  <p className="server-card-namespace">{server.namespace}</p>
+                </div>
+                {/* Kubernetes readiness only: it says the replicas are up, not
+                    that the MCP endpoint answered. */}
                 <StatusBadge tone={ready ? "ready" : "attention"}>
                   {ready ? "Ready" : server.status || "Not ready"}
                 </StatusBadge>
-              </header>
-              <dl className="server-card-meta">
-                <div>
-                  <dt>Namespace</dt>
-                  <dd>{server.namespace}</dd>
-                </div>
-                <div>
-                  <dt>Replicas</dt>
-                  <dd>{server.ready || "—"}</dd>
-                </div>
-                <div>
-                  <dt>Tools</dt>
-                  <dd>{toolCount}</dd>
-                </div>
-              </dl>
+              </div>
+
               {server.description ? (
-                <p className="server-card-description">{server.description}</p>
-              ) : null}
-              {server.endpoint ? (
-                <p className="server-card-endpoint" title={server.endpoint}>
-                  {server.endpoint}
+                <p className="server-card-description clamp-2" title={server.description}>
+                  {server.description}
                 </p>
               ) : null}
-              <button
-                type="button"
-                className={selected ? "button primary" : "button ghost"}
-                aria-pressed={selected}
-                data-testid="server-card-select"
-                onClick={() => onSelect(selected ? "" : key)}
-              >
-                {selected ? "Clear server filter" : "Show tools"}
-              </button>
+
+              <div className="server-card-facts">
+                <span>
+                  Replicas <b>{server.ready || "—"}</b>
+                </span>
+                <span>
+                  Tools <b>{toolCount}</b>
+                </span>
+                {formatAge(server.age) ? (
+                  <span title={formatAbsolute(server.age)}>
+                    Age <b>{formatAge(server.age)}</b>
+                  </span>
+                ) : null}
+                {server.authMode ? (
+                  <span>
+                    Auth <b>{server.authMode}</b>
+                  </span>
+                ) : null}
+              </div>
+
+              {server.endpoint ? (
+                <span className="copy-row">
+                  <span className="copy-value" title={server.endpoint}>
+                    {server.endpoint}
+                  </span>
+                  <CopyButton
+                    value={server.endpoint}
+                    label={`Copy the endpoint for ${server.name}`}
+                    testId="server-copy-endpoint"
+                  />
+                </span>
+              ) : null}
+
+              <div className="server-card-actions">
+                <Button variant="secondary" size="sm" onClick={() => onInspect(key)} data-testid="server-card-details">
+                  View details
+                </Button>
+                <Button
+                  variant={scoped ? "primary" : "ghost"}
+                  size="sm"
+                  aria-pressed={scoped}
+                  data-testid="server-card-select"
+                  onClick={() => onScope(scoped ? "" : key)}
+                >
+                  {scoped ? "Clear server filter" : "Show tools"}
+                </Button>
+              </div>
             </article>
           </li>
         );
