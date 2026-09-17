@@ -3,6 +3,7 @@ import type { AccessSelection } from "./AccessControlPanel";
 import { ErrorState } from "../ErrorState";
 import { LoadingState } from "../LoadingState";
 import { StatusBadge } from "../StatusBadge";
+import { ForbiddenError } from "../../api/client";
 import { useAccessActivity } from "../../hooks/useAdminData";
 import { subjectLabel } from "../../api/types";
 import type { GatewayEvent } from "../../api/types";
@@ -32,9 +33,9 @@ function eventTime(event: GatewayEvent): string {
   return Number.isNaN(parsed.getTime()) ? event.timestamp : parsed.toLocaleString();
 }
 
-// Mirrors the legacy drill-down filtering from #378: a grant's activity is the
-// last 7 days of decisions that matched it in the same namespace; a session's
-// timeline is every decision recorded against it in that namespace.
+// A grant's activity is the last 7 days of decisions that matched it in the
+// same namespace; a session's timeline is every decision recorded against it
+// in that namespace.
 export function filterGrantActivity(
   events: GatewayEvent[],
   name: string,
@@ -161,6 +162,12 @@ export function AccessDetail({ selection, onBack }: AccessDetailProps) {
         <LoadingState
           label={isGrant ? "Loading activity…" : "Loading timeline…"}
           testId="access-activity-loading"
+        />
+      ) : activityQuery.error instanceof ForbiddenError ? (
+        <ErrorState
+          title="Admin access required."
+          detail="Gateway decision events are restricted to admin accounts on this cluster."
+          testId="access-activity-forbidden"
         />
       ) : activityQuery.error ? (
         <ErrorState

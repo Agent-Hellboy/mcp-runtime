@@ -30,7 +30,7 @@ export function ActivityWorkspace({ auth, onSignIn }: ActivityWorkspaceProps) {
   const windowId = useId();
   const serverId = useId();
 
-  // Legacy data-user-only gate: Activity is the tenant view. Admins use the
+  // Activity is the tenant view. Admins use the
   // org-wide Analytics surface instead.
   const enabled = isTenantUser(auth);
 

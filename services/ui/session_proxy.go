@@ -60,6 +60,7 @@ var sessionProxyWriteRoutes = []sessionProxyWriteRoute{
 	{Prefix: "/runtime/teams/", Methods: []string{http.MethodPost}, Segments: 2, Suffixes: []string{"members", "users"}},
 	{Prefix: "/runtime/teams/", Methods: []string{http.MethodPut, http.MethodDelete}, Segments: 3, Suffixes: []string{"members"}, SuffixIndex: 1},
 	{Prefix: "/runtime/actions/restart", Methods: []string{http.MethodPost}},
+	{Prefix: "/runtime/servers/", Methods: []string{http.MethodDelete}, Segments: 2},
 }
 
 type sessionProxyWriteRoute struct {

@@ -1,6 +1,4 @@
-/* Phase 4 admin surfaces. Reuses the Sentinel tokens defined in global.css so
-   the admin workspace stays visually continuous with the legacy dashboard it
-   still sits above. */
+/* Admin surfaces. Reuses the Sentinel tokens defined in global.css. */
 
 .admin-workspace {
   display: block;

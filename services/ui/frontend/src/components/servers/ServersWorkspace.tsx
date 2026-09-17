@@ -7,14 +7,100 @@ import { EMPTY_FILTERS, ToolFilters, type CatalogFilters } from "./ToolFilters";
 import { EmptyState } from "../EmptyState";
 import { ErrorState } from "../ErrorState";
 import { LoadingState } from "../LoadingState";
-import { useCatalog } from "../../hooks/useCatalog";
-import { isServerReady, serverKey, toolKey } from "../../api/types";
-import type { ServerSummary, ToolRow } from "../../api/types";
+import { retireServer } from "../../api/catalog";
+import { readRuntimeConfig } from "../../api/config";
+import { useCatalog, usePublicCatalog } from "../../hooks/useCatalog";
+import { formatPublishQuota, isServerReady, isTenantUser, serverKey, toolKey } from "../../api/types";
+import type { AuthStatus, ServerSummary, ToolRow } from "../../api/types";
 
 type ServersWorkspaceProps = {
-  authenticated: boolean;
+  auth: AuthStatus;
   onSignIn: () => void;
 };
+
+// The anonymous counterpart of ServersWorkspace, for a signed-out visitor to
+// a PLATFORM_MODE=public deployment. Read-only: no namespace/status
+// filtering, no retire, no quota stat - just the same public catalog the
+// removed legacy dashboard's synthesized "public preview" scope showed.
+function PublicServersPreview({ onSignIn }: { onSignIn: () => void }) {
+  const [selectedServerKey, setSelectedServerKey] = useState("");
+  const [selectedToolKey, setSelectedToolKey] = useState("");
+  const catalog = usePublicCatalog(true);
+
+  const toolCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const tool of catalog.tools) {
+      const key = `${tool.namespace}/${tool.server_name}`;
+      counts[key] = (counts[key] || 0) + 1;
+    }
+    return counts;
+  }, [catalog.tools]);
+
+  const visibleTools = useMemo(
+    () =>
+      selectedServerKey
+        ? catalog.tools.filter((tool) => `${tool.namespace}/${tool.server_name}` === selectedServerKey)
+        : catalog.tools,
+    [catalog.tools, selectedServerKey]
+  );
+
+  const selectedTool = useMemo(
+    () => visibleTools.find((tool) => toolKey(tool) === selectedToolKey),
+    [visibleTools, selectedToolKey]
+  );
+
+  if (catalog.status === "loading") {
+    return <LoadingState label="Loading the public catalog…" testId="public-catalog-loading" />;
+  }
+
+  if (catalog.status === "error") {
+    return (
+      <ErrorState
+        title="The public catalog could not be loaded."
+        detail={catalog.error}
+        testId="public-catalog-error"
+      />
+    );
+  }
+
+  return (
+    <div className="servers-workspace">
+      <section className="panel" aria-labelledby="public-catalog-title">
+        <div className="panel-head">
+          <div>
+            <h2 id="public-catalog-title">Public catalog preview</h2>
+            <p className="panel-lede">
+              Browsing anonymously. Sign in to see your organization&rsquo;s full catalog and manage
+              servers.
+            </p>
+          </div>
+          <button type="button" className="button primary" onClick={onSignIn} data-testid="public-catalog-sign-in">
+            Sign in
+          </button>
+        </div>
+        <ServerList
+          servers={catalog.servers}
+          toolCounts={toolCounts}
+          selectedKey={selectedServerKey}
+          onSelect={(key) => {
+            setSelectedServerKey(key);
+            setSelectedToolKey("");
+          }}
+        />
+      </section>
+      <ToolCatalog
+        tools={visibleTools}
+        totalCount={catalog.tools.length}
+        selectedToolKey={selectedToolKey}
+        onSelectTool={setSelectedToolKey}
+        emptyMessage="No tools are published in the public catalog."
+      />
+      {selectedTool ? (
+        <ToolDetail tool={selectedTool} onClose={() => setSelectedToolKey("")} />
+      ) : null}
+    </div>
+  );
+}
 
 export function matchesSearch(tool: ToolRow, search: string): boolean {
   const term = search.trim().toLowerCase();
@@ -76,7 +162,8 @@ export function filterTools(
   });
 }
 
-export function ServersWorkspace({ authenticated, onSignIn }: ServersWorkspaceProps) {
+export function ServersWorkspace({ auth, onSignIn }: ServersWorkspaceProps) {
+  const authenticated = auth.authenticated;
   const [filters, setFilters] = useState<CatalogFilters>(EMPTY_FILTERS);
   const [selectedToolKey, setSelectedToolKey] = useState("");
   const catalog = useCatalog(authenticated, filters.namespace);
@@ -116,6 +203,9 @@ export function ServersWorkspace({ authenticated, onSignIn }: ServersWorkspacePr
   );
 
   if (!authenticated) {
+    if (readRuntimeConfig().platformMode === "public") {
+      return <PublicServersPreview onSignIn={onSignIn} />;
+    }
     return (
       <section className="panel" aria-labelledby="catalog-signed-out-title">
         <h2 id="catalog-signed-out-title">Server catalog</h2>
@@ -180,6 +270,11 @@ export function ServersWorkspace({ authenticated, onSignIn }: ServersWorkspacePr
             <li>
               <strong>{scopedTools.length}</strong> tools
             </li>
+            {isTenantUser(auth) ? (
+              <li data-testid="server-quota">
+                <strong>{formatPublishQuota(catalog.publishPolicy)}</strong> quota
+              </li>
+            ) : null}
           </ul>
         </div>
         <ToolFilters
@@ -202,6 +297,15 @@ export function ServersWorkspace({ authenticated, onSignIn }: ServersWorkspacePr
           onSelect={(key) => {
             setFilters((previous) => ({ ...previous, selectedServerKey: key }));
             setSelectedToolKey("");
+          }}
+          onRetire={async (namespace, name) => {
+            await retireServer(namespace, name);
+            const retiredKey = serverKey({ namespace, name });
+            if (filters.selectedServerKey === retiredKey) {
+              setFilters((previous) => ({ ...previous, selectedServerKey: "" }));
+              setSelectedToolKey("");
+            }
+            catalog.reload();
           }}
         />
       </section>

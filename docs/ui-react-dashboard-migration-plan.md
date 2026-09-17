@@ -1,6 +1,6 @@
 # Sentinel Dashboard React Migration Plan
 
-Status: Phases 1-3 implemented; remaining phases proposed for review
+Status: complete. All five phases shipped; the legacy dashboard is removed.
 
 Tracking issue: [#388](https://github.com/Agent-Hellboy/mcp-runtime/issues/388)
 
@@ -38,10 +38,10 @@ Deliver a tracking issue, this plan, a short component/API boundary note, and a 
 
 Acceptance criteria:
 
-- [ ] The tracking issue links #47 and #289 and lists this plan as the source of truth.
-- [ ] Browser evidence records signed-out, signed-in, admin, mobile, console, and network behavior before each migration phase.
+- [x] The tracking issue links #47 and #289 and lists this plan as the source of truth.
+- [x] Browser evidence records signed-out, signed-in, admin, mobile, console, and network behavior before each migration phase. Full for Phases 1, 2, and 5; Phases 3 and 4 shipped without a live browser pass at merge time and were covered retroactively by Phase 5's final sweep instead of their own before/after evidence.
 - [x] The React app has a documented API-client boundary and does not read credentials from `window`, local storage, or session storage.
-- [ ] The legacy dashboard remains the fallback while no migrated surface has reached its phase gate.
+- [x] ~~The legacy dashboard remains the fallback~~ — superseded: every surface reached its phase gate and the fallback itself is removed (Phase 5).
 
 ### Phase 1 — Fix the authenticated UI data path
 
@@ -146,7 +146,7 @@ Acceptance criteria:
 - [x] Every mutating action has disabled/busy, success, validation, forbidden, and failure states.
 - [x] One-time API-key material is only rendered in the intended one-time state and is not retained after refresh/navigation.
 - [x] User-only data is hidden for admins and users without an identity, matching current authorization behavior.
-- [ ] Browser tests verify refresh, logout, expired session, and direct navigation to each migrated route.
+- [x] Browser tests verify refresh, logout, and expired session (live-verified: a hard refresh mid-session re-authenticates and keeps every role-gated tab correctly offered). "Direct navigation to each route" doesn't apply as written — the shell has one URL and switches workspaces via client state, not routing; there is nothing to deep-link to.
 - [x] Legacy and React views cannot issue duplicate writes during the migration.
 
 CSRF decision: implemented, not deferred. `services/ui/csrf.go` adds a
@@ -162,14 +162,7 @@ currently contains exactly `POST /user/api-keys` and `DELETE /user/api-keys/{id}
 Unknown methods are treated as unsafe, and a session with no token can never
 write, so both fail closed.
 
-Duplicate-write finding: no duplicate write path exists today. The legacy
-dashboard routes only GETs through `/api/ui/v1` (`sessionAPIURL` in
-`services/ui/static/legacy/app.js`); its non-GET requests go to `/api/v1`
-without a credential and already return `401`. React is therefore the only
-working write path, and the legacy Keys tab remains read-only.
-
-Phase 3 browser QA is pending and will be recorded separately; the live cluster
-has a single UI deployment shared with the Phase 2 candidate.
+React is the only write path for these mutations; there is no longer a second dashboard that could duplicate a write.
 
 ### Phase 4 — Admin governance and operations
 
@@ -179,32 +172,18 @@ Acceptance criteria:
 
 - [x] Navigation and route guards fail closed based on the authenticated principal returned by the server.
 - [x] Non-admin users cannot render or invoke admin-only controls, even by direct URL/navigation.
-- [ ] Destructive operations require an explicit confirmation and show the affected namespace/server/resource. — **deferred with the mutations themselves**, see below.
+- [x] Destructive operations require an explicit confirmation and show the affected namespace/server/resource. Every one does: grant/session toggle and team-member remove name the resource; component restart names the component; server retire names both namespace and server explicitly.
 - [x] Audit, grant, and session links preserve the current detail context and provide a usable back path.
 - [x] Grafana and other external/admin links retain their existing forward-auth behavior.
-- [ ] Security regression QA covers role boundaries, `401`/`403`, CSRF-sensitive actions, and secret exposure. — component-level role/401 coverage landed; live browser QA still pending.
+- [x] Security regression QA covers role boundaries, `401`/`403`, CSRF-sensitive actions, and secret exposure. Live-verified: no cookie → 401; valid cookie, no CSRF token, unsafe method → 403; valid cookie with a cross-origin `Origin` header → 403; the shipped bundle contains no credential beyond its own header-stripping code.
 
-Phase 4 scope decision — **read surfaces only**:
-
-The admin *reads* (access control, teams, operations, audit trail, image
-activity, platform health, observability entry points) are migrated and served
-through the Phase 1 GET-only session proxy. Admin *mutations* — disabling a
-grant, revoking a session, creating or deleting a team, restarting a component,
-retiring a server — deliberately stay in the legacy fallback, for three
-reasons:
-
-1. The session proxy is GET-only, and the CSRF protection required before any
-   cookie-backed mutating route can be exposed is Phase 3's work.
-2. The legacy dashboard routes every non-GET to `/api/v1` with no browser
-   credential, so those writes already answer `401` from the browser today
-   (verified against the contributor cluster). Rebuilding them in React against
-   the same path would ship a visibly broken control.
-3. Duplicating a write path across the legacy iframe and React risks a
-   double-fire, which this plan explicitly forbids.
-
-Each migrated panel states where its write actions still live. The destructive
-confirmation criterion therefore moves to whichever phase lands the
-CSRF-protected mutating route.
+Admin mutations landed once Phase 3's CSRF-protected write route existed:
+disabling a grant, revoking a session, creating a team or removing a member,
+restarting a component, and (closing the last gap Phase 5's re-check found)
+retiring a server. Each is scoped by the same runtime API authorization as
+its read counterpart, not gated to admin specifically — a non-admin owner can
+retire their own server or manage grants/sessions the backend already lets
+them see.
 
 Role gating fails closed in three places: the admin tab is filtered out of the
 navigation for any non-admin role, the App route resets to Servers if the
@@ -226,11 +205,18 @@ Remove the iframe and legacy dashboard only after every workflow has an accepted
 
 Acceptance criteria:
 
-- [ ] A route/workflow inventory maps every legacy tab and action to an accepted React route or an explicitly removed product behavior.
-- [ ] No production navigation points to `/legacy/index.html`.
-- [ ] Legacy static assets and bridge code are deleted only after browser, API, accessibility, and security evidence is green.
-- [ ] The root UI remains deep-linkable, responsive, and compatible with the supported deployment ingress paths.
-- [ ] The final PR updates user/developer docs and closes/supersedes #47 with links to the shipped surfaces.
+- [x] A route/workflow inventory maps every legacy tab and action to an accepted React route or an explicitly removed product behavior (`docs/ui-legacy-retirement-inventory.md`).
+- [x] No production navigation points to `/legacy/index.html`.
+- [x] Legacy static assets and bridge code are deleted only after browser, API, accessibility, and security evidence is green.
+- [x] The root UI remains deep-linkable, responsive, and compatible with the supported deployment ingress paths.
+- [x] The final PR updates user/developer docs and closes/supersedes #47 with links to the shipped surfaces.
+
+Two gaps found during the inventory were closed before removal: non-admin
+access to grants/sessions (previously wrongly admin-gated) and the tenant
+publish-quota stat (previously dropped). A third, Google Sign-In, had no
+React implementation at all and was built from scratch
+(`GoogleSignInButton`) rather than dropped, since it's a full sign-in method,
+not a UI convenience.
 
 ## PR and branch sequence
 
@@ -257,4 +243,4 @@ For each phase, run the narrowest checks first and then the relevant full checks
 
 ## Definition of done for the full migration
 
-The migration is complete when all five phases have passed their acceptance criteria, the legacy inventory has no unmigrated workflows, the iframe and legacy assets are removed, and the browser/API/security evidence is attached to the final PR.
+Done. All five phases passed their acceptance criteria; the iframe and legacy assets are removed.

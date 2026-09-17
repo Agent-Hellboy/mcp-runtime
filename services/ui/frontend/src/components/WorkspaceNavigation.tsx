@@ -1,7 +1,7 @@
 import type { AuthStatus } from "../api/types";
 import { hasUserIdentity, isAdmin, isTenantUser } from "../api/types";
 
-export type WorkspaceId = "servers" | "admin" | "activity" | "keys" | "legacy";
+export type WorkspaceId = "servers" | "access" | "admin" | "activity" | "keys";
 
 export type WorkspaceTab = {
   id: WorkspaceId;
@@ -18,9 +18,17 @@ export const WORKSPACE_TABS: WorkspaceTab[] = [
     description: "Deployed MCP servers and their governed tool catalog.",
   },
   {
+    id: "access",
+    label: "Access Control",
+    description: "Grants and agent sessions enforced by the MCP gateway.",
+    // Any authenticated principal, not only admins - the backend registers
+    // /runtime/grants and /runtime/sessions with rr.auth, not rr.adminOnly.
+    visible: (auth) => auth.authenticated,
+  },
+  {
     id: "admin",
     label: "Administration",
-    description: "Access control, teams, operations, and platform health.",
+    description: "Teams, operations, and platform health.",
     visible: isAdmin,
   },
   {
@@ -34,11 +42,6 @@ export const WORKSPACE_TABS: WorkspaceTab[] = [
     label: "Keys",
     description: "Personal API keys for agents and CI jobs.",
     visible: hasUserIdentity,
-  },
-  {
-    id: "legacy",
-    label: "More workspaces",
-    description: "Analytics, teams, access control, and operations.",
   },
 ];
 

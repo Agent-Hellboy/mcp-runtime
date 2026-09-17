@@ -16,43 +16,6 @@ const TENANT: AuthStatus = {
 };
 const SIGNED_OUT: AuthStatus = { authenticated: false };
 
-const GRANTS = {
-  grants: [
-    {
-      name: "acme-readonly",
-      namespace: "mcp-servers",
-      serverRef: { name: "workspace-assistant" },
-      subject: { humanID: "alice@example.com", teamID: "acme" },
-      maxTrust: "low",
-      allowedSideEffects: ["read"],
-      disabled: false,
-    },
-    {
-      name: "acme-retired",
-      namespace: "mcp-servers",
-      serverRef: { name: "workspace-assistant" },
-      subject: { humanID: "bob@example.com" },
-      maxTrust: "high",
-      allowedSideEffects: ["read", "write"],
-      disabled: true,
-    },
-  ],
-};
-
-const SESSIONS = {
-  sessions: [
-    {
-      name: "sess-1",
-      namespace: "mcp-servers",
-      serverRef: { name: "workspace-assistant" },
-      subject: { humanID: "alice@example.com", agentID: "agent-7" },
-      consentedTrust: "low",
-      revoked: false,
-      expiresAt: "2026-10-01T00:00:00Z",
-    },
-  ],
-};
-
 const TEAMS = {
   teams: [{ id: "t-1", slug: "verify", name: "Verify Team", namespace: "mcp-team-verify" }],
 };
@@ -112,18 +75,6 @@ const OPERATIONS = {
   ],
 };
 
-const EVENTS = {
-  events: [
-    {
-      timestamp: new Date().toISOString(),
-      namespace: "mcp-servers",
-      tool_name: "add",
-      decision: "allow",
-      payload: { matched_grant: "acme-readonly", matched_grant_namespace: "mcp-servers" },
-    },
-  ],
-};
-
 function stubAdminApi(overrides: Record<string, { status?: number; body?: unknown }> = {}) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
@@ -137,19 +88,13 @@ function stubAdminApi(overrides: Record<string, { status?: number; body?: unknow
         text: async () => JSON.stringify(body),
       } as unknown as Response;
     }
-    const body = url.includes("/runtime/grants")
-      ? GRANTS
-      : url.includes("/runtime/sessions")
-        ? SESSIONS
-        : url.includes("/runtime/teams")
-          ? TEAMS
-          : url.includes("/runtime/components")
-            ? COMPONENTS
-            : url.includes("/admin/operations")
-              ? OPERATIONS
-              : url.includes("/events")
-                ? EVENTS
-                : {};
+    const body = url.includes("/runtime/teams")
+      ? TEAMS
+      : url.includes("/runtime/components")
+        ? COMPONENTS
+        : url.includes("/admin/operations")
+          ? OPERATIONS
+          : {};
     return { ok: true, status: 200, json: async () => body } as unknown as Response;
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -180,7 +125,7 @@ describe("AdminWorkspace role gating", () => {
     renderAdmin(SIGNED_OUT);
 
     expect(screen.getByTestId("admin-signed-out")).toBeInTheDocument();
-    expect(screen.queryByTestId("admin-section-access")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("admin-section-teams")).not.toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -192,9 +137,11 @@ describe("AdminWorkspace role gating", () => {
     const refusal = screen.getByTestId("admin-forbidden");
     expect(refusal).toHaveTextContent("This workspace is restricted to administrators.");
     expect(refusal).toHaveAttribute("role", "alert");
-    // No admin control of any kind is rendered for a tenant user.
-    expect(screen.queryByTestId("admin-section-access")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("grants-table")).not.toBeInTheDocument();
+    // No admin control of any kind is rendered for a tenant user. Access
+    // control (grants/sessions) is deliberately not admin-gated at all - it
+    // lives in the separate AccessWorkspace - so it is not asserted here.
+    expect(screen.queryByTestId("admin-section-teams")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("teams-table")).not.toBeInTheDocument();
     expect(screen.queryByTestId("grafana-link")).not.toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -207,179 +154,26 @@ describe("AdminWorkspace role gating", () => {
     expect(screen.getByTestId("admin-forbidden")).toBeInTheDocument();
   });
 
-  it("renders the admin sections for an admin principal", async () => {
+  it("renders the admin-only sections for an admin principal", async () => {
     stubAdminApi();
 
     renderAdmin(ADMIN);
 
-    expect(await screen.findByTestId("grants-table")).toBeInTheDocument();
-    for (const section of ["access", "teams", "operations", "platform", "analytics"]) {
+    expect(await screen.findByTestId("teams-table")).toBeInTheDocument();
+    for (const section of ["teams", "operations", "platform", "analytics"]) {
       expect(screen.getByTestId(`admin-section-${section}`)).toBeInTheDocument();
     }
-  });
-});
-
-describe("AdminWorkspace access control", () => {
-  it("reads grants and sessions through the session-backed proxy", async () => {
-    const fetchMock = stubAdminApi();
-
-    renderAdmin(ADMIN);
-    await screen.findByTestId("grants-table");
-
-    const urls = fetchMock.mock.calls.map((call) => String(call[0]));
-    expect(urls).toEqual(
-      expect.arrayContaining(["/api/ui/v1/runtime/grants", "/api/ui/v1/runtime/sessions"])
-    );
-    for (const call of fetchMock.mock.calls) {
-      const init = call[1] as RequestInit;
-      expect(init.credentials).toBe("same-origin");
-      const headers = new Headers(init.headers);
-      expect(headers.get("authorization")).toBeNull();
-      expect(headers.get("x-api-key")).toBeNull();
-    }
-  });
-
-  it("renders grant and session rows with status and subject", async () => {
-    stubAdminApi();
-
-    renderAdmin(ADMIN);
-    const table = await screen.findByTestId("grants-table");
-
-    expect(within(table).getByText("alice@example.com / acme")).toBeInTheDocument();
-    expect(within(table).getByText("Disabled")).toBeInTheDocument();
-    expect(screen.getByTestId("access-stats")).toHaveTextContent("1");
-    expect(within(screen.getByTestId("sessions-table")).getByText("agent-7", { exact: false }))
-      .toBeInTheDocument();
-  });
-
-  it("filters grants and sessions by term", async () => {
-    const user = userEvent.setup();
-    stubAdminApi();
-
-    renderAdmin(ADMIN);
-    await screen.findByTestId("grants-table");
-
-    await user.type(screen.getByTestId("access-filter"), "retired");
-    expect(screen.getAllByTestId("grants-table-row")).toHaveLength(1);
-
-    await user.clear(screen.getByTestId("access-filter"));
-    await user.type(screen.getByTestId("access-filter"), "zzz-no-match");
-    expect(screen.getByTestId("grants-table-empty")).toHaveTextContent(
-      "No grants match this filter."
-    );
-  });
-
-  it("shows an empty state when no grants exist", async () => {
-    stubAdminApi({
-      "/runtime/grants": { body: { grants: [] } },
-      "/runtime/sessions": { body: { sessions: [] } },
-    });
-
-    renderAdmin(ADMIN);
-
-    expect(await screen.findByTestId("grants-table-empty")).toHaveTextContent(
-      "No access grants found."
-    );
-  });
-
-  it("shows an error state when the grant read fails", async () => {
-    stubAdminApi({ "/runtime/grants": { status: 500, body: { error: "boom" } } });
-
-    renderAdmin(ADMIN);
-
-    const error = await screen.findByTestId("grants-error", {}, { timeout: 5000 });
-    expect(error).toHaveTextContent("Access grants could not be loaded.");
-    expect(error).toHaveAttribute("role", "alert");
-  });
-
-  it("shows a session-expired state on 401", async () => {
-    stubAdminApi({ "/runtime/grants": { status: 401, body: { error: "unauthorized" } } });
-
-    renderAdmin(ADMIN);
-
-    expect(await screen.findByTestId("grants-unauthorized")).toHaveTextContent(
-      "Your session expired."
-    );
-  });
-
-  it("exposes CSRF-backed grant and session mutation controls", async () => {
-    const fetchMock = stubAdminApi();
-    vi.spyOn(window, "confirm").mockReturnValue(true);
-
-    renderAdmin(ADMIN);
-    await screen.findByTestId("grants-table");
-
-    await userEvent.click(screen.getAllByTestId("grant-toggle")[0]);
-    await userEvent.click(screen.getAllByTestId("session-toggle")[0]);
-
-    await waitFor(() => {
-      const writes = fetchMock.mock.calls.filter((call) => (call[1] as RequestInit)?.method);
-      expect(writes.map((call) => (call[1] as RequestInit).method)).toEqual(
-        expect.arrayContaining(["PATCH", "PATCH"])
-      );
-    });
-  });
-});
-
-describe("AdminWorkspace drill-down", () => {
-  it("opens a grant detail with its context and returns via the back path", async () => {
-    const user = userEvent.setup();
-    stubAdminApi();
-
-    renderAdmin(ADMIN);
-    await screen.findByTestId("grants-table");
-
-    await user.click(screen.getAllByTestId("grant-drilldown")[0]);
-
-    const detail = await screen.findByTestId("access-detail");
-    expect(detail).toHaveTextContent("acme-readonly");
-    expect(screen.getByTestId("access-detail-kicker")).toHaveTextContent(
-      "mcp-servers / MCPAccessGrant"
-    );
-    expect(detail).toHaveTextContent("alice@example.com / acme");
-
-    await user.click(screen.getByTestId("access-detail-back"));
-    await waitFor(() => expect(screen.getByTestId("grants-table")).toBeInTheDocument());
-    expect(screen.queryByTestId("access-detail")).not.toBeInTheDocument();
-  });
-
-  it("opens a session detail labelled as an agent session", async () => {
-    const user = userEvent.setup();
-    stubAdminApi();
-
-    renderAdmin(ADMIN);
-    await screen.findByTestId("sessions-table");
-
-    await user.click(screen.getAllByTestId("session-drilldown")[0]);
-
-    expect(await screen.findByTestId("access-detail-kicker")).toHaveTextContent(
-      "mcp-servers / MCPAgentSession"
-    );
-    expect(screen.getByTestId("access-detail")).toHaveTextContent("sess-1");
-  });
-
-  it("surfaces the analytics outage as an activity error, not a blank table", async () => {
-    const user = userEvent.setup();
-    stubAdminApi({ "/events": { status: 502, body: { error: "upstream_error" } } });
-
-    renderAdmin(ADMIN);
-    await screen.findByTestId("grants-table");
-    await user.click(screen.getAllByTestId("grant-drilldown")[0]);
-
-    const error = await screen.findByTestId("access-activity-error", {}, { timeout: 5000 });
-    expect(error).toHaveTextContent("Activity is unavailable.");
-    expect(error).toHaveTextContent("analytics service");
+    // Access control moved out to its own workspace; it is not an
+    // Administration section any more.
+    expect(screen.queryByTestId("admin-section-access")).not.toBeInTheDocument();
   });
 });
 
 describe("AdminWorkspace sections", () => {
-  it("renders teams", async () => {
-    const user = userEvent.setup();
+  it("renders teams by default", async () => {
     stubAdminApi();
 
     renderAdmin(ADMIN);
-    await screen.findByTestId("grants-table");
-    await user.click(screen.getByTestId("admin-section-teams"));
 
     const table = await screen.findByTestId("teams-table");
     expect(within(table).getByText("Verify Team")).toBeInTheDocument();
@@ -391,7 +185,7 @@ describe("AdminWorkspace sections", () => {
     stubAdminApi();
 
     renderAdmin(ADMIN);
-    await screen.findByTestId("grants-table");
+    await screen.findByTestId("teams-table");
     await user.click(screen.getByTestId("admin-section-operations"));
 
     expect(await screen.findByTestId("operations-users-table")).toHaveTextContent(
@@ -406,7 +200,7 @@ describe("AdminWorkspace sections", () => {
     const fetchMock = stubAdminApi();
 
     renderAdmin(ADMIN);
-    await screen.findByTestId("grants-table");
+    await screen.findByTestId("teams-table");
     await user.click(screen.getByTestId("admin-section-operations"));
     await screen.findByTestId("operations-users-table");
 
@@ -424,7 +218,7 @@ describe("AdminWorkspace sections", () => {
     stubAdminApi();
 
     renderAdmin(ADMIN);
-    await screen.findByTestId("grants-table");
+    await screen.findByTestId("teams-table");
     await user.click(screen.getByTestId("admin-section-platform"));
 
     const table = await screen.findByTestId("platform-table");

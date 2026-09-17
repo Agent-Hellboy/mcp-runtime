@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
+import { AccessWorkspace } from "./components/AccessWorkspace";
 import { AppShell } from "./components/AppShell";
 import { ActivityWorkspace } from "./components/user/ActivityWorkspace";
 import { ApiKeysWorkspace } from "./components/user/ApiKeysWorkspace";
-import { LegacyWorkspace } from "./components/LegacyWorkspace";
 import { SignInPanel } from "./components/SignInPanel";
 import { ServersWorkspace } from "./components/servers/ServersWorkspace";
 import { AdminWorkspace } from "./components/admin/AdminWorkspace";
@@ -35,16 +35,6 @@ function loginErrorMessage(err: unknown): string {
     return "Enter an email and password, or an API key.";
   }
   return "Sign-in failed. Try again.";
-}
-
-function authCacheKey(status: AuthStatus): string {
-  if (!status.authenticated) {
-    return "signed-out";
-  }
-  const principal = status.principal;
-  return [principal?.role, principal?.subject, principal?.email, principal?.auth_type]
-    .map((value) => value || "")
-    .join("|");
 }
 
 export function App() {
@@ -134,13 +124,7 @@ export function App() {
     }
   }, [queryClient]);
 
-  const openLegacy = useCallback(() => {
-    setShowSignIn(false);
-    setWorkspace("legacy");
-  }, []);
-
-  // A workspace that role gating no longer permits must not stay rendered; this
-  // mirrors the legacy resolveActiveTab() fallback to Servers.
+  // A workspace that role gating no longer permits must not stay rendered.
   useEffect(() => {
     const allowed = visibleWorkspaceTabs(auth).some((tab) => tab.id === workspace);
     if (!allowed) {
@@ -161,21 +145,20 @@ export function App() {
       <SignInPanel
         onSubmit={handleSubmit}
         onCancel={() => setShowSignIn(false)}
-        onOpenLegacy={openLegacy}
         error={loginError}
         busy={authBusy}
       />
     );
-  } else if (workspace === "legacy") {
-    content = <LegacyWorkspace />;
   } else if (workspace === "admin") {
     content = <AdminWorkspace auth={auth} onSignIn={handleSignIn} />;
+  } else if (workspace === "access") {
+    content = <AccessWorkspace auth={auth} onSignIn={handleSignIn} />;
   } else if (workspace === "activity") {
     content = <ActivityWorkspace auth={auth} onSignIn={handleSignIn} />;
   } else if (workspace === "keys") {
     content = <ApiKeysWorkspace auth={auth} onSignIn={handleSignIn} />;
   } else {
-    content = <ServersWorkspace authenticated={auth.authenticated} onSignIn={handleSignIn} />;
+    content = <ServersWorkspace auth={auth} onSignIn={handleSignIn} />;
   }
 
   return (
@@ -188,19 +171,6 @@ export function App() {
       onSelectWorkspace={(id) => {
         setShowSignIn(false);
         setWorkspace(id);
-        if (workspace === "legacy" && id !== "legacy") {
-          void readAuthStatus()
-            .then((status) => {
-              if (authCacheKey(auth) !== authCacheKey(status)) {
-                queryClient.clear();
-              }
-              setAuth(status);
-            })
-            .catch(() => {
-              queryClient.clear();
-              setAuth({ authenticated: false });
-            });
-        }
       }}
       onSignIn={handleSignIn}
       onSignOut={handleSignOut}
