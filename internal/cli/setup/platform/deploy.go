@@ -915,6 +915,9 @@ func operatorImagePullPolicy(operatorImage string) string {
 // operatorEnvOverrides returns the environment variables to set on the operator deployment.
 func operatorEnvOverrides(gatewayProxyImage, existingGatewayOTLPEndpoint string) []operatorEnvVar {
 	var envVars []operatorEnvVar
+	if issuer := strings.TrimSpace(os.Getenv("OAUTH_INTERNAL_ISSUER_URL")); issuer != "" {
+		envVars = append(envVars, operatorEnvVar{Name: "OAUTH_INTERNAL_ISSUER_URL", Value: issuer})
+	}
 	image := strings.TrimSpace(gatewayProxyImage)
 	if image == "" {
 		image = strings.TrimSpace(core.GetGatewayProxyImageOverride())

@@ -150,9 +150,9 @@ func renderMCPAuthServerManifest(raw string, opts mcpAuthServerOptions) (string,
 	manifest = strings.ReplaceAll(manifest, "MCP_AUTH_RESOURCE_VALUE", strconv.Quote(resources[0]))
 	// Quoted: a container env value is a string, and a bare true/false renders
 	// as a YAML boolean that the API server rejects on the EnvVar.Value field.
-	manifest = strings.ReplaceAll(manifest, "MCP_AUTH_LOCAL_DEVELOPMENT_VALUE", strconv.Quote(strconv.FormatBool(opts.TestMode)))
-	manifest = strings.ReplaceAll(manifest, "MCP_AUTH_LOCAL_TOKEN_EXCHANGE_VALUE", strconv.Quote(strconv.FormatBool(opts.TestMode)))
-	manifest = strings.ReplaceAll(manifest, "MCP_AUTH_REQUIRE_HTTPS_VALUE", strconv.Quote(strconv.FormatBool(!opts.TestMode)))
+	manifest = strings.ReplaceAll(manifest, "MCP_AUTH_LOCAL_DEVELOPMENT_VALUE", strconv.FormatBool(opts.TestMode))
+	manifest = strings.ReplaceAll(manifest, "MCP_AUTH_LOCAL_TOKEN_EXCHANGE_VALUE", strconv.FormatBool(opts.TestMode))
+	manifest = strings.ReplaceAll(manifest, "MCP_AUTH_REQUIRE_HTTPS_VALUE", strconv.FormatBool(!opts.TestMode))
 	store := "sqlite"
 	databaseURL := "/data/mcp-auth.db"
 	dataVolume := "persistentVolumeClaim:\n            claimName: mcp-auth-server-data"

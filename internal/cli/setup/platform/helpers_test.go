@@ -652,6 +652,14 @@ func TestOperatorEnvOverrides(t *testing.T) {
 	t.Cleanup(func() {
 		core.DefaultCLIConfig = orig
 	})
+	t.Setenv("OAUTH_INTERNAL_ISSUER_URL", "")
+
+	t.Run("includes explicit internal OAuth issuer", func(t *testing.T) {
+		t.Setenv("OAUTH_INTERNAL_ISSUER_URL", "http://mcp-auth-server.mcp-sentinel.svc.cluster.local:8080")
+		core.DefaultCLIConfig = &core.CLIConfig{}
+		got := operatorEnvOverrides("", "")
+		requireOperatorEnvVar(t, got, "OAUTH_INTERNAL_ISSUER_URL", "http://mcp-auth-server.mcp-sentinel.svc.cluster.local:8080")
+	})
 
 	t.Run("returns empty when no gateway override is set", func(t *testing.T) {
 		core.DefaultCLIConfig = &core.CLIConfig{}

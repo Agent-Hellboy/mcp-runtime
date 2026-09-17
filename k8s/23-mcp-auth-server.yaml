@@ -5,6 +5,14 @@ spec:
   stripPrefix:
     prefixes: [/mcp-auth]
 ---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata: {name: mcp-auth-server-discovery-rewrite, namespace: mcp-sentinel}
+spec:
+  replacePathRegex:
+    regex: ^/\\.well-known/(oauth-authorization-server|openid-configuration)/mcp-auth$
+    replacement: /.well-known/$1
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -32,11 +40,11 @@ spec:
             - {name: MCP_AUTH_ISSUER, value: "MCP_AUTH_ISSUER_VALUE"}
             - {name: MCP_AUTH_RESOURCE, value: MCP_AUTH_RESOURCE_VALUE}
             - {name: MCP_AUTH_LISTEN_ADDR, value: ":8080"}
-            - {name: MCP_AUTH_LOCAL_DEVELOPMENT, value: MCP_AUTH_LOCAL_DEVELOPMENT_VALUE}
-            - {name: MCP_AUTH_LOCAL_TOKEN_EXCHANGE, value: MCP_AUTH_LOCAL_TOKEN_EXCHANGE_VALUE}
+            - {name: MCP_AUTH_LOCAL_DEVELOPMENT, value: "MCP_AUTH_LOCAL_DEVELOPMENT_VALUE"}
+            - {name: MCP_AUTH_LOCAL_TOKEN_EXCHANGE, value: "MCP_AUTH_LOCAL_TOKEN_EXCHANGE_VALUE"}
             - {name: MCP_AUTH_LOCAL_CLIENT_ID, value: mcp-auth-example-client}
             - {name: MCP_AUTH_REGISTRATION_ENABLED, value: "true"}
-            - {name: MCP_AUTH_REQUIRE_HTTPS, value: MCP_AUTH_REQUIRE_HTTPS_VALUE}
+            - {name: MCP_AUTH_REQUIRE_HTTPS, value: "MCP_AUTH_REQUIRE_HTTPS_VALUE"}
             - {name: MCP_AUTH_STORE, value: MCP_AUTH_STORE_VALUE}
             - {name: MCP_AUTH_DATABASE_URL, value: MCP_AUTH_DATABASE_URL_VALUE}
             MCP_AUTH_SIGNING_KEY_ENV_BLOCK
@@ -95,7 +103,7 @@ metadata:
   name: mcp-auth-server
   namespace: mcp-sentinel
   annotations:
-    traefik.ingress.kubernetes.io/router.middlewares: mcp-sentinel-mcp-auth-server-strip-prefix@kubernetescrd
+    traefik.ingress.kubernetes.io/router.middlewares: mcp-sentinel-mcp-auth-server-discovery-rewrite@kubernetescrd,mcp-sentinel-mcp-auth-server-strip-prefix@kubernetescrd
 spec:
   ingressClassName: traefik
 # Rendered by internal/cli/setup/platform/mcp_auth_server.go. The placeholder
@@ -108,6 +116,12 @@ MCP_AUTH_INGRESS_TLS_BLOCK
         paths:
           - path: /mcp-auth
             pathType: Prefix
+            backend: {service: {name: mcp-auth-server, port: {number: 8080}}}
+          - path: /.well-known/oauth-authorization-server/mcp-auth
+            pathType: Exact
+            backend: {service: {name: mcp-auth-server, port: {number: 8080}}}
+          - path: /.well-known/openid-configuration/mcp-auth
+            pathType: Exact
             backend: {service: {name: mcp-auth-server, port: {number: 8080}}}
 ---
 # Least-privilege egress for the authorization server. It replaces the

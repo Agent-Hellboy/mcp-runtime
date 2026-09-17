@@ -89,6 +89,9 @@ func TestRenderMCPAuthServerManifestProductionHardensDevSwitches(t *testing.T) {
 		`value: https`,
 		`{name: MCP_AUTH_STORE, value: sqlite}`,
 		"- secretRef: {name: mcp-auth-connector-secrets}",
+		"mcp-auth-server-discovery-rewrite@kubernetescrd",
+		"/.well-known/oauth-authorization-server/mcp-auth",
+		"/.well-known/openid-configuration/mcp-auth",
 	} {
 		if !strings.Contains(manifest, want) {
 			t.Errorf("manifest missing %q", want)

@@ -4,3 +4,10 @@ resources:
   - ../../base
 patches:
   - path: traefik-no-redirect.yaml
+  - target:
+      kind: Deployment
+      name: traefik
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/args/3
+        value: --providers.kubernetescrd.namespaces=mcp-servers,mcp-servers-org,mcp-servers-public,mcp-sentinel
