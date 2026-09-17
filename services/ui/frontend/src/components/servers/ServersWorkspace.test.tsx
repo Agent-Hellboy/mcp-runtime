@@ -92,6 +92,7 @@ function stubCatalog(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   delete window.MCP_API_BASE;
+  delete window.MCP_PLATFORM_MODE;
 });
 
 afterEach(() => {
@@ -351,7 +352,7 @@ describe("ServersWorkspace", () => {
   });
 });
 
-// Legacy's Servers tab shows a tenant-only "count/limit" (or "off") publish
+// The Servers tab shows a tenant-only "count/limit" (or "off") publish
 // quota stat, sourced from GET /runtime/servers's publish_policy field
 // (services/runtime-api/internal/runtimeapi/servers.go). The runtime does
 // not enforce this for admin, so admin never sees it either.
@@ -408,5 +409,318 @@ describe("ServersWorkspace publish quota", () => {
     await screen.findByTestId("server-list");
 
     expect(screen.queryByTestId("server-quota")).not.toBeInTheDocument();
+  });
+});
+
+// GET /runtime/servers/{ns}/{name} and DELETE both go through
+// rr.auth (services/runtime-api/routes.go), not adminOnly - any principal
+// who owns/can-publish the namespace can retire their own server, not only
+// admin. handleRuntimeServerDelete enforces that ownership check itself.
+describe("ServersWorkspace server retire", () => {
+  it("confirms with the exact namespace and name before retiring", async () => {
+    const user = userEvent.setup();
+    const fetchMock = stubCatalog();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+
+    renderWorkspace({ authenticated: true });
+    await screen.findByTestId("server-list");
+
+    await user.click(screen.getAllByTestId("server-card-retire")[0]);
+
+    expect(confirmSpy).toHaveBeenCalledWith(
+      expect.stringContaining('"workspace-assistant"')
+    );
+    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining('"mcp-servers"'));
+    expect(fetchMock.mock.calls.some((call) => (call[1] as RequestInit)?.method === "DELETE")).toBe(
+      false
+    );
+  });
+
+  it("retires through the CSRF-backed proxy and refreshes the catalog on success", async () => {
+    const user = userEvent.setup();
+    let retired = false;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      const url = String(input);
+      if (init.method === "DELETE" && url.includes("/runtime/servers/")) {
+        retired = true;
+        return { ok: true, status: 200, json: async () => ({ success: true }) } as unknown as Response;
+      }
+      const payload = url.includes("/runtime/namespaces")
+        ? NAMESPACES
+        : url.includes("/runtime/servers")
+          ? retired
+            ? { servers: [] }
+            : SERVERS
+          : TOOLS;
+      return { ok: true, status: 200, json: async () => payload } as unknown as Response;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    renderWorkspace({ authenticated: true });
+    await screen.findByTestId("server-list");
+    expect(screen.getAllByTestId("server-card")).toHaveLength(2);
+
+    await user.click(screen.getAllByTestId("server-card-retire")[0]);
+
+    await waitFor(() => expect(screen.getByTestId("server-list-empty")).toBeInTheDocument());
+
+    const deleteCall = fetchMock.mock.calls.find(
+      (call) => (call[1] as RequestInit)?.method === "DELETE"
+    );
+    expect(String(deleteCall?.[0])).toBe("/api/ui/v1/runtime/servers/mcp-servers/workspace-assistant");
+    const init = deleteCall?.[1] as RequestInit;
+    expect(init.credentials).toBe("same-origin");
+    expect(new Headers(init.headers).get("x-api-key")).toBeNull();
+  });
+
+  it("clears a stale selected-server filter when the retired server was the active filter", async () => {
+    const user = userEvent.setup();
+    let retired = false;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      const url = String(input);
+      if (init.method === "DELETE" && url.includes("/runtime/servers/")) {
+        retired = true;
+        return { ok: true, status: 200, json: async () => ({ success: true }) } as unknown as Response;
+      }
+      const payload = url.includes("/runtime/namespaces")
+        ? NAMESPACES
+        : url.includes("/runtime/servers")
+          ? retired
+            ? { servers: [SERVERS.servers[1]] }
+            : SERVERS
+          : retired
+            ? { tools: [TOOLS.tools[2]] }
+            : TOOLS;
+      return { ok: true, status: 200, json: async () => payload } as unknown as Response;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    renderWorkspace({ authenticated: true });
+    await screen.findByTestId("server-list");
+
+    const [firstCard] = screen.getAllByTestId("server-card");
+    await user.click(within(firstCard).getByTestId("server-card-select"));
+    expect(screen.getAllByTestId("tool-row")).toHaveLength(2);
+
+    await user.click(within(firstCard).getByTestId("server-card-retire"));
+
+    await waitFor(() => expect(screen.getAllByTestId("server-card")).toHaveLength(1));
+    // Previously the stale selectedServerKey (the retired server's) kept
+    // filtering every remaining tool out, leaving an apparently empty
+    // catalog even though degraded-server's "probe" tool is still there.
+    expect(screen.getByTestId("tool-table")).toHaveTextContent("probe");
+    expect(screen.getAllByTestId("tool-row")).toHaveLength(1);
+  });
+
+  it("shows an inline error and keeps the server listed when retire fails", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      const url = String(input);
+      if (init.method === "DELETE") {
+        return {
+          ok: false,
+          status: 403,
+          text: async () => JSON.stringify({ error: "server is not owned by this user" }),
+        } as unknown as Response;
+      }
+      const payload = url.includes("/runtime/namespaces")
+        ? NAMESPACES
+        : url.includes("/runtime/servers")
+          ? SERVERS
+          : TOOLS;
+      return { ok: true, status: 200, json: async () => payload } as unknown as Response;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    renderWorkspace({ authenticated: true });
+    await screen.findByTestId("server-list");
+
+    await user.click(screen.getAllByTestId("server-card-retire")[0]);
+
+    const error = await screen.findByTestId("server-retire-error");
+    expect(error).toHaveTextContent("server is not owned by this user");
+    expect(error).toHaveAttribute("role", "alert");
+    expect(screen.getAllByTestId("server-card")).toHaveLength(2);
+  });
+
+  it("does not call the API when the confirmation is declined", async () => {
+    const user = userEvent.setup();
+    const fetchMock = stubCatalog();
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+
+    renderWorkspace({ authenticated: true });
+    await screen.findByTestId("server-list");
+    fetchMock.mockClear();
+
+    await user.click(screen.getAllByTestId("server-card-retire")[0]);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(screen.getAllByTestId("server-card")).toHaveLength(2);
+  });
+});
+
+describe("ServersWorkspace connect config, protocol inventory, and observability", () => {
+  const RICH_SERVERS = {
+    servers: [
+      {
+        ...SERVERS.servers[0],
+        access_json: { mcpServers: { "workspace-assistant": { type: "http", url: "http://x/mcp" } } },
+        prompts: [{ name: "summarize" }],
+        resources: [{ name: "workspace-doc" }],
+        tasks: [{ name: "nightly-sync" }],
+        liveInventory: { prompts: [{ name: "summarize" }, { name: "translate" }], resources: [] },
+        observability: {
+          namespace: "mcp-servers",
+          server: "workspace-assistant",
+          prometheus: {
+            queries: [{ id: "latency", name: "Latency", description: "p99 latency", url: "http://prom/query?latency" }],
+            direct_admin_only: false,
+          },
+          grafana: { available: true, url: "http://grafana/d/workspace-assistant", direct_admin_only: false },
+        },
+      },
+      SERVERS.servers[1],
+    ],
+  };
+
+  function stubRichCatalog() {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const payload = url.includes("/runtime/namespaces")
+        ? NAMESPACES
+        : url.includes("/runtime/servers")
+          ? RICH_SERVERS
+          : TOOLS;
+      return { ok: true, status: 200, json: async () => payload } as unknown as Response;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it("copies the connect config to the clipboard and offers it only when access_json is present", async () => {
+    const user = userEvent.setup();
+    stubRichCatalog();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+
+    renderWorkspace({ authenticated: true });
+    await screen.findByTestId("server-list");
+
+    const [richCard, plainCard] = screen.getAllByTestId("server-card");
+    expect(within(plainCard).queryByTestId("server-card-copy-connect-config")).not.toBeInTheDocument();
+
+    await user.click(within(richCard).getByTestId("server-card-copy-connect-config"));
+
+    expect(writeText).toHaveBeenCalledWith(
+      JSON.stringify(RICH_SERVERS.servers[0].access_json, null, 2)
+    );
+    expect(within(richCard).getByTestId("server-card-copy-connect-config")).toHaveTextContent("Copied");
+  });
+
+  it("shows the merged declared/live protocol inventory and hides it when there is none", async () => {
+    stubRichCatalog();
+
+    renderWorkspace({ authenticated: true });
+    await screen.findByTestId("server-list");
+
+    const [richCard, plainCard] = screen.getAllByTestId("server-card");
+    expect(within(plainCard).queryByTestId("server-card-inventory")).not.toBeInTheDocument();
+
+    const inventory = within(richCard).getByTestId("server-card-inventory");
+    // Declared "summarize" + live-only "translate" - union by name, not double-counted.
+    expect(inventory).toHaveTextContent("summarize, translate");
+    expect(inventory).toHaveTextContent("workspace-doc");
+    expect(inventory).toHaveTextContent("nightly-sync");
+  });
+
+  it("shows owner-scoped observability links and hides them when the backend omits them", async () => {
+    stubRichCatalog();
+
+    renderWorkspace({ authenticated: true });
+    await screen.findByTestId("server-list");
+
+    const [richCard, plainCard] = screen.getAllByTestId("server-card");
+    expect(within(plainCard).queryByTestId("server-card-observability")).not.toBeInTheDocument();
+
+    const observability = within(richCard).getByTestId("server-card-observability");
+    const grafanaLink = within(observability).getByTestId("server-card-grafana-link");
+    expect(grafanaLink).toHaveAttribute("href", "http://grafana/d/workspace-assistant");
+    expect(observability).toHaveTextContent("Latency");
+  });
+});
+
+describe("ServersWorkspace public-mode anonymous browsing", () => {
+  function stubPublicCatalog() {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (!url.startsWith("/api/public/v1/")) {
+        throw new Error(`unexpected authenticated fetch in public mode: ${url}`);
+      }
+      const payload = url.includes("/servers") ? SERVERS : TOOLS;
+      return { ok: true, status: 200, json: async () => payload } as unknown as Response;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it("still shows the sign-in prompt outside public mode", () => {
+    const fetchMock = stubCatalog();
+
+    renderWorkspace({ authenticated: false });
+
+    expect(screen.getByTestId("catalog-signed-out")).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("browses the catalog anonymously in public mode, with no credentials and no retire action", async () => {
+    window.MCP_PLATFORM_MODE = "public";
+    const fetchMock = stubPublicCatalog();
+
+    renderWorkspace({ authenticated: false });
+
+    await screen.findByTestId("server-list");
+    expect(screen.getAllByTestId("server-card")).toHaveLength(2);
+    expect(screen.getAllByTestId("tool-row")).toHaveLength(3);
+    expect(screen.queryByTestId("server-card-retire")).not.toBeInTheDocument();
+    expect(screen.getByTestId("public-catalog-sign-in")).toBeInTheDocument();
+
+    for (const call of fetchMock.mock.calls) {
+      const init = call[1] as RequestInit | undefined;
+      expect(init?.credentials).not.toBe("same-origin");
+      expect(new Headers(init?.headers).get("x-api-key")).toBeNull();
+    }
+  });
+
+  it("narrows the public tool catalog when a server is selected", async () => {
+    window.MCP_PLATFORM_MODE = "public";
+    stubPublicCatalog();
+    const user = userEvent.setup();
+
+    renderWorkspace({ authenticated: false });
+    await screen.findByTestId("server-list");
+    expect(screen.getAllByTestId("tool-row")).toHaveLength(3);
+
+    const [firstCard] = screen.getAllByTestId("server-card");
+    await user.click(within(firstCard).getByTestId("server-card-select"));
+
+    expect(screen.getAllByTestId("tool-row")).toHaveLength(2);
+    expect(screen.getByTestId("tool-table")).not.toHaveTextContent("probe");
+  });
+
+  it("surfaces a load failure instead of a blank public catalog", async () => {
+    window.MCP_PLATFORM_MODE = "public";
+    const fetchMock = vi.fn(async () => ({ ok: false, status: 502, text: async () => "upstream_error" }) as unknown as Response);
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderWorkspace({ authenticated: false });
+
+    // TanStack Query retries once with backoff before the error surfaces.
+    expect(await screen.findByTestId("public-catalog-error", {}, { timeout: 5000 })).toBeInTheDocument();
   });
 });

@@ -43,6 +43,7 @@ export const SESSION_PROXY_WRITE_PATHS: Array<{
   { path: "/runtime/teams/", methods: ["POST"], segments: 2, suffixes: ["members", "users"] },
   { path: "/runtime/teams/", methods: ["PUT", "DELETE"], segments: 3, suffixes: ["members"], suffixIndex: 1 },
   { path: "/runtime/actions/restart", methods: ["POST"] },
+  { path: "/runtime/servers/", methods: ["DELETE"], segments: 2 },
 ];
 
 export const CSRF_HEADER = "X-CSRF-Token";
@@ -185,6 +186,17 @@ export async function fetchUIJSON(path: string, options: RequestInit = {}): Prom
     throw new Error(`unsupported UI origin path: ${path}`);
   }
   return readJSON(await fetch(path, sameOriginInit(options)));
+}
+
+// Anonymous public-mode catalog reads (services/ui/public_catalog_proxy.go).
+// Unlike every other fetch* helper here, these never carry the session
+// cookie or a CSRF token - there is no session to carry, since the visitor
+// isn't signed in. The runtime API authenticates the request as a synthetic
+// public principal instead.
+export const PUBLIC_CATALOG_PREFIX = "/api/public/v1";
+
+export async function fetchPublicJSON(path: string): Promise<unknown> {
+  return readJSON(await fetch(`${PUBLIC_CATALOG_PREFIX}${path}`, { credentials: "omit" }));
 }
 
 export function withQuery(path: string, params: Record<string, string | undefined>): string {

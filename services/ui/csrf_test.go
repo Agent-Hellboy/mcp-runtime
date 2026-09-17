@@ -22,9 +22,12 @@ func TestSessionProxyUserWriteAllowlist(t *testing.T) {
 		{method: http.MethodPost, path: "/user/api-keys/uk_abc", want: false},
 		{method: http.MethodPut, path: "/user/api-keys", want: false},
 		{method: http.MethodPatch, path: "/user/api-keys", want: false},
-		// Read-allowlisted paths are not writable.
+		// Read-allowlisted paths are not writable, except the one explicit
+		// exception: retiring a server (DELETE only - never create/update).
 		{method: http.MethodPost, path: "/runtime/servers", want: false},
-		{method: http.MethodDelete, path: "/runtime/servers/ns/name", want: false},
+		{method: http.MethodDelete, path: "/runtime/servers/ns/name", want: true},
+		{method: http.MethodPatch, path: "/runtime/servers/ns/name", want: false},
+		{method: http.MethodDelete, path: "/runtime/servers/ns/name/extra", want: false},
 		{method: http.MethodPost, path: "/admin/operations", want: false},
 		// Nested traversal beyond one segment is denied.
 		{method: http.MethodDelete, path: "/user/api-keys/uk_abc/extra", want: false},

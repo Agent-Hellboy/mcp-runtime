@@ -33,9 +33,9 @@ function eventTime(event: GatewayEvent): string {
   return Number.isNaN(parsed.getTime()) ? event.timestamp : parsed.toLocaleString();
 }
 
-// Mirrors the legacy drill-down filtering from #378: a grant's activity is the
-// last 7 days of decisions that matched it in the same namespace; a session's
-// timeline is every decision recorded against it in that namespace.
+// A grant's activity is the last 7 days of decisions that matched it in the
+// same namespace; a session's timeline is every decision recorded against it
+// in that namespace.
 export function filterGrantActivity(
   events: GatewayEvent[],
   name: string,

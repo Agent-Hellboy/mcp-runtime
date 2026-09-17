@@ -16,10 +16,7 @@ type AccessWorkspaceProps = {
 
 // Grants and agent sessions are any authenticated user's territory, not
 // admin-only - the backend registers /runtime/grants and /runtime/sessions
-// with its plain auth() middleware, not adminOnly(), and the legacy
-// dashboard's governance tab is gated on data-auth-required, not
-// data-admin-only. Only the gateway policy-decision analytics inside that
-// tab were ever admin-restricted, and that content isn't part of this panel.
+// with its plain auth() middleware, not adminOnly().
 export function AccessWorkspace({ auth, onSignIn }: AccessWorkspaceProps) {
   const [namespace, setNamespace] = useState("");
   const [selection, setSelection] = useState<AccessSelection | null>(null);

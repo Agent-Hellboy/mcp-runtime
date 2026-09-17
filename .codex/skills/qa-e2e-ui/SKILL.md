@@ -318,9 +318,12 @@ Rules that keep this evidence honest:
 
 - `vite build` writes into `services/ui/static/`, which the Go service embeds.
   A frontend change is not deployable until `npm run build` has run and the new
-  `static/assets/*` hashes are committed. `public/legacy/` is copied through the
-  build, so verify `services/ui/static/legacy/` still exists afterwards —
-  `emptyOutDir: true` makes a missed copy silent.
+  `static/assets/*` hashes are committed. `emptyOutDir: true` wipes that
+  directory first, so a build that silently drops an expected asset (an
+  entry in `public/`, a route) is easy to miss — check the actual files
+  under `services/ui/static/` after building, don't assume the previous
+  build's file list still applies. `services/ui/static/legacy/` no longer
+  exists (the legacy dashboard was removed) — don't expect it back.
 - Disable the `color-contrast` axe rule in jsdom (no layout engine) and cover
   contrast in the browser pass instead. Every other rule should stay on.
 - jsdom tests cannot prove responsive bounds or real network paths. Keep

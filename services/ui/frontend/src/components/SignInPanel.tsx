@@ -1,22 +1,16 @@
-import { useId, useState, type FormEvent } from "react";
+import { useCallback, useId, useState, type FormEvent } from "react";
 
+import { GoogleSignInButton } from "./GoogleSignInButton";
 import type { LoginInput } from "../api/auth";
 
 type SignInPanelProps = {
   onSubmit: (input: LoginInput) => Promise<void>;
   onCancel?: () => void;
-  onOpenLegacy: () => void;
   error: string;
   busy: boolean;
 };
 
-export function SignInPanel({
-  onSubmit,
-  onCancel,
-  onOpenLegacy,
-  error,
-  busy,
-}: SignInPanelProps) {
+export function SignInPanel({ onSubmit, onCancel, error, busy }: SignInPanelProps) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [apiKey, setApiKey] = useState("");
@@ -32,6 +26,13 @@ export function SignInPanel({
     const key = apiKey.trim();
     await onSubmit(key ? { apiKey: key } : { email: email.trim(), password });
   }
+
+  const handleGoogleCredential = useCallback(
+    (idToken: string) => {
+      void onSubmit({ idToken });
+    },
+    [onSubmit]
+  );
 
   return (
     <section className="panel signin-panel" aria-labelledby="signin-title">
@@ -91,14 +92,7 @@ export function SignInPanel({
           ) : null}
         </div>
       </form>
-      <p className="panel-footnote">
-        Google sign-in and every workspace that has not moved to the new dashboard yet stay
-        available in{" "}
-        <button type="button" className="link-button" onClick={onOpenLegacy}>
-          More workspaces
-        </button>
-        .
-      </p>
+      <GoogleSignInButton onCredential={handleGoogleCredential} />
     </section>
   );
 }

@@ -512,9 +512,32 @@ body {
   overflow-wrap: anywhere;
 }
 
-.server-card > .button {
+.server-card-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
   margin-top: auto;
-  align-self: flex-start;
+}
+
+.server-card-inventory {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.server-card-inventory summary {
+  cursor: pointer;
+  color: var(--text);
+}
+
+.server-card-inventory p {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.server-card-observability {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 /* Table ------------------------------------------------------------------ */
@@ -780,17 +803,6 @@ body {
   font-size: 14px;
 }
 
-/* Legacy fallback -------------------------------------------------------- */
-
-.legacy-dashboard {
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  display: block;
-  width: 100%;
-  height: min(78vh, 900px);
-  background: var(--surface-raised);
-}
-
 /* Theme control --------------------------------------------------------- */
 
 .theme-toggle {
@@ -857,9 +869,5 @@ body {
 
   .server-grid {
     grid-template-columns: 1fr;
-  }
-
-  .legacy-dashboard {
-    height: 70vh;
   }
 }
