@@ -66,14 +66,18 @@ docker build --pull -f services/ui/Dockerfile -t mcp-sentinel-ui:audit .
 docker build --pull -f services/ingest/Dockerfile -t mcp-sentinel-ingest:audit .
 docker build --pull -f services/processor/Dockerfile -t mcp-sentinel-processor:audit .
 docker build --pull -f services/mcp-gateway/Dockerfile -t mcp-sentinel-mcp-gateway:audit .
+docker build --pull -f services/oauth-server/Dockerfile -t mcp-oauth-server:audit .
 
-# Or use the repo helper (same image set + CI-matching flags):
+# Or use the repo helper — NOTE: as of this audit hack/trivy-sentinel-images.sh
+# does not include oauth-server (its SERVICE_DOCKERFILES map stops at
+# mcp-gateway), so it under-covers relative to the CI matrix below; run the
+# manual oauth-server build/scan separately until the script is fixed.
 bash hack/trivy-sentinel-images.sh
 
 for img in mcp-runtime-operator:audit mcp-platform-api:audit mcp-runtime-api:audit \
            mcp-analytics-api:audit mcp-sentinel-ui:audit \
            mcp-sentinel-ingest:audit mcp-sentinel-processor:audit \
-           mcp-sentinel-mcp-gateway:audit; do
+           mcp-sentinel-mcp-gateway:audit mcp-oauth-server:audit; do
   trivy image --exit-code 0 --severity CRITICAL,HIGH --ignore-unfixed \
               --vuln-type os,library --format table "$img"
 done
@@ -95,14 +99,17 @@ Each gap is a finding (severity per the rubric).
 ## Step 4 — SBOM generation and diff
 
 Match the CI step using `anchore/sbom-action` (currently
-`@e22c389904149dbc22b58101806040fa8d37a610` v0.24.0). Locally run `syft`:
+`@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26` v0.24.2 — verify against
+`.github/workflows/ci.yaml`, which is the pin of record; other workflows
+should match it). Locally run `syft`:
 
 ```sh
 go install github.com/anchore/syft/cmd/syft@latest
 
 for img in mcp-runtime-operator:audit mcp-platform-api:audit mcp-runtime-api:audit \
            mcp-analytics-api:audit mcp-sentinel-ui:audit mcp-sentinel-ingest:audit \
-           mcp-sentinel-processor:audit mcp-sentinel-mcp-gateway:audit; do
+           mcp-sentinel-processor:audit mcp-sentinel-mcp-gateway:audit \
+           mcp-oauth-server:audit; do
   out=$(echo "$img" | tr ':/' '__').spdx.json
   syft "$img" -o spdx-json="/tmp/$out"
 done

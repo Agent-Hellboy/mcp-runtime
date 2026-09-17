@@ -53,9 +53,10 @@ spec:
 
 ## HTTP API (admin `x-api-key`)
 
-- `POST /api/v1/runtime/grants`, `POST /api/v1/runtime/sessions`
-- `POST /api/v1/runtime/grants/{ns}/{name}/enable|disable`
-- `POST /api/v1/runtime/sessions/{ns}/{name}/revoke|unrevoke`
+- `POST /api/v1/runtime/grants`, `POST /api/v1/runtime/sessions` — create
+- `GET|DELETE|PATCH /api/v1/runtime/grants/{ns}/{name}` — `PATCH {"disabled": true|false}` is the current toggle
+- `GET|DELETE|PATCH /api/v1/runtime/sessions/{ns}/{name}` — `PATCH {"revoked": true|false}` is the current toggle
+- `POST .../grants/{ns}/{name}/enable|disable` and `POST .../sessions/{ns}/{name}/revoke|unrevoke` still work but are marked legacy in the handler comments (`services/runtime-api/internal/runtimeapi/grants.go`, `sessions.go`) — prefer PATCH for new callers
 
 ## MCP JSON-RPC (local Kind, port-forward 18080)
 

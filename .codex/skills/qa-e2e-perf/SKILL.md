@@ -79,7 +79,7 @@ without contention.
 python3 - <<'PY' "$PERF_OUT_DIR" "$PERF_SAMPLES"
 import json, time, urllib.request, sys
 out_dir, n = sys.argv[1], int(sys.argv[2])
-BASE="http://localhost:18080/go-example-mcp/mcp"; PROTO="2025-06-18"
+BASE="http://localhost:18080/workspace-assistant-mcp/mcp"; PROTO="2025-06-18"
 H={"content-type":"application/json","accept":"application/json, text/event-stream",
    "Mcp-Protocol-Version":PROTO,
    "X-MCP-Human-ID":"local-user","X-MCP-Agent-ID":"local-agent",
@@ -113,7 +113,7 @@ latency under contention.
 python3 - <<'PY' "$PERF_OUT_DIR" "$PERF_SAMPLES" "$PERF_CONCURRENCY"
 import json, time, threading, urllib.request, sys
 out_dir, n, c = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
-BASE="http://localhost:18080/go-example-mcp/mcp"; PROTO="2025-06-18"
+BASE="http://localhost:18080/workspace-assistant-mcp/mcp"; PROTO="2025-06-18"
 H={"content-type":"application/json","accept":"application/json, text/event-stream",
    "Mcp-Protocol-Version":PROTO,
    "X-MCP-Human-ID":"local-user","X-MCP-Agent-ID":"local-agent",
@@ -155,6 +155,12 @@ Any non-zero `errors` against the bundled `add` tool is itself a finding
 
 ## Step 6 — Scenario S3: /api/v1/analytics/usage latency under load
 
+This scenario depends on ClickHouse being healthy. If it has been down for
+a while (reused long-lived cluster), latency numbers here are meaningless —
+check `mcp-runtime-troubleshooting/reference.md` for the ClickHouse/Kafka
+PVC-corruption signature and recover it first rather than recording a
+baseline against a 500/502-erroring endpoint.
+
 ```bash
 UI_KEY="$(kubectl get secret mcp-sentinel-secrets -n mcp-sentinel \
   -o jsonpath='{.data.UI_API_KEY}' | base64 -d)"
@@ -181,10 +187,10 @@ PY
 ```bash
 START="$(date +%s%3N)"
 for i in $(seq 1 10); do
-  kubectl annotate mcpserver -n mcp-servers go-example-mcp \
+  kubectl annotate mcpserver -n mcp-servers workspace-assistant-mcp \
     qa.mcpruntime.org/ping="$START-$i" --overwrite >/dev/null
 done
-kubectl wait --for=condition=Ready=true mcpserver/go-example-mcp \
+kubectl wait --for=condition=Ready=true mcpserver/workspace-assistant-mcp \
   -n mcp-servers --timeout=120s >/dev/null
 END="$(date +%s%3N)"
 python3 -c "import json,sys; print(json.dumps({'scenario':'S4','burst':10,'wall_ms':int(sys.argv[1])-int(sys.argv[2])}))" \
@@ -227,7 +233,7 @@ Do not auto-revert. Capture context so the author can act:
 
 ```bash
 # CPU profile of the proxy sidecar (if pprof is enabled on the build).
-POD="$(kubectl get pods -n mcp-servers -l app=go-example-mcp -o jsonpath='{.items[0].metadata.name}')"
+POD="$(kubectl get pods -n mcp-servers -l app=workspace-assistant-mcp -o jsonpath='{.items[0].metadata.name}')"
 kubectl exec -n mcp-servers "$POD" -c mcp-gateway -- \
   wget -qO- http://127.0.0.1:6060/debug/pprof/profile?seconds=10 > /tmp/proxy-cpu.pprof 2>/dev/null \
   || echo "pprof not enabled on mcp-gateway"

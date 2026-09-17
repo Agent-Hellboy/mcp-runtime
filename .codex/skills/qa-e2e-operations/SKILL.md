@@ -117,14 +117,14 @@ creating a duplicate `mcp-e2e` cluster.
 ```bash
 # Apply an MCPServer change and watch it converge.
 kubectl get mcpservers -n mcp-servers -o wide
-kubectl describe mcpserver -n mcp-servers go-example-mcp | sed -n '/Status:/,$p'
+kubectl describe mcpserver -n mcp-servers workspace-assistant-mcp | sed -n '/Status:/,$p'
 
 # Force a reconcile and confirm Ready / phase transition.
-kubectl annotate mcpserver -n mcp-servers go-example-mcp \
+kubectl annotate mcpserver -n mcp-servers workspace-assistant-mcp \
   qa.mcpruntime.org/reconcile-ping="$(date +%s)" --overwrite
-kubectl wait --for=condition=Ready=true mcpserver/go-example-mcp \
+kubectl wait --for=condition=Ready=true mcpserver/workspace-assistant-mcp \
   -n mcp-servers --timeout=120s \
-  || kubectl describe mcpserver -n mcp-servers go-example-mcp
+  || kubectl describe mcpserver -n mcp-servers workspace-assistant-mcp
 
 # Operator log scan for reconcile errors (last 10m).
 kubectl logs -n mcp-runtime deploy/mcp-runtime-operator-controller-manager \
@@ -135,8 +135,8 @@ When `internal/operator/**` or `api/v1alpha1/**` changed, also exercise the
 governance objects:
 
 ```bash
-kubectl apply -f /tmp/go-example-access.yaml
-./bin/mcp-runtime server policy inspect go-example-mcp --namespace mcp-servers \
+kubectl apply -f /tmp/workspace-assistant-access.yaml
+./bin/mcp-runtime server policy inspect workspace-assistant-mcp --namespace mcp-servers \
   | grep -q local-session || echo "FAIL: policy missing session"
 ```
 
@@ -147,9 +147,9 @@ about behavior).
 
 ```bash
 ./bin/mcp-runtime server status --namespace mcp-servers
-./bin/mcp-runtime server logs go-example-mcp --namespace mcp-servers \
+./bin/mcp-runtime server logs workspace-assistant-mcp --namespace mcp-servers \
   --since 5m | head -40
-./bin/mcp-runtime server policy inspect go-example-mcp --namespace mcp-servers \
+./bin/mcp-runtime server policy inspect workspace-assistant-mcp --namespace mcp-servers \
   | head -40
 ./bin/mcp-runtime sentinel events | head -20
 ./bin/mcp-runtime sentinel logs api --since 5m | tail -40
@@ -212,7 +212,7 @@ curl -fsS -o /dev/null -w "%{http_code}\n" http://localhost:18080/    # 200
 ADMIN_KEY=$(kubectl get secret mcp-sentinel-secrets -n mcp-sentinel -o jsonpath='{.data.ADMIN_API_KEYS}' | base64 -d | cut -d, -f1)
 curl -fsS -o /dev/null -w "%{http_code}\n" \
   -H "x-api-key: $ADMIN_KEY" http://localhost:18080/api/v1/dashboard/summary  # 200
-curl -fsS -o /dev/null -w "%{http_code}\n" http://localhost:18080/go-example-mcp/mcp # 405/406 expected (POST-only)
+curl -fsS -o /dev/null -w "%{http_code}\n" http://localhost:18080/workspace-assistant-mcp/mcp # 405/406 expected (POST-only)
 ```
 
 If image pulls fail with `http: server gave HTTP response to HTTPS client`,
@@ -272,10 +272,10 @@ kubectl -n mcp-runtime rollout status \
 
 # Bounce runtime-api mid grant-apply.
 kubectl -n mcp-sentinel scale deploy/mcp-runtime-api --replicas=0
-kubectl apply -f /tmp/go-example-access.yaml
+kubectl apply -f /tmp/workspace-assistant-access.yaml
 kubectl -n mcp-sentinel scale deploy/mcp-runtime-api --replicas=1
 kubectl -n mcp-sentinel rollout status deploy/mcp-runtime-api --timeout=90s
-./bin/mcp-runtime server policy inspect go-example-mcp --namespace mcp-servers \
+./bin/mcp-runtime server policy inspect workspace-assistant-mcp --namespace mcp-servers \
   | grep -q local-session
 ```
 

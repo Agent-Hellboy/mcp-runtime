@@ -114,6 +114,12 @@ If `cluster doctor` reports admin/UI/ingest key mismatches, roll
 and gateway deployments after patching `mcp-sentinel-secrets`
 (see `CLAUDE.md` → API keys). Do not paper over a `Degraded` reading.
 
+If `clickhouse-0` or any `kafka-N` pod is `CrashLoopBackOff` with a high
+restart count on an old, reused cluster, that is local PVC corruption, not a
+setup regression — see `mcp-runtime-troubleshooting/reference.md` for the
+diagnosis and recovery steps (pod+PVC recreate, ClickHouse schema replay)
+before reporting bring-up as failed.
+
 ### Kind image architecture gotcha
 
 Before manually refreshing API/UI/operator/gateway images in Kind, match the
@@ -152,16 +158,16 @@ exactly — gateway policy, analytics, and required headers all depend on the
 documented shape.
 
 ```bash
-cat > /tmp/go-example-mcp.yaml <<'EOF'
+cat > /tmp/workspace-assistant-mcp.yaml <<'EOF'
 version: v1
 servers:
-  - name: go-example-mcp
-    route: /go-example-mcp/mcp
-    publicPathPrefix: go-example-mcp
+  - name: workspace-assistant-mcp
+    route: /workspace-assistant-mcp/mcp
+    publicPathPrefix: workspace-assistant-mcp
     port: 8088
     namespace: mcp-servers
     envVars:
-      - { name: MCP_PATH, value: /go-example-mcp/mcp }
+      - { name: MCP_PATH, value: /workspace-assistant-mcp/mcp }
     tools:
       - { name: add,   requiredTrust: low }
       - { name: upper, requiredTrust: medium }
@@ -179,42 +185,42 @@ servers:
     analytics:
       enabled: true
       ingestURL: http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events
-      apiKeySecretRef: { name: go-example-mcp-analytics, key: api-key }
+      apiKeySecretRef: { name: workspace-assistant-mcp-analytics, key: api-key }
 EOF
 
 API_KEY="$(kubectl get secret mcp-sentinel-secrets -n mcp-sentinel \
   -o jsonpath='{.data.INGEST_API_KEYS}' | base64 -d | cut -d, -f1)"
-kubectl create secret generic go-example-mcp-analytics -n mcp-servers \
+kubectl create secret generic workspace-assistant-mcp-analytics -n mcp-servers \
   --from-literal=api-key="$API_KEY" \
   --dry-run=client -o yaml | kubectl apply -f -
 
-./bin/mcp-runtime server build image go-example-mcp \
-  --metadata-file /tmp/go-example-mcp.yaml \
-  --dockerfile examples/go-mcp-server/Dockerfile \
-  --context examples/go-mcp-server \
+./bin/mcp-runtime server build image workspace-assistant-mcp \
+  --metadata-file /tmp/workspace-assistant-mcp.yaml \
+  --dockerfile examples/workspace-assistant-mcp/Dockerfile \
+  --context examples/workspace-assistant-mcp \
   --registry registry.registry.svc.cluster.local:5000 \
   --tag dev
 
 ./bin/mcp-runtime registry push \
-  --image registry.registry.svc.cluster.local:5000/go-example-mcp:dev
+  --image registry.registry.svc.cluster.local:5000/workspace-assistant-mcp:dev
 
-rm -rf /tmp/go-example-mcp-manifests
+rm -rf /tmp/workspace-assistant-mcp-manifests
 ./bin/mcp-runtime pipeline generate \
-  --file /tmp/go-example-mcp.yaml \
-  --output /tmp/go-example-mcp-manifests
-./bin/mcp-runtime pipeline deploy --dir /tmp/go-example-mcp-manifests
-kubectl rollout status deploy/go-example-mcp -n mcp-servers --timeout=180s
+  --file /tmp/workspace-assistant-mcp.yaml \
+  --output /tmp/workspace-assistant-mcp-manifests
+./bin/mcp-runtime pipeline deploy --dir /tmp/workspace-assistant-mcp-manifests
+kubectl rollout status deploy/workspace-assistant-mcp -n mcp-servers --timeout=180s
 ```
 
 ## Step 8 — Apply baseline grant + session
 
 ```bash
-cat > /tmp/go-example-access.yaml <<'EOF'
+cat > /tmp/workspace-assistant-access.yaml <<'EOF'
 apiVersion: mcpruntime.org/v1alpha1
 kind: MCPAccessGrant
-metadata: { name: go-example-local, namespace: mcp-servers }
+metadata: { name: workspace-assistant-local, namespace: mcp-servers }
 spec:
-  serverRef: { name: go-example-mcp }
+  serverRef: { name: workspace-assistant-mcp }
   subject: { humanID: local-user, agentID: local-agent }
   maxTrust: high
   policyVersion: v1
@@ -226,14 +232,14 @@ apiVersion: mcpruntime.org/v1alpha1
 kind: MCPAgentSession
 metadata: { name: local-session, namespace: mcp-servers }
 spec:
-  serverRef: { name: go-example-mcp }
+  serverRef: { name: workspace-assistant-mcp }
   subject: { humanID: local-user, agentID: local-agent }
   consentedTrust: high
   policyVersion: v1
 EOF
-kubectl apply -f /tmp/go-example-access.yaml
+kubectl apply -f /tmp/workspace-assistant-access.yaml
 
-until ./bin/mcp-runtime server policy inspect go-example-mcp --namespace mcp-servers \
+until ./bin/mcp-runtime server policy inspect workspace-assistant-mcp --namespace mcp-servers \
   | grep -q local-session; do sleep 2; done
 sleep 6   # proxy sidecar polls; do not skip this wait
 ```
@@ -245,7 +251,7 @@ the regressions that unit tests miss (Traefik routing, gateway policy
 materialization, proxy reload, auth headers, analytics path).
 
 ```bash
-BASE=http://localhost:18080/go-example-mcp/mcp
+BASE=http://localhost:18080/workspace-assistant-mcp/mcp
 PROTO=2025-06-18
 H=(-H "content-type: application/json"
    -H "accept: application/json, text/event-stream"
@@ -280,7 +286,7 @@ to know the environment is ready.
 - Mode: reuse | create | rebuild-from-broken.
 - Cluster context: `kubectl config current-context`.
 - Image SHAs pushed (operator, gateway proxy, sentinel api/ui/ingest/processor,
-  go-example-mcp).
+  workspace-assistant-mcp).
 - `cluster doctor` summary line.
 - Traefik port-forward pid + log path.
 - Demo `tools/call` result: `5` ✓ / details on failure.

@@ -96,6 +96,51 @@ toward full parity with `docs/security/authz-matrix.md` when auditing finds gaps
 Any 200/204 response on a path-role combo where the matrix expects 401/403 is
 **Critical** until proven otherwise.
 
+The harness above only exercises `x-api-key`-header roles. It does not cover
+the cookie-authenticated `ui-cookie` role: the browser dashboard's
+`GET /api/ui/v1/*` session proxy (`services/ui/session_proxy.go`) translates
+the HttpOnly `mcp_ui_session` cookie server-side and is not represented in
+`docs/security/authz-matrix.json`/`.md` at all as of this audit. Test it with
+a cookie jar instead of a header:
+
+```bash
+JAR=$(mktemp)
+curl -sS -c "$JAR" -X POST "$BASE/auth/login" -H 'content-type: application/json' \
+  -d '{"email":"<test-user>","password":"<test-password>"}' -o /dev/null
+curl -sS -b "$JAR" -o /dev/null -w "%{http_code}\n" "$BASE/api/ui/v1/runtime/servers"
+rm -f "$JAR"
+```
+
+Add matrix rows for every allowlisted proxy path (`/api/ui/v1/dashboard/summary`,
+`/runtime/{namespaces,servers,tools,server-events,teams,grants,sessions,
+components,policy,observability/*}`, `/user/api-keys`,
+`/admin/{operations,deployments}`, `/events`, `/analytics/usage`,
+`/user/analytics/usage` — see `sessionProxyRuntimePrefixes` /
+`sessionProxyAnalyticsPrefixes` in `session_proxy.go` for the authoritative
+list) and confirm a missing/expired/invalid session returns 401 on each.
+A cookie-authenticated write allowlist already exists in `session_proxy.go`
+(`sessionProxyWriteRoutes`) — this is not a hypothetical a future branch
+might add. As of this audit it covers `/user/api-keys` (POST, DELETE),
+`/runtime/grants` (POST, PATCH, DELETE), `/runtime/sessions` (POST, PATCH,
+DELETE), `/runtime/teams` and its `/members`/`/users` sub-paths (POST, PUT,
+DELETE), and `/runtime/actions/restart` (POST) — re-check
+`sessionProxyWriteRoutes` for the current list, since branches regularly add
+routes here (e.g. server retire). Every non-GET request, allowlisted or not,
+goes through CSRF verification (`verifyCSRF`) before reaching the upstream.
+Audit both directions:
+
+- Non-GET methods **not** on the allowlist still return 405 (`sessionProxyWriteAllowed`
+  rejects them before the CSRF/session check even runs).
+- Non-GET methods **on** the allowlist reject a missing or invalid
+  `X-CSRF-Token` with 403 (`{"error":"csrf_failed"}`), and only succeed with
+  a valid session-bound token obtained from `/auth/login`/`/auth/status`.
+
+```bash
+# Missing CSRF token on an allowlisted write route must 403, not succeed.
+curl -sS -b "$JAR" -o /dev/null -w "%{http_code}\n" -X POST \
+  "$BASE/api/ui/v1/runtime/sessions" -H 'content-type: application/json' -d '{}'
+```
+
 ## Step 3 — Tenant and grant isolation probes
 
 Build adversarial cases against governance. Pre-create:
