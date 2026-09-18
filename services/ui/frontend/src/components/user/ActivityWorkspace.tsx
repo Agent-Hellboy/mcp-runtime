@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { TeamMembershipPanel } from "./TeamMembershipPanel";
 import { UsageMetrics } from "../usage/UsageMetrics";
-import { ServerUsageRanking, ServerUsageTable, ToolUsageTable } from "../usage/UsageTables";
+import { RecentActivityTable, ServerUsageRanking, ServerUsageTable, ToolUsageTable } from "../usage/UsageTables";
 import { Button } from "../../ui/Button";
 import { SelectField } from "../../ui/Field";
 import { FilterBar } from "../../ui/FilterBar";
@@ -223,6 +223,13 @@ export function ActivityWorkspace({ auth, onSignIn }: ActivityWorkspaceProps) {
           </h2>
         </div>
         <ToolUsageTable rows={tools} />
+      </section>
+
+      <section className="section">
+        <div className="section-head">
+          <h2 className="section-title" id="activity-recent-title">Recent activity</h2>
+        </div>
+        <RecentActivityTable rows={usage?.recent ?? []} />
       </section>
 
       {/* Team membership is an independent read: a usage outage must not hide it,

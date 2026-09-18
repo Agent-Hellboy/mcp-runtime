@@ -1,4 +1,5 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 
 import { StatusBadge, riskTone } from "../../ui/Badge";
 import { Button } from "../../ui/Button";
@@ -15,6 +16,7 @@ import {
   type ServerSummary,
   type ToolRow,
 } from "../../api/types";
+import { listServerEvents } from "../../api/catalog";
 
 type ServerDetailProps = {
   server: ServerSummary;
@@ -25,6 +27,7 @@ type ServerDetailProps = {
 };
 
 export function ServerDetail({ server, tools, onClose, onShowTools, onSelectTool }: ServerDetailProps) {
+  const [configTab, setConfigTab] = useState<"claude" | "cursor" | "vscode" | "raw">("claude");
   const ready = isServerReady(server);
   const auth = authModeInfo(server.authMode);
   const prompts = serverPrompts(server);
@@ -68,6 +71,23 @@ export function ServerDetail({ server, tools, onClose, onShowTools, onSelectTool
     }));
   }, [tools, server]);
 
+  const eventsQuery = useQuery({
+    queryKey: ["server-events", server.namespace, server.name],
+    queryFn: () => listServerEvents(server.namespace, server.name),
+    staleTime: 30_000,
+  });
+
+  const configTabs = useMemo(() => {
+    const name = server.name || "mcp-server";
+    const url = server.endpoint || "";
+    return {
+      claude: { label: "Claude Desktop", hint: "~/Library/Application Support/Claude/claude_desktop_config.json", value: JSON.stringify({ mcpServers: { [name]: { type: "http", url } } }, null, 2) },
+      cursor: { label: "Cursor", hint: "~/.cursor/mcp.json or .cursor/mcp.json", value: JSON.stringify({ mcpServers: { [name]: { type: "http", url } } }, null, 2) },
+      vscode: { label: "VS Code", hint: ".vscode/mcp.json", value: JSON.stringify({ servers: { [name]: { type: "http", url } } }, null, 2) },
+      raw: { label: "Raw JSON", hint: "The server-provided access configuration", value: JSON.stringify(server.access_json || {}, null, 2) },
+    };
+  }, [server]);
+
   return (
     <DetailSheet
       title={server.name}
@@ -103,14 +123,21 @@ export function ServerDetail({ server, tools, onClose, onShowTools, onSelectTool
               testId="server-detail-copy-config"
             />
           </div>
+          <div className="detail-tabs" role="tablist" aria-label="MCP client configuration">
+            {(Object.keys(configTabs) as Array<keyof typeof configTabs>).map((key) => (
+              <button key={key} type="button" role="tab" aria-selected={configTab === key} className={configTab === key ? "detail-tab is-active" : "detail-tab"} onClick={() => setConfigTab(key)}>
+                {configTabs[key].label}
+              </button>
+            ))}
+          </div>
           <p className="section-note" style={{ marginBottom: "var(--space-2)" }}>
-            Paste this into your client&rsquo;s MCP server configuration.
+            Paste this into {configTabs[configTab].hint}.
             {auth.label === "OAuth" || auth.label === "mTLS"
               ? ` The client must also satisfy ${auth.label} before calls are allowed.`
               : ""}
           </p>
           <code className="code-block" data-testid="server-detail-config">
-            {connectConfig}
+            {configTabs[configTab].value}
           </code>
         </div>
       ) : (
@@ -240,6 +267,27 @@ export function ServerDetail({ server, tools, onClose, onShowTools, onSelectTool
             })}
           </div>
         )}
+      </div>
+
+      <div>
+        <div className="section-head">
+          <p className="detail-label">Recent activity</p>
+          <span className="section-note">Last 20 events</span>
+        </div>
+        {eventsQuery.isPending ? <p className="section-note">Loading activity…</p> : null}
+        {eventsQuery.error ? <p className="section-note">Activity is unavailable for this server.</p> : null}
+        {!eventsQuery.isPending && !eventsQuery.error && (eventsQuery.data || []).length === 0 ? <p className="section-note">No recent activity recorded.</p> : null}
+        {(eventsQuery.data || []).length > 0 ? (
+          <div className="event-list" data-testid="server-detail-events">
+            {(eventsQuery.data || []).map((event, index) => (
+              <div className="event-row" key={`${event.timestamp || "event"}-${index}`}>
+                <span>{event.tool_name || event.event_type || "Gateway event"}</span>
+                <StatusBadge tone={event.decision === "deny" ? "warning" : "ready"}>{event.decision || "unknown"}</StatusBadge>
+                <time dateTime={event.timestamp}>{event.timestamp ? new Date(event.timestamp).toLocaleString() : "—"}</time>
+              </div>
+            ))}
+          </div>
+        ) : null}
       </div>
     </DetailSheet>
   );

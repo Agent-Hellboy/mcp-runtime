@@ -1,7 +1,7 @@
 # MCP Sentinel platform redesign: research and implementation prompt
 
-Status: implemented on `ui/servers_console_redesign` (2026-09-17). This file is
-kept as the research and requirements record; see
+Status: implementation is in progress on the current redesign worktree (2026-09-18). This file is
+kept as the research, parity, and requirements record; see
 [`ui-console-design-system.md`](./ui-console-design-system.md) for what the
 console actually does now, including where the shipped result deviates from the
 starting values below.
@@ -32,7 +32,9 @@ decisions for this repository, not claims about those products' exact tokens.
 
 - Source repository: `/Users/proshan/mcp-runtime`.
 - Existing task worktree: `/Users/proshan/mcp-runtime-worktrees/servers-console-redesign`.
-- Branch: `ui/servers_console_redesign`, created at `0181edc`.
+- The checked-out branch currently contains the existing React redesign plus the
+  implementation slice described below; the final legacy retirement gate is not
+  complete.
 - Frontend: React 19, TypeScript, Vite, TanStack Query and Table, semantic CSS.
 - Baseline: 11 frontend test files / 124 tests passed; production build passed.
 - Baseline build: JS 349.06 kB / 103.64 kB gzip; CSS 15.79 kB / 3.98 kB gzip.
@@ -44,8 +46,11 @@ decisions for this repository, not claims about those products' exact tokens.
   React UI is already deployed.
 - Current source includes React admin mutations and CSRF handling. Some migration
   documentation still describes earlier phases; check current code before acting.
-- This research pass changes only this brief. Application redesign remains to be
-  implemented. No production deployment was performed.
+- This pass also updates the React implementation with typed analytics
+  time-series/recent-activity data, a truthful usage chart, client-specific
+  server connection tabs, server recent-activity states, and a user recent-
+  activity table. Full legacy retirement is still pending. No production
+  deployment was performed.
 
 ## Copy-ready implementation prompt
 
@@ -406,3 +411,201 @@ screen list, representative screenshots, test/build results, and any verified
 remaining gaps. Explicitly distinguish completed redesign work from backend
 capabilities that would require a separate feature. Do not claim deployment or
 live validation that did not happen.
+
+## Legacy-to-React migration supplement
+
+This section is mandatory. Do not remove the legacy iframe or its embedded
+assets until this inventory has been checked against the current source and
+each row has an accepted React replacement. The old dashboard is not merely a
+visual reference: it contains product behavior that must be preserved or
+explicitly retired with a product decision.
+
+### Legacy surface inventory
+
+The legacy implementation is `services/ui/frontend/public/legacy/index.html`
+and `services/ui/frontend/public/legacy/app.js` (also copied into
+`services/ui/static/legacy/`). The JavaScript is a 4,610-line imperative
+dashboard with role-gated tabs, auto-refresh, scoped inventory, connection
+configuration, observability links, activity drill-downs, and mutations.
+
+| Legacy surface or behavior | React destination | Current React state | Migration requirement |
+| --- | --- | --- | --- |
+| Servers catalog | `ServersWorkspace` home | Partially migrated | Keep as home; add missing inventory and server actions below. |
+| Namespace/scope selector | App shell + Servers scope control | Partially migrated | Preserve catalog/all/user/team/shared/public scope semantics; never call it an environment switcher. |
+| Server status/search filters | Servers filter bar | Migrated, needs UX refinement | Search server metadata and expose result count/chips. |
+| Live inventory polling and merge | Server inspector/catalog API model | Missing in React types/UI | Migrate tools, prompts, resources, tasks, declared/live/ungoverned/missing drift, and `liveInventoryError`. |
+| Server card selection and detail | Server detail sheet | Partially migrated | Replace inline appended detail with a deep-linkable sheet/full-screen mobile detail. |
+| Server endpoint and copy URL | Server detail | Partial | Add reliable copy feedback, selectable fallback, and truthful missing-endpoint state. |
+| Connect config | Server detail > Connect | Missing in React | Port Claude Desktop, Cursor, VS Code, and Raw JSON tabs from `renderServerConnectConfig`; preserve the exact generated JSON and copy actions. |
+| Server labels/image/auth mode/age | Server detail metadata | Incomplete | Add all API-backed fields; use code styling for image, endpoint, and identifiers. |
+| Server recent events | Server detail Activity section | Missing in React | Use `GET /runtime/server-events` with server/namespace scope; show analytics unavailable separately from no events. |
+| Scoped Grafana link | Server detail Observability action | Missing in React | Use API-provided `observability.grafana` only when available; preserve direct-admin restrictions and reason copy. |
+| Scoped Prometheus links/queries | Server detail Observability action | Missing in React | Present returned query names/descriptions and open the authorized URL; do not create arbitrary query inputs. |
+| Retire server | Server detail destructive action | Backend exists, React route missing | Add only where the principal can use it; expose through the session BFF with CSRF, confirmation, pending, success, forbidden, and failure states. |
+| Publish policy/quota | Servers summary/action area | Missing in React | Display only returned `publish_policy`; distinguish quota disabled, available, and exhausted. Do not invent a publish button if apply/deploy UX is not in scope. |
+| Tool catalog | Servers tool section | Migrated, needs parity | Preserve trust, side effect, risk, drift, labels, declared/live values, sorting, and detail. |
+| Tool risk and metadata filtering | Servers tool filters | Partial | Add drift and metadata filters only when backed by loaded fields; keep dependent selection stable. |
+| Public catalog signed-out mode | Servers auth/scope state | Missing/unclear in React | Respect `PLATFORM_MODE=public`: allow only the server/catalog GET behavior intended by the backend, and never show private analytics or mutation controls. |
+| User dashboard server summary | Activity | Partially migrated | Move server list and summary metrics into Activity, not a separate workspace. Keep server links and supported observability actions. |
+| User usage analytics | Activity | Partially migrated | Preserve server/tool/recent tables and add backend `series` chart data; retain 1/7/30/90-day and server filters. |
+| Auto-refresh toggle | Activity/Admin analytics | Missing in React | Add only where useful, default off for expensive analytics, show last refreshed time, pause when hidden, and never refresh the full Servers DOM. |
+| Admin usage summary | Administration > Analytics | Partially migrated | Preserve totals, servers, actors, tools, decisions, `series`, `recent`, window, and filters. Client types currently omit `series` and `recent`; fix that. |
+| Analytics decision meter | Administration > Analytics | Missing in React | Use an accessible labeled allow/deny proportion, not color alone; show unavailable state when ClickHouse/analytics fails. |
+| Analytics server/actor/tool/decision tables | Administration > Analytics local tabs | Partially migrated | Keep all four datasets, add scope/window/filter controls supported by the API, pagination or honest limit copy, and row detail where useful. |
+| Gateway events table | Administration > Operations/Audit | Missing in React | Migrate recent policy decisions with human/agent, target, decision, policy reason, grant/session links, and event detail. |
+| Grant creation | Administration > Access | Migrated but incomplete | Restore agent subject, namespace, server namespace, policy version, allowed side effects, and tool-rule editing. Never silently force only `read` if the API supports more. |
+| Grant enable/disable/delete | Administration > Access | Migrated partially | Replace `window.confirm` with accessible confirmation; preserve PATCH/DELETE semantics and audit feedback. |
+| Grant activity detail | Access detail sheet | Migrated as page | Make it a contextual sheet/deep link with last-seven-days filtering and clear analytics unavailable state. |
+| Session creation | Administration > Access | Migrated but incomplete | Restore agent/team subjects, server namespace, policy version, trust, expiry, UTC hint, and validation. |
+| Session revoke/unrevoke/delete | Administration > Access | Migrated partially | Show expiry-aware status, use accessible destructive confirmation, and preserve PATCH/DELETE semantics. |
+| Session timeline | Access detail sheet | Migrated as page | Preserve namespace matching, tool/RPC name, decision, reason, and full timeline state. |
+| Team list and selected team | Administration > Teams | Migrated | Redesign as list/detail; preserve selected-team state through refresh and deep links. |
+| Team member list | Team detail | Migrated | Preserve role, member identity, created time, and stale-response protection. |
+| Create team | Administration > Teams | Migrated | Use a focused sheet with validation, dirty-close behavior, pending/error/success states. |
+| Create team user | Administration > Teams | Migrated but misleading | Label this as creating a user, not inviting one, unless the backend is changed. Never imply an invitation email is sent. |
+| Change role/remove member | Team detail | Migrated partially | Use confirmation for removal, show owner/member semantics, and guard against stale selected-team responses. |
+| API key list/create/revoke | API keys | Migrated | Improve the one-time secret notice, clipboard fallback, revoke confirmation, and identity-gated copy. |
+| Operations user directory | Administration > Operations | Migrated but dense | Make Users, Audit, Image activity local tabs with filters and detail sheets. |
+| User detail | Operations user detail | Missing in current React | Port role, namespace, IDs, login/activity/failure counts, and filtered audit activity. |
+| Audit filters | Administration > Operations | Incomplete | Port user, since, until, and limit parameters already supported by `readOperations`; display the loaded-window boundary honestly. |
+| Image/deployment activity | Operations > Image activity | Migrated | Preserve image ref, deployment target, server, source, action, status, and detail. Do not add deployment controls without a verified mutation API. |
+| MCP server operations inventory | Operations | Missing as a distinct local section | Keep fleet server health and selected-server inspector associated with Operations where admin scope is required. |
+| Platform component health | Administration > Platform | Migrated | Add per-component restart beside component identity; keep restart-all isolated and explicitly disruptive. |
+| Refresh components | Platform | Migrated | Add refresh busy/last-updated state without replacing healthy rows with a page spinner. |
+| Grafana/Prometheus platform links | Platform | Migrated | Preserve `/grafana` and `/prometheus` behavior and deployment restrictions. |
+| Admin team detail | Team detail sheet | Missing in current React | Port team namespace, ID, created timestamp, member table, back behavior, and direct navigation. |
+| Admin user detail | User detail sheet | Missing in current React | Port user header metadata and audit activity, including back context to Teams or Operations. |
+| Google sign-in | Styled SignInPanel | Not confirmed in React | Check `MCP_GOOGLE_CLIENT_ID`; port the Google Identity Services callback into the React auth state if configured. |
+| Toasts/inline errors/copy feedback | Shared feedback primitives | Inconsistent | Replace legacy `showToast`, inline DOM errors, and swallowed clipboard failures with one accessible system. |
+| Role tab visibility | App/navigation guards | Migrated | Keep server-backed gates; hide navigation and also guard direct routes. |
+| Legacy tabs and iframe | No React destination | Must retire | Remove `legacy` workspace, `/legacy/index.html`, `public/legacy`, embedded copies, CSP frame allowance, and tests only after parity evidence. |
+
+### Important legacy behaviors that are easy to lose
+
+1. **Inventory is broader than tools.** The runtime probe returns tools,
+prompts, and resources, while the server model also carries tasks and declared
+policy metadata. The legacy UI merges live inventory with declared inventory:
+live-only entries are `ungoverned`, declared-only entries are `missing`, and
+matched entries retain policy metadata. React must model this explicitly rather
+than reducing everything to `tools?: { name }[]`.
+
+2. **Scope is a security and comprehension concept.** Legacy scope entries can
+represent a catalog, a shared namespace, a public preview, a user namespace,
+team namespaces, or an admin fleet. Preserve those distinctions in labels and
+request parameters. Do not replace them with a fake “workspace” picker.
+
+3. **Analytics has independent datasets.** The analytics response includes
+`totals`, `servers`, `actors`, `tools`, `decisions`, `series`, `recent`,
+`window_days`, and `filters`. A partial response must not be presented as zero
+data. If the backend returns a failed whole response, show unavailable; if the
+API later supports partial sections, render section-level errors.
+
+4. **Server observability is scoped.** Prometheus URLs and Grafana availability
+come from authorized runtime responses. Keep the namespace/server parameters
+and direct-admin flags; never construct arbitrary monitoring URLs in the
+browser.
+
+5. **Legacy has two different auth experiences.** Email/password and API-key
+login are alternatives, and Google may be conditionally configured. Keep the
+normal React auth state as the single source of truth and clear sensitive input
+after successful login. Public catalog mode is a separate anonymous GET-only
+case, not an authenticated user state.
+
+6. **Legacy auto-refresh was deliberately selective.** Admin summary/analytics
+and governance events refresh periodically, while full server cards do not
+because re-rendering them caused focus and expansion flicker. React should use
+query invalidation or silent section refreshes and visibly disclose refresh
+time.
+
+7. **Connection JSON is a user workflow.** The generated config differs by
+client: Claude Desktop/Cursor use `mcpServers`, VS Code uses `servers`, and Raw
+JSON exposes the server-provided access blob. Keep copyable code blocks and
+client-specific path hints, but never render credentials or secret headers.
+
+### React/API parity work required before legacy removal
+
+Before deleting legacy files, update the source contracts as needed:
+
+- Extend `ServerSummary` with live inventory, prompts, resources, tasks,
+  labels, access JSON, observability, and live-inventory error fields.
+- Extend `UsageResponse` with `series`, `recent`, and complete filter fields;
+  add typed `TimePoint` and `RecentActivity` records.
+- Add catalog/admin/user API functions for server events, observability links,
+  server retirement, deployment inventory where read-only, and the exact
+  legacy-supported filters. Keep every route in the Go session-proxy allowlist
+  before calling it from React.
+- Add safe write routes for server retirement only if product scope approves it;
+  add CSRF tests and upstream authorization tests. Do not call a direct `/api/v1`
+  mutation from browser JavaScript.
+- Replace `window.confirm` with `ConfirmDialog`/`AlertDialog`; destructive
+  confirmations must name the exact resource and consequence.
+- Replace `event.currentTarget` reads after awaited mutations with values captured
+  before the await or controlled form state. Avoid unmounted-form DOM access.
+- Ensure expired sessions invalidate all queries and return the user to Servers,
+  not to a blank or stale admin page.
+- Add route/state persistence for selected namespace, selected server, selected
+  tool, admin section, and detail context. Back should close a sheet before
+  leaving the underlying page.
+
+### Legacy retirement gate
+
+The implementation agent must produce a parity checklist with one row per
+legacy tab and one row per legacy action. For each row attach:
+
+- React route/component and API function;
+- signed-out, tenant, admin, no-user-identity, unauthorized, empty, and error
+  behavior where relevant;
+- desktop and 390px screenshot;
+- browser evidence of the request URL, status, and console state;
+- keyboard/focus evidence for dialogs, sheets, menus, tables, and copy controls;
+- mutation evidence with CSRF and authorization checks where relevant.
+
+Only after all rows are accepted may the agent:
+
+1. remove `legacy` from `WorkspaceId`, navigation, and `App.tsx` fallback;
+2. remove `LegacyWorkspace.tsx` and `LegacyDashboard.tsx`;
+3. remove `services/ui/frontend/public/legacy/*` and regenerate
+   `services/ui/static/*` through the Vite build;
+4. remove iframe-specific CSP allowances and stale legacy asset tests;
+5. update `docs/ui-react-dashboard-migration-plan.md` so its phase claims match
+   current code rather than historical migration status.
+
+Do not delete legacy assets as a cleanup shortcut. They are the rollback path
+until React has demonstrated behavior parity.
+
+## Reference pack for the implementation agent
+
+Use these direct links for interaction behavior and component study. Borrow
+principles and information architecture, not branding or copied source.
+
+- [Vercel dashboard navigation redesign](https://vercel.com/changelog/dashboard-navigation-redesign-rollout) — persistent resource/team context, collapsible navigation, and mobile navigation ideas.
+- [Vercel runtime log filtering](https://vercel.com/changelog/redesigned-search-and-filtering-for-runtime-logs) — removable filter pills, data-informed suggestions, and query clarity.
+- [Vercel Geist introduction](https://vercel.com/geist/introduction) — catalog of tables, sheets, drawers, status dots, code blocks, copy buttons, pagination, and skeletons.
+- [Geist Sheet](https://vercel.com/geist/sheet) — contextual inspection rules, explicit close behavior, focus restoration, and when a sheet should not be used for destructive confirmation.
+- [Geist Modal](https://vercel.com/geist/modal) — blocking decision behavior and destructive confirmation semantics.
+- [Geist Table](https://vercel.com/geist/table) — dense table hierarchy, sortable controls, placeholders, and tabular data treatment.
+- [Geist Copy Button](https://vercel.com/geist/copy-button) — copy interaction feedback for endpoint/config/key workflows.
+- [Supabase layout patterns](https://supabase.com/design-system/docs/ui-patterns/layout) — page containers, headers, sections, narrow forms, and wide data regions.
+- [Supabase navigation patterns](https://supabase.com/design-system/docs/ui-patterns/navigation) — compact primary/secondary navigation structure.
+- [Supabase table patterns](https://supabase.com/design-system/docs/ui-patterns/tables) — choosing semantic tables versus heavier grid behavior.
+- [Supabase table component](https://supabase.com/design-system/docs/components/table) — horizontal scroll regions, sortable headers, and row-action ambiguity guidance.
+- [Supabase form patterns](https://supabase.com/design-system/docs/ui-patterns/forms) — grouped fields, contextual validation, pending actions, and submission errors.
+- [Supabase modality patterns](https://supabase.com/design-system/docs/ui-patterns/modality) — dialog versus sheet, dirty-form dismissal, and destructive-action speed bumps.
+- [Supabase filter bar](https://supabase.com/design-system/docs/fragments/filter-bar) — advanced filter conditions and async option patterns; adapt only the complexity users need.
+- [Supabase empty states](https://supabase.com/design-system/docs/ui-patterns/empty-states) — initial empty state versus no-results-after-filter distinction.
+- [Supabase chart patterns](https://supabase.com/design-system/docs/ui-patterns/charts) — chart loading/empty/error states, timestamped data, tooltips, and accessible chart-plus-table treatment.
+- [Linear UI redesign](https://linear.app/now/how-we-redesigned-the-linear-ui) — compact application chrome, hierarchy, alignment, and light/dark surface discipline.
+- [Railway metrics](https://docs.railway.com/observability/metrics) — keeping metrics in service context and tying operational data to a selected resource.
+- [Render metrics with service events](https://render.com/changelog/in-dashboard-metrics-now-display-service-events) — associating operational events with metric timelines when the data exists.
+- [Radix accessibility overview](https://www.radix-ui.com/primitives/docs/overview/accessibility) — accessible interaction primitives and implementor responsibility for names/labels.
+- [Radix Dialog](https://www.radix-ui.com/primitives/docs/components/dialog) — focus trapping, Escape, controlled state, title, and description behavior.
+- [Lucide React guide](https://lucide.dev/guide/react) — consistent open-source icon usage and selective imports.
+- [WAI-ARIA modal dialog pattern](https://www.w3.org/WAI/ARIA/apg/patterns/dialog-modal/) — focus cycle and return-focus requirements.
+- [WCAG contrast minimum](https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum.html) — verify text contrast in both themes.
+- [WCAG target size minimum](https://www.w3.org/WAI/WCAG22/Understanding/target-size-minimum.html) — use the 24px AA minimum as a floor and design more comfortable mobile targets where possible.
+
+The desired synthesis is a calm, high-density infrastructure console: Vercel's
+resource context, Supabase's honest data/form states, Linear's quiet alignment,
+Railway/Render's service inspection, and MCP Sentinel's navy/teal identity.
+Do not turn the platform into a marketing landing page or a generic “AI
+dashboard.”

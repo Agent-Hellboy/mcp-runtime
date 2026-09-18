@@ -3,7 +3,7 @@ import { useMemo } from "react";
 import { DataTable, buildColumns } from "../../ui/DataTable";
 import { ProportionList } from "../../ui/ProportionBar";
 import { formatAbsolute, formatTimestamp } from "../../lib/format";
-import type { ServerUsage, ToolUsage } from "../../api/types";
+import type { RecentActivity, ServerUsage, ToolUsage } from "../../api/types";
 
 export function ServerUsageTable({ rows }: { rows: ServerUsage[] }) {
   const columns = useMemo(
@@ -79,6 +79,27 @@ export function ToolUsageTable({ rows }: { rows: ToolUsage[] }) {
       emptyTestId="tool-usage-empty"
       emptyMessage="No tool activity in this window."
     />
+  );
+}
+
+export function RecentActivityTable({ rows }: { rows: RecentActivity[] }) {
+  return (
+    <div className="table-scroll" data-testid="recent-activity-scroll" tabIndex={0}>
+      <table className="data-table" data-testid="recent-activity-table">
+        <caption className="visually-hidden">Recent gateway activity in your accessible namespaces.</caption>
+        <thead><tr><th scope="col">Time</th><th scope="col">Server</th><th scope="col">Tool</th><th scope="col">Decision</th></tr></thead>
+        <tbody>
+          {rows.length === 0 ? <tr><td colSpan={4} className="table-empty">No recent activity in this window.</td></tr> : rows.map((row, index) => (
+            <tr key={`${row.timestamp}-${row.server || ""}-${row.tool_name || ""}-${index}`}>
+              <th scope="row"><time dateTime={row.timestamp}>{formatTimestamp(row.timestamp)}</time></th>
+              <td>{row.server || "—"}<span className="cell-detail">{row.namespace || ""}</span></td>
+              <td>{row.tool_name || row.event_type || "—"}</td>
+              <td>{row.decision || "unknown"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 

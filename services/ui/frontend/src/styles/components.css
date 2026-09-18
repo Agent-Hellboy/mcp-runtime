@@ -1307,3 +1307,35 @@ fieldset.field > .field-label {
 .label-value {
   font-family: var(--font-mono);
 }
+.usage-series {
+  padding: var(--space-4) 0;
+  border-top: 1px solid var(--border);
+}
+
+.usage-series-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+}
+
+.usage-series-chart {
+  display: block;
+  width: 100%;
+  min-width: 520px;
+  height: 168px;
+}
+
+.series-axis { stroke: var(--border-strong); stroke-width: 1; }
+.series-line { stroke: var(--accent); stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+.series-point { fill: var(--surface-raised); stroke: var(--accent); stroke-width: 2; }
+.series-legend { color: var(--text-secondary); font-size: 12px; }
+.series-dot { display: inline-block; width: 8px; height: 8px; margin-right: 5px; border-radius: 50%; background: var(--accent); }
+.series-range { display: flex; justify-content: space-between; gap: var(--space-3); color: var(--text-secondary); font-size: 11px; padding-top: 6px; }
+
+.detail-tabs { display: flex; gap: 4px; overflow-x: auto; margin-top: var(--space-3); border-bottom: 1px solid var(--border); }
+.detail-tab { border: 0; border-bottom: 2px solid transparent; padding: 8px 10px; background: transparent; color: var(--text-secondary); white-space: nowrap; cursor: pointer; }
+.detail-tab:hover, .detail-tab.is-active { color: var(--text); border-bottom-color: var(--accent); }
+.event-list { display: grid; gap: 6px; }
+.event-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; align-items: center; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 12px; }
+.event-row time { color: var(--text-secondary); white-space: nowrap; }

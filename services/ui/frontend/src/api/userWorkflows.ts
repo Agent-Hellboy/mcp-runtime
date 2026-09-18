@@ -60,6 +60,9 @@ export async function readUserUsage(windowDays: number, server?: string): Promis
     },
     servers: Array.isArray(body?.servers) ? body.servers : [],
     tools: Array.isArray(body?.tools) ? body.tools : [],
+    series: Array.isArray(body?.series) ? body.series : [],
+    recent: Array.isArray(body?.recent) ? body.recent : [],
+    filters: body?.filters || {},
     window_days: body?.window_days ?? windowDays,
   };
 }

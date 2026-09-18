@@ -11,6 +11,7 @@ import { ProportionList } from "../../ui/ProportionBar";
 import { ErrorState, LoadingState } from "../../ui/States";
 import { UsageMetrics } from "../usage/UsageMetrics";
 import { ServerUsageTable, ToolUsageTable } from "../usage/UsageTables";
+import { UsageSeries } from "../usage/UsageSeries";
 import { formatAbsolute, formatTimestamp } from "../../lib/format";
 import { useAdminReload, useUsage } from "../../hooks/useAdminData";
 import { useQuery } from "@tanstack/react-query";
@@ -134,6 +135,8 @@ export function UsageAnalyticsPanel({ onSignIn }: UsageAnalyticsPanelProps) {
       >
         <>
           {usage ? <UsageMetrics totals={usage.totals} scope="the whole platform" testId="analytics-stats" /> : null}
+
+          {usage?.series?.length ? <UsageSeries points={usage.series} /> : null}
 
           {decisions.length > 0 ? (
             <section className="section">
