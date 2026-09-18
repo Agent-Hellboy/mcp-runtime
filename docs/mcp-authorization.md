@@ -1,9 +1,51 @@
-# MCP authorization with the optional mcp-auth server
+# MCP authorization with the independent mcp-auth server
 
 MCP authorization is optional. MCP clients and servers can communicate without
 OAuth when a deployment does not require user identity or bearer-token
 protection. Enable authorization when clients need standards-based login, PKCE,
 token issuance, and protected-resource discovery.
+
+MCP Runtime ships the `mcp-auth-server` as an independent, standards-based
+authorization service. It is not compiled into the Runtime gateway and it does
+not make Runtime grant or policy decisions. You can run the auth server as its
+own service alongside an existing MCP deployment, or ask `mcp-runtime setup` to
+deploy and wire the bundled image for you with `--with-mcp-auth-server`.
+
+The auth server is identity-provider neutral. It can be configured with
+Keycloak, Okta, PingOne, Microsoft Entra ID, Auth0, Google, or any compatible
+OIDC/OAuth provider. The Keycloak configuration below is a concrete walkthrough
+of the provider-neutral connector model, not a product limitation. The same
+auth server can also be used independently; configure its issuer, resource
+audience, signing key, storage, and connector settings directly using the
+[mcp-auth auth-server guide][auth-server-guide].
+
+## The mental model: server, connector, and provider adapter
+
+There are three layers in the authentication path:
+
+1. **The independent auth server** owns the MCP-facing OAuth endpoints,
+   authorization-code and PKCE flow, consent, token issuance, metadata, and
+   JWKS. It issues tokens whose issuer and audience are configured for the MCP
+   resource you protect.
+2. **A connector** is a named JSON configuration selected with
+   `MCP_AUTH_CONNECTOR`. It describes how this auth-server instance talks to an
+   upstream identity provider: issuer/discovery, client credentials, scopes,
+   claims, callback allow-lists, and downstream-token strategy.
+3. **Provider adapters** implement the provider-specific behavior behind the
+   connector interfaces (`IdentityProvider` and, when required,
+   `TokenExchanger`). The auth server loads the adapter selected by the
+   connector at startup, so Keycloak-specific behavior stays out of the Runtime
+   gateway and MCP tool handlers.
+
+One running auth-server process selects one connector and one issuer/resource
+configuration. A connector file may contain several named entries for
+different environments, but only the entry named by `MCP_AUTH_CONNECTOR` is
+active in that process. To use Keycloak in production, select the `keycloak`
+connector shown below; to use another OIDC provider, add a separate connector
+with that provider's issuer and client settings.
+
+See the auth server's [architecture guide][auth-architecture] for the
+standalone deployment boundary and the adapter interfaces.
 
 ## What each component does
 
@@ -26,6 +68,18 @@ MCP client → optional mcp-auth-server → Keycloak/OIDC provider
 This separation is necessary because the authorization server sees login and
 token requests, while Runtime governance must inspect the actual MCP JSON-RPC
 tool call and current grant/session state.
+
+The request path is therefore:
+
+```text
+Browser/MCP client
+        │ OAuth authorization-code + PKCE
+        ▼
+mcp-auth-server ── selected connector ──► configured identity provider
+        │ issues MCP access token
+        ▼
+Runtime gateway ── issuer/audience validation + grants/policy ──► MCP server
+```
 
 ## Responsibility boundary
 
@@ -187,6 +241,12 @@ gateway rejects tokens with a different issuer or audience and strips the
 client bearer token before forwarding upstream.
 
 ## Deploy through setup
+
+The setup flag is the convenient Runtime-integrated deployment mode. It creates
+the auth-server workload, configures its public issuer and MCP resource
+audience, mounts the connector configuration, and wires the TLS and signing-key
+Secrets. It does not install or manage Keycloak: Keycloak remains an external
+identity-provider service that you operate independently.
 
 Create the persistent signing-key Secret with the RSA key stored as
 `private-key.pem`, create the TLS Secret, export the client secret only in the
@@ -489,3 +549,6 @@ exchange boundaries.
   performs discovery, metadata schema validation, DCR, and PKCE that `curl`
   does not. Recipe and symptom table:
   `.codex/skills/mcp-runtime-troubleshooting/reference.md`.
+
+[auth-server-guide]: https://github.com/Agent-Hellboy/mcp-auth/blob/main/docs/auth-server.md
+[auth-architecture]: https://github.com/Agent-Hellboy/mcp-auth/blob/main/docs/architecture.md
