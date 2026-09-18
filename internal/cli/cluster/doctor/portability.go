@@ -35,6 +35,9 @@ func checkClusterImageArchitecture(kubectl core.KubectlRunner) DoctorCheck {
 }
 
 func checkDNSNetworkPolicyPortability(kubectl core.KubectlRunner) DoctorCheck {
+	if _, err := readKubectlOutput(kubectl, []string{"get", "namespace", doctorSentinelNamespace, "-o", "jsonpath={.metadata.name}"}); err != nil {
+		return DoctorCheck{Name: "DNS NetworkPolicy portability", OK: true, Detail: "namespace mcp-sentinel is not installed; skipping runtime API DNS policy check"}
+	}
 	selectors := []string{"k8s-app=kube-dns", "k8s-app=coredns", "app.kubernetes.io/name=coredns"}
 	matched := ""
 	for _, selector := range selectors {
