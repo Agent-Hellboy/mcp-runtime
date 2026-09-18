@@ -2,8 +2,7 @@
 
 This documents what the platform console actually does after the
 `ui/servers_console_redesign` pass. It is a description of implemented
-behaviour, not a plan. The research and requirements that produced it are in
-[`ui-platform-redesign-prompt.md`](./ui-platform-redesign-prompt.md).
+behaviour, not a plan.
 
 Source: `services/ui/frontend/src`.
 
