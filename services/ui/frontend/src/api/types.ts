@@ -437,6 +437,34 @@ export type UsageResponse = {
   window_days?: number;
   actors?: Array<{ human_id: string; agent_id: string; events: number; unique_servers: number; unique_tools: number; denied: number }>;
   decisions?: Array<{ decision: string; events: number }>;
+  series?: UsageTimePoint[];
+  recent?: RecentActivity[];
+  filters?: {
+    namespaces?: string[];
+    team_ids?: string[];
+    server?: string;
+    decision?: string;
+    tool_name?: string;
+  };
+};
+
+export type UsageTimePoint = {
+  bucket: string;
+  events: number;
+  allowed: number;
+  denied: number;
+};
+
+export type RecentActivity = {
+  timestamp: string;
+  server?: string;
+  namespace?: string;
+  human_id?: string;
+  agent_id?: string;
+  session_id?: string;
+  decision?: string;
+  tool_name?: string;
+  event_type?: string;
 };
 
 // Role gating helpers shared across every workspace.
