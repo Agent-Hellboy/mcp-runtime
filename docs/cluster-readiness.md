@@ -626,7 +626,7 @@ curl -s http://127.0.0.1:32000/v2/_catalog
 getent hosts registry.local
 
 # Post-install diagnostics via the CLI (see below)
-./bin/mcp-runtime cluster doctor
+./bin/mcp-runtime cluster doctor --after-setup
 ```
 
 ## Failure-to-cause map
@@ -658,7 +658,7 @@ Missing pieces are warnings, not errors — the command surfaces them so you can
 
 ## `cluster doctor`
 
-`./bin/mcp-runtime cluster doctor` runs post-install diagnostics by default:
+`./bin/mcp-runtime cluster doctor --after-setup` runs post-install diagnostics:
 
 - Detects your distribution (k3s / kind / minikube / docker-desktop / generic).
 - Checks the installed MCP Runtime namespaces, CRDs, operator, Traefik ingress, registry, Sentinel, and MCPServer reconciliation path. The MCPServer smoke uses an existing ready app image when available; otherwise it falls back to `registry.k8s.io/pause:3.9` and validates deployment/service/ingress reconciliation plus pod scheduling without a TCP readiness wait.
@@ -674,6 +674,7 @@ Missing pieces are warnings, not errors — the command surfaces them so you can
 
 For setup preflight, run `./bin/mcp-runtime cluster doctor --for-setup`. That mode focuses on:
 
+- Kubernetes API access, Ready nodes, allocatable capacity, and StorageClass availability before workloads are installed.
 - Traefik ingress readiness and exposure.
 - Public host resolution from `MCP_PLATFORM_DOMAIN` or the explicit `MCP_PLATFORM_INGRESS_HOST`, `MCP_REGISTRY_INGRESS_HOST`, and `MCP_MCP_INGRESS_HOST` env vars.
 - Local DNS resolution for those configured public hosts.
@@ -681,5 +682,9 @@ For setup preflight, run `./bin/mcp-runtime cluster doctor --for-setup`. That mo
 - `MCP_TLS_CLUSTER_ISSUER` existence when configured.
 - `MCP_ACME_EMAIL` HTTP-01 readiness, including whether the active Traefik web entrypoint is on service port `80`.
 
-Run `bootstrap` before `setup` on a fresh cluster. Run `cluster doctor` after
-setup, or use `cluster doctor --for-setup` before a host-based TLS install.
+Run `bootstrap` before `setup` on a fresh cluster, then run `cluster doctor --for-setup`.
+After setup completes, run `cluster doctor --after-setup` to validate the installed
+Runtime, Sentinel, registry, telemetry, PVCs, secrets, APIs, ingress routes, and
+MCPServer reconciliation path. The no-flag form remains an alias for the complete
+post-setup diagnostic for backward compatibility; the two explicit flags cannot be
+combined.

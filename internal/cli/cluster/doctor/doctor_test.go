@@ -2624,6 +2624,18 @@ func TestCheckPersistentVolumeClaimsReportsPendingClaims(t *testing.T) {
 	}
 }
 
+func TestCheckClusterNodesReadyReportsNotReadyNodes(t *testing.T) {
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			return &core.MockCommand{OutputData: []byte(`{"items":[{"metadata":{"name":"worker-1"},"status":{"conditions":[{"type":"Ready","status":"False"}]}}]}`)}
+		},
+	}
+	check := checkClusterNodesReady(core.NewTestKubectlClient(mock))
+	if check.OK || !strings.Contains(check.Detail, "worker-1") {
+		t.Fatalf("expected not-ready node to fail, got %+v", check)
+	}
+}
+
 func argValueWithPrefix(args []string, prefix string) string {
 	for _, arg := range args {
 		if strings.HasPrefix(arg, prefix) {
