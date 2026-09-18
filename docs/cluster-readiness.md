@@ -665,6 +665,9 @@ Missing pieces are warnings, not errors — the command surfaces them so you can
 - Prefers k3s' bundled Traefik in `kube-system/traefik` when the active cluster is k3s, then falls back to the repo-managed `traefik/traefik` install.
 - `setup` follows the same ownership model: it reuses active external Traefik and refuses to force-install the repo-managed Traefik when that would create a second active stack.
 - Verifies registry reachability, registry image-pull smoke behavior, and common pod image-pull failures. The bundled registry reachability probe uses HTTPS when `registry/registry-internal-tls` is installed, and HTTP otherwise.
+- Discovers the cluster's default `StorageClass` when `MCP_STORAGE_CLASS` is not set, validates the selected class against node topology, and reports PVCs that are not `Bound`.
+- Validates the bundled OpenTelemetry collector's Deployment, Service endpoints, and pipeline ConfigMap so trace-export failures are visible even when application readiness is green.
+- Recognizes the persisted setup test-mode marker and does not require production OIDC credentials for local test clusters; production tenant/public deployments still require a complete Google or generic OIDC contract.
 - Reports `http: server gave HTTP response to HTTPS client` when kubelet/containerd tried HTTPS against the HTTP dev registry, including the affected pod and image where possible.
 - Streams the current check before running it, including helper pod probes and waits, so a slow run shows what it is doing.
 - Prints the distribution-specific registry remediation hint only when registry or image-pull checks fail; Traefik and Sentinel failures use their own check-specific remedies.

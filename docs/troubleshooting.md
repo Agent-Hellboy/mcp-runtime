@@ -215,7 +215,7 @@ kubectl rollout status deployment/mcp-platform-api -n mcp-sentinel --timeout=120
 KUBECONFIG=~/.kube/config mcp-runtime cluster doctor
 ```
 
-The doctor runs 37 checks and prints a remedy for each failure. Follow the printed
+The doctor runs a broad set of post-install checks and prints a remedy for each failure. Follow the printed
 instructions — most failures point to missing ingress, stale certificates, or
 image pull errors with specific `kubectl` commands to fix them.
 

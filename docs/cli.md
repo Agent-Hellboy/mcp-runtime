@@ -638,7 +638,7 @@ mcp-runtime cluster cert status
 mcp-runtime cluster cert apply
 mcp-runtime cluster cert wait --timeout 10m
 
-KUBECONFIG=~/.kube/config mcp-runtime cluster doctor    # 37-point diagnostic
+KUBECONFIG=~/.kube/config mcp-runtime cluster doctor    # full cluster diagnostic
 ```
 
 

@@ -274,6 +274,8 @@ func doctorCheckSpecs(kubectl core.KubectlRunner, distro Distribution) []doctorC
 		{Name: "sentinel ingest readiness", Detail: "checking the analytics ingest deployment is ready", Run: func() DoctorCheck { return checkSentinelIngestReadiness(kubectl) }},
 		{Name: "sentinel platform API readiness", Detail: "checking the platform-api deployment and /health + /ready endpoints", Run: func() DoctorCheck { return checkSentinelPlatformAPIReadiness(kubectl) }},
 		{Name: "sentinel analytics API readiness", Detail: "checking the analytics-api deployment and /health + /ready endpoints", Run: func() DoctorCheck { return checkSentinelAnalyticsAPIReadiness(kubectl) }},
+		{Name: "sentinel telemetry pipeline", Detail: "checking the collector Service, endpoints, workload, and trace pipeline configuration", Run: func() DoctorCheck { return checkSentinelTelemetryPipeline(kubectl) }},
+		{Name: "persistent volume claims", Detail: "checking that discovered PVCs are Bound", Run: func() DoctorCheck { return checkPersistentVolumeClaims(kubectl) }},
 		{Name: "runtime API Kubernetes API egress", Detail: "checking the runtime-api NetworkPolicy allows the cluster's actual Kubernetes API endpoint port", Run: func() DoctorCheck { return checkRuntimeAPIKubernetesAPIEgress(kubectl) }},
 		{Name: "cluster image architecture", Detail: "checking MCP_IMAGE_PLATFORM matches Kubernetes node architectures", Run: func() DoctorCheck { return checkClusterImageArchitecture(kubectl) }},
 		{Name: "DNS NetworkPolicy portability", Detail: "checking runtime-api egress matches the cluster's actual DNS pod labels", Run: func() DoctorCheck { return checkDNSNetworkPolicyPortability(kubectl) }},
