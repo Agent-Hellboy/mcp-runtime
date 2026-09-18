@@ -11,10 +11,13 @@ not make Runtime grant or policy decisions. You can run the auth server as its
 own service alongside an existing MCP deployment, or ask `mcp-runtime setup` to
 deploy and wire the bundled image for you with `--with-mcp-auth-server`.
 
-This page explains the setup-integrated path with Keycloak as the example
-identity provider. The same auth server can be used independently; in that
-case, configure its issuer, resource audience, signing key, storage, and
-connector settings directly using the [mcp-auth auth-server guide][auth-server-guide].
+The auth server is identity-provider neutral. It can be configured with
+Keycloak, Okta, PingOne, Microsoft Entra ID, Auth0, Google, or any compatible
+OIDC/OAuth provider. The Keycloak configuration below is a concrete walkthrough
+of the provider-neutral connector model, not a product limitation. The same
+auth server can also be used independently; configure its issuer, resource
+audience, signing key, storage, and connector settings directly using the
+[mcp-auth auth-server guide][auth-server-guide].
 
 ## The mental model: server, connector, and provider adapter
 
@@ -72,7 +75,7 @@ The request path is therefore:
 Browser/MCP client
         │ OAuth authorization-code + PKCE
         ▼
-mcp-auth-server ── selected connector ──► Keycloak
+mcp-auth-server ── selected connector ──► configured identity provider
         │ issues MCP access token
         ▼
 Runtime gateway ── issuer/audience validation + grants/policy ──► MCP server
