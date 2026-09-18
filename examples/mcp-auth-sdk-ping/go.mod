@@ -3,7 +3,7 @@ module mcp-auth-sdk-ping
 go 1.26
 
 require (
-	github.com/Agent-Hellboy/mcp-auth/auth-client/go v0.1.1
+	github.com/Agent-Hellboy/mcp-auth/auth-client/go v0.2.0
 	github.com/modelcontextprotocol/go-sdk v1.6.0
 )
 

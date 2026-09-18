@@ -43,13 +43,15 @@ func main() {
 	// header the MCP authorization spec requires on every 401 stays correct
 	// without each server re-deriving it.
 	mux.Handle(mcpPath, mcpauth.RequireToken(verifier, mcpauth.ResourceMetadata{URL: metadataURL}, handler))
-	metadataHandler := func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("content-type", "application/json")
-		_, _ = fmt.Fprintf(w, `{"resource":%q,"authorization_servers":[%q],"bearer_methods_supported":["header"]}`, resource, issuer)
-	}
+	// The SDK derives the document from the verifier, so scopes_supported always
+	// matches the scope RequireToken enforces. Hand-writing this JSON is how the
+	// member goes missing: the client then asks for no scope and every call
+	// fails 403 insufficient_scope, which reads as broken auth rather than a
+	// missing advertisement.
+	metadataHandler := mcpauth.ProtectedResourceMetadataHandler(verifier, resource, issuer)
 	metadataPath := "/.well-known/oauth-protected-resource" + mcpPath
-	mux.HandleFunc(metadataPath, metadataHandler)
-	mux.HandleFunc("/.well-known/oauth-protected-resource", metadataHandler)
+	mux.Handle(metadataPath, metadataHandler)
+	mux.Handle("/.well-known/oauth-protected-resource", metadataHandler)
 	log.Fatal(http.ListenAndServe(":"+envOr("PORT", "8088"), mux))
 }
 

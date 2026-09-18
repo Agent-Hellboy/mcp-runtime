@@ -26,9 +26,13 @@ spec:
       value: http://localhost:18080/mcp-auth-sdk-ping/mcp
     - name: MCP_AUTH_RESOURCE_METADATA_URL
       value: http://localhost:18080/.well-known/oauth-protected-resource/mcp-auth-sdk-ping/mcp
-    # The public issuer is not reachable from inside a pod, so the verifier is
-    # pointed straight at the in-cluster JWKS endpoint. Issuer and audience are
-    # still validated against the public values above.
+    # Kind only. On a real deployment the public HTTPS issuer is reachable from
+    # inside the cluster, so omit this and let the SDK discover the JWKS over
+    # TLS — the authorization server restricts ingress to the ingress
+    # controller, so the in-cluster endpoint is not reachable from a workload
+    # namespace anyway. Here the Kind ingress is not resolvable from a pod, so
+    # the verifier is pointed at the in-cluster endpoint directly; issuer and
+    # audience are still validated against the public values above.
     - name: MCP_AUTH_JWKS_URL
       value: http://mcp-auth-server.mcp-sentinel.svc.cluster.local:8080/.well-known/jwks.json
   tools:

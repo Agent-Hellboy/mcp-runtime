@@ -89,9 +89,11 @@ func TestRenderMCPAuthServerManifestProductionHardensDevSwitches(t *testing.T) {
 		`value: https`,
 		`{name: MCP_AUTH_STORE, value: sqlite}`,
 		"- secretRef: {name: mcp-auth-connector-secrets}",
-		"mcp-auth-server-discovery-rewrite@kubernetescrd",
+		// Traefik must still route these; the authorization server answers
+		// them itself now, so no rewrite middleware sits in front.
 		"/.well-known/oauth-authorization-server/mcp-auth",
 		"/.well-known/openid-configuration/mcp-auth",
+		"mcp-sentinel-mcp-auth-server-strip-prefix@kubernetescrd",
 	} {
 		if !strings.Contains(manifest, want) {
 			t.Errorf("manifest missing %q", want)
@@ -299,5 +301,52 @@ func TestRenderMCPAuthServerManifestDecodesAsKubernetesObjects(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Every resolved resource must reach the authorization server. Rendering only
+// the first one made a deployment that fronts two MCP servers mint tokens for
+// one of them and answer /authorize with "resource is not recognized" for the
+// other - the exact failure an MCP client hits when it sends the RFC 8707
+// resource parameter for the second server.
+func TestRenderMCPAuthServerManifestCarriesEveryResource(t *testing.T) {
+	manifest, err := renderMCPAuthServerManifest(mcpAuthManifestTemplate(t), mcpAuthServerOptions{
+		Image:     "registry.example.com/mcp-auth-server:1.0.0",
+		IssuerURL: "https://auth.example.com/mcp-auth",
+		ResourceURLs: []string{
+			"https://mcp.example.com/ping/mcp",
+			"https://mcp.example.com/echo/mcp",
+		},
+		TLSSecret:        "mcp-auth-tls",
+		SigningKeySecret: "mcp-auth-signing-key",
+		ConnectorsFile:   "connectors.json",
+		Connector:        "keycloak",
+	})
+	if err != nil {
+		t.Fatalf("renderMCPAuthServerManifest() error = %v", err)
+	}
+	want := `{name: MCP_AUTH_RESOURCES, value: "https://mcp.example.com/ping/mcp,https://mcp.example.com/echo/mcp"}`
+	if !strings.Contains(manifest, want) {
+		t.Fatalf("manifest does not carry every resource.\nwant: %s\ngot:\n%s", want, manifest)
+	}
+	// The singular stays for an older image that only reads it.
+	if !strings.Contains(manifest, `{name: MCP_AUTH_RESOURCE, value: "https://mcp.example.com/ping/mcp"}`) {
+		t.Fatalf("manifest dropped the compatibility singular:\n%s", manifest)
+	}
+}
+
+// Test mode resolves both shipped SDK fixtures, so both must be served.
+func TestRenderMCPAuthServerManifestTestModeServesBothSDKFixtures(t *testing.T) {
+	manifest, err := renderMCPAuthServerManifest(mcpAuthManifestTemplate(t), mcpAuthServerOptions{
+		Image:     "registry.example.com/mcp-auth-server:1.0.0",
+		IssuerURL: "http://localhost:18080/mcp-auth",
+		TestMode:  true,
+	})
+	if err != nil {
+		t.Fatalf("renderMCPAuthServerManifest() error = %v", err)
+	}
+	want := `{name: MCP_AUTH_RESOURCES, value: "http://localhost:18080/mcp-auth-sdk-ping/mcp,http://localhost:18080/mcp-auth-sdk-echo/mcp"}`
+	if !strings.Contains(manifest, want) {
+		t.Fatalf("test mode must serve both SDK fixtures.\nwant: %s\ngot:\n%s", want, manifest)
 	}
 }

@@ -5,14 +5,6 @@ spec:
   stripPrefix:
     prefixes: [/mcp-auth]
 ---
-apiVersion: traefik.io/v1alpha1
-kind: Middleware
-metadata: {name: mcp-auth-server-discovery-rewrite, namespace: mcp-sentinel}
-spec:
-  replacePathRegex:
-    regex: ^/\.well-known/(oauth-authorization-server|openid-configuration)/mcp-auth$
-    replacement: /.well-known/$1
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -38,6 +30,11 @@ spec:
           ports: [{containerPort: 8080}]
           env:
             - {name: MCP_AUTH_ISSUER, value: "MCP_AUTH_ISSUER_VALUE"}
+            # Plural wins in the authorization server when both are set. The
+            # singular is kept for compatibility with an older image that only
+            # reads MCP_AUTH_RESOURCE; it carries the first resource so such an
+            # image still serves at least one.
+            - {name: MCP_AUTH_RESOURCES, value: MCP_AUTH_RESOURCES_VALUE}
             - {name: MCP_AUTH_RESOURCE, value: MCP_AUTH_RESOURCE_VALUE}
             - {name: MCP_AUTH_LISTEN_ADDR, value: ":8080"}
             - {name: MCP_AUTH_LOCAL_DEVELOPMENT, value: "MCP_AUTH_LOCAL_DEVELOPMENT_VALUE"}
@@ -45,6 +42,13 @@ spec:
             - {name: MCP_AUTH_LOCAL_CLIENT_ID, value: mcp-auth-sdk-client}
             - {name: MCP_AUTH_REGISTRATION_ENABLED, value: "true"}
             - {name: MCP_AUTH_REQUIRE_HTTPS, value: "MCP_AUTH_REQUIRE_HTTPS_VALUE"}
+            # Traefik terminates TLS and this pod listens plaintext, so the
+            # only evidence of HTTPS is X-Forwarded-Proto. That header is
+            # client-supplied, so the server ignores it unless we declare
+            # here that a trusted proxy fronts us. The declaration is only
+            # honest because mcp-auth-server-ingress below makes the ingress
+            # controller the only route to this pod.
+            - {name: MCP_AUTH_TRUST_PROXY_TLS, value: "MCP_AUTH_TRUST_PROXY_TLS_VALUE"}
             - {name: MCP_AUTH_STORE, value: MCP_AUTH_STORE_VALUE}
             - {name: MCP_AUTH_DATABASE_URL, value: MCP_AUTH_DATABASE_URL_VALUE}
             MCP_AUTH_SIGNING_KEY_ENV_BLOCK
@@ -103,7 +107,7 @@ metadata:
   name: mcp-auth-server
   namespace: mcp-sentinel
   annotations:
-    traefik.ingress.kubernetes.io/router.middlewares: mcp-sentinel-mcp-auth-server-discovery-rewrite@kubernetescrd,mcp-sentinel-mcp-auth-server-strip-prefix@kubernetescrd
+    traefik.ingress.kubernetes.io/router.middlewares: mcp-sentinel-mcp-auth-server-strip-prefix@kubernetescrd
 spec:
   ingressClassName: traefik
 # Rendered by internal/cli/setup/platform/mcp_auth_server.go. The placeholder
@@ -117,6 +121,8 @@ MCP_AUTH_INGRESS_TLS_BLOCK
           - path: /mcp-auth
             pathType: Prefix
             backend: {service: {name: mcp-auth-server, port: {number: 8080}}}
+          # The authorization server serves these itself (RFC 8414 section 3.1
+          # for a path-mounted issuer); Traefik only has to route them to it.
           - path: /.well-known/oauth-authorization-server/mcp-auth
             pathType: Exact
             backend: {service: {name: mcp-auth-server, port: {number: 8080}}}
@@ -167,3 +173,33 @@ spec:
       ports:
         - protocol: TCP
           port: 443
+---
+# Without this, any pod in the cluster can reach the authorization server
+# directly and set X-Forwarded-Proto: https itself, which would make
+# MCP_AUTH_TRUST_PROXY_TLS a statement the cluster does not actually enforce.
+# Restricting ingress to the controller is what makes that setting true.
+#
+# Both namespaces are listed because the ingress controller is repo-managed
+# Traefik in `traefik` on Kind and k3s's own Traefik in `kube-system`.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mcp-auth-server-ingress
+  namespace: mcp-sentinel
+spec:
+  podSelector:
+    matchLabels:
+      app: mcp-auth-server
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: traefik
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: TCP
+          port: 8080
