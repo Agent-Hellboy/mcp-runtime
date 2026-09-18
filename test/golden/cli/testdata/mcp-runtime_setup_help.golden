@@ -22,7 +22,7 @@ Flags:
   -h, --help                                 help for setup
       --ingress string                       Ingress controller to install automatically during setup (traefik|none) (default "traefik")
       --ingress-manifest string              Manifest to apply when installing the ingress controller (default "config/ingress/overlays/http")
-      --kubeconfig string                    Path to kubeconfig file (default: ~/.kube/config)
+      --kubeconfig string                    Path to kubeconfig file (default: ~/.kube/config; auto-detects /etc/rancher/k3s/k3s.yaml on k3s hosts)
       --mcp-auth-connector string            Provider connector name to activate (requires --mcp-auth-connectors-file)
       --mcp-auth-connectors-file string      Provider connector JSON file for the bundled mcp-auth authorization server
       --mcp-auth-issuer-url string           Public HTTPS issuer URL for the bundled mcp-auth authorization server (required outside --test-mode)

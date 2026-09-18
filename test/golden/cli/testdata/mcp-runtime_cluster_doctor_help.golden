@@ -1,11 +1,13 @@
-Detect the Kubernetes distribution and check that the registry service, cluster DNS, operator/CRD prerequisites, ingress (Traefik) wiring, image pulls, Sentinel, and MCPServer reconciliation are healthy. Prints remediation steps for your distribution when something is missing. Use --for-setup to run pre-setup ingress, public DNS, and TLS prerequisite checks. See docs/cluster-readiness.md for the full per-distribution checklist.
+Detect the Kubernetes distribution and check that the registry service, cluster DNS, operator/CRD prerequisites, ingress (Traefik) wiring, image pulls, Sentinel, and MCPServer reconciliation are healthy. Prints remediation steps for your distribution when something is missing. Use --for-setup before setup for cluster prerequisites, or --after-setup after setup for the complete installed-platform validation. With no lifecycle flag, the command keeps the complete post-setup behavior for backward compatibility. See docs/cluster-readiness.md for the full per-distribution checklist.
 
 Usage:
   mcp-runtime cluster doctor [flags]
 
 Flags:
-      --for-setup   Run pre-setup readiness checks for ingress, public DNS, and TLS prerequisites
-  -h, --help        help for doctor
+      --after-setup         Run the complete post-setup validation for installed Runtime components
+      --for-setup           Run pre-setup readiness checks for ingress, public DNS, and TLS prerequisites
+  -h, --help                help for doctor
+      --kubeconfig string   Path to kubeconfig file (auto-detects ~/.kube/config or /etc/rancher/k3s/k3s.yaml)
 
 Global Flags:
       --debug   Enable debug mode with structured error logging
