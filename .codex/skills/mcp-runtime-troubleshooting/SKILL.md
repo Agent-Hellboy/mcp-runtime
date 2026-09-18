@@ -36,13 +36,14 @@ only place the real error appears — it does discovery, metadata schema validat
 client registration, and PKCE that curl does not.
 
 ```bash
-tail -n 100 ~/Library/Application\ Support/Cursor/logs/**/MCP*.log   # Cursor
-tail -n 100 ~/Library/Logs/Claude/mcp*.log                           # Claude Desktop
+D=$(ls -td ~/Library/Application\ Support/Cursor/logs/*/ | head -1)   # newest launch
+tail -n 100 "$D"/mcp-server-user-*.log                                # Cursor: the live log
+tail -n 100 ~/Library/Logs/Claude/mcp*.log                            # Claude Desktop
 ```
 
-`MCP user-<server-name>.log` is the file that matters. Cursor writes a new log directory per
-launch, so sort by mtime and confirm the newest entry postdates your last fix before
-concluding anything — a stale log is not a failure.
+`mcp-server-user-<name>.log` **at the log-directory root** is the file that matters. The
+`exthost/anysphere.cursor-mcp/MCP user-<name>.log` path is a legacy location that can sit
+frozen for hours while the real log is live — trust mtime, not the filename.
 
 Full recipe, the OAuth state machine, and symptom→cause table (SSE 404 red herring,
 `subject_types_supported` schema rejection, consent-page 404, RFC 7591 echo, RFC 8707

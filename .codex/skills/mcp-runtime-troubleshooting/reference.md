@@ -47,16 +47,25 @@ real error appears.
 ### Cursor
 
 ```bash
-tail -n 100 ~/Library/Application\ Support/Cursor/logs/**/MCP*.log
+D=$(ls -td ~/Library/Application\ Support/Cursor/logs/*/ | head -1)
+tail -n 100 "$D"/mcp-server-user-*.log
 ```
 
-Requires `zsh` (default on macOS) or `shopt -s globstar` in bash for `**`. Per log directory:
+Cursor writes MCP logs in two places and **the obvious one is the wrong one**. A glob like
+`logs/**/MCP*.log` matches only the legacy `exthost` files, which can sit frozen for hours
+while the connection is actively failing elsewhere. Always sort by mtime.
 
-| File | Contents |
+| File (relative to the launch log dir) | Contents |
 |------|----------|
-| `MCP user-<server-name>.log` | **The one that matters** — per-server connect attempts, OAuth state machine, validation errors |
-| `MCP Logs.log` | Extension-host level: `Received MCP OAuth return-to-Cursor deeplink`, network connectivity |
-| `MCP canonical-cache.log`, `MCP snapshot-push.log` | Usually empty; ignore |
+| `mcp-server-user-<name>.log` | **The live, authoritative log** — connect attempts, OAuth state machine, the real error |
+| `window<N>/mcp-server-user-<name>.workbench.log` | `[MCPService] createClient completed … statusType=…`, one line per attempt |
+| `window<N>/workbench.mcp.allowlist.log` | Tool invocation and permission decisions — proof a tool actually ran |
+| `window<N>/workbench.mcp.oauth.log`, `mcpprocess.log` | OAuth and MCP process detail |
+| `exthost/anysphere.cursor-mcp/MCP user-<name>.log` | **Legacy** — often stale; do not conclude from it |
+| `exthost/anysphere.cursor-mcp/MCP Logs.log` | `Received MCP OAuth return-to-Cursor deeplink`, connectivity |
+
+A deeplink in `MCP Logs.log` with no matching activity in the legacy per-server log means the
+flow is running and being logged at the root instead — not that the client is stuck.
 
 Cursor creates a **new timestamped log directory per app launch** and a new
 `window<N>_wb<M>` subdirectory per workspace reload, so the tree accumulates dozens of stale
@@ -112,6 +121,18 @@ by a manual/scripted flow using the `cursor://` redirect URI, not by Cursor itse
   ```bash
   curl -s '<authorize-url>' | grep -o 'action="[^"]*"'
   ```
+- **`Server returned 403 after trying upscoping` (Cursor), or a 403 with an empty body:** the
+  resource server enforces a required scope that its RFC 9728 document does not advertise.
+  "Upscoping" is the client retrying with a larger scope; it has nothing to ask for when
+  `scopes_supported` is absent, so it gives up. Confirm by decoding the token — `"scope": ""`
+  while the 403 challenge names a scope:
+  ```bash
+  curl -s https://mcp.<domain>/<server>/.well-known/oauth-protected-resource/... | jq .scopes_supported
+  ```
+  The fix belongs in the resource server, not the client: derive `scopes_supported` from the
+  verifier's required scopes (`mcpauth.ProtectedResourceMetadataHandler`) rather than
+  hand-writing the JSON, so the advertised set cannot drift from the enforced one. Note the AS
+  metadata advertising the scope is **not** enough — clients read the resource's document.
 - **Client re-registers on every attempt:** RFC 7591 requires the registration response to
   echo `client_id_issued_at`, `grant_types`, `response_types`, and `scope`. Clients that
   cannot read back what they registered treat the stored registration as unusable.
