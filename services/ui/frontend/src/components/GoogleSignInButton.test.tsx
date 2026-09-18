@@ -57,14 +57,16 @@ describe("GoogleSignInButton", () => {
     window.MCP_GOOGLE_CLIENT_ID = "test-client-id";
     const { initialize } = stubGoogleIdentityServices();
     const onCredential = vi.fn();
+    const onError = vi.fn();
 
-    render(<GoogleSignInButton onCredential={onCredential} />);
+    render(<GoogleSignInButton onCredential={onCredential} onError={onError} />);
     await waitFor(() => expect(initialize).toHaveBeenCalledTimes(1));
 
     const { callback } = initialize.mock.calls[0][0];
     callback({});
 
     expect(onCredential).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledWith("Google sign-in did not return a credential. Try again.");
   });
 
   it("loads the Google Identity Services script only once across multiple mounts", () => {

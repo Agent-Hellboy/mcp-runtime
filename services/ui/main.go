@@ -187,7 +187,13 @@ func newMux(apiBase, apiUpstream, apiKey, apiKeys, adminAPIKeys string) (*http.S
 	if err != nil {
 		return nil, err
 	}
-	googleClientIDJSON, err := json.Marshal(strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_ID")))
+	googleClientID := strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_ID"))
+	if googleClientID == "" {
+		// Keep the documented MCP-prefixed alias working for deployments that
+		// inject all platform settings through MCP_* environment variables.
+		googleClientID = strings.TrimSpace(os.Getenv("MCP_GOOGLE_CLIENT_ID"))
+	}
+	googleClientIDJSON, err := json.Marshal(googleClientID)
 	if err != nil {
 		return nil, err
 	}

@@ -22,6 +22,7 @@ export function SignInPanel({ onSubmit, onCancel, error, busy }: SignInPanelProp
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [apiKey, setApiKey] = useState("");
+  const [googleError, setGoogleError] = useState("");
   const [validation, setValidation] = useState<{ email?: string; password?: string; apiKey?: string }>({});
   const googleClientId = readRuntimeConfig().googleClientId;
 
@@ -29,6 +30,7 @@ export function SignInPanel({ onSubmit, onCancel, error, busy }: SignInPanelProp
   // be stable across renders or the GSI button is rebuilt on every keystroke.
   const handleGoogleCredential = useCallback(
     (idToken: string) => {
+      setGoogleError("");
       void onSubmit({ idToken });
     },
     [onSubmit]
@@ -68,6 +70,7 @@ export function SignInPanel({ onSubmit, onCancel, error, busy }: SignInPanelProp
     if (next.email || next.password) {
       return;
     }
+    setGoogleError("");
     await onSubmit({ email: email.trim(), password });
   }
 
@@ -147,10 +150,10 @@ export function SignInPanel({ onSubmit, onCancel, error, busy }: SignInPanelProp
               />
             )}
 
-            {error ? (
+            {error || googleError ? (
               <p className="field-error" role="alert" data-testid="login-error">
                 <Icon name="alert" size={13} />
-                {error}
+                {error || googleError}
               </p>
             ) : null}
 
@@ -169,7 +172,7 @@ export function SignInPanel({ onSubmit, onCancel, error, busy }: SignInPanelProp
           {googleClientId ? (
             <>
               <div className="signin-divider">or</div>
-              <GoogleSignInButton onCredential={handleGoogleCredential} />
+              <GoogleSignInButton onCredential={handleGoogleCredential} onError={setGoogleError} />
             </>
           ) : null}
         </div>

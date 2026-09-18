@@ -28,11 +28,12 @@ function loadGoogleIdentityServices(): Promise<void> {
 
 type GoogleSignInButtonProps = {
   onCredential: (idToken: string) => void;
+  onError?: (message: string) => void;
 };
 
 // Renders nothing when no client ID is configured for this deployment
 // (readRuntimeConfig().googleClientId, from window.MCP_GOOGLE_CLIENT_ID).
-export function GoogleSignInButton({ onCredential }: GoogleSignInButtonProps) {
+export function GoogleSignInButton({ onCredential, onError }: GoogleSignInButtonProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const clientId = readRuntimeConfig().googleClientId;
 
@@ -52,6 +53,8 @@ export function GoogleSignInButton({ onCredential }: GoogleSignInButtonProps) {
           callback: (response) => {
             if (response.credential) {
               onCredential(response.credential);
+            } else {
+              onError?.("Google sign-in did not return a credential. Try again.");
             }
           },
         });
@@ -64,14 +67,13 @@ export function GoogleSignInButton({ onCredential }: GoogleSignInButtonProps) {
         });
       })
       .catch(() => {
-        // No sign-in button is better than a broken one; email/password and
-        // API-key sign-in remain available regardless.
+        onError?.("Google sign-in is unavailable right now. Use another sign-in method or try again.");
       });
 
     return () => {
       cancelled = true;
     };
-  }, [clientId, onCredential]);
+  }, [clientId, onCredential, onError]);
 
   if (!clientId) {
     return null;

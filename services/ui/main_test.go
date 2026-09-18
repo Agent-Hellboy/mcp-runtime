@@ -53,6 +53,22 @@ func TestConfigExposesPlatformMode(t *testing.T) {
 	}
 }
 
+func TestConfigExposesGoogleClientIDAlias(t *testing.T) {
+	t.Setenv("GOOGLE_CLIENT_ID", "")
+	t.Setenv("MCP_GOOGLE_CLIENT_ID", "alias-client.apps.googleusercontent.com")
+	mux, err := newMux("/api", "http://127.0.0.1:1", "secret", "api-secret", "")
+	if err != nil {
+		t.Fatalf("newMux() error = %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/config.js", nil))
+
+	if !strings.Contains(recorder.Body.String(), `window.MCP_GOOGLE_CLIENT_ID = "alias-client.apps.googleusercontent.com"`) {
+		t.Fatalf("config.js missing MCP_GOOGLE_CLIENT_ID alias: %q", recorder.Body.String())
+	}
+}
+
 func readStaticAsset(t *testing.T, path string) []byte {
 	t.Helper()
 	body, err := os.ReadFile(path)
