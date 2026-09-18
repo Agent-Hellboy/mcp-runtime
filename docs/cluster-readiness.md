@@ -436,7 +436,8 @@ For `setup --test-mode` with the bundled plain HTTP registry, the same
 containerd mirror requirement applies because setup still builds and pushes
 operator, gateway proxy, and Sentinel images, then deploys pods that pull those
 images. On k3s hosts where `~/.kube/config` is empty or minimal, pass
-`--kubeconfig /etc/rancher/k3s/k3s.yaml` to setup.
+`--kubeconfig /etc/rancher/k3s/k3s.yaml` to setup and doctor. Both commands
+auto-detect that path when the default kubeconfig is absent.
 
 The fastest path is to **preconfigure the steps below before running setup** so
 the host k3s pulls from is already trusted on first attempt. If you skip that
@@ -658,7 +659,10 @@ Missing pieces are warnings, not errors — the command surfaces them so you can
 
 ## `cluster doctor`
 
-`./bin/mcp-runtime cluster doctor --after-setup` runs post-install diagnostics:
+`./bin/mcp-runtime cluster doctor --after-setup` runs post-install diagnostics. Pass
+`--kubeconfig /path/to/config` when the active kubeconfig is not already selected;
+when omitted, setup and doctor use `~/.kube/config` and automatically fall back to
+`/etc/rancher/k3s/k3s.yaml` on k3s hosts.
 
 - Detects your distribution (k3s / kind / minikube / docker-desktop / generic).
 - Checks the installed MCP Runtime namespaces, CRDs, operator, Traefik ingress, registry, Sentinel, and MCPServer reconciliation path. The MCPServer smoke uses an existing ready app image when available; otherwise it falls back to `registry.k8s.io/pause:3.9` and validates deployment/service/ingress reconciliation plus pod scheduling without a TCP readiness wait.
