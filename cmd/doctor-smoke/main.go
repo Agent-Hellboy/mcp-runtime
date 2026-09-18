@@ -5,6 +5,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
+	"time"
 )
 
 func main() {
@@ -12,12 +14,23 @@ func main() {
 	if port == "" {
 		port = "8088"
 	}
+	portNumber, err := strconv.Atoi(port)
+	if err != nil || portNumber < 1 || portNumber > 65535 {
+		log.Fatal("doctor smoke server: PORT must be a valid TCP port")
+	}
 	handler := http.NewServeMux()
 	handler.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	handler.HandleFunc("/ready", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	handler.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
-	log.Printf("doctor smoke server listening on :%s", port)
-	if err := http.ListenAndServe(":"+port, handler); err != nil {
+	server := &http.Server{
+		Addr:              fmt.Sprintf(":%d", portNumber),
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+	if err := server.ListenAndServe(); err != nil {
 		log.Fatal(fmt.Errorf("doctor smoke server: %w", err))
 	}
 }
