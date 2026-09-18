@@ -314,7 +314,7 @@ will use to push and pull container images.`,
 	cmd.Flags().StringVar(&externalRegistryPassword, "external-registry-password", "", "External/provisioned registry password for --registry-mode external (prefer PROVISIONED_REGISTRY_PASSWORD for shells)")
 	cmd.Flags().StringVar(&storageMode, "storage-mode", "dynamic", "Storage mode for local/dev clusters (dynamic|hostpath). Use hostpath for single-node k3s/minikube/kind without a provisioner.")
 	cmd.Flags().StringVar(&platformMode, "platform-mode", "tenant", "Platform access model (tenant|org|public). public exposes the catalog without login and lets signed-in users publish to the public preview namespace.")
-	cmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Path to kubeconfig file (default: ~/.kube/config)")
+	cmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Path to kubeconfig file (default: ~/.kube/config; auto-detects /etc/rancher/k3s/k3s.yaml on k3s hosts)")
 	cmd.Flags().StringVar(&kubeContext, "context", "", "Kubernetes context to use")
 	cmd.Flags().StringVar(&ingressMode, "ingress", "traefik", "Ingress controller to install automatically during setup (traefik|none)")
 	cmd.Flags().StringVar(&ingressManifest, "ingress-manifest", "config/ingress/overlays/http", "Manifest to apply when installing the ingress controller")
