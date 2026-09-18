@@ -2,7 +2,7 @@ name: Security - Trivy
 
 on:
   pull_request:
-    branches: [ "*" ]
+    branches: [ "**" ]
   push:
     branches: [ "main" ]
   workflow_dispatch: {}

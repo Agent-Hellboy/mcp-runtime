@@ -1,8 +1,13 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-import { EmptyState } from "../EmptyState";
-import { StatusBadge } from "../StatusBadge";
+import { Button } from "../../ui/Button";
+import { CopyButton } from "../../ui/CopyButton";
+import { StatusBadge } from "../../ui/Badge";
+import { Icon } from "../../ui/Icon";
+import { EmptyState } from "../../ui/States";
+import { formatAbsolute, formatAge } from "../../lib/format";
 import {
+  authModeInfo,
   isServerReady,
   serverKey,
   serverPrompts,
@@ -14,143 +19,184 @@ import {
 type ServerListProps = {
   servers: ServerSummary[];
   toolCounts: Record<string, number>;
-  selectedKey: string;
-  onSelect: (key: string) => void;
-  // Omitted for a read-only view (the anonymous public-mode catalog preview)
-  // where there is no session to retire anything with.
-  onRetire?: (namespace: string, name: string) => Promise<void>;
+  scopedServerKey: string;
+  inspectedServerKey: string;
+  onScope: (key: string) => void;
+  onInspect: (key: string) => void;
+  onClearFilters: () => void;
+  filtered: boolean;
+  // Retiring is offered to any authenticated principal: the runtime API checks
+  // publish permission on the namespace, not the admin role. Omitted entirely
+  // for the anonymous public catalog, where there is no session to retire with.
+  onRetire?: (server: ServerSummary) => void;
+  retiringKey?: string;
+  retireError?: string;
 };
 
-async function copyConnectConfig(server: ServerSummary): Promise<void> {
-  const json = JSON.stringify(server.access_json || {}, null, 2);
-  await navigator.clipboard.writeText(json);
-}
-
-export function ServerList({ servers, toolCounts, selectedKey, onSelect, onRetire }: ServerListProps) {
-  const [busyKey, setBusyKey] = useState("");
-  const [error, setError] = useState("");
+export function ServerList({
+  servers,
+  toolCounts,
+  scopedServerKey,
+  inspectedServerKey,
+  onScope,
+  onInspect,
+  onClearFilters,
+  filtered,
+  onRetire,
+  retiringKey,
+  retireError,
+}: ServerListProps) {
   const [copiedKey, setCopiedKey] = useState("");
+  const [copyError, setCopyError] = useState("");
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
-  async function retire(server: ServerSummary): Promise<void> {
-    if (
-      !window.confirm(
-        `Retire "${server.name}" in namespace "${server.namespace}"? This deletes the MCPServer and cannot be undone.`
-      )
-    ) {
-      return;
-    }
-    const key = serverKey(server);
-    if (!onRetire) {
-      return;
-    }
-    setBusyKey(key);
-    setError("");
-    try {
-      await onRetire(server.namespace, server.name);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Server retire failed.");
-    } finally {
-      setBusyKey("");
-    }
-  }
+  useEffect(() => () => clearTimeout(timer.current), []);
 
-  async function copyConfig(server: ServerSummary): Promise<void> {
+  async function copyConnectConfig(server: ServerSummary) {
     const key = serverKey(server);
-    setError("");
+    setCopyError("");
+    clearTimeout(timer.current);
     try {
-      await copyConnectConfig(server);
+      if (!navigator.clipboard?.writeText) {
+        throw new Error("clipboard unavailable");
+      }
+      await navigator.clipboard.writeText(JSON.stringify(server.access_json || {}, null, 2));
       setCopiedKey(key);
-      window.setTimeout(() => setCopiedKey((current) => (current === key ? "" : current)), 2000);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Copying the connect config failed.");
+      timer.current = setTimeout(() => setCopiedKey((current) => (current === key ? "" : current)), 2400);
+    } catch {
+      setCopyError(`The connect config for ${server.name} could not be copied. Open the server details to read it.`);
     }
   }
 
   if (servers.length === 0) {
     return (
       <EmptyState
-        title="No MCP servers match this scope."
-        detail="Publish a server, or widen the namespace and status filters."
+        icon="server"
+        title={filtered ? "No servers match these filters." : "No MCP servers in this scope."}
+        detail={
+          filtered
+            ? "Widen the namespace, status, or search filters to see more servers."
+            : "Publish a server with `mcp-runtime server deploy`, or switch to a namespace that has one."
+        }
         testId="server-list-empty"
+        action={
+          filtered ? (
+            <Button variant="secondary" onClick={onClearFilters}>
+              Clear filters
+            </Button>
+          ) : undefined
+        }
       />
     );
   }
 
   return (
     <>
-      {error ? (
-        <p className="inline-error" role="alert" data-testid="server-retire-error">
-          {error}
+      {retireError ? (
+        <p className="notice notice-danger" role="alert" data-testid="server-retire-error">
+          <Icon name="alert" />
+          <span className="notice-body">{retireError}</span>
         </p>
       ) : null}
+      {copyError ? (
+        <p className="notice notice-danger" role="alert" data-testid="server-copy-error">
+          <Icon name="alert" />
+          <span className="notice-body">{copyError}</span>
+        </p>
+      ) : null}
+
       <ul className="server-grid" data-testid="server-list">
         {servers.map((server) => {
           const key = serverKey(server);
           const ready = isServerReady(server);
-          const selected = key === selectedKey;
+          const scoped = key === scopedServerKey;
+          const inspected = key === inspectedServerKey;
           const toolCount = toolCounts[key] ?? 0;
-          const busy = busyKey === key;
           const prompts = serverPrompts(server);
           const resources = serverResources(server);
           const tasks = serverTasks(server);
-          const hasConnectConfig = Boolean(server.access_json && Object.keys(server.access_json).length);
+          const auth = authModeInfo(server.authMode);
+          const hasConnectConfig = Boolean(
+            server.access_json && Object.keys(server.access_json).length
+          );
           const observability = server.observability;
           const hasObservability = Boolean(
             observability && (observability.grafana.available || observability.prometheus.queries.length)
           );
+
           return (
             <li key={key}>
               <article
-                className={selected ? "server-card selected" : "server-card"}
+                className={scoped || inspected ? "server-card is-selected" : "server-card"}
                 data-testid="server-card"
                 data-server-key={key}
               >
-                <header className="server-card-head">
-                  <h3>{server.name}</h3>
-                  <StatusBadge tone={ready ? "ready" : "attention"}>
-                    {ready ? "Ready" : server.status || "Not ready"}
-                  </StatusBadge>
-                </header>
-                <dl className="server-card-meta">
+                <div className="server-card-head">
                   <div>
-                    <dt>Namespace</dt>
-                    <dd>{server.namespace}</dd>
+                    <h3 className="server-card-name">{server.name}</h3>
+                    <p className="server-card-namespace">{server.namespace}</p>
                   </div>
-                  <div>
-                    <dt>Replicas</dt>
-                    <dd>{server.ready || "—"}</dd>
+                  <div className="server-card-badges">
+                    {/* Kubernetes readiness only: it says the replicas are up, not
+                        that the MCP endpoint answered. */}
+                    <StatusBadge tone={ready ? "ready" : "attention"}>
+                      {ready ? "Ready" : server.status || "Not ready"}
+                    </StatusBadge>
+                    {/* What a client must present to reach this server. */}
+                    <StatusBadge tone={auth.tone} label={auth.detail}>
+                      {auth.label}
+                    </StatusBadge>
                   </div>
-                  <div>
-                    <dt>Tools</dt>
-                    <dd>{toolCount}</dd>
-                  </div>
-                  {prompts.length ? (
-                    <div>
-                      <dt>Prompts</dt>
-                      <dd>{prompts.length}</dd>
-                    </div>
-                  ) : null}
-                  {resources.length ? (
-                    <div>
-                      <dt>Resources</dt>
-                      <dd>{resources.length}</dd>
-                    </div>
-                  ) : null}
-                  {tasks.length ? (
-                    <div>
-                      <dt>Tasks</dt>
-                      <dd>{tasks.length}</dd>
-                    </div>
-                  ) : null}
-                </dl>
+                </div>
+
                 {server.description ? (
-                  <p className="server-card-description">{server.description}</p>
-                ) : null}
-                {server.endpoint ? (
-                  <p className="server-card-endpoint" title={server.endpoint}>
-                    {server.endpoint}
+                  <p className="server-card-description clamp-2" title={server.description}>
+                    {server.description}
                   </p>
                 ) : null}
+
+                <div className="server-card-facts">
+                  <span>
+                    Replicas <b>{server.ready || "—"}</b>
+                  </span>
+                  <span>
+                    Tools <b>{toolCount}</b>
+                  </span>
+                  {prompts.length ? (
+                    <span>
+                      Prompts <b>{prompts.length}</b>
+                    </span>
+                  ) : null}
+                  {resources.length ? (
+                    <span>
+                      Resources <b>{resources.length}</b>
+                    </span>
+                  ) : null}
+                  {tasks.length ? (
+                    <span>
+                      Tasks <b>{tasks.length}</b>
+                    </span>
+                  ) : null}
+                  {formatAge(server.age) ? (
+                    <span title={formatAbsolute(server.age)}>
+                      Age <b>{formatAge(server.age)}</b>
+                    </span>
+                  ) : null}
+                </div>
+
+                {server.endpoint ? (
+                  <span className="copy-row">
+                    <span className="copy-value" title={server.endpoint}>
+                      {server.endpoint}
+                    </span>
+                    <CopyButton
+                      value={server.endpoint}
+                      label={`Copy the endpoint for ${server.name}`}
+                      testId="server-copy-endpoint"
+                    />
+                  </span>
+                ) : null}
+
                 {prompts.length || resources.length || tasks.length ? (
                   <details className="server-card-inventory" data-testid="server-card-inventory">
                     <summary>Protocol inventory</summary>
@@ -171,63 +217,72 @@ export function ServerList({ servers, toolCounts, selectedKey, onSelect, onRetir
                     ) : null}
                   </details>
                 ) : null}
+
                 {hasObservability ? (
                   <div className="server-card-observability" data-testid="server-card-observability">
+                    <span className="observability-label">Metrics</span>
                     {observability?.grafana.available && observability.grafana.url ? (
                       <a
-                        className="button ghost"
+                        className="quiet-link"
                         href={observability.grafana.url}
                         target="_blank"
                         rel="noreferrer"
                         data-testid="server-card-grafana-link"
                       >
-                        Grafana dashboard
+                        Grafana <Icon name="external" size={11} />
                       </a>
                     ) : null}
-                    {observability?.prometheus.queries.map((linkItem) => (
+                    {observability?.prometheus.queries.map((query) => (
                       <a
-                        key={linkItem.id}
-                        className="button ghost"
-                        href={linkItem.url}
+                        key={query.id}
+                        className="quiet-link"
+                        href={query.url}
                         target="_blank"
                         rel="noreferrer"
-                        title={linkItem.description}
+                        title={query.description}
                       >
-                        {linkItem.name}
+                        {query.name} <Icon name="external" size={11} />
                       </a>
                     ))}
                   </div>
                 ) : null}
+
                 <div className="server-card-actions">
-                  <button
-                    type="button"
-                    className={selected ? "button primary" : "button ghost"}
-                    aria-pressed={selected}
+                  <Button variant="secondary" size="sm" onClick={() => onInspect(key)} data-testid="server-card-details">
+                    View details
+                  </Button>
+                  <Button
+                    variant={scoped ? "primary" : "ghost"}
+                    size="sm"
+                    aria-pressed={scoped}
                     data-testid="server-card-select"
-                    onClick={() => onSelect(selected ? "" : key)}
+                    onClick={() => onScope(scoped ? "" : key)}
                   >
-                    {selected ? "Clear server filter" : "Show tools"}
-                  </button>
+                    {scoped ? "Clear server filter" : "Show tools"}
+                  </Button>
                   {hasConnectConfig ? (
-                    <button
-                      type="button"
-                      className="button ghost"
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      icon={copiedKey === key ? "check" : "copy"}
                       data-testid="server-card-copy-connect-config"
-                      onClick={() => void copyConfig(server)}
+                      onClick={() => void copyConnectConfig(server)}
                     >
                       {copiedKey === key ? "Copied" : "Copy connect config"}
-                    </button>
+                    </Button>
                   ) : null}
                   {onRetire ? (
-                    <button
-                      type="button"
-                      className="button ghost danger"
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      icon="trash"
+                      className="card-action-end"
+                      busy={retiringKey === key}
                       data-testid="server-card-retire"
-                      disabled={busy}
-                      onClick={() => void retire(server)}
+                      onClick={() => onRetire(server)}
                     >
-                      {busy ? "Retiring…" : "Retire"}
-                    </button>
+                      Retire
+                    </Button>
                   ) : null}
                 </div>
               </article>

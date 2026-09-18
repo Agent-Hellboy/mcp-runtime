@@ -1,48 +1,64 @@
-import { EmptyState } from "../EmptyState";
-import { StatusBadge } from "../StatusBadge";
+import { StatusBadge } from "../../ui/Badge";
+import { CopyButton } from "../../ui/CopyButton";
+import { EmptyState } from "../../ui/States";
 import type { TeamMembership } from "../../api/types";
 
 type TeamMembershipPanelProps = {
   teams: TeamMembership[];
 };
 
+function roleTone(role: string): "info" | "neutral" {
+  return role.toLowerCase() === "owner" ? "info" : "neutral";
+}
+
 export function TeamMembershipPanel({ teams }: TeamMembershipPanelProps) {
   return (
-    <section className="panel" aria-labelledby="team-membership-title">
-      <div className="panel-head">
-        <div>
-          <h2 id="team-membership-title">Team membership</h2>
-          <p className="panel-lede">
-            The teams your account belongs to, and the namespace each one owns.
-          </p>
-        </div>
+    <section className="section">
+      <div className="section-head">
+        <h2 className="section-title" id="team-membership-title">
+          Team membership
+        </h2>
+        <p className="section-note">Each team owns one namespace.</p>
       </div>
+
       {teams.length === 0 ? (
         <EmptyState
+          icon="users"
           title="You are not a member of any team."
           detail="Team namespaces appear here once an administrator adds you."
           testId="teams-empty"
         />
       ) : (
-        <ul className="team-list" data-testid="team-list">
-          {teams.map((team) => (
-            <li key={team.id || team.slug || team.namespace} data-testid="team-item">
-              <div className="team-item-head">
-                <h3>{team.name || team.slug || "Team"}</h3>
-                {team.role ? <StatusBadge tone="neutral">{team.role}</StatusBadge> : null}
-              </div>
-              <dl className="team-item-meta">
-                <div>
-                  <dt>Namespace</dt>
-                  <dd>{team.namespace || "—"}</dd>
-                </div>
-                <div>
-                  <dt>Slug</dt>
-                  <dd>{team.slug || "—"}</dd>
-                </div>
-              </dl>
-            </li>
-          ))}
+        <ul className="server-grid" data-testid="team-list">
+          {teams.map((team) => {
+            const namespace = team.namespace || team.team_namespace || "";
+            const slug = team.slug || team.team_slug || "";
+            return (
+              <li key={team.id || team.team_id || slug || namespace} data-testid="team-item">
+                <article className="server-card">
+                  <div className="server-card-head">
+                    <div>
+                      <h3 className="server-card-name">{team.name || team.team_name || slug || "Team"}</h3>
+                      <p className="server-card-namespace">{namespace || "No namespace"}</p>
+                    </div>
+                    {team.role ? (
+                      <StatusBadge tone={roleTone(team.role)} label={`Your role: ${team.role}`}>
+                        {team.role}
+                      </StatusBadge>
+                    ) : null}
+                  </div>
+                  {slug ? (
+                    <span className="copy-row">
+                      <span className="copy-value" title={slug}>
+                        {slug}
+                      </span>
+                      <CopyButton value={slug} label={`Copy the slug for ${team.name || slug}`} />
+                    </span>
+                  ) : null}
+                </article>
+              </li>
+            );
+          })}
         </ul>
       )}
     </section>

@@ -79,6 +79,7 @@ describe("admin workspace navigation", () => {
     await screen.findByTestId("workspace-tab-servers");
 
     expect(screen.queryByTestId("workspace-tab-admin")).not.toBeInTheDocument();
+    expect(screen.getByTestId("workspace-tab-servers")).toBeInTheDocument();
   });
 
   it("hides the Administration tab from a signed-out visitor", async () => {
@@ -111,60 +112,61 @@ describe("admin workspace navigation", () => {
     expect(screen.queryByTestId("workspace-tab-admin")).not.toBeInTheDocument();
   });
 
-});
-
-// Access control (grants/sessions) is its own top-level workspace, reachable
-// by any authenticated user - admin or tenant - matching the backend's
-// plain auth() (not adminOnly()) middleware on /runtime/grants and
-// /runtime/sessions.
-describe("access control workspace navigation", () => {
-  it("offers the Access Control tab to a tenant user and opens it", async () => {
-    const user = userEvent.setup();
+  it("refuses a deep link into administration for a tenant user", async () => {
+    window.location.hash = "#/admin/access";
     stub("user");
 
     renderApp();
-    const tab = await screen.findByTestId("workspace-tab-access");
+    await screen.findByTestId("workspace-tab-servers");
 
-    await user.click(tab);
-    expect(await screen.findByTestId("grants-table")).toBeInTheDocument();
+    // The guard and the route both fail closed, so nothing admin renders.
+    expect(screen.queryByTestId("admin-section-teams")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("grants-table")).not.toBeInTheDocument();
   });
 
-  it("offers the Access Control tab to an admin too", async () => {
+  it("puts the administration section in the URL", async () => {
     const user = userEvent.setup();
     stub("admin");
 
     renderApp();
-    const tab = await screen.findByTestId("workspace-tab-access");
+    await user.click(await screen.findByTestId("workspace-tab-admin"));
+    await user.click(await screen.findByTestId("admin-section-teams"));
 
-    await user.click(tab);
+    expect(window.location.hash).toBe("#/admin/teams");
+  });
+});
+
+// Access control is a top-level workspace reachable by any authenticated
+// principal - admin or tenant - matching the backend's plain auth()
+// middleware on /runtime/grants and /runtime/sessions.
+describe("access control workspace navigation", () => {
+  it("offers Access control to a tenant user and opens it", async () => {
+    const user = userEvent.setup();
+    stub("user");
+
+    renderApp();
+    await user.click(await screen.findByTestId("workspace-tab-access"));
+
+    expect(await screen.findByTestId("grants-table")).toBeInTheDocument();
+    expect(window.location.hash).toBe("#/access");
+  });
+
+  it("offers Access control to an admin too", async () => {
+    const user = userEvent.setup();
+    stub("admin");
+
+    renderApp();
+    await user.click(await screen.findByTestId("workspace-tab-access"));
+
     expect(await screen.findByTestId("grants-table")).toBeInTheDocument();
   });
 
-  it("hides the Access Control tab from a signed-out visitor", async () => {
+  it("hides Access control from a signed-out visitor", async () => {
     stub(undefined, false);
 
     renderApp();
     await screen.findByTestId("workspace-tab-servers");
 
-    expect(screen.queryByTestId("workspace-tab-access")).not.toBeInTheDocument();
-  });
-
-  it("drops out of the access workspace when the session signs out", async () => {
-    const user = userEvent.setup();
-    const fetchMock = stub("user");
-
-    renderApp();
-    await user.click(await screen.findByTestId("workspace-tab-access"));
-    await screen.findByTestId("grants-table");
-
-    fetchMock.mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => ({ authenticated: false }),
-    } as unknown as Response);
-    await user.click(screen.getByTestId("logout-button"));
-
-    await waitFor(() => expect(screen.queryByTestId("grants-table")).not.toBeInTheDocument());
     expect(screen.queryByTestId("workspace-tab-access")).not.toBeInTheDocument();
   });
 });

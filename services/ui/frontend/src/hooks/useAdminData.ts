@@ -6,6 +6,7 @@ import {
   listEvents,
   listGrants,
   listSessions,
+  listTeamMembers,
   listTeams,
   listUsage,
   readOperations,
@@ -63,6 +64,16 @@ export function useTeams(enabled: boolean) {
   });
 }
 
+// Keyed by slug, so switching teams never shows the previous team's members:
+// the new key has no data yet and the panel renders its own loading state.
+export function useTeamMembers(enabled: boolean, slug: string) {
+  return useQuery({
+    queryKey: [ADMIN_QUERY_KEY, "team-members", slug],
+    queryFn: () => listTeamMembers(slug),
+    enabled: enabled && Boolean(slug),
+  });
+}
+
 export function useComponents(enabled: boolean) {
   return useQuery({
     queryKey: [ADMIN_QUERY_KEY, "components"],
@@ -71,10 +82,22 @@ export function useComponents(enabled: boolean) {
   });
 }
 
-export function useOperations(enabled: boolean, user: string) {
+export const OPERATIONS_LIMIT = "100";
+
+export type OperationsFilters = { user: string; since: string; until: string };
+
+// The API returns at most OPERATIONS_LIMIT rows per collection, so anything the
+// panel paginates is a loaded window, not the complete history.
+export function useOperations(enabled: boolean, filters: OperationsFilters) {
   return useQuery({
-    queryKey: [ADMIN_QUERY_KEY, "operations", user],
-    queryFn: () => readOperations({ user, limit: "100" }),
+    queryKey: [ADMIN_QUERY_KEY, "operations", filters.user, filters.since, filters.until],
+    queryFn: () =>
+      readOperations({
+        user: filters.user,
+        since: filters.since,
+        until: filters.until,
+        limit: OPERATIONS_LIMIT,
+      }),
     enabled,
   });
 }

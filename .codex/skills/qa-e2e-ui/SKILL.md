@@ -319,6 +319,13 @@ If a check is unsafe or too expensive for the requested scope, skip it with a
 specific reason. For example, skip Kind e2e when the live contributor cluster is
 busy with unrelated user work or when the user requested a read-only audit.
 
+## Step 7a - Know the console's routes and test ids
+
+The React console is hash-routed and no longer embeds the legacy dashboard.
+Read `references/ui-coverage.md`, "React console structure", before writing any
+browser script: the routes, the confirmation dialogs, the Operations tabs, and
+the Platform health grid all changed, and older selectors will silently fail.
+
 ## Step 7b - Frontend development, test, and Playwright-without-MCP tooling
 
 Read `references/frontend-tooling.md` before doing `services/ui/frontend`

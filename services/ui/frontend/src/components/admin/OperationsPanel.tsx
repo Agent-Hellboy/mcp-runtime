@@ -1,142 +1,264 @@
-import { useId, useState } from "react";
+import { useMemo, useState } from "react";
 
-import { AdminTable, type AdminColumn } from "./AdminTable";
 import { AsyncSection } from "./AsyncSection";
-import { StatusBadge } from "../StatusBadge";
-import { useAdminReload, useOperations } from "../../hooks/useAdminData";
+import { StatusBadge, outcomeTone } from "../../ui/Badge";
+import { Button } from "../../ui/Button";
+import { DataTable, buildColumns } from "../../ui/DataTable";
+import { DetailSheet } from "../../ui/DetailSheet";
+import { TextField } from "../../ui/Field";
+import { FilterBar, FilterSummary, type FilterChip } from "../../ui/FilterBar";
+import { MetricGrid } from "../../ui/MetricCard";
+import { PageHeader } from "../../ui/PageHeader";
+import { TabPanel, Tabs } from "../../ui/Tabs";
+import { formatAbsolute, formatTimestamp } from "../../lib/format";
+import { OPERATIONS_LIMIT, useAdminReload, useOperations } from "../../hooks/useAdminData";
 import type { AuditLogEntry, ImageActivity, UserActivity } from "../../api/types";
 
 type OperationsPanelProps = {
   onSignIn: () => void;
 };
 
-function formatTime(value: string | undefined): string {
-  if (!value) {
-    return "—";
-  }
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
-}
+type OperationsTab = "users" | "audit" | "images";
 
-function statusTone(status: string): "ready" | "attention" | "neutral" {
-  const normalized = (status || "").toLowerCase();
-  if (normalized === "success" || normalized === "ok") {
-    return "ready";
-  }
-  if (normalized === "error" || normalized === "failed" || normalized === "denied") {
-    return "attention";
-  }
-  return "neutral";
-}
-
-const USER_COLUMNS: Array<AdminColumn<UserActivity>> = [
-  { id: "email", header: "User", rowHeader: true, cell: (user) => user.email },
-  { id: "role", header: "Role", cell: (user) => user.role || "—" },
-  { id: "namespace", header: "Namespace", cell: (user) => user.namespace || "—" },
-  { id: "logins", header: "Logins", cell: (user) => String(user.login_count ?? 0) },
-  { id: "failures", header: "Failed actions", cell: (user) => String(user.failed_action_count ?? 0) },
-  { id: "keys", header: "API keys", cell: (user) => String(user.api_keys ?? 0) },
-  { id: "last", header: "Last activity", cell: (user) => formatTime(user.last_activity_at) },
-];
-
-const AUDIT_COLUMNS: Array<AdminColumn<AuditLogEntry>> = [
-  { id: "time", header: "Time", rowHeader: true, cell: (entry) => formatTime(entry.created_at) },
-  { id: "action", header: "Action", cell: (entry) => entry.action || "—" },
-  { id: "resource", header: "Resource", cell: (entry) => entry.resource || "—" },
-  { id: "namespace", header: "Namespace", cell: (entry) => entry.namespace || "—" },
-  { id: "identity", header: "Identity", cell: (entry) => entry.auth_identity || entry.user_id || "—" },
-  {
-    id: "status",
-    header: "Status",
-    cell: (entry) => (
-      <StatusBadge tone={statusTone(entry.status)}>{entry.status || "—"}</StatusBadge>
-    ),
-  },
-];
-
-const IMAGE_COLUMNS: Array<AdminColumn<ImageActivity>> = [
-  {
-    id: "image",
-    header: "Image",
-    rowHeader: true,
-    cell: (image) => <code className="cell-code">{image.image_ref}</code>,
-  },
-  { id: "server", header: "Server", cell: (image) => image.server_name || "—" },
-  { id: "namespace", header: "Namespace", cell: (image) => image.namespace || "—" },
-  { id: "email", header: "By", cell: (image) => image.email || "—" },
-  { id: "action", header: "Action", cell: (image) => image.action || "—" },
-  {
-    id: "status",
-    header: "Status",
-    cell: (image) => (
-      <StatusBadge tone={statusTone(image.status)}>{image.status || "—"}</StatusBadge>
-    ),
-  },
-  { id: "time", header: "When", cell: (image) => formatTime(image.created_at) },
-];
+const LOADED_NOTE = `loaded entries (the API returns at most ${OPERATIONS_LIMIT} per collection)`;
 
 export function OperationsPanel({ onSignIn }: OperationsPanelProps) {
-  const [userFilter, setUserFilter] = useState("");
-  const [appliedUser, setAppliedUser] = useState("");
-  const userId = useId();
+  const [tab, setTab] = useState<OperationsTab>("users");
+  const [draft, setDraft] = useState({ user: "", since: "", until: "" });
+  const [applied, setApplied] = useState({ user: "", since: "", until: "" });
+  const [inspected, setInspected] = useState<AuditLogEntry | null>(null);
   const reload = useAdminReload();
 
-  const operationsQuery = useOperations(true, appliedUser);
+  const operationsQuery = useOperations(true, applied);
   const operations = operationsQuery.data;
+  const users = operations?.users ?? [];
+  const audit = operations?.audit_logs ?? [];
+  const images = operations?.images ?? [];
+
+  const userColumns = useMemo(
+    () =>
+      buildColumns<UserActivity>([
+        {
+          id: "email",
+          header: "User",
+          rowHeader: true,
+          sortValue: (user) => user.email,
+          cell: (user) => (
+            <>
+              {user.email}
+              <span className="cell-detail">{user.role || "no role"}</span>
+            </>
+          ),
+        },
+        {
+          id: "namespace",
+          header: "Namespace",
+          sortValue: (user) => user.namespace || "",
+          cell: (user) => user.namespace || "—",
+        },
+        { id: "logins", header: "Logins", numeric: true, sortValue: (user) => user.login_count ?? 0, cell: (user) => String(user.login_count ?? 0) },
+        {
+          id: "failures",
+          header: "Failed actions",
+          numeric: true,
+          sortValue: (user) => user.failed_action_count ?? 0,
+          cell: (user) =>
+            (user.failed_action_count ?? 0) > 0 ? (
+              <StatusBadge tone="warning">{String(user.failed_action_count)}</StatusBadge>
+            ) : (
+              "0"
+            ),
+        },
+        { id: "keys", header: "API keys", numeric: true, sortValue: (user) => user.api_keys ?? 0, cell: (user) => String(user.api_keys ?? 0) },
+        {
+          id: "last",
+          header: "Last activity",
+          sortValue: (user) => Date.parse(user.last_activity_at || "") || 0,
+          cell: (user) => (
+            <span title={formatAbsolute(user.last_activity_at)}>{formatTimestamp(user.last_activity_at)}</span>
+          ),
+        },
+      ]),
+    []
+  );
+
+  const auditColumns = useMemo(
+    () =>
+      buildColumns<AuditLogEntry>([
+        {
+          id: "time",
+          header: "Time",
+          rowHeader: true,
+          sortValue: (entry) => Date.parse(entry.created_at || "") || 0,
+          cell: (entry) => (
+            <span title={formatAbsolute(entry.created_at)}>{formatTimestamp(entry.created_at)}</span>
+          ),
+        },
+        { id: "action", header: "Action", sortValue: (entry) => entry.action || "", cell: (entry) => entry.action || "—" },
+        {
+          id: "resource",
+          header: "Resource",
+          sortValue: (entry) => entry.resource || "",
+          cell: (entry) => <span className="cell-code wrap-anywhere">{entry.resource || "—"}</span>,
+        },
+        {
+          id: "identity",
+          header: "Identity",
+          sortValue: (entry) => entry.auth_identity || entry.user_id || "",
+          cell: (entry) => entry.auth_identity || entry.user_id || "—",
+        },
+        {
+          id: "status",
+          header: "Status",
+          sortValue: (entry) => entry.status || "",
+          cell: (entry) => <StatusBadge tone={outcomeTone(entry.status)}>{entry.status || "unknown"}</StatusBadge>,
+        },
+        {
+          id: "details",
+          header: "Details",
+          cell: (entry) => (
+            <Button variant="ghost" size="sm" data-testid="audit-inspect" onClick={() => setInspected(entry)}>
+              Inspect
+            </Button>
+          ),
+        },
+      ]),
+    []
+  );
+
+  const imageColumns = useMemo(
+    () =>
+      buildColumns<ImageActivity>([
+        {
+          id: "image",
+          header: "Image",
+          rowHeader: true,
+          sortValue: (image) => image.image_ref,
+          cell: (image) => <span className="cell-code wrap-anywhere">{image.image_ref}</span>,
+        },
+        { id: "server", header: "Server", sortValue: (image) => image.server_name || "", cell: (image) => image.server_name || "—" },
+        { id: "namespace", header: "Namespace", sortValue: (image) => image.namespace || "", cell: (image) => image.namespace || "—" },
+        { id: "email", header: "By", sortValue: (image) => image.email || "", cell: (image) => image.email || "—" },
+        { id: "action", header: "Action", sortValue: (image) => image.action || "", cell: (image) => image.action || "—" },
+        {
+          id: "status",
+          header: "Status",
+          sortValue: (image) => image.status || "",
+          cell: (image) => <StatusBadge tone={outcomeTone(image.status)}>{image.status || "unknown"}</StatusBadge>,
+        },
+        {
+          id: "time",
+          header: "When",
+          sortValue: (image) => Date.parse(image.created_at || "") || 0,
+          cell: (image) => (
+            <span title={formatAbsolute(image.created_at)}>{formatTimestamp(image.created_at)}</span>
+          ),
+        },
+      ]),
+    []
+  );
+
+  function apply() {
+    setApplied({ user: draft.user.trim(), since: draft.since, until: draft.until });
+  }
+
+  const chips: FilterChip[] = [];
+  if (applied.user) {
+    chips.push({
+      id: "user",
+      label: "User",
+      value: applied.user,
+      onRemove: () => {
+        setDraft((current) => ({ ...current, user: "" }));
+        setApplied((current) => ({ ...current, user: "" }));
+      },
+    });
+  }
+  if (applied.since) {
+    chips.push({
+      id: "since",
+      label: "From",
+      value: applied.since,
+      onRemove: () => {
+        setDraft((current) => ({ ...current, since: "" }));
+        setApplied((current) => ({ ...current, since: "" }));
+      },
+    });
+  }
+  if (applied.until) {
+    chips.push({
+      id: "until",
+      label: "To",
+      value: applied.until,
+      onRemove: () => {
+        setDraft((current) => ({ ...current, until: "" }));
+        setApplied((current) => ({ ...current, until: "" }));
+      },
+    });
+  }
 
   return (
-    <section className="panel" aria-labelledby="operations-title">
-      <div className="panel-head">
-        <div>
-          <h2 id="operations-title">Operations</h2>
-          <p className="panel-lede">
-            Platform users, the audit trail, and image publish activity.
-          </p>
-        </div>
-        <ul className="stat-row" aria-label="Operations summary" data-testid="operations-stats">
-          <li>
-            <strong>{operations?.users.length ?? 0}</strong> users
-          </li>
-          <li>
-            <strong>{operations?.audit_logs.length ?? 0}</strong> audit entries
-          </li>
-          <li>
-            <strong>{operations?.images.length ?? 0}</strong> image events
-          </li>
-        </ul>
-      </div>
+    <>
+      <PageHeader
+        title="Operations"
+        breadcrumb={[{ label: "Administration" }, { label: "Operations" }]}
+        description="Platform users, the audit trail, and image publish activity."
+        actions={
+          <Button variant="secondary" icon="refresh" onClick={reload} data-testid="operations-refresh">
+            Refresh
+          </Button>
+        }
+      />
 
-      <form
-        className="toolbar"
-        role="search"
-        onSubmit={(event) => {
-          event.preventDefault();
-          setAppliedUser(userFilter.trim());
-        }}
-      >
-        <div className="field grow">
-          <label htmlFor={userId}>Filter by user</label>
-          <input
-            id={userId}
-            type="search"
-            placeholder="Email address"
-            value={userFilter}
-            onChange={(event) => setUserFilter(event.target.value)}
-            data-testid="operations-user-filter"
-          />
-        </div>
-        <button type="submit" className="button primary" data-testid="operations-apply">
+      <MetricGrid
+        label="Operations summary"
+        testId="operations-stats"
+        metrics={[
+          { label: "Users", value: operations ? users.length : undefined, icon: "users" },
+          { label: "Audit entries", value: operations ? audit.length : undefined, icon: "clock", hint: "Loaded window" },
+          { label: "Image events", value: operations ? images.length : undefined, icon: "inbox", hint: "Loaded window" },
+        ]}
+      />
+
+      <FilterBar label="Filter operations" onSubmit={apply}>
+        <TextField
+          label="User"
+          type="search"
+          fieldClassName="grow"
+          leadingIcon
+          placeholder="Email address"
+          value={draft.user}
+          data-testid="operations-user-filter"
+          onChange={(event) => setDraft({ ...draft, user: event.target.value })}
+        />
+        <TextField
+          label="From"
+          type="date"
+          value={draft.since}
+          data-testid="operations-since"
+          onChange={(event) => setDraft({ ...draft, since: event.target.value })}
+        />
+        <TextField
+          label="To"
+          type="date"
+          value={draft.until}
+          data-testid="operations-until"
+          onChange={(event) => setDraft({ ...draft, until: event.target.value })}
+        />
+        <Button type="submit" variant="primary" data-testid="operations-apply">
           Apply
-        </button>
-        <button
-          type="button"
-          className="button ghost"
-          onClick={reload}
-          data-testid="operations-refresh"
-        >
-          Refresh
-        </button>
-      </form>
+        </Button>
+      </FilterBar>
+
+      <FilterSummary
+        chips={chips}
+        count={`${users.length} users · ${audit.length} audit entries · ${images.length} image events loaded`}
+        onClear={() => {
+          setDraft({ user: "", since: "", until: "" });
+          setApplied({ user: "", since: "", until: "" });
+        }}
+        testId="operations-summary"
+      />
 
       <AsyncSection
         query={operationsQuery}
@@ -147,39 +269,117 @@ export function OperationsPanel({ onSignIn }: OperationsPanelProps) {
         testId="operations"
       >
         <>
-          <h3 className="subsection-title">Users</h3>
-          <AdminTable
-            caption="Platform users with role, namespace, login counts, and last activity."
-            columns={USER_COLUMNS}
-            rows={operations?.users ?? []}
-            rowKey={(user) => user.id || user.email}
-            emptyMessage="No users found."
-            testId="operations-users-table"
+          <Tabs
+          label="Operations sections"
+            active={tab}
+            onSelect={setTab}
+            testIdPrefix="operations-tab"
+            items={[
+              { id: "users", label: "Users", count: users.length },
+              { id: "audit", label: "Audit trail", count: audit.length },
+              { id: "images", label: "Image activity", count: images.length },
+            ]}
           />
 
-          <h3 className="subsection-title">Audit trail</h3>
-          <AdminTable
-            caption="Recent platform audit entries with action, resource, identity, and status."
-            columns={AUDIT_COLUMNS}
-            rows={operations?.audit_logs ?? []}
-            rowKey={(entry) =>
-              `${entry.created_at || ""}-${entry.action}-${entry.resource}-${entry.user_id || ""}`
-            }
-            emptyMessage="No audit entries found."
-            testId="operations-audit-table"
-          />
-
-          <h3 className="subsection-title">Image activity</h3>
-          <AdminTable
-            caption="Image publish and deployment activity with the user and resulting status."
-            columns={IMAGE_COLUMNS}
-            rows={operations?.images ?? []}
-            rowKey={(image) => `${image.created_at || ""}-${image.image_ref}-${image.action}`}
-            emptyMessage="No image activity found."
-            testId="operations-images-table"
-          />
+          {tab === "users" ? (
+            <TabPanel id="users">
+              <DataTable
+                columns={userColumns}
+                rows={users}
+                rowKey={(user) => user.id || user.email}
+                caption="Platform users with role, namespace, login counts, and last activity."
+                regionLabel="Platform users"
+                testId="operations-users-table"
+                emptyMessage="No users match these filters."
+                pageNote={LOADED_NOTE}
+              />
+            </TabPanel>
+          ) : tab === "audit" ? (
+            <TabPanel id="audit">
+              <DataTable
+                columns={auditColumns}
+                rows={audit}
+                rowKey={(entry) =>
+                  `${entry.created_at || ""}-${entry.action}-${entry.resource}-${entry.user_id || ""}`
+                }
+                caption="Platform audit entries with action, resource, identity, and status."
+                regionLabel="Audit trail"
+                testId="operations-audit-table"
+                emptyMessage="No audit entries match these filters."
+                pageNote={LOADED_NOTE}
+              />
+            </TabPanel>
+          ) : (
+            <TabPanel id="images">
+              <DataTable
+                columns={imageColumns}
+                rows={images}
+                rowKey={(image) => `${image.created_at || ""}-${image.image_ref}-${image.action}`}
+                caption="Image publish and deployment activity with the user and resulting status."
+                regionLabel="Image activity"
+                testId="operations-images-table"
+                emptyMessage="No image activity matches these filters."
+                pageNote={LOADED_NOTE}
+              />
+            </TabPanel>
+          )}
         </>
       </AsyncSection>
-    </section>
+
+      {inspected ? (
+        <DetailSheet
+          title={inspected.action || "Audit entry"}
+          eyebrow={formatTimestamp(inspected.created_at)}
+          onClose={() => setInspected(null)}
+          testId="audit-detail"
+          closeTestId="audit-detail-close"
+        >
+          <dl className="detail-rows">
+            <div>
+              <dt>Resource</dt>
+              <dd className="cell-code">{inspected.resource || "—"}</dd>
+            </div>
+            <div>
+              <dt>Namespace</dt>
+              <dd>{inspected.namespace || "—"}</dd>
+            </div>
+            <div>
+              <dt>Status</dt>
+              <dd>
+                <StatusBadge tone={outcomeTone(inspected.status)}>{inspected.status || "unknown"}</StatusBadge>
+              </dd>
+            </div>
+            <div>
+              <dt>Identity</dt>
+              <dd>{inspected.auth_identity || inspected.user_id || "—"}</dd>
+            </div>
+            <div>
+              <dt>Source</dt>
+              <dd>{inspected.source || "—"}</dd>
+            </div>
+            <div>
+              <dt>Actor IP</dt>
+              <dd>{inspected.actor_ip || "—"}</dd>
+            </div>
+            <div>
+              <dt>Server</dt>
+              <dd>{inspected.server_name || "—"}</dd>
+            </div>
+            <div>
+              <dt>Image</dt>
+              <dd className="cell-code">{inspected.image_ref || "—"}</dd>
+            </div>
+            <div>
+              <dt>Recorded at</dt>
+              <dd>{formatAbsolute(inspected.created_at)}</dd>
+            </div>
+            <div>
+              <dt>Message</dt>
+              <dd className="wrap-anywhere">{inspected.message || "—"}</dd>
+            </div>
+          </dl>
+        </DetailSheet>
+      ) : null}
+    </>
   );
 }

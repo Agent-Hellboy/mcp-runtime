@@ -420,17 +420,18 @@ describe("ServersWorkspace server retire", () => {
   it("confirms with the exact namespace and name before retiring", async () => {
     const user = userEvent.setup();
     const fetchMock = stubCatalog();
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+
 
     renderWorkspace({ authenticated: true });
     await screen.findByTestId("server-list");
 
     await user.click(screen.getAllByTestId("server-card-retire")[0]);
 
-    expect(confirmSpy).toHaveBeenCalledWith(
-      expect.stringContaining('"workspace-assistant"')
-    );
-    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining('"mcp-servers"'));
+    // An accessible dialog rather than window.confirm, but it still names the
+    // server and the namespace and still blocks the write until confirmed.
+    const dialog = await screen.findByTestId("server-retire-confirm");
+    expect(dialog).toHaveTextContent("workspace-assistant");
+    expect(dialog).toHaveTextContent("mcp-servers");
     expect(fetchMock.mock.calls.some((call) => (call[1] as RequestInit)?.method === "DELETE")).toBe(
       false
     );
@@ -455,13 +456,14 @@ describe("ServersWorkspace server retire", () => {
       return { ok: true, status: 200, json: async () => payload } as unknown as Response;
     });
     vi.stubGlobal("fetch", fetchMock);
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+
 
     renderWorkspace({ authenticated: true });
     await screen.findByTestId("server-list");
     expect(screen.getAllByTestId("server-card")).toHaveLength(2);
 
     await user.click(screen.getAllByTestId("server-card-retire")[0]);
+    await user.click(await screen.findByTestId("server-retire-confirm-yes"));
 
     await waitFor(() => expect(screen.getByTestId("server-list-empty")).toBeInTheDocument());
 
@@ -495,7 +497,7 @@ describe("ServersWorkspace server retire", () => {
       return { ok: true, status: 200, json: async () => payload } as unknown as Response;
     });
     vi.stubGlobal("fetch", fetchMock);
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+
 
     renderWorkspace({ authenticated: true });
     await screen.findByTestId("server-list");
@@ -505,6 +507,7 @@ describe("ServersWorkspace server retire", () => {
     expect(screen.getAllByTestId("tool-row")).toHaveLength(2);
 
     await user.click(within(firstCard).getByTestId("server-card-retire"));
+    await user.click(await screen.findByTestId("server-retire-confirm-yes"));
 
     await waitFor(() => expect(screen.getAllByTestId("server-card")).toHaveLength(1));
     // Previously the stale selectedServerKey (the retired server's) kept
@@ -533,12 +536,13 @@ describe("ServersWorkspace server retire", () => {
       return { ok: true, status: 200, json: async () => payload } as unknown as Response;
     });
     vi.stubGlobal("fetch", fetchMock);
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+
 
     renderWorkspace({ authenticated: true });
     await screen.findByTestId("server-list");
 
     await user.click(screen.getAllByTestId("server-card-retire")[0]);
+    await user.click(await screen.findByTestId("server-retire-confirm-yes"));
 
     const error = await screen.findByTestId("server-retire-error");
     expect(error).toHaveTextContent("server is not owned by this user");
@@ -549,14 +553,15 @@ describe("ServersWorkspace server retire", () => {
   it("does not call the API when the confirmation is declined", async () => {
     const user = userEvent.setup();
     const fetchMock = stubCatalog();
-    vi.spyOn(window, "confirm").mockReturnValue(false);
 
     renderWorkspace({ authenticated: true });
     await screen.findByTestId("server-list");
     fetchMock.mockClear();
 
     await user.click(screen.getAllByTestId("server-card-retire")[0]);
+    await user.click(await screen.findByTestId("server-retire-confirm-cancel"));
 
+    expect(screen.queryByTestId("server-retire-confirm")).not.toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalled();
     expect(screen.getAllByTestId("server-card")).toHaveLength(2);
   });

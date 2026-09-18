@@ -66,6 +66,9 @@ export function useCatalog(enabled: boolean, namespace: string) {
 
   return {
     status,
+    // True while a refetch of already-loaded data is in flight, so Refresh can
+    // show real progress instead of pretending the click did nothing.
+    refreshing: status === "ready" && results.some((result) => result.isFetching),
     namespaces: (namespacesQuery.data ?? []) as NamespaceEntry[],
     servers: serverList?.servers ?? [],
     publishPolicy: serverList?.publishPolicy ?? null,

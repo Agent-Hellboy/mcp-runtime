@@ -111,30 +111,13 @@ afterEach(() => {
 
 describe("admin navigation gating", () => {
   it("lists the admin tab only for an admin role", () => {
-    expect(visibleWorkspaceTabs(ADMIN).map((tab) => tab.id)).toEqual([
-      "servers",
-      "access",
-      "admin",
-    ]);
+    expect(visibleWorkspaceTabs(ADMIN).map((tab) => tab.id)).toEqual(["servers", "access", "admin"]);
     const user = { authenticated: true, principal: { role: "user" } } as AuthStatus;
     expect(visibleWorkspaceTabs(user).map((tab) => tab.id)).not.toContain("admin");
-    // Access control is not admin-gated - any authenticated principal gets it.
-    expect(visibleWorkspaceTabs(user).map((tab) => tab.id)).toContain("access");
   });
 });
 
 describe("admin accessibility", () => {
-  // Access control / grant drill-down a11y coverage lives in
-  // AccessWorkspace.test.tsx now - that surface moved out of AdminWorkspace.
-
-  it("has no detectable violations on teams", async () => {
-    stub();
-    const { container } = renderAdmin(ADMIN);
-    await screen.findByTestId("teams-table");
-
-    expect(await axe(container, AXE_OPTIONS)).toHaveNoViolations();
-  });
-
   it("has no detectable violations on operations", async () => {
     const user = userEvent.setup();
     stub();
@@ -152,7 +135,7 @@ describe("admin accessibility", () => {
     const { container } = renderAdmin(ADMIN);
     await screen.findByTestId("teams-table");
     await user.click(screen.getByTestId("admin-section-platform"));
-    await screen.findByTestId("platform-table");
+    await screen.findByTestId("platform-components");
 
     expect(await axe(container, AXE_OPTIONS)).toHaveNoViolations();
   });

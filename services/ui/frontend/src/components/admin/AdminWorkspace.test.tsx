@@ -16,6 +16,43 @@ const TENANT: AuthStatus = {
 };
 const SIGNED_OUT: AuthStatus = { authenticated: false };
 
+const GRANTS = {
+  grants: [
+    {
+      name: "acme-readonly",
+      namespace: "mcp-servers",
+      serverRef: { name: "workspace-assistant" },
+      subject: { humanID: "alice@example.com", teamID: "acme" },
+      maxTrust: "low",
+      allowedSideEffects: ["read"],
+      disabled: false,
+    },
+    {
+      name: "acme-retired",
+      namespace: "mcp-servers",
+      serverRef: { name: "workspace-assistant" },
+      subject: { humanID: "bob@example.com" },
+      maxTrust: "high",
+      allowedSideEffects: ["read", "write"],
+      disabled: true,
+    },
+  ],
+};
+
+const SESSIONS = {
+  sessions: [
+    {
+      name: "sess-1",
+      namespace: "mcp-servers",
+      serverRef: { name: "workspace-assistant" },
+      subject: { humanID: "alice@example.com", agentID: "agent-7" },
+      consentedTrust: "low",
+      revoked: false,
+      expiresAt: "2026-10-01T00:00:00Z",
+    },
+  ],
+};
+
 const TEAMS = {
   teams: [{ id: "t-1", slug: "verify", name: "Verify Team", namespace: "mcp-team-verify" }],
 };
@@ -75,6 +112,18 @@ const OPERATIONS = {
   ],
 };
 
+const EVENTS = {
+  events: [
+    {
+      timestamp: new Date().toISOString(),
+      namespace: "mcp-servers",
+      tool_name: "add",
+      decision: "allow",
+      payload: { matched_grant: "acme-readonly", matched_grant_namespace: "mcp-servers" },
+    },
+  ],
+};
+
 function stubAdminApi(overrides: Record<string, { status?: number; body?: unknown }> = {}) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
@@ -88,13 +137,19 @@ function stubAdminApi(overrides: Record<string, { status?: number; body?: unknow
         text: async () => JSON.stringify(body),
       } as unknown as Response;
     }
-    const body = url.includes("/runtime/teams")
-      ? TEAMS
-      : url.includes("/runtime/components")
-        ? COMPONENTS
-        : url.includes("/admin/operations")
-          ? OPERATIONS
-          : {};
+    const body = url.includes("/runtime/grants")
+      ? GRANTS
+      : url.includes("/runtime/sessions")
+        ? SESSIONS
+        : url.includes("/runtime/teams")
+          ? TEAMS
+          : url.includes("/runtime/components")
+            ? COMPONENTS
+            : url.includes("/admin/operations")
+              ? OPERATIONS
+              : url.includes("/events")
+                ? EVENTS
+                : {};
     return { ok: true, status: 200, json: async () => body } as unknown as Response;
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -137,9 +192,7 @@ describe("AdminWorkspace role gating", () => {
     const refusal = screen.getByTestId("admin-forbidden");
     expect(refusal).toHaveTextContent("This workspace is restricted to administrators.");
     expect(refusal).toHaveAttribute("role", "alert");
-    // No admin control of any kind is rendered for a tenant user. Access
-    // control (grants/sessions) is deliberately not admin-gated at all - it
-    // lives in the separate AccessWorkspace - so it is not asserted here.
+    // No admin control of any kind is rendered for a tenant user.
     expect(screen.queryByTestId("admin-section-teams")).not.toBeInTheDocument();
     expect(screen.queryByTestId("teams-table")).not.toBeInTheDocument();
     expect(screen.queryByTestId("grafana-link")).not.toBeInTheDocument();
@@ -154,7 +207,7 @@ describe("AdminWorkspace role gating", () => {
     expect(screen.getByTestId("admin-forbidden")).toBeInTheDocument();
   });
 
-  it("renders the admin-only sections for an admin principal", async () => {
+  it("renders the admin sections for an admin principal", async () => {
     stubAdminApi();
 
     renderAdmin(ADMIN);
@@ -163,14 +216,22 @@ describe("AdminWorkspace role gating", () => {
     for (const section of ["teams", "operations", "platform", "analytics"]) {
       expect(screen.getByTestId(`admin-section-${section}`)).toBeInTheDocument();
     }
-    // Access control moved out to its own workspace; it is not an
-    // Administration section any more.
+  });
+
+  it("does not put access control behind the admin gate", () => {
+    stubAdminApi();
+
+    renderAdmin(ADMIN);
+
+    // Grants and sessions are served to any authenticated principal, so they
+    // live in their own workspace rather than an admin section.
     expect(screen.queryByTestId("admin-section-access")).not.toBeInTheDocument();
   });
 });
 
 describe("AdminWorkspace sections", () => {
-  it("renders teams by default", async () => {
+  it("renders teams", async () => {
+    const user = userEvent.setup();
     stubAdminApi();
 
     renderAdmin(ADMIN);
@@ -191,8 +252,13 @@ describe("AdminWorkspace sections", () => {
     expect(await screen.findByTestId("operations-users-table")).toHaveTextContent(
       "admin@mcpruntime.org"
     );
-    expect(screen.getByTestId("operations-audit-table")).toHaveTextContent("server_publish");
-    expect(screen.getByTestId("operations-images-table")).toHaveTextContent("registry/demo:1");
+
+    // Users, the audit trail, and image activity are separate local sections.
+    await user.click(screen.getByTestId("operations-tab-audit"));
+    expect(await screen.findByTestId("operations-audit-table")).toHaveTextContent("server_publish");
+
+    await user.click(screen.getByTestId("operations-tab-images"));
+    expect(await screen.findByTestId("operations-images-table")).toHaveTextContent("registry/demo:1");
   });
 
   it("refetches operations scoped to the applied user filter", async () => {
@@ -221,10 +287,12 @@ describe("AdminWorkspace sections", () => {
     await screen.findByTestId("teams-table");
     await user.click(screen.getByTestId("admin-section-platform"));
 
-    const table = await screen.findByTestId("platform-table");
-    expect(within(table).getByText("Operator")).toBeInTheDocument();
-    expect(within(table).getByText("CrashLoopBackOff")).toBeInTheDocument();
+    const grid = await screen.findByTestId("platform-components");
+    expect(within(grid).getByText("Operator")).toBeInTheDocument();
+    expect(within(grid).getByText("CrashLoopBackOff")).toBeInTheDocument();
     expect(screen.getByTestId("platform-stats")).toHaveTextContent("1");
+    // Restart all is separated from the safe read actions.
+    expect(screen.getByTestId("restart-all")).toBeInTheDocument();
 
     // Must stay a direct href so the platform ingress forward-auth still applies.
     expect(screen.getByTestId("grafana-link")).toHaveAttribute("href", "/grafana");

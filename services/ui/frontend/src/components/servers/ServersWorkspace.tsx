@@ -1,328 +1,477 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 
+import {
+  EMPTY_SERVER_FILTERS,
+  EMPTY_TOOL_FILTERS,
+  countToolsByServer,
+  filterServers,
+  filterTools,
+  hasDrift,
+  toolsInScope,
+  visibleServerKeySet,
+  type ServerFilters,
+  type ServerStatusFilter,
+  type ToolFilters,
+} from "./filters";
+import { ServerDetail } from "./ServerDetail";
 import { ServerList } from "./ServerList";
+import { SignedOutServers } from "./SignedOutServers";
 import { ToolCatalog } from "./ToolCatalog";
 import { ToolDetail } from "./ToolDetail";
-import { EMPTY_FILTERS, ToolFilters, type CatalogFilters } from "./ToolFilters";
-import { EmptyState } from "../EmptyState";
-import { ErrorState } from "../ErrorState";
-import { LoadingState } from "../LoadingState";
+import { Button } from "../../ui/Button";
+import { ConfirmDialog, type ConfirmRequest } from "../../ui/ConfirmDialog";
+import { SelectField, TextField } from "../../ui/Field";
+import { FilterBar, FilterSummary, type FilterChip } from "../../ui/FilterBar";
+import { MetricGrid } from "../../ui/MetricCard";
+import { PageHeader } from "../../ui/PageHeader";
+import { ErrorState, LoadingState } from "../../ui/States";
+import { PublicServersPreview } from "./PublicServersPreview";
+import { Icon } from "../../ui/Icon";
+import { useCatalog } from "../../hooks/useCatalog";
 import { retireServer } from "../../api/catalog";
 import { readRuntimeConfig } from "../../api/config";
-import { useCatalog, usePublicCatalog } from "../../hooks/useCatalog";
-import { formatPublishQuota, isServerReady, isTenantUser, serverKey, toolKey } from "../../api/types";
-import type { AuthStatus, ServerSummary, ToolRow } from "../../api/types";
+import {
+  formatPublishQuota,
+  isServerReady,
+  isTenantUser,
+  serverKey,
+  toolKey,
+  type AuthStatus,
+  type ServerSummary,
+} from "../../api/types";
 
 type ServersWorkspaceProps = {
   auth: AuthStatus;
   onSignIn: () => void;
+  // Supplied by the shell so a selected server or tool is shareable and
+  // survives back/forward. Standalone renders fall back to local state.
+  params?: Record<string, string>;
+  onParamsChange?: (params: Record<string, string | undefined>) => void;
 };
 
-// The anonymous counterpart of ServersWorkspace, for a signed-out visitor to
-// a PLATFORM_MODE=public deployment. Read-only: no namespace/status
-// filtering, no retire, no quota stat - just the same public catalog the
-// removed legacy dashboard's synthesized "public preview" scope showed.
-function PublicServersPreview({ onSignIn }: { onSignIn: () => void }) {
-  const [selectedServerKey, setSelectedServerKey] = useState("");
-  const [selectedToolKey, setSelectedToolKey] = useState("");
-  const catalog = usePublicCatalog(true);
+const STATUS_OPTIONS: Array<{ value: ServerStatusFilter; label: string }> = [
+  { value: "all", label: "All" },
+  { value: "ready", label: "Ready" },
+  { value: "attention", label: "Needs attention" },
+];
 
-  const toolCounts = useMemo(() => {
-    const counts: Record<string, number> = {};
-    for (const tool of catalog.tools) {
-      const key = `${tool.namespace}/${tool.server_name}`;
-      counts[key] = (counts[key] || 0) + 1;
-    }
-    return counts;
-  }, [catalog.tools]);
-
-  const visibleTools = useMemo(
-    () =>
-      selectedServerKey
-        ? catalog.tools.filter((tool) => `${tool.namespace}/${tool.server_name}` === selectedServerKey)
-        : catalog.tools,
-    [catalog.tools, selectedServerKey]
-  );
-
-  const selectedTool = useMemo(
-    () => visibleTools.find((tool) => toolKey(tool) === selectedToolKey),
-    [visibleTools, selectedToolKey]
-  );
-
-  if (catalog.status === "loading") {
-    return <LoadingState label="Loading the public catalog…" testId="public-catalog-loading" />;
-  }
-
-  if (catalog.status === "error") {
-    return (
-      <ErrorState
-        title="The public catalog could not be loaded."
-        detail={catalog.error}
-        testId="public-catalog-error"
-      />
-    );
-  }
-
-  return (
-    <div className="servers-workspace">
-      <section className="panel" aria-labelledby="public-catalog-title">
-        <div className="panel-head">
-          <div>
-            <h2 id="public-catalog-title">Public catalog preview</h2>
-            <p className="panel-lede">
-              Browsing anonymously. Sign in to see your organization&rsquo;s full catalog and manage
-              servers.
-            </p>
-          </div>
-          <button type="button" className="button primary" onClick={onSignIn} data-testid="public-catalog-sign-in">
-            Sign in
-          </button>
-        </div>
-        <ServerList
-          servers={catalog.servers}
-          toolCounts={toolCounts}
-          selectedKey={selectedServerKey}
-          onSelect={(key) => {
-            setSelectedServerKey(key);
-            setSelectedToolKey("");
-          }}
-        />
-      </section>
-      <ToolCatalog
-        tools={visibleTools}
-        totalCount={catalog.tools.length}
-        selectedToolKey={selectedToolKey}
-        onSelectTool={setSelectedToolKey}
-        emptyMessage="No tools are published in the public catalog."
-      />
-      {selectedTool ? (
-        <ToolDetail tool={selectedTool} onClose={() => setSelectedToolKey("")} />
-      ) : null}
-    </div>
-  );
-}
-
-export function matchesSearch(tool: ToolRow, search: string): boolean {
-  const term = search.trim().toLowerCase();
-  if (!term) {
-    return true;
-  }
-  const haystack = [
-    tool.tool_name,
-    tool.description,
-    tool.server_name,
-    tool.namespace,
-    tool.required_trust,
-    tool.side_effect,
-    tool.risk_level,
-    tool.drift_status,
-    ...Object.entries(tool.labels || {}).flat(),
-  ]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
-  return haystack.includes(term);
-}
-
-export function filterServers(
-  servers: ServerSummary[],
-  filters: CatalogFilters
-): ServerSummary[] {
-  return servers.filter((server) => {
-    if (filters.namespace && server.namespace !== filters.namespace) {
-      return false;
-    }
-    if (filters.serverStatus === "ready" && !isServerReady(server)) {
-      return false;
-    }
-    if (filters.serverStatus === "attention" && isServerReady(server)) {
-      return false;
-    }
-    return true;
-  });
-}
-
-export function filterTools(
-  tools: ToolRow[],
-  filters: CatalogFilters,
-  visibleServerKeys: Set<string>
-): ToolRow[] {
-  return tools.filter((tool) => {
-    const key = `${tool.namespace}/${tool.server_name}`;
-    if (!visibleServerKeys.has(key)) {
-      return false;
-    }
-    if (filters.selectedServerKey && key !== filters.selectedServerKey) {
-      return false;
-    }
-    if (filters.risk && (tool.risk_level || "").toLowerCase() !== filters.risk) {
-      return false;
-    }
-    return matchesSearch(tool, filters.search);
-  });
-}
-
-export function ServersWorkspace({ auth, onSignIn }: ServersWorkspaceProps) {
+export function ServersWorkspace({
+  auth,
+  onSignIn,
+  params,
+  onParamsChange,
+}: ServersWorkspaceProps) {
   const authenticated = auth.authenticated;
-  const [filters, setFilters] = useState<CatalogFilters>(EMPTY_FILTERS);
-  const [selectedToolKey, setSelectedToolKey] = useState("");
-  const catalog = useCatalog(authenticated, filters.namespace);
+  const [localParams, setLocalParams] = useState<Record<string, string>>({});
+  const activeParams = params ?? localParams;
+  const setParams = useCallback(
+    (next: Record<string, string | undefined>) => {
+      if (onParamsChange) {
+        onParamsChange(next);
+        return;
+      }
+      setLocalParams((current) => {
+        const merged = { ...current };
+        for (const [key, value] of Object.entries(next)) {
+          if (value) {
+            merged[key] = value;
+          } else {
+            delete merged[key];
+          }
+        }
+        return merged;
+      });
+    },
+    [onParamsChange]
+  );
+
+  const [serverFilters, setServerFilters] = useState<ServerFilters>(EMPTY_SERVER_FILTERS);
+  const [toolFilters, setToolFilters] = useState<ToolFilters>(EMPTY_TOOL_FILTERS);
+  const [confirm, setConfirm] = useState<ConfirmRequest | null>(null);
+  const [retiringKey, setRetiringKey] = useState("");
+  const [actionError, setActionError] = useState("");
+  const [actionNotice, setActionNotice] = useState("");
+
+  const catalog = useCatalog(authenticated, serverFilters.namespace);
 
   const visibleServers = useMemo(
-    () => filterServers(catalog.servers, filters),
-    [catalog.servers, filters]
+    () => filterServers(catalog.servers, serverFilters),
+    [catalog.servers, serverFilters]
   );
-
-  const visibleServerKeys = useMemo(
-    () => new Set(visibleServers.map((server) => serverKey(server))),
-    [visibleServers]
-  );
-
-  const toolCounts = useMemo(() => {
-    const counts: Record<string, number> = {};
-    for (const tool of catalog.tools) {
-      const key = `${tool.namespace}/${tool.server_name}`;
-      counts[key] = (counts[key] || 0) + 1;
-    }
-    return counts;
-  }, [catalog.tools]);
-
+  const visibleServerKeys = useMemo(() => visibleServerKeySet(visibleServers), [visibleServers]);
+  const toolCounts = useMemo(() => countToolsByServer(catalog.tools), [catalog.tools]);
   const scopedTools = useMemo(
-    () => catalog.tools.filter((tool) => visibleServerKeys.has(`${tool.namespace}/${tool.server_name}`)),
+    () => toolsInScope(catalog.tools, visibleServerKeys),
     [catalog.tools, visibleServerKeys]
   );
-
   const visibleTools = useMemo(
-    () => filterTools(catalog.tools, filters, visibleServerKeys),
-    [catalog.tools, filters, visibleServerKeys]
+    () => filterTools(catalog.tools, toolFilters, visibleServerKeys),
+    [catalog.tools, toolFilters, visibleServerKeys]
   );
 
+  const inspectedServerKey = activeParams.server || "";
+  const selectedToolKey = activeParams.tool || "";
+  const inspectedServer = useMemo(
+    () => catalog.servers.find((server) => serverKey(server) === inspectedServerKey),
+    [catalog.servers, inspectedServerKey]
+  );
   const selectedTool = useMemo(
     () => visibleTools.find((tool) => toolKey(tool) === selectedToolKey),
     [visibleTools, selectedToolKey]
   );
+  const inspectedServerTools = useMemo(
+    () =>
+      inspectedServer
+        ? catalog.tools.filter(
+            (tool) => `${tool.namespace}/${tool.server_name}` === serverKey(inspectedServer)
+          )
+        : [],
+    [catalog.tools, inspectedServer]
+  );
+
+  const scopedServerName = useMemo(() => {
+    if (!toolFilters.serverKey) {
+      return "";
+    }
+    const match = catalog.servers.find((server) => serverKey(server) === toolFilters.serverKey);
+    return match ? match.name : toolFilters.serverKey;
+  }, [catalog.servers, toolFilters.serverKey]);
+
+  const changeServerFilters = useCallback(
+    (next: ServerFilters) => {
+      setServerFilters(next);
+      // A scope change can invalidate the tool scope and the open inspectors.
+      setToolFilters((current) => ({ ...current, serverKey: "" }));
+      setParams({ server: undefined, tool: undefined });
+    },
+    [setParams]
+  );
+
+  const clearAll = useCallback(() => {
+    setServerFilters(EMPTY_SERVER_FILTERS);
+    setToolFilters(EMPTY_TOOL_FILTERS);
+    setParams({ server: undefined, tool: undefined });
+  }, [setParams]);
 
   if (!authenticated) {
+    // A public-mode deployment shows its anonymous catalog instead of a
+    // sign-in wall (services/ui/public_catalog_proxy.go).
     if (readRuntimeConfig().platformMode === "public") {
       return <PublicServersPreview onSignIn={onSignIn} />;
     }
-    return (
-      <section className="panel" aria-labelledby="catalog-signed-out-title">
-        <h2 id="catalog-signed-out-title">Server catalog</h2>
-        <EmptyState
-          title="Sign in to view the server catalog."
-          detail="Namespaces, deployed MCP servers, and their governed tool inventory are scoped to your account."
-          testId="catalog-signed-out"
-          action={
-            <button type="button" className="button primary" onClick={onSignIn}>
-              Sign in
-            </button>
-          }
-        />
-      </section>
-    );
+    return <SignedOutServers onSignIn={onSignIn} />;
   }
 
   if (catalog.status === "loading") {
-    return <LoadingState label="Loading namespaces, servers, and tools…" testId="catalog-loading" />;
+    return (
+      <>
+        <PageHeader title="Servers" description="Deployed MCP servers and their governed tool catalog." />
+        <LoadingState
+          label="Loading namespaces, servers, and tools…"
+          testId="catalog-loading"
+          variant="cards"
+          rows={3}
+        />
+      </>
+    );
   }
 
   if (catalog.status === "unauthorized") {
     return (
-      <ErrorState
-        title="Your session expired."
-        detail="Sign in again to reload the server catalog."
-        onRetry={onSignIn}
-        retryLabel="Sign in"
-        testId="catalog-unauthorized"
-      />
+      <>
+        <PageHeader title="Servers" />
+        <ErrorState
+          title="Your session expired."
+          detail="Sign in again to reload the server catalog."
+          onRetry={onSignIn}
+          retryLabel="Sign in"
+          testId="catalog-unauthorized"
+        />
+      </>
     );
   }
 
   if (catalog.status === "error") {
     return (
-      <ErrorState
-        title="The server catalog could not be loaded."
-        detail={catalog.error}
-        onRetry={catalog.reload}
-        testId="catalog-error"
-      />
+      <>
+        <PageHeader title="Servers" />
+        <ErrorState
+          title="The server catalog could not be loaded."
+          detail={catalog.error}
+          onRetry={catalog.reload}
+          testId="catalog-error"
+        />
+      </>
     );
   }
 
-  const readyCount = visibleServers.filter((server) => isServerReady(server)).length;
+  function askRetire(server: ServerSummary) {
+    const key = serverKey(server);
+    setConfirm({
+      title: `Retire ${server.name}?`,
+      body: (
+        <>
+          The MCPServer object in <strong>{server.namespace}</strong> is deleted and its endpoint stops
+          answering. Tools it publishes leave the catalog. This cannot be undone from here; the server
+          would have to be published again.
+        </>
+      ),
+      confirmLabel: "Retire server",
+      destructive: true,
+      onConfirm: async () => {
+        setRetiringKey(key);
+        setActionError("");
+        setActionNotice("");
+        try {
+          await retireServer(server.namespace, server.name);
+          setActionNotice(`${server.name} retired.`);
+          // The retired server may have been the active tool scope. Leaving
+          // that key set would filter every remaining tool out and leave an
+          // apparently empty catalog.
+          setToolFilters((current) =>
+            current.serverKey === key ? { ...current, serverKey: "" } : current
+          );
+          setParams({ server: undefined, tool: undefined });
+          catalog.reload();
+        } catch (error) {
+          setActionError(
+            error instanceof Error ? error.message : `${server.name} could not be retired.`
+          );
+        } finally {
+          setRetiringKey("");
+          setConfirm(null);
+        }
+      },
+    });
+  }
+
+  const readyCount = visibleServers.filter(isServerReady).length;
+  const driftCount = scopedTools.filter(hasDrift).length;
+  const scopeLabel = serverFilters.namespace ? `namespace ${serverFilters.namespace}` : "all namespaces you can read";
+  const serversFiltered =
+    serverFilters.search.trim() !== "" || serverFilters.status !== "all" || serverFilters.namespace !== "";
+
+  const serverChips: FilterChip[] = [];
+  if (serverFilters.search.trim()) {
+    serverChips.push({
+      id: "search",
+      label: "Search",
+      value: serverFilters.search.trim(),
+      onRemove: () => changeServerFilters({ ...serverFilters, search: "" }),
+    });
+  }
+  if (serverFilters.namespace) {
+    serverChips.push({
+      id: "namespace",
+      label: "Namespace",
+      value: serverFilters.namespace,
+      onRemove: () => changeServerFilters({ ...serverFilters, namespace: "" }),
+    });
+  }
+  if (serverFilters.status !== "all") {
+    serverChips.push({
+      id: "status",
+      label: "Status",
+      value: serverFilters.status === "ready" ? "Ready" : "Needs attention",
+      onRemove: () => changeServerFilters({ ...serverFilters, status: "all" }),
+    });
+  }
+
+  const sheetOpen = Boolean(inspectedServer || selectedTool);
 
   return (
-    <div className="servers-workspace">
-      <section className="panel" aria-labelledby="server-catalog-title">
-        <div className="panel-head">
-          <div>
-            <h2 id="server-catalog-title">Servers</h2>
-            <p className="panel-lede">Browse deployed MCP endpoints and their tool inventory.</p>
-          </div>
-          <ul className="stat-row" aria-label="Server catalog summary" data-testid="server-stats">
-            <li>
-              <strong>{visibleServers.length}</strong> servers
-            </li>
-            <li>
-              <strong>{readyCount}</strong> ready
-            </li>
-            <li>
-              <strong>{scopedTools.length}</strong> tools
-            </li>
-            {isTenantUser(auth) ? (
-              <li data-testid="server-quota">
-                <strong>{formatPublishQuota(catalog.publishPolicy)}</strong> quota
-              </li>
-            ) : null}
-          </ul>
-        </div>
-        <ToolFilters
-          filters={filters}
-          namespaces={catalog.namespaces}
-          servers={visibleServers}
-          onChange={(next) => {
-            setFilters(next);
-            setSelectedToolKey("");
-          }}
-          onReset={() => {
-            setFilters(EMPTY_FILTERS);
-            setSelectedToolKey("");
-          }}
-        />
-        <ServerList
-          servers={visibleServers}
-          toolCounts={toolCounts}
-          selectedKey={filters.selectedServerKey}
-          onSelect={(key) => {
-            setFilters((previous) => ({ ...previous, selectedServerKey: key }));
-            setSelectedToolKey("");
-          }}
-          onRetire={async (namespace, name) => {
-            await retireServer(namespace, name);
-            const retiredKey = serverKey({ namespace, name });
-            if (filters.selectedServerKey === retiredKey) {
-              setFilters((previous) => ({ ...previous, selectedServerKey: "" }));
-              setSelectedToolKey("");
-            }
-            catalog.reload();
-          }}
-        />
-      </section>
-      <ToolCatalog
-        tools={visibleTools}
-        totalCount={scopedTools.length}
-        selectedToolKey={selectedToolKey}
-        onSelectTool={setSelectedToolKey}
-        emptyMessage={
-          scopedTools.length === 0
-            ? "No tools are published in this scope."
-            : "No tools match these filters."
+    <>
+      <PageHeader
+        title="Servers"
+        description={`Deployed MCP servers and their governed tool catalog for ${scopeLabel}.`}
+        actions={
+          <Button
+            variant="secondary"
+            icon="refresh"
+            onClick={catalog.reload}
+            busy={catalog.refreshing}
+            data-testid="catalog-refresh"
+          >
+            {catalog.refreshing ? "Refreshing…" : "Refresh"}
+          </Button>
         }
       />
-      {selectedTool ? (
-        <ToolDetail tool={selectedTool} onClose={() => setSelectedToolKey("")} />
+
+      <MetricGrid
+        label="Server catalog summary"
+        testId="server-stats"
+        metrics={[
+          {
+            label: "Servers",
+            value: visibleServers.length,
+            icon: "server",
+            hint: serversFiltered ? "Matching the filters below" : `In ${scopeLabel}`,
+          },
+          {
+            label: "Ready",
+            value: readyCount,
+            icon: "check",
+            hint: "All replicas up",
+            tone: readyCount === visibleServers.length ? "default" : "warning",
+          },
+          { label: "Tools", value: scopedTools.length, icon: "tool", hint: "Published by these servers" },
+          {
+            label: "Tools with drift",
+            value: driftCount,
+            icon: "alert",
+            hint: "Missing or ungoverned",
+            tone: driftCount > 0 ? "warning" : "default",
+          },
+          // The runtime does not cap admin publishing, so the quota is only
+          // meaningful for a tenant principal.
+          ...(isTenantUser(auth)
+            ? [
+                {
+                  label: "Publish quota",
+                  value: formatPublishQuota(catalog.publishPolicy),
+                  icon: "inbox" as const,
+                  hint: "Active servers against your limit",
+                  testId: "server-quota",
+                },
+              ]
+            : []),
+        ]}
+      />
+
+      {actionNotice ? (
+        <p className="notice notice-success" role="status" data-testid="servers-action-notice">
+          <Icon name="check" />
+          <span className="notice-body">{actionNotice}</span>
+        </p>
       ) : null}
-    </div>
+
+
+      <div className={sheetOpen ? "servers-layout with-sheet" : "servers-layout"}>
+        <div>
+          <section className="section">
+            <div className="section-head">
+              <h2 className="section-title" id="server-list-title">
+                Server fleet
+              </h2>
+            </div>
+
+            <FilterBar label="Filter servers">
+              <TextField
+                label="Search servers"
+                type="search"
+                fieldClassName="grow"
+                leadingIcon
+                placeholder="Name, namespace, description, image, or endpoint"
+                value={serverFilters.search}
+                data-testid="server-search"
+                onChange={(event) =>
+                  changeServerFilters({ ...serverFilters, search: event.target.value })
+                }
+              />
+              <SelectField
+                label="Namespace"
+                value={serverFilters.namespace}
+                data-testid="namespace-filter"
+                options={[
+                  { value: "", label: "All namespaces" },
+                  ...catalog.namespaces.map((entry) => ({
+                    value: entry.namespace,
+                    label: entry.namespace,
+                  })),
+                ]}
+                onChange={(event) =>
+                  changeServerFilters({ ...serverFilters, namespace: event.target.value })
+                }
+              />
+              <fieldset className="field">
+                <legend className="field-label">Status</legend>
+                <div className="segmented">
+                  {STATUS_OPTIONS.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      className="segment"
+                      aria-pressed={serverFilters.status === option.value}
+                      data-testid={`server-status-${option.value}`}
+                      onClick={() => changeServerFilters({ ...serverFilters, status: option.value })}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </fieldset>
+            </FilterBar>
+
+            <FilterSummary
+              chips={serverChips}
+              count={
+                visibleServers.length === catalog.servers.length
+                  ? `${catalog.servers.length} server${catalog.servers.length === 1 ? "" : "s"}`
+                  : `${visibleServers.length} of ${catalog.servers.length} servers`
+              }
+              onClear={clearAll}
+              testId="server-summary"
+            />
+
+            <ServerList
+              servers={visibleServers}
+              toolCounts={toolCounts}
+              scopedServerKey={toolFilters.serverKey}
+              inspectedServerKey={inspectedServerKey}
+              filtered={serversFiltered}
+              onClearFilters={clearAll}
+              onScope={(key) => {
+                setToolFilters((current) => ({ ...current, serverKey: key }));
+                setParams({ tool: undefined });
+              }}
+              onInspect={(key) => setParams({ server: key, tool: undefined })}
+              onRetire={askRetire}
+              retiringKey={retiringKey}
+              retireError={actionError}
+            />
+          </section>
+
+          <ToolCatalog
+            tools={visibleTools}
+            scopedCount={scopedTools.length}
+            filters={toolFilters}
+            scopedServerName={scopedServerName}
+            selectedToolKey={selectedToolKey}
+            onFiltersChange={setToolFilters}
+            onClearFilters={() => {
+              setToolFilters(EMPTY_TOOL_FILTERS);
+              setParams({ tool: undefined });
+            }}
+            onSelectTool={(key) => setParams({ tool: key || undefined, server: undefined })}
+          />
+        </div>
+
+        {selectedTool ? (
+          <ToolDetail tool={selectedTool} onClose={() => setParams({ tool: undefined })} />
+        ) : inspectedServer ? (
+          <ServerDetail
+            server={inspectedServer}
+            tools={inspectedServerTools}
+            onClose={() => setParams({ server: undefined })}
+            onShowTools={() => {
+              setToolFilters((current) => ({ ...current, serverKey: serverKey(inspectedServer) }));
+              setParams({ server: undefined });
+            }}
+            onSelectTool={(key) => setParams({ tool: key, server: undefined })}
+          />
+        ) : null}
+      </div>
+
+      {confirm ? (
+        <ConfirmDialog
+          {...confirm}
+          busy={retiringKey !== ""}
+          onCancel={() => setConfirm(null)}
+          testId="server-retire-confirm"
+          confirmTestId="server-retire-confirm-yes"
+          cancelTestId="server-retire-confirm-cancel"
+        />
+      ) : null}
+    </>
   );
 }

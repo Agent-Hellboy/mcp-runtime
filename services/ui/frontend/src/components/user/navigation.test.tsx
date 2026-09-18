@@ -93,8 +93,8 @@ describe("visibleWorkspaceTabs", () => {
   });
 
   it("hides Activity from admins but keeps Keys when they have an identity", () => {
-    // Activity is tenant-only; Keys needs a user subject.
-    expect(ids(ADMIN as AuthStatus)).toEqual(["servers", "access", "admin", "keys"]);
+    // Legacy: Activity is data-user-only; Keys needs a user subject.
+    expect(ids(ADMIN as AuthStatus)).toEqual(["servers", "access", "keys", "admin"]);
   });
 
   it("hides both from a session with no user identity", () => {
@@ -144,13 +144,34 @@ describe("workspace navigation", () => {
     expect(screen.getByTestId("catalog-signed-out")).toBeInTheDocument();
   });
 
-  it("never offers a legacy fallback tab", async () => {
+  it("no longer offers the retired More workspaces entry", async () => {
     stubApp(TENANT);
 
     renderApp();
-    await screen.findByTestId("workspace-tab-activity");
+    await screen.findByTestId("workspace-tab-servers");
 
     expect(screen.queryByTestId("workspace-tab-legacy")).not.toBeInTheDocument();
+    expect(screen.queryByTitle("MCP Sentinel dashboard")).not.toBeInTheDocument();
+  });
+
+  it("puts the active workspace in the URL so it can be shared", async () => {
+    const user = userEvent.setup();
+    stubApp(TENANT);
+
+    renderApp();
+    await user.click(await screen.findByTestId("workspace-tab-keys"));
+    await screen.findByTestId("api-keys-empty");
+
+    expect(window.location.hash).toBe("#/keys");
+  });
+
+  it("opens a shared deep link straight into that workspace", async () => {
+    window.location.hash = "#/activity";
+    stubApp(TENANT);
+
+    renderApp();
+
+    expect(await screen.findByTestId("usage-summary")).toBeInTheDocument();
   });
 });
 
