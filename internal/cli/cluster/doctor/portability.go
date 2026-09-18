@@ -61,7 +61,30 @@ func checkDNSNetworkPolicyPortability(kubectl core.KubectlRunner) DoctorCheck {
 func checkStorageClassReadiness(kubectl core.KubectlRunner) DoctorCheck {
 	want := strings.TrimSpace(os.Getenv("MCP_STORAGE_CLASS"))
 	if want == "" {
-		want = "local-path"
+		raw, err := readKubectlOutput(kubectl, []string{"get", "storageclass", "-o", "json"})
+		if err != nil {
+			return DoctorCheck{Name: "storage class readiness", OK: false, Detail: fmt.Sprintf("could not discover a default StorageClass: %v", err), Remedy: "set MCP_STORAGE_CLASS to an installed StorageClass or install a default storage provisioner"}
+		}
+		var payload struct {
+			Items []struct {
+				Metadata struct {
+					Name        string            `json:"name"`
+					Annotations map[string]string `json:"annotations"`
+				} `json:"metadata"`
+			} `json:"items"`
+		}
+		if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+			return DoctorCheck{Name: "storage class readiness", OK: false, Detail: fmt.Sprintf("could not parse StorageClass inventory: %v", err), Remedy: "set MCP_STORAGE_CLASS to an installed StorageClass"}
+		}
+		for _, item := range payload.Items {
+			if item.Metadata.Annotations["storageclass.kubernetes.io/is-default-class"] == "true" || item.Metadata.Annotations["storageclass.beta.kubernetes.io/is-default-class"] == "true" {
+				want = strings.TrimSpace(item.Metadata.Name)
+				break
+			}
+		}
+		if want == "" {
+			return DoctorCheck{Name: "storage class readiness", OK: false, Detail: "no default StorageClass is available and MCP_STORAGE_CLASS is unset", Remedy: "set MCP_STORAGE_CLASS to an installed StorageClass or install a default storage provisioner"}
+		}
 	}
 	out, err := readKubectlOutput(kubectl, []string{"get", "storageclass", want, "-o", "jsonpath={.metadata.name}"})
 	if err != nil || strings.TrimSpace(out) == "" {
@@ -130,6 +153,9 @@ func checkSentinelOIDCConfiguration(kubectl core.KubectlRunner) DoctorCheck {
 		return DoctorCheck{Name: "sentinel OIDC configuration", OK: false, Detail: fmt.Sprintf("failed parsing mcp-sentinel-config: %v", err), Remedy: "reapply the Sentinel ConfigMap"}
 	}
 	mode := strings.TrimSpace(config.Data["PLATFORM_MODE"])
+	if strings.EqualFold(strings.TrimSpace(config.Data["MCP_RUNTIME_TEST_MODE"]), "1") || strings.EqualFold(strings.TrimSpace(config.Data["MCP_RUNTIME_TEST_MODE"]), "true") {
+		return DoctorCheck{Name: "sentinel OIDC configuration", OK: true, Detail: "MCP Runtime test mode is enabled; production OIDC configuration is not required"}
+	}
 	google, issuer, audience, jwks := strings.TrimSpace(config.Data["GOOGLE_CLIENT_ID"]), strings.TrimSpace(config.Data["OIDC_ISSUER"]), strings.TrimSpace(config.Data["OIDC_AUDIENCE"]), strings.TrimSpace(config.Data["OIDC_JWKS_URL"])
 	if mode == "public" || mode == "tenant" {
 		if google == "" && (issuer == "" || audience == "" || jwks == "") {

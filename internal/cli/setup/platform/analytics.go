@@ -853,6 +853,11 @@ func renderAnalyticsConfigManifestWithReaders(content, platformMode string, imag
 	if smokeImage := strings.TrimSpace(images.DoctorSmoke); smokeImage != "" {
 		manifest.Data["MCP_DOCTOR_SMOKE_IMAGE"] = smokeImage
 	}
+	if os.Getenv("MCP_RUNTIME_TEST_MODE") == "1" {
+		manifest.Data["MCP_RUNTIME_TEST_MODE"] = "1"
+	} else {
+		delete(manifest.Data, "MCP_RUNTIME_TEST_MODE")
+	}
 	applyGoogleOIDCDefaults(manifest.Data)
 	if registryIngressHost := strings.TrimSpace(core.GetRegistryIngressHost()); registryIngressHost != "" && registryIngressHost != core.DefaultRegistryIngressHost {
 		manifest.Data["MCP_REGISTRY_ENDPOINT"] = registryIngressHost

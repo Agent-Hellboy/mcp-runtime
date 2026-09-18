@@ -2572,6 +2572,34 @@ func TestRestrictedRunOverridesUsesNumericNonRootUser(t *testing.T) {
 	}
 }
 
+func TestCheckStorageClassReadinessDiscoversDefault(t *testing.T) {
+	t.Setenv("MCP_STORAGE_CLASS", "")
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			if contains(spec.Args, "-o") && contains(spec.Args, "json") {
+				return &core.MockCommand{OutputData: []byte(`{"items":[{"metadata":{"name":"standard","annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}]}`)}
+			}
+			return &core.MockCommand{OutputData: []byte("standard")}
+		},
+	}
+	check := checkStorageClassReadiness(core.NewTestKubectlClient(mock))
+	if !check.OK || !strings.Contains(check.Detail, `StorageClass "standard"`) {
+		t.Fatalf("expected discovered default StorageClass, got %+v", check)
+	}
+}
+
+func TestCheckSentinelOIDCConfigurationSkipsTestMode(t *testing.T) {
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			return &core.MockCommand{OutputData: []byte(`{"data":{"PLATFORM_MODE":"tenant","MCP_RUNTIME_TEST_MODE":"1"}}`)}
+		},
+	}
+	check := checkSentinelOIDCConfiguration(core.NewTestKubectlClient(mock))
+	if !check.OK || !strings.Contains(check.Detail, "test mode") {
+		t.Fatalf("expected test-mode OIDC check to pass, got %+v", check)
+	}
+}
+
 func argValueWithPrefix(args []string, prefix string) string {
 	for _, arg := range args {
 		if strings.HasPrefix(arg, prefix) {
