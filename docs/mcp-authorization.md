@@ -404,11 +404,48 @@ The SDK is used at the application boundary, not as Runtime governance:
   helpers to obtain an MCP token from the authorization server.
 - A standalone MCP resource server can use the SDK's `JWTVerifier` to validate
   issuer, JWKS signature, audience, expiry, and required scopes before invoking
-  tools.
+  tools, and the SDK's metadata helper to publish its RFC 9728 document.
+  Publish that document from the helper rather than hand-writing the JSON:
+  `mcpauth.ProtectedResourceMetadataHandler(verifier, resource, issuer)` in Go,
+  `protected_resource_metadata(verifier, resource, issuer)` in Python. Both
+  derive `scopes_supported` from the scopes the verifier enforces, so the two
+  cannot drift apart — see [Advertise every scope you
+  enforce](#advertise-every-scope-you-enforce).
 - A governed MCP server normally lets the Runtime gateway terminate the bearer
   token, apply grants/sessions/policy, and strip the token before forwarding.
   Add SDK verification in the upstream server only when it is intentionally
   independently exposed or defense-in-depth is required.
+
+Worked examples of both languages live in this repository:
+`examples/mcp-auth-sdk-ping` (Go) and `examples/mcp-auth-sdk-ping-py` (Python).
+Each is a complete standalone resource server — challenges, metadata document,
+audience and scope validation — with no Runtime gateway in front of it.
+
+### Advertise every scope you enforce
+
+A resource server that requires a scope but omits `scopes_supported` from its
+protected-resource metadata gives the client nothing to ask for. The client
+requests no scope, the authorization server issues a token with an empty
+`scope`, and every MCP call is refused with `403` and an empty body. Nothing in
+that exchange says a scope was missing, so it reads as broken authentication.
+Cursor reports it as `Server returned 403 after trying upscoping`.
+
+Advertising the scope on the **authorization server** is not enough. Clients
+read the *resource's* document to decide what to request:
+
+```bash
+curl -s https://mcp.<domain>/.well-known/oauth-protected-resource/<server>/mcp | jq
+{
+  "resource": "https://mcp.<domain>/<server>/mcp",
+  "authorization_servers": ["https://auth.<domain>/mcp-auth"],
+  "bearer_methods_supported": ["header"],
+  "scopes_supported": ["tools:read"]        # must be present
+}
+```
+
+Servers behind the Runtime gateway do not hit this: the gateway terminates the
+token. It applies to servers with `gateway.enabled: false`, which is how both
+`mcp-auth-sdk-ping` examples run.
 
 The SDK does not choose the identity provider. It consumes provider-neutral MCP
 authorization metadata and JWTs, so switching from Keycloak to Okta or PingOne
@@ -432,3 +469,23 @@ exchange boundaries.
   `--mcp-auth-resource-url` character-for-character.
 - tokens fail after restart: use a persistent RSA signing-key Secret; do not
   rely on the test-mode ephemeral key.
+- `resource is not recognized` from `/authorize` or `/token`: the RFC 8707
+  `resource` the client sent is not in the authorization server's allow-list.
+  `MCP_AUTH_RESOURCES` (plural, comma-separated) must list every deployed
+  server's absolute resource URI; `MCP_AUTH_RESOURCE` is the legacy
+  single-value form and only applies when the plural is unset. Setup derives
+  both from the deployed servers — see
+  `internal/cli/setup/platform/mcp_auth_server.go`.
+- `403` with an empty body from an ungoverned resource server: its metadata is
+  missing `scopes_supported`. See [Advertise every scope you
+  enforce](#advertise-every-scope-you-enforce).
+- discovery returns `404 page not found` for a path-mounted issuer: the client
+  requests the RFC 8414 §3.1 location,
+  `/.well-known/oauth-authorization-server/<issuer path>`, not
+  `<issuer>/.well-known/oauth-authorization-server`. Fix this in the
+  authorization server; do not add an ingress rewrite, which only papers over
+  it for one deployment.
+- a real client fails while `curl` succeeds: read the client's own log — it
+  performs discovery, metadata schema validation, DCR, and PKCE that `curl`
+  does not. Recipe and symptom table:
+  `.codex/skills/mcp-runtime-troubleshooting/reference.md`.

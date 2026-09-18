@@ -1,0 +1,6 @@
+# Pinned to the mcp-auth commit that adds protected_resource_metadata and the
+# insufficient_scope challenge helper. Move to a released version once
+# mcp-auth tags it.
+mcp-auth-client @ git+https://github.com/Agent-Hellboy/mcp-auth.git@2fb35ce#subdirectory=auth-client/python
+starlette==0.42.0
+uvicorn==0.34.0
