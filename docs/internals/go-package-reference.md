@@ -6560,6 +6560,7 @@ type AnalyticsImageSet struct {
 	AnalyticsAPI  string
 	Processor     string
 	UI            string
+	DoctorSmoke   string
 	Traefik       string
 	ClickHouse    string
 	Kafka         string

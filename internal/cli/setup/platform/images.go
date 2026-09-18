@@ -362,6 +362,7 @@ func prepareAnalyticsImages(logger *zap.Logger, extRegistry *config.ExternalRegi
 		AnalyticsAPI: analyticsImageFor(extRegistry, analyticsComponents[3].Repository),
 		Processor:    analyticsImageFor(extRegistry, analyticsComponents[4].Repository),
 		UI:           analyticsImageFor(extRegistry, analyticsComponents[5].Repository),
+		DoctorSmoke:  analyticsImageFor(extRegistry, analyticsComponents[6].Repository),
 	}
 	if !testMode {
 	}
@@ -513,6 +514,8 @@ func assignAnalyticsImage(images *AnalyticsImageSet, repository, image string) {
 		images.Processor = image
 	case "mcp-sentinel-ui":
 		images.UI = image
+	case "mcp-runtime-doctor-smoke":
+		images.DoctorSmoke = image
 	}
 }
 

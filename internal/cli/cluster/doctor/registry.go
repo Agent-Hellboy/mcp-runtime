@@ -3,6 +3,7 @@ package doctor
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -228,10 +229,15 @@ func checkMCPServersImagePullSmoke(kubectl core.KubectlRunner, namespace string)
 		}
 	}
 	if err := waitForDoctorPodImagePulled(kubectl, podName, namespace, 90*time.Second); err != nil {
+		describe, describeErr := readKubectlOutput(kubectl, []string{"describe", "pod", podName, "-n", namespace})
+		detail := fmt.Sprintf("pod image was not pulled: %v", err)
+		if describeErr == nil && strings.TrimSpace(describe) != "" {
+			detail += "; " + firstMatchingSnippet(describe, "Events:", "Failed", "ErrImagePull", "ImagePullBackOff", "Back-off")
+		}
 		return DoctorCheck{
 			Name:   "mcp-servers image pull smoke",
 			OK:     false,
-			Detail: fmt.Sprintf("pod image was not pulled: %v", err),
+			Detail: detail,
 			Remedy: "inspect pod events: `kubectl -n mcp-servers describe pod " + podName + "`",
 		}
 	}
@@ -833,6 +839,14 @@ func hasRegistryHTTPPullMismatchMessage(messages []string) bool {
 func checkMCPServerReconcileSmoke(kubectl core.KubectlRunner, namespace string) DoctorCheck {
 	target := resolveDoctorSmokeTarget(kubectl, namespace)
 	name := fmt.Sprintf("doctor-smoke-%d", time.Now().UnixNano()%1_000_000)
+	ingressClass := strings.TrimSpace(os.Getenv("MCP_DEFAULT_INGRESS_CLASS"))
+	if ingressClass == "" {
+		ingressClass = "traefik"
+	}
+	ingressEntryPoints := strings.TrimSpace(os.Getenv("MCP_DEFAULT_INGRESS_ENTRYPOINTS"))
+	if ingressEntryPoints == "" {
+		ingressEntryPoints = "web"
+	}
 	manifest := fmt.Sprintf(`apiVersion: mcpruntime.org/v1alpha1
 kind: MCPServer
 metadata:
@@ -843,10 +857,10 @@ spec:
   port: %d
   servicePort: 80
   publicPathPrefix: %s
-  ingressClass: traefik
+  ingressClass: %s
   ingressAnnotations:
-    traefik.ingress.kubernetes.io/router.entrypoints: web
-`, name, namespace, strings.TrimSpace(target.Image), target.Port, name)
+    traefik.ingress.kubernetes.io/router.entrypoints: %s
+`, name, namespace, strings.TrimSpace(target.Image), target.Port, name, ingressClass, ingressEntryPoints)
 	cleanup := func() {
 		_ = kubectl.Run([]string{"delete", "mcpserver", name, "-n", namespace, "--ignore-not-found"})
 		_ = kubectl.Run([]string{"delete", "deploy", name, "-n", namespace, "--ignore-not-found"})

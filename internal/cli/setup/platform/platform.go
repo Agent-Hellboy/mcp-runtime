@@ -84,6 +84,7 @@ type AnalyticsImageSet struct {
 	AnalyticsAPI  string
 	Processor     string
 	UI            string
+	DoctorSmoke   string
 	Traefik       string
 	ClickHouse    string
 	Kafka         string
@@ -130,6 +131,12 @@ var analyticsComponents = []analyticsComponent{
 		Name:         "ui",
 		Repository:   "mcp-sentinel-ui",
 		Dockerfile:   "services/ui/Dockerfile",
+		BuildContext: ".",
+	},
+	{
+		Name:         "doctor-smoke",
+		Repository:   "mcp-runtime-doctor-smoke",
+		Dockerfile:   "services/doctor-smoke/Dockerfile",
 		BuildContext: ".",
 	},
 }

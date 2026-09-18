@@ -57,6 +57,12 @@ default. Override the path with `MCP_DEPLOY_ENV=/path/to/other.env`. See
 | Variable | Required | Used by | Purpose |
 |----------|----------|---------|---------|
 | `MCP_IMAGE_PLATFORM` | strongly recommended | setup, rollout | Target OS/arch for images built on your workstation (for example `linux/amd64` when nodes are amd64). Omitting on an arm64 laptop builds images nodes cannot run. |
+| `MCP_KUBERNETES_API_PORT` | optional | setup manifest rendering | Host-facing Kubernetes API port allowed for runtime-api egress. Defaults to `6443` for k3s; doctor detects the live endpoint port. |
+| `MCP_DOCTOR_SMOKE_IMAGE` | optional | cluster doctor | Internal image for doctor smoke pods when public registries are unavailable or blocked. |
+| `MCP_CLUSTER_DOMAIN` | optional | setup manifest rendering | Kubernetes Service DNS suffix. Defaults to `cluster.local`. |
+| `MCP_DNS_LABEL_KEY` / `MCP_DNS_LABEL_VALUE` | optional | setup NetworkPolicy rendering | Override the kube-system DNS pod selector when it is not `k8s-app=kube-dns`. |
+| `MCP_STORAGE_CLASS` | optional | setup manifest rendering, doctor | StorageClass for persistent workloads. Defaults to `local-path` in the local profile. |
+| `MCP_DEFAULT_INGRESS_CLASS` / `MCP_DEFAULT_INGRESS_ENTRYPOINTS` | optional | operator/doctor smoke | Ingress class and entrypoint used for generated smoke resources. |
 | `MCP_REGISTRY_ENDPOINT` | yes (`bundled-https`) | setup, rollout (via configmap patch) | Hostname nodes use to **pull** platform and tenant images. With public TLS, set to `registry.<domain>` — **not** the registry Service ClusterIP. |
 | `MCP_REGISTRY_INGRESS_HOST` | optional | rollout, CLI build/push | Public registry hostname for `docker push` / `registry push`. Defaults from `MCP_PLATFORM_DOMAIN` when unset. |
 | `MCP_REGISTRY_HOST` | do not set | — | Public ingress hostname; derived from `MCP_PLATFORM_DOMAIN`. Do not use as the internal pull URL. |
