@@ -1594,6 +1594,60 @@ func TestCheckSentinelSecretsReportsInvalidBase64(t *testing.T) {
 	}
 }
 
+func TestCheckRuntimeAPIKubernetesAPIEgressUsesLiveEndpointPort(t *testing.T) {
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			switch {
+			case contains(spec.Args, "namespace"):
+				return &core.MockCommand{OutputData: []byte(doctorSentinelNamespace)}
+			case contains(spec.Args, "endpoints"):
+				return &core.MockCommand{OutputData: []byte("9443\n")}
+			case contains(spec.Args, "networkpolicy"):
+				return &core.MockCommand{OutputData: []byte(`{"spec":{"egress":[{"to":[{"ipBlock":{"cidr":"0.0.0.0/0"}}],"ports":[{"port":443},{"port":9443}]}]}}`)}
+			default:
+				return &core.MockCommand{}
+			}
+		},
+	}
+	check := checkRuntimeAPIKubernetesAPIEgress(core.NewTestKubectlClient(mock))
+	if !check.OK {
+		t.Fatalf("expected non-standard live API port to pass, got detail=%q", check.Detail)
+	}
+	if !strings.Contains(check.Detail, "9443") {
+		t.Fatalf("expected detail to name detected endpoint port, got %q", check.Detail)
+	}
+}
+
+func TestCheckSentinelRuntimeCatalogProbeChecksServersAndTools(t *testing.T) {
+	var runs int
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			switch {
+			case contains(spec.Args, "namespace"):
+				return &core.MockCommand{OutputData: []byte(doctorSentinelNamespace)}
+			case contains(spec.Args, "jsonpath={.data.ADMIN_API_KEYS}"):
+				return &core.MockCommand{OutputData: []byte("YWRtaW4=")}
+			case len(spec.Args) > 0 && spec.Args[0] == "run":
+				runs++
+				return &core.MockCommand{OutputData: []byte("pod/doctor-sentinel-catalog created\n")}
+			case contains(spec.Args, "jsonpath={.status.phase}"):
+				return &core.MockCommand{OutputData: []byte("Succeeded")}
+			case len(spec.Args) > 0 && spec.Args[0] == "logs":
+				return &core.MockCommand{OutputData: []byte("200")}
+			default:
+				return &core.MockCommand{}
+			}
+		},
+	}
+	check := checkSentinelRuntimeCatalogProbe(core.NewTestKubectlClient(mock))
+	if !check.OK {
+		t.Fatalf("expected catalog probe to pass, got detail=%q", check.Detail)
+	}
+	if runs != 2 {
+		t.Fatalf("expected servers and tools probes, got %d run pods", runs)
+	}
+}
+
 func TestRemediationHintPerDistro(t *testing.T) {
 	for _, d := range []Distribution{DistroK3s, DistroKind, DistroMinikube, DistroDockerDesktop, DistroGeneric} {
 		hint := remediationHint(d)

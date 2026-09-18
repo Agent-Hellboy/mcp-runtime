@@ -4,10 +4,78 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"mcp-runtime/internal/cli/core"
 )
+
+type doctorEgressNetworkPolicy struct {
+	Spec struct {
+		Egress []struct {
+			To []struct {
+				IPBlock *struct {
+					CIDR string `json:"cidr"`
+				} `json:"ipBlock"`
+			} `json:"to"`
+			Ports []struct {
+				Port int `json:"port"`
+			} `json:"ports"`
+		} `json:"egress"`
+	} `json:"spec"`
+}
+
+// checkRuntimeAPIKubernetesAPIEgress validates the actual endpoint port rather
+// than assuming every Kubernetes distribution exposes the API on 6443. This
+// catches the especially subtle failure where /health is green but all runtime
+// inventory calls fail when the API server is reached through a NetworkPolicy.
+func checkRuntimeAPIKubernetesAPIEgress(kubectl core.KubectlRunner) DoctorCheck {
+	if _, err := readKubectlOutput(kubectl, []string{"get", "namespace", doctorSentinelNamespace, "-o", "jsonpath={.metadata.name}"}); err != nil {
+		return DoctorCheck{Name: "runtime API Kubernetes API egress", OK: true, Detail: "namespace mcp-sentinel not found; skipping runtime API egress check"}
+	}
+	portsRaw, err := readKubectlOutput(kubectl, []string{"get", "endpoints", "kubernetes", "-o", `jsonpath={range .subsets[*].ports[*]}{.port}{"\n"}{end}`})
+	if err != nil {
+		return DoctorCheck{Name: "runtime API Kubernetes API egress", OK: false, Detail: fmt.Sprintf("failed reading Kubernetes API endpoint ports: %v", err), Remedy: "verify the kubernetes Service/Endpoints object and kubectl access"}
+	}
+	ports := make([]int, 0, 2)
+	for _, line := range strings.Split(portsRaw, "\n") {
+		port, parseErr := strconv.Atoi(strings.TrimSpace(line))
+		if parseErr == nil && port > 0 {
+			ports = append(ports, port)
+		}
+	}
+	if len(ports) == 0 {
+		return DoctorCheck{Name: "runtime API Kubernetes API egress", OK: false, Detail: "Kubernetes Service has no usable endpoint port", Remedy: "restore Kubernetes API endpoints before using the runtime catalog"}
+	}
+	policyRaw, err := readNetworkPolicyJSON(kubectl, doctorSentinelNamespace, "mcp-runtime-api-platform-egress")
+	if err != nil {
+		return DoctorCheck{Name: "runtime API Kubernetes API egress", OK: false, Detail: fmt.Sprintf("failed reading runtime API NetworkPolicy: %v", err), Remedy: "apply k8s/22-split-api-networkpolicy.yaml or configure the runtime API egress policy"}
+	}
+	var policy doctorEgressNetworkPolicy
+	if err := json.Unmarshal([]byte(policyRaw), &policy); err != nil {
+		return DoctorCheck{Name: "runtime API Kubernetes API egress", OK: false, Detail: fmt.Sprintf("runtime API NetworkPolicy is invalid JSON: %v", err), Remedy: "reapply the runtime API NetworkPolicy"}
+	}
+	for _, endpointPort := range ports {
+		for _, rule := range policy.Spec.Egress {
+			public := false
+			for _, peer := range rule.To {
+				if peer.IPBlock != nil && peer.IPBlock.CIDR == "0.0.0.0/0" {
+					public = true
+				}
+			}
+			if !public {
+				continue
+			}
+			for _, port := range rule.Ports {
+				if port.Port == endpointPort {
+					return DoctorCheck{Name: "runtime API Kubernetes API egress", OK: true, Detail: fmt.Sprintf("runtime API egress allows Kubernetes API endpoint port %d", endpointPort)}
+				}
+			}
+		}
+		return DoctorCheck{Name: "runtime API Kubernetes API egress", OK: false, Detail: fmt.Sprintf("runtime API NetworkPolicy does not allow Kubernetes API endpoint port %d", endpointPort), Remedy: fmt.Sprintf("allow TCP %d in mcp-runtime-api-platform-egress (configure MCP_KUBERNETES_API_PORT if this is a non-standard cluster)", endpointPort)}
+	}
+	return DoctorCheck{Name: "runtime API Kubernetes API egress", OK: false, Detail: "runtime API NetworkPolicy has no public egress rule for Kubernetes API endpoints", Remedy: "allow the Kubernetes API endpoint through mcp-runtime-api-platform-egress"}
+}
 
 func checkPlatformAPILiveInventoryNetworkPolicy(kubectl core.KubectlRunner) DoctorCheck {
 	out, err := readKubectlOutput(kubectl, []string{"get", "mcpservers", "-A", "-o", buildMCPServerNamespaceJSONPath()})

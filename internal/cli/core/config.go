@@ -20,7 +20,10 @@ type CLIConfig struct {
 	HelperPodTimeout  time.Duration
 
 	// Registry settings
-	RegistryPort        int
+	RegistryPort int
+	// KubernetesAPIPort is the host-facing Kubernetes API port used by the
+	// runtime API NetworkPolicy on distributions such as k3s.
+	KubernetesAPIPort   int
 	RegistryEndpoint    string
 	RegistryIngressHost string
 	// McpIngressHost is the public gateway / MCP host (e.g. mcp.mcpruntime.com), from
@@ -57,6 +60,7 @@ const (
 	defaultCertTimeout         = 60 * time.Second
 	defaultHelperPodTimeout    = 3 * time.Minute
 	defaultRegistryPort        = 5000
+	defaultKubernetesAPIPort   = 6443
 	defaultRegistryEndpoint    = "registry.local" // used by build paths; same default as metadata.DefaultRegistryHost
 	defaultRegistryIngressHost = "registry.local"
 	// Exported aliases for tests and subpackages (same values as above).
@@ -81,6 +85,7 @@ func LoadCLIConfig() *CLIConfig {
 		CertTimeout:                 parseDurationEnv("MCP_CERT_TIMEOUT", defaultCertTimeout),
 		HelperPodTimeout:            parseDurationEnv("MCP_HELPER_POD_TIMEOUT", defaultHelperPodTimeout),
 		RegistryPort:                parseIntEnv("MCP_REGISTRY_PORT", defaultRegistryPort),
+		KubernetesAPIPort:           parseIntEnv("MCP_KUBERNETES_API_PORT", defaultKubernetesAPIPort),
 		RegistryEndpoint:            registryEndpoint,
 		RegistryIngressHost:         registryIngressHost,
 		McpIngressHost:              mcpIngressHost,

@@ -694,6 +694,13 @@ func removePathBasedSentinelIngresses() error {
 
 func renderAnalyticsManifest(content string, images AnalyticsImageSet, imagePullSecretName, platformMode string) (string, error) {
 	replacements := map[string]string{}
+	if strings.Contains(content, "# MCP_KUBERNETES_API_PORT") {
+		port := core.DefaultCLIConfig.KubernetesAPIPort
+		if port < 1 || port > 65535 {
+			return "", fmt.Errorf("MCP_KUBERNETES_API_PORT must be between 1 and 65535, got %d", port)
+		}
+		replacements["port: 6443 # MCP_KUBERNETES_API_PORT"] = fmt.Sprintf("port: %d # MCP_KUBERNETES_API_PORT", port)
+	}
 	if mode, ok := setupplan.NormalizePlatformMode(platformMode); ok && mode != "" {
 		replacements[`PLATFORM_MODE: "tenant"`] = fmt.Sprintf(`PLATFORM_MODE: "%s"`, mode)
 	}

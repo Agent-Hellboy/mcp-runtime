@@ -3521,7 +3521,10 @@ type CLIConfig struct {
 	HelperPodTimeout  time.Duration
 
 	// Registry settings
-	RegistryPort        int
+	RegistryPort int
+	// KubernetesAPIPort is the host-facing Kubernetes API port used by the
+	// runtime API NetworkPolicy on distributions such as k3s.
+	KubernetesAPIPort   int
 	RegistryEndpoint    string
 	RegistryIngressHost string
 	// McpIngressHost is the public gateway / MCP host (e.g. mcp.mcpruntime.com), from

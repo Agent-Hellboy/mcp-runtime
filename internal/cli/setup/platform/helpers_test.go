@@ -2127,6 +2127,30 @@ spec:
 	}
 }
 
+func TestRenderAnalyticsManifestUsesConfigurableKubernetesAPIPort(t *testing.T) {
+	original := core.DefaultCLIConfig
+	t.Cleanup(func() { core.DefaultCLIConfig = original })
+	core.DefaultCLIConfig = &core.CLIConfig{KubernetesAPIPort: 9443}
+	content := "egress:\n- ports:\n  - protocol: TCP\n    port: 6443 # MCP_KUBERNETES_API_PORT\n"
+	rendered, err := renderAnalyticsManifest(content, AnalyticsImageSet{}, "", setupplan.PlatformModeTenant)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(rendered, "port: 9443 # MCP_KUBERNETES_API_PORT") {
+		t.Fatalf("expected configured Kubernetes API port, got %q", rendered)
+	}
+}
+
+func TestRenderAnalyticsManifestRejectsInvalidKubernetesAPIPort(t *testing.T) {
+	original := core.DefaultCLIConfig
+	t.Cleanup(func() { core.DefaultCLIConfig = original })
+	core.DefaultCLIConfig = &core.CLIConfig{KubernetesAPIPort: 70000}
+	_, err := renderAnalyticsManifest("port: 6443 # MCP_KUBERNETES_API_PORT\n", AnalyticsImageSet{}, "", setupplan.PlatformModeTenant)
+	if err == nil || !strings.Contains(err.Error(), "MCP_KUBERNETES_API_PORT") {
+		t.Fatalf("expected invalid port error, got %v", err)
+	}
+}
+
 func TestDeployAnalyticsManifestsWithKubectl_RecreatesInitializationJobs(t *testing.T) {
 	orig := core.DefaultCLIConfig
 	t.Cleanup(func() {
