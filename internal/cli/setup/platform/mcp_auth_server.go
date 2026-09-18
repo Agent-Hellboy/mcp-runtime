@@ -196,6 +196,12 @@ func renderMCPAuthServerManifest(raw string, opts mcpAuthServerOptions) (string,
 
 	manifest := strings.ReplaceAll(raw, "image: docker.io/princekrroshan01/mcp-auth-server:latest", "image: "+opts.Image)
 	manifest = strings.ReplaceAll(manifest, "MCP_AUTH_ISSUER_VALUE", issuer)
+	// Every resolved resource has to reach the authorization server, not just
+	// the first: a deployment fronting two MCP servers would otherwise mint
+	// tokens for one of them and reject the other's resource parameter with
+	// "resource is not recognized" at /authorize. MCP_AUTH_RESOURCES is the
+	// multi-resource setting and takes precedence server-side.
+	manifest = strings.ReplaceAll(manifest, "MCP_AUTH_RESOURCES_VALUE", strconv.Quote(strings.Join(resources, ",")))
 	manifest = strings.ReplaceAll(manifest, "MCP_AUTH_RESOURCE_VALUE", strconv.Quote(resources[0]))
 	// Quoted: a container env value is a string, and a bare true/false renders
 	// as a YAML boolean that the API server rejects on the EnvVar.Value field.
@@ -341,6 +347,7 @@ func unresolvedManifestPlaceholders(manifest string) []string {
 	var remaining []string
 	for _, placeholder := range []string{
 		"MCP_AUTH_ISSUER_VALUE",
+		"MCP_AUTH_RESOURCES_VALUE",
 		"MCP_AUTH_RESOURCE_VALUE",
 		"MCP_AUTH_LOCAL_DEVELOPMENT_VALUE",
 		"MCP_AUTH_LOCAL_TOKEN_EXCHANGE_VALUE",

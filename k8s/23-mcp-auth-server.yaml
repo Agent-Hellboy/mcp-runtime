@@ -5,14 +5,6 @@ spec:
   stripPrefix:
     prefixes: [/mcp-auth]
 ---
-apiVersion: traefik.io/v1alpha1
-kind: Middleware
-metadata: {name: mcp-auth-server-discovery-rewrite, namespace: mcp-sentinel}
-spec:
-  replacePathRegex:
-    regex: ^/\.well-known/(oauth-authorization-server|openid-configuration)/mcp-auth$
-    replacement: /.well-known/$1
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -38,6 +30,11 @@ spec:
           ports: [{containerPort: 8080}]
           env:
             - {name: MCP_AUTH_ISSUER, value: "MCP_AUTH_ISSUER_VALUE"}
+            # Plural wins in the authorization server when both are set. The
+            # singular is kept for compatibility with an older image that only
+            # reads MCP_AUTH_RESOURCE; it carries the first resource so such an
+            # image still serves at least one.
+            - {name: MCP_AUTH_RESOURCES, value: MCP_AUTH_RESOURCES_VALUE}
             - {name: MCP_AUTH_RESOURCE, value: MCP_AUTH_RESOURCE_VALUE}
             - {name: MCP_AUTH_LISTEN_ADDR, value: ":8080"}
             - {name: MCP_AUTH_LOCAL_DEVELOPMENT, value: "MCP_AUTH_LOCAL_DEVELOPMENT_VALUE"}
@@ -103,7 +100,7 @@ metadata:
   name: mcp-auth-server
   namespace: mcp-sentinel
   annotations:
-    traefik.ingress.kubernetes.io/router.middlewares: mcp-sentinel-mcp-auth-server-discovery-rewrite@kubernetescrd,mcp-sentinel-mcp-auth-server-strip-prefix@kubernetescrd
+    traefik.ingress.kubernetes.io/router.middlewares: mcp-sentinel-mcp-auth-server-strip-prefix@kubernetescrd
 spec:
   ingressClassName: traefik
 # Rendered by internal/cli/setup/platform/mcp_auth_server.go. The placeholder
@@ -117,6 +114,8 @@ MCP_AUTH_INGRESS_TLS_BLOCK
           - path: /mcp-auth
             pathType: Prefix
             backend: {service: {name: mcp-auth-server, port: {number: 8080}}}
+          # The authorization server serves these itself (RFC 8414 section 3.1
+          # for a path-mounted issuer); Traefik only has to route them to it.
           - path: /.well-known/oauth-authorization-server/mcp-auth
             pathType: Exact
             backend: {service: {name: mcp-auth-server, port: {number: 8080}}}
