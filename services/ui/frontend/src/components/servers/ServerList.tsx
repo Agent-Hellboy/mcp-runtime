@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-import { Button, ButtonLink } from "../../ui/Button";
+import { Button } from "../../ui/Button";
 import { CopyButton } from "../../ui/CopyButton";
 import { StatusBadge } from "../../ui/Badge";
 import { Icon } from "../../ui/Icon";
@@ -220,32 +220,29 @@ export function ServerList({
 
                 {hasObservability ? (
                   <div className="server-card-observability" data-testid="server-card-observability">
+                    <span className="observability-label">Metrics</span>
                     {observability?.grafana.available && observability.grafana.url ? (
-                      <ButtonLink
-                        variant="ghost"
-                        size="sm"
+                      <a
+                        className="quiet-link"
                         href={observability.grafana.url}
                         target="_blank"
                         rel="noreferrer"
-                        trailingIcon="external"
                         data-testid="server-card-grafana-link"
                       >
-                        Grafana dashboard
-                      </ButtonLink>
+                        Grafana <Icon name="external" size={11} />
+                      </a>
                     ) : null}
                     {observability?.prometheus.queries.map((query) => (
-                      <ButtonLink
+                      <a
                         key={query.id}
-                        variant="ghost"
-                        size="sm"
+                        className="quiet-link"
                         href={query.url}
                         target="_blank"
                         rel="noreferrer"
-                        trailingIcon="external"
                         title={query.description}
                       >
-                        {query.name}
-                      </ButtonLink>
+                        {query.name} <Icon name="external" size={11} />
+                      </a>
                     ))}
                   </div>
                 ) : null}
@@ -279,6 +276,7 @@ export function ServerList({
                       variant="ghost"
                       size="sm"
                       icon="trash"
+                      className="card-action-end"
                       busy={retiringKey === key}
                       data-testid="server-card-retire"
                       onClick={() => onRetire(server)}

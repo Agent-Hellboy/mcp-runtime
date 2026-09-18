@@ -884,3 +884,38 @@
   font-size: var(--fs-meta);
   color: var(--text-secondary);
 }
+
+/* Observability is reference material, not an action: quiet links on one row. */
+.observability-label {
+  font-size: var(--fs-meta);
+  font-weight: 600;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.quiet-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--fs-meta);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.quiet-link:hover {
+  color: var(--link);
+}
+
+.server-card-observability {
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  padding-top: var(--space-1);
+  border-top: 1px solid var(--border);
+}
+
+/* Destructive card actions sit apart from the primary run. */
+.card-action-end {
+  margin-left: auto;
+  color: var(--danger);
+}
