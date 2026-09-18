@@ -274,6 +274,8 @@ func doctorCheckSpecs(kubectl core.KubectlRunner, distro Distribution) []doctorC
 		{Name: "sentinel ingest readiness", Detail: "checking the analytics ingest deployment is ready", Run: func() DoctorCheck { return checkSentinelIngestReadiness(kubectl) }},
 		{Name: "sentinel platform API readiness", Detail: "checking the platform-api deployment and /health + /ready endpoints", Run: func() DoctorCheck { return checkSentinelPlatformAPIReadiness(kubectl) }},
 		{Name: "sentinel analytics API readiness", Detail: "checking the analytics-api deployment and /health + /ready endpoints", Run: func() DoctorCheck { return checkSentinelAnalyticsAPIReadiness(kubectl) }},
+		{Name: "sentinel telemetry pipeline", Detail: "checking the collector Service, endpoints, workload, and trace pipeline configuration", Run: func() DoctorCheck { return checkSentinelTelemetryPipeline(kubectl) }},
+		{Name: "persistent volume claims", Detail: "checking that discovered PVCs are Bound", Run: func() DoctorCheck { return checkPersistentVolumeClaims(kubectl) }},
 		{Name: "runtime API Kubernetes API egress", Detail: "checking the runtime-api NetworkPolicy allows the cluster's actual Kubernetes API endpoint port", Run: func() DoctorCheck { return checkRuntimeAPIKubernetesAPIEgress(kubectl) }},
 		{Name: "cluster image architecture", Detail: "checking MCP_IMAGE_PLATFORM matches Kubernetes node architectures", Run: func() DoctorCheck { return checkClusterImageArchitecture(kubectl) }},
 		{Name: "DNS NetworkPolicy portability", Detail: "checking runtime-api egress matches the cluster's actual DNS pod labels", Run: func() DoctorCheck { return checkDNSNetworkPolicyPortability(kubectl) }},
@@ -300,6 +302,9 @@ func doctorCheckSpecs(kubectl core.KubectlRunner, distro Distribution) []doctorC
 
 func doctorSetupCheckSpecs(kubectl core.KubectlRunner, distro Distribution) []doctorCheckSpec {
 	return []doctorCheckSpec{
+		{Name: "Kubernetes nodes ready", Detail: "checking that the Kubernetes API is reachable and every node is Ready", Run: func() DoctorCheck { return checkClusterNodesReady(kubectl) }},
+		{Name: "node capacity", Detail: "checking allocatable node capacity before scheduling Runtime workloads", Run: func() DoctorCheck { return checkNodeCapacity(kubectl) }},
+		{Name: "storage class readiness", Detail: "discovering the default or configured StorageClass before setup", Run: func() DoctorCheck { return checkStorageClassReadiness(kubectl) }},
 		{Name: "traefik ingressClass", Detail: "checking that the traefik IngressClass exists", Run: func() DoctorCheck { return checkTraefikIngressClass(kubectl) }},
 		{Name: "traefik deployment readiness", Detail: "reading ready and desired replicas for Traefik", Run: func() DoctorCheck { return checkTraefikDeploymentReady(kubectl, distro) }},
 		{Name: "traefik web entrypoint", Detail: "checking the Traefik Service ports for the web entrypoint", Run: func() DoctorCheck { return checkTraefikWebEntrypoint(kubectl, distro) }},

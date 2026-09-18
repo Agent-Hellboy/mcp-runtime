@@ -44,9 +44,8 @@ verification.
 
 `./bin/mcp-runtime cluster doctor` is useful in both modes. For the bundled
 registry it probes the in-cluster `registry/registry` Service and selects HTTP
-or HTTPS from the installed registry state: if `registry/registry-internal-tls`
-exists, doctor probes `https://registry.registry.svc.cluster.local:5000/v2/`;
-otherwise it probes the plain HTTP service. If you run with a provisioned
+or HTTPS from the installed registry state, using the Service DNS name and
+discovered Service port. If you run with a provisioned
 external registry, interpret bundled-registry-specific failures against your
 registry architecture instead of copying the local workaround literally.
 
@@ -436,7 +435,8 @@ For `setup --test-mode` with the bundled plain HTTP registry, the same
 containerd mirror requirement applies because setup still builds and pushes
 operator, gateway proxy, and Sentinel images, then deploys pods that pull those
 images. On k3s hosts where `~/.kube/config` is empty or minimal, pass
-`--kubeconfig /etc/rancher/k3s/k3s.yaml` to setup.
+`--kubeconfig /etc/rancher/k3s/k3s.yaml` to setup and doctor. Both commands
+auto-detect that path when the default kubeconfig is absent.
 
 The fastest path is to **preconfigure the steps below before running setup** so
 the host k3s pulls from is already trusted on first attempt. If you skip that
@@ -626,7 +626,7 @@ curl -s http://127.0.0.1:32000/v2/_catalog
 getent hosts registry.local
 
 # Post-install diagnostics via the CLI (see below)
-./bin/mcp-runtime cluster doctor
+./bin/mcp-runtime cluster doctor --after-setup
 ```
 
 ## Failure-to-cause map
@@ -658,19 +658,28 @@ Missing pieces are warnings, not errors — the command surfaces them so you can
 
 ## `cluster doctor`
 
-`./bin/mcp-runtime cluster doctor` runs post-install diagnostics by default:
+`./bin/mcp-runtime cluster doctor --after-setup` runs post-install diagnostics. Pass
+`--kubeconfig /path/to/config` when the active kubeconfig is not already selected;
+when omitted, setup and doctor use `~/.kube/config` and automatically fall back to
+`/etc/rancher/k3s/k3s.yaml` on k3s hosts. Set `MCP_CLUSTER_DOMAIN` when the
+cluster uses a Service DNS suffix other than `cluster.local`; setup-generated
+internal URLs and doctor probes honor that value.
 
 - Detects your distribution (k3s / kind / minikube / docker-desktop / generic).
 - Checks the installed MCP Runtime namespaces, CRDs, operator, Traefik ingress, registry, Sentinel, and MCPServer reconciliation path. The MCPServer smoke uses an existing ready app image when available; otherwise it falls back to `registry.k8s.io/pause:3.9` and validates deployment/service/ingress reconciliation plus pod scheduling without a TCP readiness wait.
 - Prefers k3s' bundled Traefik in `kube-system/traefik` when the active cluster is k3s, then falls back to the repo-managed `traefik/traefik` install.
 - `setup` follows the same ownership model: it reuses active external Traefik and refuses to force-install the repo-managed Traefik when that would create a second active stack.
 - Verifies registry reachability, registry image-pull smoke behavior, and common pod image-pull failures. The bundled registry reachability probe uses HTTPS when `registry/registry-internal-tls` is installed, and HTTP otherwise.
+- Discovers the cluster's default `StorageClass` when `MCP_STORAGE_CLASS` is not set, validates the selected class against node topology, and reports PVCs that are not `Bound`.
+- Validates the bundled OpenTelemetry collector's Deployment, Service endpoints, and pipeline ConfigMap so trace-export failures are visible even when application readiness is green.
+- Recognizes the persisted setup test-mode marker and does not require production OIDC credentials for local test clusters; production tenant/public deployments still require a complete Google or generic OIDC contract.
 - Reports `http: server gave HTTP response to HTTPS client` when kubelet/containerd tried HTTPS against the HTTP dev registry, including the affected pod and image where possible.
 - Streams the current check before running it, including helper pod probes and waits, so a slow run shows what it is doing.
 - Prints the distribution-specific registry remediation hint only when registry or image-pull checks fail; Traefik and Sentinel failures use their own check-specific remedies.
 
 For setup preflight, run `./bin/mcp-runtime cluster doctor --for-setup`. That mode focuses on:
 
+- Kubernetes API access, Ready nodes, allocatable capacity, and StorageClass availability before workloads are installed.
 - Traefik ingress readiness and exposure.
 - Public host resolution from `MCP_PLATFORM_DOMAIN` or the explicit `MCP_PLATFORM_INGRESS_HOST`, `MCP_REGISTRY_INGRESS_HOST`, and `MCP_MCP_INGRESS_HOST` env vars.
 - Local DNS resolution for those configured public hosts.
@@ -678,5 +687,9 @@ For setup preflight, run `./bin/mcp-runtime cluster doctor --for-setup`. That mo
 - `MCP_TLS_CLUSTER_ISSUER` existence when configured.
 - `MCP_ACME_EMAIL` HTTP-01 readiness, including whether the active Traefik web entrypoint is on service port `80`.
 
-Run `bootstrap` before `setup` on a fresh cluster. Run `cluster doctor` after
-setup, or use `cluster doctor --for-setup` before a host-based TLS install.
+Run `bootstrap` before `setup` on a fresh cluster, then run `cluster doctor --for-setup`.
+After setup completes, run `cluster doctor --after-setup` to validate the installed
+Runtime, Sentinel, registry, telemetry, PVCs, secrets, APIs, ingress routes, and
+MCPServer reconciliation path. The no-flag form remains an alias for the complete
+post-setup diagnostic for backward compatibility; the two explicit flags cannot be
+combined.

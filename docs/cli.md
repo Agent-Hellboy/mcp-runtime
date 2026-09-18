@@ -638,7 +638,8 @@ mcp-runtime cluster cert status
 mcp-runtime cluster cert apply
 mcp-runtime cluster cert wait --timeout 10m
 
-KUBECONFIG=~/.kube/config mcp-runtime cluster doctor    # 37-point diagnostic
+mcp-runtime cluster doctor --kubeconfig ~/.kube/config --after-setup  # full post-setup diagnostic
+# k3s hosts can use --kubeconfig /etc/rancher/k3s/k3s.yaml; it is auto-detected when ~/.kube/config is absent
 ```
 
 

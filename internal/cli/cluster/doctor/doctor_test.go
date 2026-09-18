@@ -2600,6 +2600,42 @@ func TestCheckSentinelOIDCConfigurationSkipsTestMode(t *testing.T) {
 	}
 }
 
+func TestCheckSentinelTelemetryPipelineSkipsMissingNamespace(t *testing.T) {
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			return &core.MockCommand{OutputErr: errors.New("not found")}
+		},
+	}
+	check := checkSentinelTelemetryPipeline(core.NewTestKubectlClient(mock))
+	if !check.OK || !strings.Contains(check.Detail, "skipping") {
+		t.Fatalf("expected missing optional telemetry stack to be skipped, got %+v", check)
+	}
+}
+
+func TestCheckPersistentVolumeClaimsReportsPendingClaims(t *testing.T) {
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			return &core.MockCommand{OutputData: []byte(`{"items":[{"metadata":{"namespace":"mcp-sentinel","name":"kafka-data-0"},"status":{"phase":"Pending"}}]}`)}
+		},
+	}
+	check := checkPersistentVolumeClaims(core.NewTestKubectlClient(mock))
+	if check.OK || !strings.Contains(check.Detail, "kafka-data-0") {
+		t.Fatalf("expected pending PVC to fail, got %+v", check)
+	}
+}
+
+func TestCheckClusterNodesReadyReportsNotReadyNodes(t *testing.T) {
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			return &core.MockCommand{OutputData: []byte(`{"items":[{"metadata":{"name":"worker-1"},"status":{"conditions":[{"type":"Ready","status":"False"}]}}]}`)}
+		},
+	}
+	check := checkClusterNodesReady(core.NewTestKubectlClient(mock))
+	if check.OK || !strings.Contains(check.Detail, "worker-1") {
+		t.Fatalf("expected not-ready node to fail, got %+v", check)
+	}
+}
+
 func argValueWithPrefix(args []string, prefix string) string {
 	for _, arg := range args {
 		if strings.HasPrefix(arg, prefix) {

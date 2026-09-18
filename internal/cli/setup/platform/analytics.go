@@ -1799,6 +1799,7 @@ func shellQuote(s string) string {
 }
 
 var analyticsHostpathDirs = []string{
+	"/var/lib/mcp-runtime/registry",
 	"/var/lib/mcp-runtime/clickhouse",
 	"/var/lib/mcp-runtime/kafka/0",
 	"/var/lib/mcp-runtime/kafka/1",

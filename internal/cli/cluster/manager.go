@@ -108,7 +108,22 @@ func resolveKubeconfigPath(kubeconfig string) (string, error) {
 		// Note: No logger available in this helper function
 		return "", wrappedErr
 	}
-	return filepath.Join(home, ".kube", "config"), nil
+	defaultPath := filepath.Join(home, ".kube", "config")
+	if _, err := os.Stat(defaultPath); err == nil {
+		return defaultPath, nil
+	}
+
+	// k3s intentionally keeps its administrator kubeconfig outside the user's
+	// home directory. On a k3s host, requiring users to discover and repeat
+	// this path makes an otherwise healthy cluster look unavailable to setup.
+	// Keep an explicitly supplied path authoritative, but safely discover the
+	// standard k3s path when the normal kubeconfig is absent.
+	const k3sPath = "/etc/rancher/k3s/k3s.yaml"
+	if _, err := os.Stat(k3sPath); err == nil {
+		return k3sPath, nil
+	}
+
+	return defaultPath, nil
 }
 
 // ConfigureKubeconfig sets KUBECONFIG and optionally switches context.

@@ -81,7 +81,7 @@ with your platform tooling before continuing.
 `bootstrap` validates kubectl connectivity, CoreDNS, the default
 `StorageClass`, Traefik `IngressClass`, and MetalLB namespace. Warnings only —
 fix gaps with your platform tooling, or `bootstrap --apply --provider k3s` to
-install bundled CoreDNS / local-path on k3s. After setup, run `cluster doctor`
+install bundled CoreDNS / local-path on k3s. Before setup, run `cluster doctor --for-setup`; after setup, run `cluster doctor --after-setup`
 to validate the installed MCP Runtime resources, registry pulls, ingress,
 Sentinel, and operator readiness.
 
@@ -100,7 +100,7 @@ make deps && make build
 kind create cluster --name mcp-runtime
 ./bin/mcp-runtime setup --test-mode --ingress-manifest config/ingress/overlays/http
 kubectl port-forward -n traefik svc/traefik 18080:8000
-./bin/mcp-runtime cluster doctor
+./bin/mcp-runtime cluster doctor --after-setup
 ```
 
 Local surfaces: platform `http://localhost:18080/`, MCP routes `http://localhost:18080/<server-name>/mcp`.

@@ -30,7 +30,7 @@ func SetupHint(detail string) (string, bool) {
 		return "kubectl is missing. Install kubectl and re-run the command.", true
 	case strings.Contains(lower, "kubeconfig"),
 		strings.Contains(lower, "no configuration has been provided"):
-		return "kubeconfig is missing or not readable. Either copy your cluster kubeconfig to ~/.kube/config, or re-run with `./bin/mcp-runtime setup --kubeconfig /etc/rancher/k3s/k3s.yaml` (for k3s) and optionally `--context <name>`.", true
+		return "kubeconfig is missing or not readable. Copy your cluster kubeconfig to ~/.kube/config, or pass --kubeconfig explicitly. On k3s hosts, setup auto-detects /etc/rancher/k3s/k3s.yaml when ~/.kube/config is absent.", true
 	case strings.Contains(lower, "connection refused"),
 		strings.Contains(lower, "unable to connect to the server"),
 		strings.Contains(lower, "context deadline exceeded"),

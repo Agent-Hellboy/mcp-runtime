@@ -354,7 +354,7 @@ Run the platform checks:
 
 ```bash
 ./bin/mcp-runtime status
-./bin/mcp-runtime cluster doctor
+./bin/mcp-runtime cluster doctor --after-setup
 kubectl get pods -A
 kubectl get ingress -A
 kubectl get certificate -A

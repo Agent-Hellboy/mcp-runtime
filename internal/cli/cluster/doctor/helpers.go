@@ -134,6 +134,21 @@ func firstNonEmpty(values []string, fallback string) string {
 	return fallback
 }
 
+// doctorClusterDomain returns the Kubernetes cluster DNS domain used by
+// in-cluster service probes. Kubernetes defaults this to cluster.local, but
+// distributions and operators can be installed with a different domain.
+func doctorClusterDomain() string {
+	domain := strings.TrimSpace(os.Getenv("MCP_CLUSTER_DOMAIN"))
+	if domain == "" {
+		return "cluster.local"
+	}
+	return strings.Trim(strings.TrimSuffix(domain, "."), ".")
+}
+
+func doctorServiceDNS(service, namespace string) string {
+	return fmt.Sprintf("%s.%s.svc.%s", service, namespace, doctorClusterDomain())
+}
+
 func filterNonEmptyLines(value string) []string {
 	raw := strings.Split(value, "\n")
 	out := make([]string, 0, len(raw))
