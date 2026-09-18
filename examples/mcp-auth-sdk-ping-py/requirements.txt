@@ -4,3 +4,4 @@
 mcp-auth-client @ git+https://github.com/Agent-Hellboy/mcp-auth.git@2fb35ce#subdirectory=auth-client/python
 starlette==0.42.0
 uvicorn==0.34.0
+httpx==0.28.1

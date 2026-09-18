@@ -11,8 +11,10 @@ validation — comes from mcp_auth_client.
 from __future__ import annotations
 
 import json
+import logging
 import os
 
+import httpx
 from mcp_auth_client import (
     protected_resource_metadata,
     unauthorized_headers,
@@ -49,20 +51,45 @@ RESOURCE = _required_env("MCP_AUTH_RESOURCE")
 METADATA_URL = _required_env("MCP_AUTH_RESOURCE_METADATA_URL")
 MCP_PATH = os.getenv("MCP_PATH", "/mcp")
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(SERVER_NAME)
+
+JWKS_URL = os.getenv("MCP_AUTH_JWKS_URL", "").strip() or f"{ISSUER}/.well-known/jwks.json"
+SSRF_SAFE = os.getenv("MCP_AUTH_JWKS_SSRF_SAFE", "true").strip().lower() not in {
+    "0",
+    "false",
+    "no",
+    "off",
+}
+
+
+def _jwks_client() -> httpx.AsyncClient | None:
+    """Return the HTTP client used to fetch JWKS, or None for the SDK default.
+
+    The optional cluster-local JWKS URL is reached directly over the Service
+    network, so the request arrives as plain HTTP and mcp-auth's HTTPS guard
+    rejects it with 400. The header records that this is the same trusted
+    backchannel an ingress would forward as HTTPS. Never set this for a URL
+    that leaves the cluster.
+    """
+
+    if not JWKS_URL.startswith("http://"):
+        return None
+    return httpx.AsyncClient(headers={"X-Forwarded-Proto": "https"})
+
+
 # The public issuer is not reachable from inside a pod and the authorization
 # server sits behind an ingress that strips its path prefix, so discovery would
 # look in the wrong place. Pointing at the in-cluster JWKS endpoint skips
 # discovery; issuer and audience are still validated in full against the public
 # values above.
 verifier = JWTVerifier(
-    jwks_uri=os.getenv("MCP_AUTH_JWKS_URL", "").strip() or f"{ISSUER}/.well-known/jwks.json",
+    jwks_uri=JWKS_URL,
     issuer=ISSUER,
     audience=RESOURCE,
     required_scopes=REQUIRED_SCOPES,
-    # The in-cluster JWKS URL is plain HTTP over the Service network. Never
-    # relax this for a URL that leaves the cluster.
-    ssrf_safe=os.getenv("MCP_AUTH_JWKS_SSRF_SAFE", "true").strip().lower()
-    not in {"0", "false", "no", "off"},
+    http_client=_jwks_client(),
+    ssrf_safe=SSRF_SAFE,
 )
 
 # Derived from the verifier, so scopes_supported always names the scope that is
@@ -92,6 +119,10 @@ async def mcp_endpoint(request: Request) -> Response:
     try:
         await verifier.verify(parts[1])
     except TokenVerificationError as error:
+        # The category is safe to log and is the only way to tell a JWKS
+        # problem from a bad token without decoding the bearer value, which is
+        # never logged.
+        logger.warning("token verification failed: %s", error)
         # RFC 6750 section 3: a 403 has to say a scope is missing, or the client
         # cannot tell a recoverable scope problem from a rejected token.
         if "scope" in str(error).lower():
