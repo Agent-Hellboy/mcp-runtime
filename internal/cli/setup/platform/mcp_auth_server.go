@@ -208,6 +208,11 @@ func renderMCPAuthServerManifest(raw string, opts mcpAuthServerOptions) (string,
 	manifest = strings.ReplaceAll(manifest, "MCP_AUTH_LOCAL_DEVELOPMENT_VALUE", strconv.FormatBool(opts.TestMode))
 	manifest = strings.ReplaceAll(manifest, "MCP_AUTH_LOCAL_TOKEN_EXCHANGE_VALUE", strconv.FormatBool(opts.TestMode))
 	manifest = strings.ReplaceAll(manifest, "MCP_AUTH_REQUIRE_HTTPS_VALUE", strconv.FormatBool(!opts.TestMode))
+	// The platform always fronts the authorization server with an ingress
+	// that terminates TLS, and k8s/23-mcp-auth-server.yaml restricts ingress
+	// to that controller, so the forwarded-proto header can be trusted here.
+	// A deployment that exposes the pod directly must not set this.
+	manifest = strings.ReplaceAll(manifest, "MCP_AUTH_TRUST_PROXY_TLS_VALUE", strconv.FormatBool(!opts.TestMode))
 	store := "sqlite"
 	databaseURL := "/data/mcp-auth.db"
 	dataVolume := "persistentVolumeClaim:\n            claimName: mcp-auth-server-data"
@@ -352,6 +357,7 @@ func unresolvedManifestPlaceholders(manifest string) []string {
 		"MCP_AUTH_LOCAL_DEVELOPMENT_VALUE",
 		"MCP_AUTH_LOCAL_TOKEN_EXCHANGE_VALUE",
 		"MCP_AUTH_REQUIRE_HTTPS_VALUE",
+		"MCP_AUTH_TRUST_PROXY_TLS_VALUE",
 		"MCP_AUTH_STORE_VALUE",
 		"MCP_AUTH_DATABASE_URL_VALUE",
 		"MCP_AUTH_DATA_VOLUME_BLOCK",

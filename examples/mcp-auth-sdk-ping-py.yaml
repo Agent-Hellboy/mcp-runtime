@@ -26,11 +26,16 @@ spec:
       value: http://localhost:18080/mcp-auth-sdk-ping-py/mcp
     - name: MCP_AUTH_RESOURCE_METADATA_URL
       value: http://localhost:18080/.well-known/oauth-protected-resource/mcp-auth-sdk-ping-py/mcp
-    # The public issuer is not reachable from inside a pod, so the verifier is
-    # pointed straight at the in-cluster JWKS endpoint. Issuer and audience are
-    # still validated against the public values above.
+    # Kind only. The SDK derives <issuer>/.well-known/jwks.json by default, and
+    # on a real deployment the public HTTPS issuer is reachable from inside the
+    # cluster, so omit both of these and let it fetch over TLS. They exist here
+    # because the Kind ingress is not resolvable from inside a pod; the plain
+    # HTTP endpoint then needs MCP_AUTH_JWKS_SSRF_SAFE=false, which must never
+    # be set for a URL that leaves the cluster.
     - name: MCP_AUTH_JWKS_URL
       value: http://mcp-auth-server.mcp-sentinel.svc.cluster.local:8080/.well-known/jwks.json
+    - name: MCP_AUTH_JWKS_SSRF_SAFE
+      value: "false"
   tools:
     - name: sdk-ping-py
       description: Return pong after Python SDK verification.
