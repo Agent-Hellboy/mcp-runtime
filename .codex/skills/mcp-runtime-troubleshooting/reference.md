@@ -10,13 +10,7 @@ Symptom-oriented remedies. Prefer `cluster doctor` and targeted fixes before ful
 - **Analytics 401:** use gateway/ingest URL and key, not the app’s random env. Example: `ANALYTICS_INGEST_URL=http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events` and `ANALYTICS_API_KEY` from `mcp-sentinel-secrets` (`INGEST_API_KEYS` key).
 - **Kafka `InconsistentClusterIdException`:** Kafka logs and stored metadata describe different clusters. Setup refuses to delete the Kafka PVC automatically. Scale Kafka to zero, delete all three `kafka-data-kafka-{0,1,2}` PVCs when a clean reset is acceptable, then rerun setup.
 - **Kafka KRaft quorum unavailable:** the bundled cluster requires two of three combined broker/controller pods for quorum. Check `kubectl get pods -n mcp-sentinel -l app=kafka -o wide`, then run `kafka-metadata-quorum --bootstrap-server localhost:9092 describe --status` in `kafka-0`. For an intentional clean reset, scale Kafka to zero and delete all three `kafka-data-kafka-{0,1,2}` PVCs before rerunning setup.
-- **ClickHouse and/or Kafka CrashLoopBackOff after long cluster uptime (not `InconsistentClusterIdException`):** local-path PVC data corrupted by an unclean Docker Desktop/Kind VM shutdown, not a code bug — don't chase it as one. Confirm with `kubectl logs -n mcp-sentinel <pod> --previous`: ClickHouse exits 70 with no reason on stdout; Kafka logs `Malformed line in checkpoint file .../replication-offset-checkpoint`. Only the corrupted replica fails (e.g. `kafka-1` can stay healthy while `kafka-0`/`kafka-2` don't); `mcp-sentinel-processor` and `mcp-analytics-api` fail purely downstream with `connect: connection refused` to ClickHouse. Fix: **scale the StatefulSet to zero before deleting the corrupted PVC** — `kubectl delete pod` alone races the StatefulSet controller, which can recreate the pod and reattach the existing (still-corrupted) claim before the PVC deletion lands, leaving the delete stuck on PVC protection and the replacement crash-looping on the same volume:
-  ```bash
-  kubectl scale statefulset -n mcp-sentinel clickhouse --replicas=0   # or kafka
-  kubectl delete pvc -n mcp-sentinel data-clickhouse-0                 # or kafka-data-kafka-<n>
-  kubectl scale statefulset -n mcp-sentinel clickhouse --replicas=1   # kafka: --replicas=3
-  ```
-  Scaling to zero takes down every replica in that StatefulSet, not just the corrupted one — for Kafka, only delete the corrupted replica's own PVC (leave the other `kafka-data-kafka-*` claims alone) so the healthy replicas reattach their intact volumes on scale-up while the corrupted one gets a fresh, empty claim and resyncs from the healthy brokers. Wiping ClickHouse's volume also wipes its schema; `kubectl create job --from=job/clickhouse-init` is not supported on all kubectl versions (`unknown object type *v1.Job`), so replay the init Job's script directly over stdin instead of nesting `sh -c` (parens in the SQL break nested quoting):
+- **ClickHouse and/or Kafka CrashLoopBackOff after long cluster uptime (not `InconsistentClusterIdException`):** local-path PVC data corrupted by an unclean Docker Desktop/Kind VM shutdown, not a code bug — don't chase it as one. Confirm with `kubectl logs -n mcp-sentinel <pod> --previous`: ClickHouse exits 70 with no reason on stdout; Kafka logs `Malformed line in checkpoint file .../replication-offset-checkpoint`. Only the corrupted replica fails (e.g. `kafka-1` can stay healthy while `kafka-0`/`kafka-2` don't); `mcp-sentinel-processor` and `mcp-analytics-api` fail purely downstream with `connect: connection refused` to ClickHouse. Fix: `kubectl delete pod -n mcp-sentinel <replica>` then `kubectl delete pvc -n mcp-sentinel <its PVC>` (`data-clickhouse-0`, `kafka-data-kafka-<n>`) — the StatefulSet recreates both and Kafka resyncs from a healthy broker. Wiping ClickHouse's volume also wipes its schema; `kubectl create job --from=job/clickhouse-init` is not supported on all kubectl versions (`unknown object type *v1.Job`), so replay the init Job's script directly over stdin instead of nesting `sh -c` (parens in the SQL break nested quoting):
   ```bash
   kubectl get job -n mcp-sentinel clickhouse-init \
     -o jsonpath='{.spec.template.spec.containers[0].args[0]}' \
@@ -42,3 +36,97 @@ Symptom-oriented remedies. Prefer `cluster doctor` and targeted fixes before ful
 - **Duplicate Traefik:** setup reuses an active external Traefik such as k3s `kube-system/traefik` and refuses `--force-ingress-install` when that would install repo-managed `traefik/traefik` as a second stack. Remove one Traefik install, or rerun setup with `--ingress none` when your platform ingress is already managed outside this repo. External ingress controllers must provide an equivalent registry admin-auth guard to `/api/v1/registry/authz` before exposing `registry.<domain>` publicly.
 - **Prod registry 404 / image pulls say “not found”:** if `registry-cert` is Ready but pods fail to pull `registry.<domain>/<repo>:<tag>`, check the public registry route with an admin key: `curl -k -i -H "x-api-key: $ADMIN_API_KEY" https://registry.<domain>/v2/`. Expected is HTTP 200 with `docker-distribution-api-version: registry/2.0`; HTTP 401/403 means the route is active but admin auth was missing or rejected; Traefik `404 page not found` means the ingress/router is not active. Check `kubectl logs -n traefik deploy/traefik --tail=120` and `kubectl get ingress registry -n registry -o yaml`. In prod, the registry ingress must not reference the dev-only `pii-redactor@file` middleware.
 - **Prod MCP server URLs:** prefer path-based public routing for clients: `https://mcp.<domain>/<server-name>/mcp`. Use `spec.publicPathPrefix: <server-name>` and set the server’s `MCP_PATH` to `/<server-name>/mcp`; `mcp-runtime server deploy` does this automatically for its default `/<name>/mcp` route. Avoid examples that require a custom `Host` header such as `go.example.local`.
+
+## MCP client-side debugging (Cursor, Claude Desktop)
+
+When a real client cannot connect but `curl` against the server looks fine, **read the
+client's own log before changing anything on the cluster**. The client performs discovery,
+metadata validation, DCR, and PKCE that curl does not, and it is usually the only place the
+real error appears.
+
+### Cursor
+
+```bash
+tail -n 100 ~/Library/Application\ Support/Cursor/logs/**/MCP*.log
+```
+
+Requires `zsh` (default on macOS) or `shopt -s globstar` in bash for `**`. Per log directory:
+
+| File | Contents |
+|------|----------|
+| `MCP user-<server-name>.log` | **The one that matters** — per-server connect attempts, OAuth state machine, validation errors |
+| `MCP Logs.log` | Extension-host level: `Received MCP OAuth return-to-Cursor deeplink`, network connectivity |
+| `MCP canonical-cache.log`, `MCP snapshot-push.log` | Usually empty; ignore |
+
+Cursor creates a **new timestamped log directory per app launch** and a new
+`window<N>_wb<M>` subdirectory per workspace reload, so the tree accumulates dozens of stale
+files. Sort by mtime before trusting anything:
+
+```bash
+ls -t ~/Library/Application\ Support/Cursor/logs/**/MCP\ user-*.log | head -5
+```
+
+A per-server log whose last line is older than your most recent fix means **the client never
+retried** — the log is stale evidence, not a failure. `DeleteClient action, reason:
+mcp_process_client_factory_changed` is the last line when the server was removed or edited in
+`mcp.json`.
+
+### Reading the Cursor OAuth flow
+
+Healthy sequence in `MCP user-<name>.log`:
+
+```
+CreateClient action → MCP OAuth provider initialized → Registration lock acquired
+→ Persisting new OAuth client registration → Saving PKCE code verifier
+→ MCP OAuth redirect to authorization → statusType: needsAuth
+```
+
+`needsAuth` is **not** an error — it means the client is waiting for you to finish the
+browser flow. Completion shows as `Received MCP OAuth return-to-Cursor deeplink` in
+`MCP Logs.log`. A deeplink with no matching per-server activity usually means it was produced
+by a manual/scripted flow using the `cursor://` redirect URI, not by Cursor itself.
+
+### Symptom → cause
+
+- **`Error POSTing to endpoint: 404 page not found`, then `SSE error: Non-200 status code (404)`:**
+  the SSE line is a red herring — Cursor falls back to the deprecated SSE transport after
+  Streamable HTTP fails. Diagnose the **first** 404. Common cause: the authorization server
+  does not serve RFC 8414 discovery for a path-mounted issuer. For issuer
+  `https://auth.<domain>/<path>`, the client requests
+  `/.well-known/oauth-authorization-server/<path>` (RFC 8414 §3.1 — suffix, not
+  `<path>/.well-known/...`). Verify both forms:
+  ```bash
+  curl -s -o /dev/null -w '%{http_code}\n' https://auth.<domain>/.well-known/oauth-authorization-server/<path>
+  curl -s -o /dev/null -w '%{http_code}\n' https://auth.<domain>/.well-known/openid-configuration/<path>
+  ```
+  Do **not** paper this over with a Traefik `replacePathRegex` middleware; the authorization
+  server has to serve it, or every other client hits the same wall.
+- **`Invalid input: expected array, received undefined` for `subject_types_supported` /
+  `id_token_signing_alg_values_supported`:** Cursor validates the discovery document against
+  the **OpenID Connect Discovery** schema, which requires fields RFC 8414 lists as optional.
+  The whole document is rejected, so the flow dies before the browser ever opens. The AS must
+  advertise them even for a pure OAuth 2.1 deployment.
+- **Browser never reaches the upstream IdP (Keycloak) consent page:** check the consent form's
+  `action` attribute. A root-relative `action="/authorize/consent"` 404s when the issuer is
+  path-mounted; it must be absolute and issuer-prefixed.
+  ```bash
+  curl -s '<authorize-url>' | grep -o 'action="[^"]*"'
+  ```
+- **Client re-registers on every attempt:** RFC 7591 requires the registration response to
+  echo `client_id_issued_at`, `grant_types`, `response_types`, and `scope`. Clients that
+  cannot read back what they registered treat the stored registration as unusable.
+- **`400 {"error":"resource is not recognized"}` from the token or authorize endpoint:** the
+  RFC 8707 `resource` the client sends is not in the AS allowlist. On this platform check
+  that `MCP_AUTH_RESOURCES` (plural, comma-separated — **not** just `MCP_AUTH_RESOURCE`)
+  carries every deployed server's absolute resource URI. See
+  `internal/cli/setup/platform/mcp_auth_server.go` and `k8s/23-mcp-auth-server.yaml`.
+
+After any server-side fix, **remove and re-add the server in the client and restart it** —
+Cursor caches the DCR client registration and discovery document per server, so a stale
+registration survives a server redeploy and reproduces the old error.
+
+### Claude Desktop
+
+```bash
+tail -n 100 ~/Library/Logs/Claude/mcp*.log
+```
