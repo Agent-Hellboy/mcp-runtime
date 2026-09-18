@@ -81,7 +81,7 @@ func TestStaticShellLoadsReactBundle(t *testing.T) {
 
 // TestLegacyDashboardAssetsAreGone guards against the legacy static bundle
 // being reintroduced - every workflow it served has an accepted React route
-// (docs/ui-legacy-retirement-inventory.md).
+// before the legacy bundle can return.
 func TestLegacyDashboardAssetsAreGone(t *testing.T) {
 	if _, err := os.Stat("static/legacy"); !os.IsNotExist(err) {
 		t.Fatalf("static/legacy should have been removed, stat error = %v", err)
