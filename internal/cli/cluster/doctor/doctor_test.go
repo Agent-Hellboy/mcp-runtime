@@ -1627,6 +1627,8 @@ func TestCheckSentinelRuntimeCatalogProbeChecksServersAndTools(t *testing.T) {
 				return &core.MockCommand{OutputData: []byte(doctorSentinelNamespace)}
 			case contains(spec.Args, "jsonpath={.data.ADMIN_API_KEYS}"):
 				return &core.MockCommand{OutputData: []byte("YWRtaW4=")}
+			case contains(spec.Args, "jsonpath={.data.API_KEYS}"):
+				return &core.MockCommand{OutputData: []byte("YWRtaW4=")}
 			case len(spec.Args) > 0 && spec.Args[0] == "run":
 				runs++
 				return &core.MockCommand{OutputData: []byte("pod/doctor-sentinel-catalog created\n")}
@@ -2198,6 +2200,8 @@ func TestCheckMCPServerReconcileSmoke(t *testing.T) {
 			CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
 				switch {
 				case contains(spec.Args, "get") && contains(spec.Args, "mcpservers"):
+					return &core.MockCommand{}
+				case contains(spec.Args, "configmap"):
 					return &core.MockCommand{}
 				case argContains(spec.Args, "readyReplicas") && argContains(spec.Args, "containerPort"):
 					return &core.MockCommand{OutputData: []byte("oauth-issuer|1|docker.io/library/python:3.12-alpine|8080\n")}

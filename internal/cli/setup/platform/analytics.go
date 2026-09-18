@@ -750,6 +750,19 @@ func renderAnalyticsManifest(content string, images AnalyticsImageSet, imagePull
 		replacements["image: grafana/grafana:10.2.3"] = "image: " + images.Grafana
 	}
 	rendered := content
+	if dnsKey := strings.TrimSpace(os.Getenv("MCP_DNS_LABEL_KEY")); dnsKey != "" {
+		dnsValue := strings.TrimSpace(os.Getenv("MCP_DNS_LABEL_VALUE"))
+		if dnsValue == "" {
+			return "", fmt.Errorf("MCP_DNS_LABEL_VALUE is required when MCP_DNS_LABEL_KEY is set")
+		}
+		rendered = strings.ReplaceAll(rendered, "k8s-app: kube-dns", dnsKey+": "+dnsValue)
+	}
+	if clusterDomain := strings.TrimSpace(os.Getenv("MCP_CLUSTER_DOMAIN")); clusterDomain != "" {
+		rendered = strings.ReplaceAll(rendered, ".svc.cluster.local", ".svc."+strings.TrimSuffix(clusterDomain, "."))
+	}
+	if storageClass := strings.TrimSpace(os.Getenv("MCP_STORAGE_CLASS")); storageClass != "" {
+		rendered = strings.ReplaceAll(rendered, "storageClassName: local-path", "storageClassName: "+storageClass)
+	}
 	for oldValue, newValue := range replacements {
 		rendered = strings.ReplaceAll(rendered, oldValue, newValue)
 	}
@@ -836,6 +849,9 @@ func renderAnalyticsConfigManifestWithReaders(content, platformMode string, imag
 		if strings.TrimSpace(manifest.Data[key]) == "" && strings.TrimSpace(existingData[key]) != "" {
 			manifest.Data[key] = existingData[key]
 		}
+	}
+	if smokeImage := strings.TrimSpace(images.DoctorSmoke); smokeImage != "" {
+		manifest.Data["MCP_DOCTOR_SMOKE_IMAGE"] = smokeImage
 	}
 	applyGoogleOIDCDefaults(manifest.Data)
 	if registryIngressHost := strings.TrimSpace(core.GetRegistryIngressHost()); registryIngressHost != "" && registryIngressHost != core.DefaultRegistryIngressHost {

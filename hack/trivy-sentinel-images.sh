@@ -15,7 +15,7 @@ TRIVY_ACTION_REF="aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce3
 SCAN_ONLY=0
 BUILD_TAG="${BUILD_TAG:-audit}"
 
-ALL_IMAGE_KEYS="operator platform-api analytics-api runtime-api ui ingest processor mcp-gateway"
+ALL_IMAGE_KEYS="operator platform-api analytics-api runtime-api ui ingest processor mcp-gateway doctor-smoke"
 
 image_dockerfile() {
   case "$1" in
@@ -27,6 +27,7 @@ image_dockerfile() {
     ingest) echo "services/ingest/Dockerfile" ;;
     processor) echo "services/processor/Dockerfile" ;;
     mcp-gateway) echo "services/mcp-gateway/Dockerfile" ;;
+    doctor-smoke) echo "services/doctor-smoke/Dockerfile" ;;
     *) return 1 ;;
   esac
 }
@@ -41,6 +42,7 @@ image_repo() {
     ingest) echo "mcp-sentinel-ingest" ;;
     processor) echo "mcp-sentinel-processor" ;;
     mcp-gateway) echo "mcp-sentinel-mcp-gateway" ;;
+    doctor-smoke) echo "mcp-runtime-doctor-smoke" ;;
     *) return 1 ;;
   esac
 }

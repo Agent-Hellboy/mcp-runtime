@@ -237,9 +237,19 @@ func checkSentinelRuntimeCatalogProbe(kubectl core.KubectlRunner) DoctorCheck {
 	if err != nil {
 		return DoctorCheck{Name: "sentinel runtime catalog probe", OK: false, Detail: fmt.Sprintf("ADMIN_API_KEYS is not valid base64: %v", err), Remedy: "patch mcp-sentinel-secrets with valid Kubernetes secret data"}
 	}
-	keys := splitCommaTrim(decoded)
+	adminKeys := splitCommaTrim(decoded)
+	apiKeysEncoded, err := readKubectlOutput(kubectl, []string{"get", "secret", "mcp-sentinel-secrets", "-n", doctorSentinelNamespace, "-o", "jsonpath={.data.API_KEYS}"})
+	if err != nil {
+		return DoctorCheck{Name: "sentinel runtime catalog probe", OK: false, Detail: "API_KEYS not available in mcp-sentinel-secrets", Remedy: "configure the admin probe key in both API_KEYS and ADMIN_API_KEYS"}
+	}
+	apiKeysDecoded, err := decodeBase64(apiKeysEncoded)
+	if err != nil {
+		return DoctorCheck{Name: "sentinel runtime catalog probe", OK: false, Detail: fmt.Sprintf("API_KEYS is not valid base64: %v", err), Remedy: "patch mcp-sentinel-secrets with valid Kubernetes secret data"}
+	}
+	apiKeys := splitCommaTrim(apiKeysDecoded)
+	keys := intersectSecretKeys(apiKeys, adminKeys)
 	if len(keys) == 0 {
-		return DoctorCheck{Name: "sentinel runtime catalog probe", OK: false, Detail: "ADMIN_API_KEYS decoded to no usable keys", Remedy: "set a non-empty admin API key in mcp-sentinel-secrets"}
+		return DoctorCheck{Name: "sentinel runtime catalog probe", OK: false, Detail: "API_KEYS and ADMIN_API_KEYS have no common key", Remedy: "include at least one identical admin credential in both API_KEYS and ADMIN_API_KEYS"}
 	}
 	for _, path := range []string{"/api/v1/runtime/servers", "/api/v1/runtime/tools"} {
 		status, probeErr := runSentinelAuthenticatedProbe(kubectl, keys[0], path)
@@ -251,6 +261,20 @@ func checkSentinelRuntimeCatalogProbe(kubectl core.KubectlRunner) DoctorCheck {
 		}
 	}
 	return DoctorCheck{Name: "sentinel runtime catalog probe", OK: true, Detail: "authenticated runtime servers and tools catalog endpoints returned HTTP 200"}
+}
+
+func intersectSecretKeys(apiKeys, adminKeys []string) []string {
+	adminSet := make(map[string]struct{}, len(adminKeys))
+	for _, key := range adminKeys {
+		adminSet[key] = struct{}{}
+	}
+	keys := make([]string, 0)
+	for _, key := range apiKeys {
+		if _, ok := adminSet[key]; ok {
+			keys = append(keys, key)
+		}
+	}
+	return keys
 }
 
 func runSentinelAuthenticatedProbe(kubectl core.KubectlRunner, apiKey, path string) (string, error) {

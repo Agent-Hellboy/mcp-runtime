@@ -1898,6 +1898,7 @@ func TestPrepareAnalyticsImagesUsesTestModeImageSet(t *testing.T) {
 		AnalyticsAPI: "registry.example.com/mcp-analytics-api:latest",
 		Processor:    "registry.example.com/mcp-sentinel-processor:latest",
 		UI:           "registry.example.com/mcp-sentinel-ui:latest",
+		DoctorSmoke:  "registry.example.com/mcp-runtime-doctor-smoke:latest",
 	}
 	if got != want {
 		t.Fatalf("prepareAnalyticsImages() = %+v, want %+v", got, want)
@@ -1906,7 +1907,7 @@ func TestPrepareAnalyticsImagesUsesTestModeImageSet(t *testing.T) {
 		t.Fatalf("expected %d builds in test mode, got %d", len(analyticsComponentsForSetup(true)), buildCalls)
 	}
 	// Sentinel service Dockerfiles need the repo root context for shared packages and service modules.
-	wantBuildContexts := []string{".", ".", ".", ".", ".", "."}
+	wantBuildContexts := []string{".", ".", ".", ".", ".", ".", "."}
 	if !slices.Equal(buildContexts, wantBuildContexts) {
 		t.Fatalf("build contexts = %v, want %v", buildContexts, wantBuildContexts)
 	}
@@ -2074,6 +2075,7 @@ func TestPrepareAnalyticsImagesParallelBuildsPreparesInternalRegistryOnce(t *tes
 		AnalyticsAPI: "registry.local:5000/mcp-analytics-api:latest",
 		Processor:    "registry.local:5000/mcp-sentinel-processor:latest",
 		UI:           "registry.local:5000/mcp-sentinel-ui:latest",
+		DoctorSmoke:  "registry.local:5000/mcp-runtime-doctor-smoke:latest",
 	}
 	if got != want {
 		t.Fatalf("prepareAnalyticsImages() = %+v, want %+v", got, want)

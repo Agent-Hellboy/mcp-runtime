@@ -3,6 +3,7 @@ package doctor
 import (
 	"encoding/base64"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -213,6 +214,12 @@ func resolveDoctorSmokeImage(kubectl core.KubectlRunner, preferredNamespace stri
 }
 
 func resolveDoctorSmokeTarget(kubectl core.KubectlRunner, preferredNamespace string) doctorSmokeTarget {
+	if image := strings.TrimSpace(os.Getenv("MCP_DOCTOR_SMOKE_IMAGE")); image != "" {
+		return doctorSmokeTarget{Image: image, Port: 8088, Source: "MCP_DOCTOR_SMOKE_IMAGE", WaitForReady: false}
+	}
+	if image, err := readKubectlOutput(kubectl, []string{"get", "configmap", "mcp-sentinel-config", "-n", doctorSentinelNamespace, "-o", "jsonpath={.data.MCP_DOCTOR_SMOKE_IMAGE}"}); err == nil && strings.TrimSpace(image) != "" {
+		return doctorSmokeTarget{Image: strings.TrimSpace(image), Port: 8088, Source: "mcp-sentinel-config/MCP_DOCTOR_SMOKE_IMAGE", WaitForReady: true}
+	}
 	mcpServerNames, haveMCPServerNames := readDoctorMCPServerNames(kubectl, preferredNamespace)
 	out, err := readKubectlOutput(kubectl, []string{"get", "deploy", "-n", preferredNamespace, "-o", "jsonpath={range .items[*]}{.metadata.name}|{.status.readyReplicas}|{.spec.template.spec.containers[0].image}|{.spec.template.spec.containers[0].ports[0].containerPort}{\"\\n\"}{end}"})
 	if err == nil {
