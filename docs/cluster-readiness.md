@@ -44,9 +44,8 @@ verification.
 
 `./bin/mcp-runtime cluster doctor` is useful in both modes. For the bundled
 registry it probes the in-cluster `registry/registry` Service and selects HTTP
-or HTTPS from the installed registry state: if `registry/registry-internal-tls`
-exists, doctor probes `https://registry.registry.svc.cluster.local:5000/v2/`;
-otherwise it probes the plain HTTP service. If you run with a provisioned
+or HTTPS from the installed registry state, using the Service DNS name and
+discovered Service port. If you run with a provisioned
 external registry, interpret bundled-registry-specific failures against your
 registry architecture instead of copying the local workaround literally.
 
@@ -662,7 +661,9 @@ Missing pieces are warnings, not errors — the command surfaces them so you can
 `./bin/mcp-runtime cluster doctor --after-setup` runs post-install diagnostics. Pass
 `--kubeconfig /path/to/config` when the active kubeconfig is not already selected;
 when omitted, setup and doctor use `~/.kube/config` and automatically fall back to
-`/etc/rancher/k3s/k3s.yaml` on k3s hosts.
+`/etc/rancher/k3s/k3s.yaml` on k3s hosts. Set `MCP_CLUSTER_DOMAIN` when the
+cluster uses a Service DNS suffix other than `cluster.local`; setup-generated
+internal URLs and doctor probes honor that value.
 
 - Detects your distribution (k3s / kind / minikube / docker-desktop / generic).
 - Checks the installed MCP Runtime namespaces, CRDs, operator, Traefik ingress, registry, Sentinel, and MCPServer reconciliation path. The MCPServer smoke uses an existing ready app image when available; otherwise it falls back to `registry.k8s.io/pause:3.9` and validates deployment/service/ingress reconciliation plus pod scheduling without a TCP readiness wait.

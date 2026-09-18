@@ -154,7 +154,7 @@ func checkSentinelAPIAuthProbe(kubectl core.KubectlRunner) DoctorCheck {
 		"--connect-timeout", "5",
 		"--max-time", "20",
 		"-H", "x-api-key: " + apiKey,
-		fmt.Sprintf("http://%s.%s.svc.cluster.local:%d/api/v1/runtime/components", doctorRuntimeAPIService, doctorSentinelNamespace, doctorRuntimeAPIPort),
+		fmt.Sprintf("http://%s:%d/api/v1/runtime/components", doctorServiceDNS(doctorRuntimeAPIService, doctorSentinelNamespace), doctorRuntimeAPIPort),
 	}
 	defer func() {
 		_ = kubectl.Run([]string{"delete", "pod", podName, "-n", doctorSentinelNamespace, "--ignore-not-found"})
@@ -284,7 +284,7 @@ func runSentinelAuthenticatedProbe(kubectl core.KubectlRunner, apiKey, path stri
 		"-sS", "-o", "/tmp/doctor-response", "-w", "%{http_code}",
 		"--connect-timeout", "5", "--max-time", "20",
 		"-H", "x-api-key: " + apiKey,
-		fmt.Sprintf("http://%s.%s.svc.cluster.local:%d%s", doctorRuntimeAPIService, doctorSentinelNamespace, doctorRuntimeAPIPort, path),
+		fmt.Sprintf("http://%s:%d%s", doctorServiceDNS(doctorRuntimeAPIService, doctorSentinelNamespace), doctorRuntimeAPIPort, path),
 	}
 	defer func() {
 		_ = kubectl.Run([]string{"delete", "pod", podName, "-n", doctorSentinelNamespace, "--ignore-not-found"})
@@ -355,7 +355,7 @@ func checkSentinelServiceHealthReadiness(kubectl core.KubectlRunner, checkName, 
 		}
 	}
 
-	baseURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", service, doctorSentinelNamespace, port)
+	baseURL := fmt.Sprintf("http://%s:%d", doctorServiceDNS(service, doctorSentinelNamespace), port)
 	for _, path := range []string{"/health", "/ready"} {
 		status, probeErr := doctorCurlServiceEndpoint(kubectl, baseURL+path)
 		if probeErr != nil {

@@ -12,7 +12,13 @@ import (
 	"mcp-runtime/internal/cli/core"
 )
 
-const registryServiceDNS = "registry.registry.svc.cluster.local"
+func registryServiceDNS() string {
+	domain := strings.Trim(strings.TrimSuffix(strings.TrimSpace(os.Getenv("MCP_CLUSTER_DOMAIN")), "."), ".")
+	if domain == "" {
+		domain = "cluster.local"
+	}
+	return fmt.Sprintf("%s.%s.svc.%s", core.RegistryServiceName, core.NamespaceRegistry, domain)
+}
 
 func resolveInternalPlatformRegistryURLClientGo(logger *zap.Logger) string {
 	cfg := core.DefaultCLIConfig
@@ -33,12 +39,12 @@ func resolveInternalPlatformRegistryURLClientGo(logger *zap.Logger) string {
 	portValue, portErr := registryServicePortClientGo()
 	if os.Getenv("MCP_RUNTIME_TEST_MODE") == "1" {
 		if portErr == nil && portValue != "" {
-			return fmt.Sprintf("%s:%s", registryServiceDNS, portValue)
+			return fmt.Sprintf("%s:%s", registryServiceDNS(), portValue)
 		}
 		if logger != nil {
 			logger.Warn("Could not detect registry service port in test mode, using default service DNS:port")
 		}
-		return fmt.Sprintf("%s:%d", registryServiceDNS, registryPort)
+		return fmt.Sprintf("%s:%d", registryServiceDNS(), registryPort)
 	}
 
 	ip, ipErr := registryServiceClusterIPClientGo()
@@ -46,13 +52,13 @@ func resolveInternalPlatformRegistryURLClientGo(logger *zap.Logger) string {
 		return fmt.Sprintf("%s:%s", ip, portValue)
 	}
 	if portErr == nil && portValue != "" {
-		return fmt.Sprintf("%s:%s", registryServiceDNS, portValue)
+		return fmt.Sprintf("%s:%s", registryServiceDNS(), portValue)
 	}
 
 	if logger != nil {
 		logger.Warn("Could not detect internal registry service port, using default service DNS:port")
 	}
-	return fmt.Sprintf("%s:%d", registryServiceDNS, registryPort)
+	return fmt.Sprintf("%s:%d", registryServiceDNS(), registryPort)
 }
 
 func registryServiceClusterIPClientGo() (string, error) {

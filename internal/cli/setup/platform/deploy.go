@@ -930,12 +930,12 @@ func operatorEnvOverrides(gatewayProxyImage, existingGatewayOTLPEndpoint string)
 		gatewayOTLPEndpoint = strings.TrimSpace(existingGatewayOTLPEndpoint)
 	}
 	if gatewayOTLPEndpoint == "" {
-		gatewayOTLPEndpoint = defaultGatewayOTELExporterOTLPEndpoint
+		gatewayOTLPEndpoint = defaultGatewayOTELExporterOTLPEndpointForCluster()
 	}
 	envVars = append(envVars, operatorEnvVar{Name: gatewayOTELExporterOTLPEndpointEnv, Value: gatewayOTLPEndpoint})
 	ingestURL := strings.TrimSpace(core.GetAnalyticsIngestURLOverride())
 	if ingestURL == "" {
-		ingestURL = defaultAnalyticsIngestURL
+		ingestURL = defaultAnalyticsIngestURLForCluster()
 	}
 	if ingestURL != "" {
 		envVars = append(envVars, operatorEnvVar{Name: "MCP_SENTINEL_INGEST_URL", Value: ingestURL})
@@ -1026,7 +1026,7 @@ func applySetupPlanToCLIConfig(plan setupplan.Plan) {
 		// discovery and avoid the bootstrap deadlock.
 		current := strings.TrimSpace(core.DefaultCLIConfig.RegistryEndpoint)
 		if current == "" || current == core.DefaultRegistryEndpoint {
-			core.DefaultCLIConfig.RegistryEndpoint = fmt.Sprintf("%s.%s.svc.cluster.local:%d", core.RegistryServiceName, core.NamespaceRegistry, core.GetRegistryPort())
+			core.DefaultCLIConfig.RegistryEndpoint = fmt.Sprintf("%s:%d", registryServiceDNS(), core.GetRegistryPort())
 		}
 	}
 	if !plan.TLSEnabled {

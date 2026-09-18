@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -122,7 +123,17 @@ func doctorRegistryServiceURL(kubectl core.KubectlRunner) string {
 	if doctorRegistryInternalTLSConfigured(kubectl) {
 		scheme = "https"
 	}
-	return fmt.Sprintf("%s://registry.registry.svc.cluster.local:5000/v2/", scheme)
+	return fmt.Sprintf("%s://%s:%d/v2/", scheme, doctorServiceDNS("registry", "registry"), doctorRegistryServicePort(kubectl))
+}
+
+func doctorRegistryServicePort(kubectl core.KubectlRunner) int {
+	out, err := readKubectlOutput(kubectl, []string{"get", "svc", "registry", "-n", "registry", "-o", "jsonpath={.spec.ports[0].port}"})
+	if err == nil {
+		if port, parseErr := strconv.Atoi(strings.TrimSpace(out)); parseErr == nil && port > 0 {
+			return port
+		}
+	}
+	return 5000
 }
 
 func doctorRegistryServiceScheme(registryURL string) string {

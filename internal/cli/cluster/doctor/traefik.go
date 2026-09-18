@@ -767,7 +767,7 @@ func checkIngressRouteProbe(kubectl core.KubectlRunner, namespace string, distro
 	}
 	probeArgs = append(probeArgs,
 		"-d", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`,
-		fmt.Sprintf("http://%s.%s.svc.cluster.local:%d%s", traefik.Name, traefik.Namespace, traefik.WebPort, path),
+		fmt.Sprintf("http://%s:%d%s", doctorServiceDNS(traefik.Name, traefik.Namespace), traefik.WebPort, path),
 	)
 	curlArgs := []string{
 		"run", "-n", namespace,

@@ -32,6 +32,22 @@ const gatewayOTELExporterOTLPEndpointEnv = "MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPO
 
 const defaultGatewayOTELExporterOTLPEndpoint = "http://otel-collector.mcp-sentinel.svc.cluster.local:4318"
 
+func clusterServiceDNS(service, namespace string) string {
+	domain := strings.Trim(strings.TrimSuffix(strings.TrimSpace(os.Getenv("MCP_CLUSTER_DOMAIN")), "."), ".")
+	if domain == "" {
+		domain = "cluster.local"
+	}
+	return fmt.Sprintf("%s.%s.svc.%s", service, namespace, domain)
+}
+
+func defaultAnalyticsIngestURLForCluster() string {
+	return "http://" + clusterServiceDNS("mcp-sentinel-ingest", "mcp-sentinel") + ":8081/events"
+}
+
+func defaultGatewayOTELExporterOTLPEndpointForCluster() string {
+	return "http://" + clusterServiceDNS("otel-collector", "mcp-sentinel") + ":4318"
+}
+
 const gatewayProxyDockerfilePath = "services/mcp-gateway/Dockerfile"
 
 const gatewayProxyBuildContext = "."

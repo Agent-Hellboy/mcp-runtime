@@ -39,3 +39,10 @@ func TestRegistryEndpointExplicitlyConfiguredForPlatform(t *testing.T) {
 		t.Fatal("expected MCP_REGISTRY_ENDPOINT to mark registry endpoint explicit")
 	}
 }
+
+func TestRegistryServiceDNSUsesConfiguredClusterDomain(t *testing.T) {
+	t.Setenv("MCP_CLUSTER_DOMAIN", "corp.example.")
+	if got, want := registryServiceDNS(), "registry.registry.svc.corp.example"; got != want {
+		t.Fatalf("registry service DNS = %q, want %q", got, want)
+	}
+}
