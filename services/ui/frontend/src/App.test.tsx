@@ -74,7 +74,9 @@ describe("App", () => {
     expect(await screen.findByTestId("catalog-signed-out")).toBeInTheDocument();
     expect(screen.getByTestId("account-state")).toHaveTextContent("Signed out");
     expect(screen.getByTestId("signin-button")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Control Plane Dashboard" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "The control plane for your MCP servers" })
+    ).toBeInTheDocument();
   });
 
   it("switches themes and persists the preference", async () => {
@@ -84,12 +86,11 @@ describe("App", () => {
     renderApp();
 
     const toggle = await screen.findByTestId("theme-toggle");
-    expect(toggle).toHaveTextContent("Dark");
+    expect(toggle).toHaveAttribute("aria-label", "Switch to light mode");
     expect(document.documentElement.dataset.theme).toBe("dark");
 
     await user.click(toggle);
 
-    expect(toggle).toHaveTextContent("Light");
     expect(toggle).toHaveAttribute("aria-label", "Switch to dark mode");
     expect(document.documentElement.dataset.theme).toBe("light");
     expect(window.localStorage.getItem("mcp-sentinel-theme")).toBe("light");
@@ -138,6 +139,8 @@ describe("App", () => {
 
     renderApp();
     await user.click(await screen.findByTestId("signin-button"));
+    // Account and API-key credentials are separate modes now.
+    await user.click(screen.getByTestId("signin-mode-api-key"));
     await user.type(screen.getByTestId("login-api-key"), "ui-key");
     await user.click(screen.getByTestId("login-submit"));
 
@@ -145,6 +148,32 @@ describe("App", () => {
     const loginCall = calls.find((call) => call.url === "/auth/login");
     expect(String(loginCall?.init.body)).toBe(JSON.stringify({ api_key: "ui-key" }));
     expect(document.body.innerHTML).not.toContain("ui-key");
+  });
+
+  it("signs in with a Google credential", async () => {
+    const user = userEvent.setup();
+    window.MCP_GOOGLE_CLIENT_ID = "test-client-id";
+    const initialize = vi.fn();
+    window.google = { accounts: { id: { initialize, renderButton: vi.fn() } } };
+    const { calls } = stubRoutes({
+      "/auth/status": SIGNED_OUT,
+      "/auth/login": ADMIN,
+      ...EMPTY_CATALOG,
+    });
+
+    renderApp();
+    await user.click(await screen.findByTestId("signin-button"));
+    await waitFor(() => expect(initialize).toHaveBeenCalledTimes(1));
+
+    const { callback } = initialize.mock.calls[0][0];
+    callback({ credential: "google-id-token" });
+
+    await waitFor(() => expect(screen.getByTestId("logout-button")).toBeInTheDocument());
+    const loginCall = calls.find((call) => call.url === "/auth/login");
+    expect(String(loginCall?.init.body)).toBe(JSON.stringify({ id_token: "google-id-token" }));
+
+    delete window.google;
+    delete window.MCP_GOOGLE_CLIENT_ID;
   });
 
   it("shows a sign-in error without leaving the form", async () => {
@@ -186,34 +215,32 @@ describe("App", () => {
     );
   });
 
-  it("keeps the legacy dashboard reachable for unmigrated workspaces", async () => {
-    const user = userEvent.setup();
+  it("no longer renders the nested legacy dashboard anywhere", async () => {
     stubRoutes({ "/auth/status": ADMIN, ...EMPTY_CATALOG });
 
     renderApp();
-    await user.click(await screen.findByTestId("workspace-tab-legacy"));
+    await screen.findByTestId("workspace-tab-servers");
 
-    const frame = screen.getByTitle("MCP Sentinel dashboard");
-    expect(frame).toHaveAttribute("src", "/legacy/index.html");
-
-    await user.click(screen.getByTestId("workspace-tab-servers"));
+    expect(screen.queryByTestId("workspace-tab-legacy")).not.toBeInTheDocument();
     expect(screen.queryByTitle("MCP Sentinel dashboard")).not.toBeInTheDocument();
+    expect(document.querySelector("iframe")).toBeNull();
   });
 
-  it("unmounts the legacy dashboard when signing out", async () => {
+  it("returns to Servers after signing in from a deep link", async () => {
     const user = userEvent.setup();
+    window.location.hash = "#/keys";
     stubRoutes({
-      "/auth/status": ADMIN,
-      "/auth/logout": { status: 200, body: { authenticated: false } },
+      "/auth/status": SIGNED_OUT,
+      "/auth/login": ADMIN,
       ...EMPTY_CATALOG,
     });
 
     renderApp();
-    await user.click(await screen.findByTestId("workspace-tab-legacy"));
-    expect(screen.getByTitle("MCP Sentinel dashboard")).toBeInTheDocument();
+    await user.click(await screen.findByTestId("signin-button"));
+    await user.type(screen.getByTestId("login-email"), "admin@mcpruntime.org");
+    await user.type(screen.getByTestId("login-password"), "admin@123");
+    await user.click(screen.getByTestId("login-submit"));
 
-    await user.click(screen.getByTestId("logout-button"));
-    await waitFor(() => expect(screen.getByTestId("catalog-signed-out")).toBeInTheDocument());
-    expect(screen.queryByTitle("MCP Sentinel dashboard")).not.toBeInTheDocument();
+    await waitFor(() => expect(window.location.hash).toBe("#/servers"));
   });
 });

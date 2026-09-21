@@ -69,7 +69,7 @@ describe("admin workspace navigation", () => {
     const tab = await screen.findByTestId("workspace-tab-admin");
 
     await user.click(tab);
-    expect(await screen.findByTestId("admin-section-access")).toBeInTheDocument();
+    expect(await screen.findByTestId("admin-section-teams")).toBeInTheDocument();
   });
 
   it("hides the Administration tab from a tenant user", async () => {
@@ -79,7 +79,7 @@ describe("admin workspace navigation", () => {
     await screen.findByTestId("workspace-tab-servers");
 
     expect(screen.queryByTestId("workspace-tab-admin")).not.toBeInTheDocument();
-    expect(screen.getByTestId("workspace-tab-legacy")).toBeInTheDocument();
+    expect(screen.getByTestId("workspace-tab-servers")).toBeInTheDocument();
   });
 
   it("hides the Administration tab from a signed-out visitor", async () => {
@@ -97,7 +97,7 @@ describe("admin workspace navigation", () => {
 
     renderApp();
     await user.click(await screen.findByTestId("workspace-tab-admin"));
-    await screen.findByTestId("admin-section-access");
+    await screen.findByTestId("admin-section-teams");
 
     fetchMock.mockResolvedValue({
       ok: true,
@@ -107,21 +107,66 @@ describe("admin workspace navigation", () => {
     await user.click(screen.getByTestId("logout-button"));
 
     await waitFor(() =>
-      expect(screen.queryByTestId("admin-section-access")).not.toBeInTheDocument()
+      expect(screen.queryByTestId("admin-section-teams")).not.toBeInTheDocument()
     );
     expect(screen.queryByTestId("workspace-tab-admin")).not.toBeInTheDocument();
   });
 
-  it("keeps the legacy fallback reachable for unmigrated admin actions", async () => {
+  it("refuses a deep link into administration for a tenant user", async () => {
+    window.location.hash = "#/admin/access";
+    stub("user");
+
+    renderApp();
+    await screen.findByTestId("workspace-tab-servers");
+
+    // The guard and the route both fail closed, so nothing admin renders.
+    expect(screen.queryByTestId("admin-section-teams")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("grants-table")).not.toBeInTheDocument();
+  });
+
+  it("puts the administration section in the URL", async () => {
     const user = userEvent.setup();
     stub("admin");
 
     renderApp();
-    await user.click(await screen.findByTestId("workspace-tab-legacy"));
+    await user.click(await screen.findByTestId("workspace-tab-admin"));
+    await user.click(await screen.findByTestId("admin-section-teams"));
 
-    expect(screen.getByTitle("MCP Sentinel dashboard")).toHaveAttribute(
-      "src",
-      "/legacy/index.html"
-    );
+    expect(window.location.hash).toBe("#/admin/teams");
+  });
+});
+
+// Access control is a top-level workspace reachable by any authenticated
+// principal - admin or tenant - matching the backend's plain auth()
+// middleware on /runtime/grants and /runtime/sessions.
+describe("access control workspace navigation", () => {
+  it("offers Access control to a tenant user and opens it", async () => {
+    const user = userEvent.setup();
+    stub("user");
+
+    renderApp();
+    await user.click(await screen.findByTestId("workspace-tab-access"));
+
+    expect(await screen.findByTestId("grants-table")).toBeInTheDocument();
+    expect(window.location.hash).toBe("#/access");
+  });
+
+  it("offers Access control to an admin too", async () => {
+    const user = userEvent.setup();
+    stub("admin");
+
+    renderApp();
+    await user.click(await screen.findByTestId("workspace-tab-access"));
+
+    expect(await screen.findByTestId("grants-table")).toBeInTheDocument();
+  });
+
+  it("hides Access control from a signed-out visitor", async () => {
+    stub(undefined, false);
+
+    renderApp();
+    await screen.findByTestId("workspace-tab-servers");
+
+    expect(screen.queryByTestId("workspace-tab-access")).not.toBeInTheDocument();
   });
 });

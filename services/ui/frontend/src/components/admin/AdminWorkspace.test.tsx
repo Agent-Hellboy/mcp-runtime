@@ -180,7 +180,7 @@ describe("AdminWorkspace role gating", () => {
     renderAdmin(SIGNED_OUT);
 
     expect(screen.getByTestId("admin-signed-out")).toBeInTheDocument();
-    expect(screen.queryByTestId("admin-section-access")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("admin-section-teams")).not.toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -193,8 +193,8 @@ describe("AdminWorkspace role gating", () => {
     expect(refusal).toHaveTextContent("This workspace is restricted to administrators.");
     expect(refusal).toHaveAttribute("role", "alert");
     // No admin control of any kind is rendered for a tenant user.
-    expect(screen.queryByTestId("admin-section-access")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("grants-table")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("admin-section-teams")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("teams-table")).not.toBeInTheDocument();
     expect(screen.queryByTestId("grafana-link")).not.toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -212,163 +212,20 @@ describe("AdminWorkspace role gating", () => {
 
     renderAdmin(ADMIN);
 
-    expect(await screen.findByTestId("grants-table")).toBeInTheDocument();
-    for (const section of ["access", "teams", "operations", "platform", "analytics"]) {
+    expect(await screen.findByTestId("teams-table")).toBeInTheDocument();
+    for (const section of ["teams", "operations", "platform", "analytics"]) {
       expect(screen.getByTestId(`admin-section-${section}`)).toBeInTheDocument();
     }
   });
-});
 
-describe("AdminWorkspace access control", () => {
-  it("reads grants and sessions through the session-backed proxy", async () => {
-    const fetchMock = stubAdminApi();
-
-    renderAdmin(ADMIN);
-    await screen.findByTestId("grants-table");
-
-    const urls = fetchMock.mock.calls.map((call) => String(call[0]));
-    expect(urls).toEqual(
-      expect.arrayContaining(["/api/ui/v1/runtime/grants", "/api/ui/v1/runtime/sessions"])
-    );
-    for (const call of fetchMock.mock.calls) {
-      const init = call[1] as RequestInit;
-      expect(init.credentials).toBe("same-origin");
-      const headers = new Headers(init.headers);
-      expect(headers.get("authorization")).toBeNull();
-      expect(headers.get("x-api-key")).toBeNull();
-    }
-  });
-
-  it("renders grant and session rows with status and subject", async () => {
+  it("does not put access control behind the admin gate", () => {
     stubAdminApi();
 
     renderAdmin(ADMIN);
-    const table = await screen.findByTestId("grants-table");
 
-    expect(within(table).getByText("alice@example.com / acme")).toBeInTheDocument();
-    expect(within(table).getByText("Disabled")).toBeInTheDocument();
-    expect(screen.getByTestId("access-stats")).toHaveTextContent("1");
-    expect(within(screen.getByTestId("sessions-table")).getByText("agent-7", { exact: false }))
-      .toBeInTheDocument();
-  });
-
-  it("filters grants and sessions by term", async () => {
-    const user = userEvent.setup();
-    stubAdminApi();
-
-    renderAdmin(ADMIN);
-    await screen.findByTestId("grants-table");
-
-    await user.type(screen.getByTestId("access-filter"), "retired");
-    expect(screen.getAllByTestId("grants-table-row")).toHaveLength(1);
-
-    await user.clear(screen.getByTestId("access-filter"));
-    await user.type(screen.getByTestId("access-filter"), "zzz-no-match");
-    expect(screen.getByTestId("grants-table-empty")).toHaveTextContent(
-      "No grants match this filter."
-    );
-  });
-
-  it("shows an empty state when no grants exist", async () => {
-    stubAdminApi({
-      "/runtime/grants": { body: { grants: [] } },
-      "/runtime/sessions": { body: { sessions: [] } },
-    });
-
-    renderAdmin(ADMIN);
-
-    expect(await screen.findByTestId("grants-table-empty")).toHaveTextContent(
-      "No access grants found."
-    );
-  });
-
-  it("shows an error state when the grant read fails", async () => {
-    stubAdminApi({ "/runtime/grants": { status: 500, body: { error: "boom" } } });
-
-    renderAdmin(ADMIN);
-
-    const error = await screen.findByTestId("grants-error", {}, { timeout: 5000 });
-    expect(error).toHaveTextContent("Access grants could not be loaded.");
-    expect(error).toHaveAttribute("role", "alert");
-  });
-
-  it("shows a session-expired state on 401", async () => {
-    stubAdminApi({ "/runtime/grants": { status: 401, body: { error: "unauthorized" } } });
-
-    renderAdmin(ADMIN);
-
-    expect(await screen.findByTestId("grants-unauthorized")).toHaveTextContent(
-      "Your session expired."
-    );
-  });
-
-  it("exposes CSRF-backed grant and session mutation controls", async () => {
-    const fetchMock = stubAdminApi();
-    vi.spyOn(window, "confirm").mockReturnValue(true);
-
-    renderAdmin(ADMIN);
-    await screen.findByTestId("grants-table");
-
-    await userEvent.click(screen.getAllByTestId("grant-toggle")[0]);
-    await userEvent.click(screen.getAllByTestId("session-toggle")[0]);
-
-    await waitFor(() => {
-      const writes = fetchMock.mock.calls.filter((call) => (call[1] as RequestInit)?.method);
-      expect(writes.map((call) => (call[1] as RequestInit).method)).toEqual(
-        expect.arrayContaining(["PATCH", "PATCH"])
-      );
-    });
-  });
-});
-
-describe("AdminWorkspace drill-down", () => {
-  it("opens a grant detail with its context and returns via the back path", async () => {
-    const user = userEvent.setup();
-    stubAdminApi();
-
-    renderAdmin(ADMIN);
-    await screen.findByTestId("grants-table");
-
-    await user.click(screen.getAllByTestId("grant-drilldown")[0]);
-
-    const detail = await screen.findByTestId("access-detail");
-    expect(detail).toHaveTextContent("acme-readonly");
-    expect(screen.getByTestId("access-detail-kicker")).toHaveTextContent(
-      "mcp-servers / MCPAccessGrant"
-    );
-    expect(detail).toHaveTextContent("alice@example.com / acme");
-
-    await user.click(screen.getByTestId("access-detail-back"));
-    await waitFor(() => expect(screen.getByTestId("grants-table")).toBeInTheDocument());
-    expect(screen.queryByTestId("access-detail")).not.toBeInTheDocument();
-  });
-
-  it("opens a session detail labelled as an agent session", async () => {
-    const user = userEvent.setup();
-    stubAdminApi();
-
-    renderAdmin(ADMIN);
-    await screen.findByTestId("sessions-table");
-
-    await user.click(screen.getAllByTestId("session-drilldown")[0]);
-
-    expect(await screen.findByTestId("access-detail-kicker")).toHaveTextContent(
-      "mcp-servers / MCPAgentSession"
-    );
-    expect(screen.getByTestId("access-detail")).toHaveTextContent("sess-1");
-  });
-
-  it("surfaces the analytics outage as an activity error, not a blank table", async () => {
-    const user = userEvent.setup();
-    stubAdminApi({ "/events": { status: 502, body: { error: "upstream_error" } } });
-
-    renderAdmin(ADMIN);
-    await screen.findByTestId("grants-table");
-    await user.click(screen.getAllByTestId("grant-drilldown")[0]);
-
-    const error = await screen.findByTestId("access-activity-error", {}, { timeout: 5000 });
-    expect(error).toHaveTextContent("Activity is unavailable.");
-    expect(error).toHaveTextContent("analytics service");
+    // Grants and sessions are served to any authenticated principal, so they
+    // live in their own workspace rather than an admin section.
+    expect(screen.queryByTestId("admin-section-access")).not.toBeInTheDocument();
   });
 });
 
@@ -378,8 +235,6 @@ describe("AdminWorkspace sections", () => {
     stubAdminApi();
 
     renderAdmin(ADMIN);
-    await screen.findByTestId("grants-table");
-    await user.click(screen.getByTestId("admin-section-teams"));
 
     const table = await screen.findByTestId("teams-table");
     expect(within(table).getByText("Verify Team")).toBeInTheDocument();
@@ -391,14 +246,19 @@ describe("AdminWorkspace sections", () => {
     stubAdminApi();
 
     renderAdmin(ADMIN);
-    await screen.findByTestId("grants-table");
+    await screen.findByTestId("teams-table");
     await user.click(screen.getByTestId("admin-section-operations"));
 
     expect(await screen.findByTestId("operations-users-table")).toHaveTextContent(
       "admin@mcpruntime.org"
     );
-    expect(screen.getByTestId("operations-audit-table")).toHaveTextContent("server_publish");
-    expect(screen.getByTestId("operations-images-table")).toHaveTextContent("registry/demo:1");
+
+    // Users, the audit trail, and image activity are separate local sections.
+    await user.click(screen.getByTestId("operations-tab-audit"));
+    expect(await screen.findByTestId("operations-audit-table")).toHaveTextContent("server_publish");
+
+    await user.click(screen.getByTestId("operations-tab-images"));
+    expect(await screen.findByTestId("operations-images-table")).toHaveTextContent("registry/demo:1");
   });
 
   it("refetches operations scoped to the applied user filter", async () => {
@@ -406,7 +266,7 @@ describe("AdminWorkspace sections", () => {
     const fetchMock = stubAdminApi();
 
     renderAdmin(ADMIN);
-    await screen.findByTestId("grants-table");
+    await screen.findByTestId("teams-table");
     await user.click(screen.getByTestId("admin-section-operations"));
     await screen.findByTestId("operations-users-table");
 
@@ -424,13 +284,15 @@ describe("AdminWorkspace sections", () => {
     stubAdminApi();
 
     renderAdmin(ADMIN);
-    await screen.findByTestId("grants-table");
+    await screen.findByTestId("teams-table");
     await user.click(screen.getByTestId("admin-section-platform"));
 
-    const table = await screen.findByTestId("platform-table");
-    expect(within(table).getByText("Operator")).toBeInTheDocument();
-    expect(within(table).getByText("CrashLoopBackOff")).toBeInTheDocument();
+    const grid = await screen.findByTestId("platform-components");
+    expect(within(grid).getByText("Operator")).toBeInTheDocument();
+    expect(within(grid).getByText("CrashLoopBackOff")).toBeInTheDocument();
     expect(screen.getByTestId("platform-stats")).toHaveTextContent("1");
+    // Restart all is separated from the safe read actions.
+    expect(screen.getByTestId("restart-all")).toBeInTheDocument();
 
     // Must stay a direct href so the platform ingress forward-auth still applies.
     expect(screen.getByTestId("grafana-link")).toHaveAttribute("href", "/grafana");

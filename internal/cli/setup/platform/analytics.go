@@ -769,6 +769,13 @@ func removePathBasedSentinelIngresses() error {
 
 func renderAnalyticsManifest(content string, images AnalyticsImageSet, imagePullSecretName, platformMode string) (string, error) {
 	replacements := map[string]string{}
+	if strings.Contains(content, "# MCP_KUBERNETES_API_PORT") {
+		port := core.DefaultCLIConfig.KubernetesAPIPort
+		if port < 1 || port > 65535 {
+			return "", fmt.Errorf("MCP_KUBERNETES_API_PORT must be between 1 and 65535, got %d", port)
+		}
+		replacements["port: 6443 # MCP_KUBERNETES_API_PORT"] = fmt.Sprintf("port: %d # MCP_KUBERNETES_API_PORT", port)
+	}
 	if mode, ok := setupplan.NormalizePlatformMode(platformMode); ok && mode != "" {
 		replacements[`PLATFORM_MODE: "tenant"`] = fmt.Sprintf(`PLATFORM_MODE: "%s"`, mode)
 	}
@@ -818,6 +825,19 @@ func renderAnalyticsManifest(content string, images AnalyticsImageSet, imagePull
 		replacements["image: grafana/grafana:10.2.3"] = "image: " + images.Grafana
 	}
 	rendered := content
+	if dnsKey := strings.TrimSpace(os.Getenv("MCP_DNS_LABEL_KEY")); dnsKey != "" {
+		dnsValue := strings.TrimSpace(os.Getenv("MCP_DNS_LABEL_VALUE"))
+		if dnsValue == "" {
+			return "", fmt.Errorf("MCP_DNS_LABEL_VALUE is required when MCP_DNS_LABEL_KEY is set")
+		}
+		rendered = strings.ReplaceAll(rendered, "k8s-app: kube-dns", dnsKey+": "+dnsValue)
+	}
+	if clusterDomain := strings.TrimSpace(os.Getenv("MCP_CLUSTER_DOMAIN")); clusterDomain != "" {
+		rendered = strings.ReplaceAll(rendered, ".svc.cluster.local", ".svc."+strings.TrimSuffix(clusterDomain, "."))
+	}
+	if storageClass := strings.TrimSpace(os.Getenv("MCP_STORAGE_CLASS")); storageClass != "" {
+		rendered = strings.ReplaceAll(rendered, "storageClassName: local-path", "storageClassName: "+storageClass)
+	}
 	for oldValue, newValue := range replacements {
 		rendered = strings.ReplaceAll(rendered, oldValue, newValue)
 	}
@@ -904,6 +924,14 @@ func renderAnalyticsConfigManifestWithReaders(content, platformMode string, imag
 		if strings.TrimSpace(manifest.Data[key]) == "" && strings.TrimSpace(existingData[key]) != "" {
 			manifest.Data[key] = existingData[key]
 		}
+	}
+	if smokeImage := strings.TrimSpace(images.DoctorSmoke); smokeImage != "" {
+		manifest.Data["MCP_DOCTOR_SMOKE_IMAGE"] = smokeImage
+	}
+	if os.Getenv("MCP_RUNTIME_TEST_MODE") == "1" {
+		manifest.Data["MCP_RUNTIME_TEST_MODE"] = "1"
+	} else {
+		delete(manifest.Data, "MCP_RUNTIME_TEST_MODE")
 	}
 	applyGoogleOIDCDefaults(manifest.Data)
 	if registryIngressHost := strings.TrimSpace(core.GetRegistryIngressHost()); registryIngressHost != "" && registryIngressHost != core.DefaultRegistryIngressHost {
@@ -1846,6 +1874,7 @@ func shellQuote(s string) string {
 }
 
 var analyticsHostpathDirs = []string{
+	"/var/lib/mcp-runtime/registry",
 	"/var/lib/mcp-runtime/clickhouse",
 	"/var/lib/mcp-runtime/kafka/0",
 	"/var/lib/mcp-runtime/kafka/1",

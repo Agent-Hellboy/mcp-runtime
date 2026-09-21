@@ -1,12 +1,15 @@
+import type { IconName } from "../ui/Icon";
+import type { WorkspaceId } from "../routing/route";
 import type { AuthStatus } from "../api/types";
 import { hasUserIdentity, isAdmin, isTenantUser } from "../api/types";
 
-export type WorkspaceId = "servers" | "admin" | "activity" | "keys" | "legacy";
+export type { WorkspaceId };
 
 export type WorkspaceTab = {
-  id: WorkspaceId;
+  id: Exclude<WorkspaceId, "signin">;
   label: string;
   description: string;
+  icon: IconName;
   // Optional visibility gate, evaluated against the authenticated principal.
   visible?: (auth: AuthStatus) => boolean;
 };
@@ -16,66 +19,44 @@ export const WORKSPACE_TABS: WorkspaceTab[] = [
     id: "servers",
     label: "Servers",
     description: "Deployed MCP servers and their governed tool catalog.",
+    icon: "server",
   },
   {
-    id: "admin",
-    label: "Administration",
-    description: "Access control, teams, operations, and platform health.",
-    visible: isAdmin,
+    id: "access",
+    label: "Access control",
+    description: "Grants and agent sessions enforced by the MCP gateway.",
+    icon: "shield",
+    // Any authenticated principal, not only admins: the backend registers
+    // /runtime/grants and /runtime/sessions with rr.auth, not rr.adminOnly.
+    visible: (auth) => auth.authenticated,
   },
   {
     id: "activity",
     label: "Activity",
     description: "Your MCP usage and team membership.",
+    icon: "activity",
     visible: isTenantUser,
   },
   {
     id: "keys",
-    label: "Keys",
+    label: "API keys",
     description: "Personal API keys for agents and CI jobs.",
+    icon: "key",
     visible: hasUserIdentity,
   },
   {
-    id: "legacy",
-    label: "More workspaces",
-    description: "Analytics, teams, access control, and operations.",
+    id: "admin",
+    label: "Administration",
+    description: "Access control, teams, operations, and platform health.",
+    icon: "gauge",
+    visible: isAdmin,
   },
 ];
 
 // Navigation fails closed: a tab is offered only when its server-backed
-// principal is allowed to read it.
+// principal is allowed to read it. Hiding a tab is presentation, not
+// authorization - every panel behind one re-checks the principal and the
+// backend enforces it again.
 export function visibleWorkspaceTabs(auth: AuthStatus): WorkspaceTab[] {
   return WORKSPACE_TABS.filter((tab) => !tab.visible || tab.visible(auth));
-}
-
-type WorkspaceNavigationProps = {
-  active: WorkspaceId;
-  auth: AuthStatus;
-  onSelect: (id: WorkspaceId) => void;
-};
-
-export function WorkspaceNavigation({ active, auth, onSelect }: WorkspaceNavigationProps) {
-  return (
-    <nav className="workspace-nav" aria-label="Dashboard workspaces">
-      <ul className="workspace-nav-list">
-        {visibleWorkspaceTabs(auth).map((tab) => {
-          const isActive = tab.id === active;
-          return (
-            <li key={tab.id}>
-              <button
-                type="button"
-                className={isActive ? "workspace-tab active" : "workspace-tab"}
-                aria-current={isActive ? "page" : undefined}
-                title={tab.description}
-                data-testid={`workspace-tab-${tab.id}`}
-                onClick={() => onSelect(tab.id)}
-              >
-                {tab.label}
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-    </nav>
-  );
 }

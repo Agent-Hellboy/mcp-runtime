@@ -1,4 +1,7 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+
+import { Button } from "../../ui/Button";
+import { Icon } from "../../ui/Icon";
 
 type OneTimeKeyNoticeProps = {
   name: string;
@@ -12,6 +15,7 @@ type OneTimeKeyNoticeProps = {
 // the intended contract, not a limitation.
 export function OneTimeKeyNotice({ name, value, onDismiss }: OneTimeKeyNoticeProps) {
   const headingRef = useRef<HTMLHeadingElement>(null);
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
 
   useEffect(() => {
     // Move focus here so a keyboard or screen-reader user lands on the only
@@ -19,45 +23,50 @@ export function OneTimeKeyNotice({ name, value, onDismiss }: OneTimeKeyNoticePro
     headingRef.current?.focus();
   }, []);
 
+  async function copy() {
+    try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error("clipboard unavailable");
+      }
+      await navigator.clipboard.writeText(value);
+      setCopyState("copied");
+    } catch {
+      setCopyState("failed");
+    }
+  }
+
   return (
     <section
-      className="panel one-time-key"
+      className="one-time-key"
       role="alertdialog"
       aria-labelledby="one-time-key-title"
       aria-describedby="one-time-key-help"
       data-testid="one-time-key"
     >
-      <h3 id="one-time-key-title" ref={headingRef} tabIndex={-1}>
-        Copy your new API key now
+      <h3 id="one-time-key-title" ref={headingRef} tabIndex={-1} className="section-title">
+        <Icon name="key" size={15} /> Copy your new API key now
       </h3>
-      <p id="one-time-key-help" className="panel-lede">
-        This is the only time <strong>{name}</strong> is shown. Once you dismiss this message the
-        value cannot be recovered and you will need to create another key.
+      <p id="one-time-key-help" className="muted" style={{ marginTop: "var(--space-2)" }}>
+        This is the only time <strong>{name}</strong> is shown. Once you dismiss this message the value
+        cannot be recovered and you will need to create another key.
       </p>
       <output className="one-time-key-value" data-testid="one-time-key-value">
         {value}
       </output>
-      <div className="form-actions">
-        <button
-          type="button"
-          className="button ghost"
-          data-testid="one-time-key-copy"
-          onClick={() => {
-            // Clipboard access can be denied or unavailable; the value stays
-            // selectable on screen either way, so a failure is not fatal.
-            void navigator.clipboard?.writeText(value).catch(() => {});
-          }}
-        >
+      <div className="inline-actions">
+        <Button variant="secondary" icon="copy" data-testid="one-time-key-copy" onClick={() => void copy()}>
           Copy to clipboard
-        </button>
-        <button
-          type="button"
-          className="button primary"
-          data-testid="one-time-key-dismiss"
-          onClick={onDismiss}
-        >
+        </Button>
+        <Button variant="primary" data-testid="one-time-key-dismiss" onClick={onDismiss}>
           I have saved it
-        </button>
+        </Button>
+        <span role="status" className={copyState === "failed" ? "copy-status fail" : "copy-status ok"}>
+          {copyState === "copied"
+            ? "Copied to the clipboard."
+            : copyState === "failed"
+              ? "Copy failed. Select the value above and copy it manually."
+              : ""}
+        </span>
       </div>
     </section>
   );

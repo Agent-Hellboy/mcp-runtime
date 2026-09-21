@@ -1594,6 +1594,62 @@ func TestCheckSentinelSecretsReportsInvalidBase64(t *testing.T) {
 	}
 }
 
+func TestCheckRuntimeAPIKubernetesAPIEgressUsesLiveEndpointPort(t *testing.T) {
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			switch {
+			case contains(spec.Args, "namespace"):
+				return &core.MockCommand{OutputData: []byte(doctorSentinelNamespace)}
+			case contains(spec.Args, "endpoints"):
+				return &core.MockCommand{OutputData: []byte("9443\n")}
+			case contains(spec.Args, "networkpolicy"):
+				return &core.MockCommand{OutputData: []byte(`{"spec":{"egress":[{"to":[{"ipBlock":{"cidr":"0.0.0.0/0"}}],"ports":[{"port":443},{"port":9443}]}]}}`)}
+			default:
+				return &core.MockCommand{}
+			}
+		},
+	}
+	check := checkRuntimeAPIKubernetesAPIEgress(core.NewTestKubectlClient(mock))
+	if !check.OK {
+		t.Fatalf("expected non-standard live API port to pass, got detail=%q", check.Detail)
+	}
+	if !strings.Contains(check.Detail, "9443") {
+		t.Fatalf("expected detail to name detected endpoint port, got %q", check.Detail)
+	}
+}
+
+func TestCheckSentinelRuntimeCatalogProbeChecksServersAndTools(t *testing.T) {
+	var runs int
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			switch {
+			case contains(spec.Args, "namespace"):
+				return &core.MockCommand{OutputData: []byte(doctorSentinelNamespace)}
+			case contains(spec.Args, "jsonpath={.data.ADMIN_API_KEYS}"):
+				return &core.MockCommand{OutputData: []byte("YWRtaW4=")}
+			case contains(spec.Args, "jsonpath={.data.API_KEYS}"):
+				return &core.MockCommand{OutputData: []byte("YWRtaW4=")}
+			case len(spec.Args) > 0 && spec.Args[0] == "run":
+				runs++
+				return &core.MockCommand{OutputData: []byte("pod/doctor-sentinel-catalog created\n")}
+			case contains(spec.Args, "jsonpath={.status.phase}"):
+				return &core.MockCommand{OutputData: []byte("Succeeded")}
+			case len(spec.Args) > 0 && spec.Args[0] == "logs":
+				return &core.MockCommand{OutputData: []byte("200")}
+			default:
+				return &core.MockCommand{}
+			}
+		},
+	}
+	check := checkSentinelRuntimeCatalogProbe(core.NewTestKubectlClient(mock))
+	if !check.OK {
+		t.Fatalf("expected catalog probe to pass, got detail=%q", check.Detail)
+	}
+	if runs != 2 {
+		t.Fatalf("expected servers and tools probes, got %d run pods", runs)
+	}
+}
+
 func TestRemediationHintPerDistro(t *testing.T) {
 	for _, d := range []Distribution{DistroK3s, DistroKind, DistroMinikube, DistroDockerDesktop, DistroGeneric} {
 		hint := remediationHint(d)
@@ -2145,6 +2201,8 @@ func TestCheckMCPServerReconcileSmoke(t *testing.T) {
 				switch {
 				case contains(spec.Args, "get") && contains(spec.Args, "mcpservers"):
 					return &core.MockCommand{}
+				case contains(spec.Args, "configmap"):
+					return &core.MockCommand{}
 				case argContains(spec.Args, "readyReplicas") && argContains(spec.Args, "containerPort"):
 					return &core.MockCommand{OutputData: []byte("oauth-issuer|1|docker.io/library/python:3.12-alpine|8080\n")}
 				case contains(spec.Args, "apply"):
@@ -2511,6 +2569,70 @@ func TestRestrictedRunOverridesUsesNumericNonRootUser(t *testing.T) {
 		if !strings.Contains(overrides, want) {
 			t.Fatalf("restricted overrides missing %s: %s", want, overrides)
 		}
+	}
+}
+
+func TestCheckStorageClassReadinessDiscoversDefault(t *testing.T) {
+	t.Setenv("MCP_STORAGE_CLASS", "")
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			if contains(spec.Args, "-o") && contains(spec.Args, "json") {
+				return &core.MockCommand{OutputData: []byte(`{"items":[{"metadata":{"name":"standard","annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}]}`)}
+			}
+			return &core.MockCommand{OutputData: []byte("standard")}
+		},
+	}
+	check := checkStorageClassReadiness(core.NewTestKubectlClient(mock))
+	if !check.OK || !strings.Contains(check.Detail, `StorageClass "standard"`) {
+		t.Fatalf("expected discovered default StorageClass, got %+v", check)
+	}
+}
+
+func TestCheckSentinelOIDCConfigurationSkipsTestMode(t *testing.T) {
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			return &core.MockCommand{OutputData: []byte(`{"data":{"PLATFORM_MODE":"tenant","MCP_RUNTIME_TEST_MODE":"1"}}`)}
+		},
+	}
+	check := checkSentinelOIDCConfiguration(core.NewTestKubectlClient(mock))
+	if !check.OK || !strings.Contains(check.Detail, "test mode") {
+		t.Fatalf("expected test-mode OIDC check to pass, got %+v", check)
+	}
+}
+
+func TestCheckSentinelTelemetryPipelineSkipsMissingNamespace(t *testing.T) {
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			return &core.MockCommand{OutputErr: errors.New("not found")}
+		},
+	}
+	check := checkSentinelTelemetryPipeline(core.NewTestKubectlClient(mock))
+	if !check.OK || !strings.Contains(check.Detail, "skipping") {
+		t.Fatalf("expected missing optional telemetry stack to be skipped, got %+v", check)
+	}
+}
+
+func TestCheckPersistentVolumeClaimsReportsPendingClaims(t *testing.T) {
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			return &core.MockCommand{OutputData: []byte(`{"items":[{"metadata":{"namespace":"mcp-sentinel","name":"kafka-data-0"},"status":{"phase":"Pending"}}]}`)}
+		},
+	}
+	check := checkPersistentVolumeClaims(core.NewTestKubectlClient(mock))
+	if check.OK || !strings.Contains(check.Detail, "kafka-data-0") {
+		t.Fatalf("expected pending PVC to fail, got %+v", check)
+	}
+}
+
+func TestCheckClusterNodesReadyReportsNotReadyNodes(t *testing.T) {
+	mock := &core.MockExecutor{
+		CommandFunc: func(spec core.ExecSpec) *core.MockCommand {
+			return &core.MockCommand{OutputData: []byte(`{"items":[{"metadata":{"name":"worker-1"},"status":{"conditions":[{"type":"Ready","status":"False"}]}}]}`)}
+		},
+	}
+	check := checkClusterNodesReady(core.NewTestKubectlClient(mock))
+	if check.OK || !strings.Contains(check.Detail, "worker-1") {
+		t.Fatalf("expected not-ready node to fail, got %+v", check)
 	}
 }
 

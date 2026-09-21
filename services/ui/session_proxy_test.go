@@ -26,6 +26,9 @@ func TestSessionProxyWriteAllowlist(t *testing.T) {
 		{http.MethodPatch, "/runtime/grants/mcp-servers/demo/extra", false},
 		{http.MethodPost, "/runtime/teams/acme/other", false},
 		{http.MethodPost, "/runtime/servers", false},
+		{http.MethodDelete, "/runtime/servers/mcp-servers/demo", true},
+		{http.MethodPatch, "/runtime/servers/mcp-servers/demo", false},
+		{http.MethodDelete, "/runtime/servers/mcp-servers/demo/extra", false},
 	}
 	for _, tc := range cases {
 		if got := sessionProxyWriteAllowed(tc.method, tc.path); got != tc.want {
@@ -456,26 +459,6 @@ func TestNewMuxSessionProxyUsesStore(t *testing.T) {
 	}
 	if gotAuth != "Bearer mux-token" {
 		t.Fatalf("upstream authorization = %q", gotAuth)
-	}
-}
-
-func TestStaticAppRoutesAuthenticatedCatalogThroughSessionProxy(t *testing.T) {
-	source := string(readStaticAsset(t, "static/legacy/app.js"))
-	for _, want := range []string{
-		`function sessionAPIURL(path, method = "GET")`,
-		"`/api/ui/v1${path}`",
-		`const sessionAPIRuntimePrefixes`,
-		`"/runtime/namespaces"`,
-		`"/runtime/servers"`,
-		`"/runtime/tools"`,
-		`fetch(sessionAPIURL(path, options.method)`,
-	} {
-		if !strings.Contains(source, want) {
-			t.Fatalf("legacy app.js missing %q", want)
-		}
-	}
-	if strings.Contains(source, `fetchJSONNoAuthSideEffects(sessionAPIURL`) {
-		t.Fatal("unsigned fetch helper must not use the session proxy")
 	}
 }
 

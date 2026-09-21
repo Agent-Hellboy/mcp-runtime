@@ -107,7 +107,7 @@ describe("ActivityWorkspace", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("hides tenant activity from admins, matching legacy user-only gating", () => {
+  it("hides tenant activity from admins", () => {
     const { fetchMock } = stub();
 
     renderActivity(ADMIN);

@@ -187,7 +187,13 @@ func newMux(apiBase, apiUpstream, apiKey, apiKeys, adminAPIKeys string) (*http.S
 	if err != nil {
 		return nil, err
 	}
-	googleClientIDJSON, err := json.Marshal(strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_ID")))
+	googleClientID := strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_ID"))
+	if googleClientID == "" {
+		// Keep the documented MCP-prefixed alias working for deployments that
+		// inject all platform settings through MCP_* environment variables.
+		googleClientID = strings.TrimSpace(os.Getenv("MCP_GOOGLE_CLIENT_ID"))
+	}
+	googleClientIDJSON, err := json.Marshal(googleClientID)
 	if err != nil {
 		return nil, err
 	}
@@ -219,6 +225,7 @@ func newMux(apiBase, apiUpstream, apiKey, apiKeys, adminAPIKeys string) (*http.S
 		return nil, err
 	}
 	mux.Handle(uiSessionAPIPrefix+"/", newSessionProxyWithUpstreams(runtimeBase, analyticsBase, sessions))
+	mux.Handle(publicCatalogAPIPrefix+"/", newPublicCatalogProxy(runtimeBase, platformMode == "public"))
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/")
@@ -1209,13 +1216,12 @@ func securityHeadersMiddleware(next http.Handler) http.Handler {
 				"img-src 'self' data: https:; "+
 				"font-src 'self' data: https://fonts.gstatic.com; "+
 				"connect-src 'self' https://accounts.google.com; "+
-				"frame-src 'self' https://accounts.google.com; "+
-				// 'self', not 'none': the dashboard shell renders the legacy
-				// dashboard in a same-origin iframe (src="/legacy/index.html"),
-				// and 'none' forbids every ancestor including same-origin, so
-				// the app blocked its own UI. 'self' keeps cross-origin
-				// framing (clickjacking) blocked.
-				"frame-ancestors 'self'; "+
+				"frame-src https://accounts.google.com; "+
+				// The dashboard no longer frames anything on its own origin
+				// (the legacy same-origin iframe was removed in Phase 5), so
+				// 'none' is safe here and blocks every ancestor, same-origin
+				// included.
+				"frame-ancestors 'none'; "+
 				"base-uri 'self'; "+
 				"form-action 'self'")
 		if isHTTPSRequest(r) {

@@ -53,6 +53,22 @@ func TestConfigExposesPlatformMode(t *testing.T) {
 	}
 }
 
+func TestConfigExposesGoogleClientIDAlias(t *testing.T) {
+	t.Setenv("GOOGLE_CLIENT_ID", "")
+	t.Setenv("MCP_GOOGLE_CLIENT_ID", "alias-client.apps.googleusercontent.com")
+	mux, err := newMux("/api", "http://127.0.0.1:1", "secret", "api-secret", "")
+	if err != nil {
+		t.Fatalf("newMux() error = %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/config.js", nil))
+
+	if !strings.Contains(recorder.Body.String(), `window.MCP_GOOGLE_CLIENT_ID = "alias-client.apps.googleusercontent.com"`) {
+		t.Fatalf("config.js missing MCP_GOOGLE_CLIENT_ID alias: %q", recorder.Body.String())
+	}
+}
+
 func readStaticAsset(t *testing.T, path string) []byte {
 	t.Helper()
 	body, err := os.ReadFile(path)
@@ -77,397 +93,14 @@ func TestStaticShellLoadsReactBundle(t *testing.T) {
 			t.Fatalf("react shell missing %q", want)
 		}
 	}
-
-	legacyBody := readStaticAsset(t, "static/legacy/index.html")
-	legacy := string(legacyBody)
-	for _, want := range []string{
-		`href="styles.css"`,
-		`src="app.js"`,
-		`src="/config.js"`,
-	} {
-		if !strings.Contains(legacy, want) {
-			t.Fatalf("legacy dashboard missing %q", want)
-		}
-	}
 }
 
-func TestStaticAppPreservesOneTimeAPIKeyAfterCreate(t *testing.T) {
-	body := readStaticAsset(t, "static/legacy/app.js")
-	source := string(body)
-	if !strings.Contains(source, "async function loadUserAPIKeys(options = {})") {
-		t.Fatal("loadUserAPIKeys should accept options so callers can preserve one-time key display")
-	}
-	if !strings.Contains(source, "if (!options.preserveOneTime)") {
-		t.Fatal("loadUserAPIKeys should only clear the one-time API key when preserveOneTime is false")
-	}
-	if !strings.Contains(source, "await loadUserAPIKeys({ preserveOneTime: true })") {
-		t.Fatal("createUserAPIKey should refresh the key list without clearing the newly issued one-time key")
-	}
-}
-
-func TestStaticAppKeepsOrgCatalogBehindLogin(t *testing.T) {
-	body := readStaticAsset(t, "static/legacy/app.js")
-	source := string(body)
-	if !strings.Contains(source, `const publicCatalogEnabled = platformMode === "public";`) {
-		t.Fatal("anonymous catalog browsing should only be enabled for public mode")
-	}
-	if !strings.Contains(source, "No public catalog is available. Sign in to view organization and private servers.") {
-		t.Fatal("signed-out tenant/org catalog should explain that only public catalogs are anonymous")
-	}
-}
-
-func TestStaticAppHidesPersonalActivityForAdmins(t *testing.T) {
-	index := readStaticAsset(t, "static/legacy/index.html")
-	html := string(index)
-	if !strings.Contains(html, "Activity") {
-		t.Fatal("personal user dashboard tab should be named Activity")
-	}
-	if strings.Contains(html, "My Activity") {
-		t.Fatal("personal user dashboard tab should not use the verbose My Activity label")
-	}
-	if got := strings.Count(html, "Servers"); got < 2 {
-		t.Fatalf("expected navigation and panel to use Servers, got %d occurrences", got)
-	}
-	if got := strings.Count(html, `data-user-only="true"`); got < 2 {
-		t.Fatalf("expected tab button and panel to be marked user-only, got %d markers", got)
-	}
-
-	body := readStaticAsset(t, "static/legacy/app.js")
-	source := string(body)
-	if !strings.Contains(source, `querySelectorAll('[data-user-only="true"]')`) {
-		t.Fatal("app should apply user-only visibility rules")
-	}
-	if !strings.Contains(source, `node.classList.toggle("hidden", !isTenantUser())`) {
-		t.Fatal("user-only views should only show for authenticated tenant users")
-	}
-	if !strings.Contains(source, "isVisibleTab(active)") {
-		t.Fatal("active tab resolution should ignore hidden tabs")
-	}
-}
-
-func TestStaticAppHidesProtectedTabsWhenSignedOut(t *testing.T) {
-	index := readStaticAsset(t, "static/legacy/index.html")
-	html := string(index)
-	if got := strings.Count(html, `data-auth-required="true"`); got < 4 {
-		t.Fatalf("expected API Keys and Governance tabs/panels to require auth, got %d markers", got)
-	}
-
-	body := readStaticAsset(t, "static/legacy/app.js")
-	source := string(body)
-	for _, want := range []string{
-		`querySelectorAll('[data-auth-required="true"]')`,
-		`node.classList.toggle("hidden", authenticated !== true)`,
-	} {
-		if !strings.Contains(source, want) {
-			t.Fatalf("app missing %q", want)
-		}
-	}
-}
-
-func TestStaticAppDefaultsAdminsToAllNamespaceGovernance(t *testing.T) {
-	body := readStaticAsset(t, "static/legacy/app.js")
-	source := string(body)
-	for _, want := range []string{
-		`function adminAllNamespaceScope()`,
-		`is_admin_fleet: true`,
-		`return "all namespaces";`,
-		`authPrincipal?.role === "admin" && namespaceScopes.length > 1`,
-		`namespaceScopes = [adminAllNamespaceScope(), ...namespaceScopes]`,
-	} {
-		if !strings.Contains(source, want) {
-			t.Fatalf("admin governance scope missing %q", want)
-		}
-	}
-}
-
-func TestStaticAppIncludesAdminTeamsView(t *testing.T) {
-	index := readStaticAsset(t, "static/legacy/index.html")
-	html := string(index)
-	for _, want := range []string{
-		`id="tab-button-teams"`,
-		`id="tab-teams"`,
-		`id="team-create-form"`,
-		`id="team-user-form"`,
-		`id="team-user-password"`,
-	} {
-		if !strings.Contains(html, want) {
-			t.Fatalf("teams view missing %q", want)
-		}
-	}
-
-	body := readStaticAsset(t, "static/legacy/app.js")
-	source := string(body)
-	for _, want := range []string{
-		`loadTeams()`,
-		`fetchJSON("/runtime/teams")`,
-		"`/runtime/teams/${encodePathSegment(selectedTeamSlug)}/members`",
-		"`/runtime/teams/${encodePathSegment(team)}/users`",
-		`document.getElementById("team-user-password")?.value || ""`,
-		`function initTeams()`,
-	} {
-		if !strings.Contains(source, want) {
-			t.Fatalf("teams app missing %q", want)
-		}
-	}
-}
-
-func TestStaticAppHidesUserAPIKeysWithoutUserIdentity(t *testing.T) {
-	index := readStaticAsset(t, "static/legacy/index.html")
-	html := string(index)
-	if got := strings.Count(html, `data-user-identity-required="true"`); got < 2 {
-		t.Fatalf("expected API key tab and panel to require a user identity, got %d markers", got)
-	}
-
-	body := readStaticAsset(t, "static/legacy/app.js")
-	source := string(body)
-	for _, want := range []string{
-		`function hasUserIdentity()`,
-		`String(authPrincipal?.subject || "").trim() !== ""`,
-		`querySelectorAll('[data-user-identity-required="true"]')`,
-		`Sign in with a platform account to manage user API keys.`,
-	} {
-		if !strings.Contains(source, want) {
-			t.Fatalf("app missing %q", want)
-		}
-	}
-}
-
-func TestStaticAppShowsInlineUserAPIKeyLoadFailures(t *testing.T) {
-	body := readStaticAsset(t, "static/legacy/app.js")
-	source := string(body)
-	for _, want := range []string{
-		"const message = `Failed to load API keys: ${readErrorMessage(err, \"request failed\")}`",
-		`setInlineError("user-api-key-error", message)`,
-		`showToast(message, "error")`,
-	} {
-		if !strings.Contains(source, want) {
-			t.Fatalf("app missing %q", want)
-		}
-	}
-}
-
-func TestStaticAppSearchesServerMetadataLabels(t *testing.T) {
-	body := readStaticAsset(t, "static/legacy/app.js")
-	source := string(body)
-	for _, want := range []string{
-		`metadataSearchText(server.labels)`,
-		`function metadataSearchText(labels)`,
-	} {
-		if !strings.Contains(source, want) {
-			t.Fatalf("app missing %q", want)
-		}
-	}
-}
-
-func TestStaticAppUsesLiveInventoryWithDriftBadges(t *testing.T) {
-	body := readStaticAsset(t, "static/legacy/app.js")
-	source := string(body)
-	for _, want := range []string{
-		`function serverDisplayInventory(server)`,
-		`mergeToolInventory(live.tools || [], declaredTools)`,
-		`drift: governance ? "" : "ungoverned"`,
-		`drift: "missing"`,
-		`missing on server`,
-		`function scheduleServerLiveInventoryRefresh()`,
-		`serverLiveInventoryPending`,
-		`reason === "live inventory pending"`,
-	} {
-		if !strings.Contains(source, want) {
-			t.Fatalf("app missing %q", want)
-		}
-	}
-
-	styles := readStaticAsset(t, "static/legacy/styles.css")
-	css := string(styles)
-	for _, want := range []string{
-		`.drift-ungoverned`,
-		`.drift-missing`,
-		`.drift-chip::before`,
-	} {
-		if !strings.Contains(css, want) {
-			t.Fatalf("styles missing %q", want)
-		}
-	}
-}
-
-func TestStaticAppRequiresGrantSideEffects(t *testing.T) {
-	body := readStaticAsset(t, "static/legacy/app.js")
-	source := string(body)
-	for _, want := range []string{
-		`const sideEffects = selectedGrantSideEffects()`,
-		`Select at least one allowed side effect.`,
-		`allowedSideEffects: sideEffects`,
-	} {
-		if !strings.Contains(source, want) {
-			t.Fatalf("app missing %q", want)
-		}
-	}
-}
-
-func TestStaticAppKeepsServerEventAuthFailuresLocal(t *testing.T) {
-	body := readStaticAsset(t, "static/legacy/app.js")
-	source := string(body)
-	for _, want := range []string{
-		`function fetchJSONNoAuthSideEffects`,
-		"fetchJSONNoAuthSideEffects(`",
-		`/runtime/server-events?`,
-	} {
-		if !strings.Contains(source, want) {
-			t.Fatalf("app missing %q", want)
-		}
-	}
-}
-
-func TestStaticAppShowsInlineValidationFeedback(t *testing.T) {
-	index := readStaticAsset(t, "static/legacy/index.html")
-	html := string(index)
-	for _, want := range []string{
-		`id="grant-form-error" class="form-error hidden" role="alert"`,
-		`id="user-api-key-error" class="form-error hidden" role="alert"`,
-		`id="restart-component-error" class="form-error hidden" role="alert"`,
-		`Servers Seen`,
-	} {
-		if !strings.Contains(html, want) {
-			t.Fatalf("index missing %q", want)
-		}
-	}
-
-	body := readStaticAsset(t, "static/legacy/app.js")
-	source := string(body)
-	for _, want := range []string{
-		`function setInlineError(id, message = "")`,
-		`failGrantForm("Provide at least one of Human ID, Agent ID, or Team ID.")`,
-		`setInlineError("user-api-key-error", message)`,
-		`setInlineError("restart-component-error", message)`,
-	} {
-		if !strings.Contains(source, want) {
-			t.Fatalf("app missing %q", want)
-		}
-	}
-}
-
-func TestStaticStylesAvoidTextGeneratedChevrons(t *testing.T) {
-	body := readStaticAsset(t, "static/legacy/styles.css")
-	source := string(body)
-	if strings.Contains(source, `content: ">"`) {
-		t.Fatal("inventory chevrons should not use generated text that leaks into the accessibility tree")
-	}
-	if !strings.Contains(source, `border-right: 2px solid var(--muted);`) {
-		t.Fatal("inventory chevrons should be drawn with borders")
-	}
-}
-
-func TestStaticMarkupIncludesPlatformRestartAndDialogReviewFixes(t *testing.T) {
-	index := readStaticAsset(t, "static/legacy/index.html")
-	html := string(index)
-	for _, want := range []string{
-		`<option value="prometheus">Prometheus</option>`,
-		`<option value="grafana">Grafana</option>`,
-		`id="modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title"`,
-	} {
-		if !strings.Contains(html, want) {
-			t.Fatalf("index missing %q", want)
-		}
-	}
-	if strings.Contains(html, `href="/prometheus"`) {
-		t.Fatal("index should not link directly to the Prometheus UI")
-	}
-}
-
-func TestStaticAppMovesTenantRetireActionToMyActivity(t *testing.T) {
-	body := readStaticAsset(t, "static/legacy/app.js")
-	source := string(body)
-	for _, want := range []string{
-		`function isTenantUser()`,
-		`if (isTenantUser() && server.namespace && server.name)`,
-		`retireButton.textContent = "Retire"`,
-		`metricsButton.textContent = "Prometheus"`,
-		`grafanaButton.textContent = "Grafana"`,
-		`async function openScopedObservability(server, target)`,
-		`server.observability?.prometheus?.queries?.length`,
-		`authenticated && !isTenantUser()`,
-		`await loadUserDashboard()`,
-	} {
-		if !strings.Contains(source, want) {
-			t.Fatalf("app missing %q", want)
-		}
-	}
-}
-
-func TestStaticAppRemovesCatalogDetailsAction(t *testing.T) {
-	body := readStaticAsset(t, "static/legacy/app.js")
-	source := string(body)
-	for _, unwanted := range []string{
-		`detailsButton`,
-		`detailsButton.textContent = "Details"`,
-		`detailsButton.addEventListener("click", () => selectServer(server))`,
-	} {
-		if strings.Contains(source, unwanted) {
-			t.Fatalf("app should not render catalog details action %q", unwanted)
-		}
-	}
-}
-
-func TestStaticAppUsesInAppConfirmForRetire(t *testing.T) {
-	body := readStaticAsset(t, "static/legacy/app.js")
-	source := string(body)
-	if strings.Contains(source, "window.confirm") {
-		t.Fatal("retire flow should use the in-app confirmation modal, not native window.confirm")
-	}
-	if !strings.Contains(source, "await confirmModal(`Retire ${server.namespace}/${server.name}?`)") {
-		t.Fatal("retire flow should call confirmModal with the target namespace/name")
-	}
-}
-
-func TestStaticAppKeepsAdminFleetCatalogAndCreatedGovernanceNamespaceVisible(t *testing.T) {
-	body := readStaticAsset(t, "static/legacy/app.js")
-	source := string(body)
-	for _, want := range []string{
-		`fetchJSON("/runtime/servers").then`,
-		`function focusNamespaceScope(namespace)`,
-		`focusNamespaceScope(payload.namespace)`,
-	} {
-		if !strings.Contains(source, want) {
-			t.Fatalf("app missing %q", want)
-		}
-	}
-	if got := strings.Count(source, "focusNamespaceScope(payload.namespace)"); got < 2 {
-		t.Fatalf("expected grant and session create flows to focus created namespace, got %d", got)
-	}
-}
-
-func TestStaticAppExposesGovernanceToTenantUsers(t *testing.T) {
-	index := readStaticAsset(t, "static/legacy/index.html")
-	html := string(index)
-	if strings.Contains(html, `id="tab-button-governance"`+`
-          class="tab"
-          data-tab="governance"
-          data-admin-only="true"`) {
-		t.Fatal("governance tab should not be admin-only")
-	}
-	if strings.Contains(html, `id="tab-governance"`+`
-        class="tab-content"
-        data-admin-only="true"`) {
-		t.Fatal("governance panel should not be admin-only")
-	}
-	for _, want := range []string{`id="grant-team"`, `id="session-team"`} {
-		if !strings.Contains(html, want) {
-			t.Fatalf("governance form missing %s", want)
-		}
-	}
-
-	body := readStaticAsset(t, "static/legacy/app.js")
-	source := string(body)
-	for _, want := range []string{
-		`subject.teamID`,
-		`const teamID = fieldValue("grant-team")`,
-		`const teamID = fieldValue("session-team")`,
-		`subject: { humanID, agentID, teamID }`,
-		`Human ID, Agent ID, or Team ID`,
-	} {
-		if !strings.Contains(source, want) {
-			t.Fatalf("app missing %q", want)
-		}
+// TestLegacyDashboardAssetsAreGone guards against the legacy static bundle
+// being reintroduced - every workflow it served has an accepted React route
+// before the legacy bundle can return.
+func TestLegacyDashboardAssetsAreGone(t *testing.T) {
+	if _, err := os.Stat("static/legacy"); !os.IsNotExist(err) {
+		t.Fatalf("static/legacy should have been removed, stat error = %v", err)
 	}
 }
 
@@ -491,96 +124,11 @@ func TestSecurityHeadersAllowConfiguredExternalAssets(t *testing.T) {
 	if !strings.Contains(csp, "https://fonts.gstatic.com") {
 		t.Fatalf("CSP should allow font file origin, got %q", csp)
 	}
-	if !strings.Contains(csp, "frame-src 'self' https://accounts.google.com") {
-		t.Fatalf("CSP should allow same-origin dashboard iframe, got %q", csp)
+	if !strings.Contains(csp, "frame-src https://accounts.google.com") {
+		t.Fatalf("CSP should allow the Google sign-in iframe, got %q", csp)
 	}
-}
-
-func TestStaticAppUsesCompactCatalogInventorySections(t *testing.T) {
-	body := readStaticAsset(t, "static/legacy/app.js")
-	source := string(body)
-	for _, want := range []string{
-		`function serverVisibleInventorySections(inventory)`,
-		`].filter((section) => section.items.length > 0);`,
-		`const visibleInventory = serverVisibleInventorySections(displayInventory)`,
-		`if (inventory.prompts.length)`,
-		`if (inventory.resources.length)`,
-		`if (inventory.tasks.length)`,
-	} {
-		if !strings.Contains(source, want) {
-			t.Fatalf("app missing compact catalog behavior %q", want)
-		}
-	}
-}
-
-func TestStaticMarkupBoundsLongActivityTables(t *testing.T) {
-	index := readStaticAsset(t, "static/legacy/index.html")
-	html := string(index)
-	if got := strings.Count(html, `class="table-wrap scroll-table"`); got < 4 {
-		t.Fatalf("expected long dashboard tables to use scroll-table, got %d", got)
-	}
-	for _, want := range []string{
-		`placeholder="Search servers and tools"`,
-		`id="tool-catalog-body"`,
-		`id="tool-risk-filter"`,
-		`class="analytics-tabset" data-analytics-tabset`,
-		`id="governance-decisions" data-admin-only="true"`,
-		`data-analytics-tab-target="governance-decision-audit"`,
-		`id="ops-workspace-panel"`,
-		`data-analytics-tab-target="ops-inspector-panel"`,
-		`id="ops-tab-platform-activity"`,
-	} {
-		if !strings.Contains(html, want) {
-			t.Fatalf("index missing navigation affordance %q", want)
-		}
-	}
-	for _, unwanted := range []string{
-		`class="section-nav" aria-label="Operations sections"`,
-		`href="#ops-inspector-panel"`,
-		`href="#dashboard-audit"`,
-		`id="dashboard-audit"`,
-	} {
-		if strings.Contains(html, unwanted) {
-			t.Fatalf("stacked section navigation should not own dense workspace markup %q", unwanted)
-		}
-	}
-
-	styles := readStaticAsset(t, "static/legacy/styles.css")
-	css := string(styles)
-	for _, want := range []string{
-		`.table-wrap.scroll-table`,
-		`max-height: min(62vh, 680px);`,
-		`.scroll-table thead th`,
-		`position: sticky;`,
-		`.section-nav`,
-		`.analytics-tabs`,
-		`.analytics-tab-panel[hidden]`,
-		`.ops-tab-head`,
-		`.tabs`,
-		`position: sticky;`,
-		`.server-card:hover`,
-	} {
-		if !strings.Contains(css, want) {
-			t.Fatalf("styles missing UX affordance %q", want)
-		}
-	}
-}
-
-func TestStaticAppRoutesDecisionAuditThroughGovernance(t *testing.T) {
-	body := readStaticAsset(t, "static/legacy/app.js")
-	source := string(body)
-	for _, want := range []string{
-		`function initAnalyticsTabsets()`,
-		`function loadGovernanceDecisionAnalytics()`,
-		`if (isAdminUser()) {` + "\n" + `          loadGovernanceDecisionAnalytics();` + "\n" + `          loadEvents();`,
-		`if (usageTab) activateAnalyticsTab(usageTab);`,
-	} {
-		if !strings.Contains(source, want) {
-			t.Fatalf("app missing governance decision behavior %q", want)
-		}
-	}
-	if strings.Contains(source, `loadDashboardAnalytics();`+"\n"+`        loadEvents();`) {
-		t.Fatal("dashboard tab should not load decision audit events")
+	if strings.Contains(csp, "frame-src 'self'") {
+		t.Fatalf("CSP should not allow same-origin framing (legacy iframe removed), got %q", csp)
 	}
 }
 
@@ -999,12 +547,10 @@ func TestSecurityHeadersMiddlewareAlwaysSetsBaselineHeaders(t *testing.T) {
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
 
 	wantContains := map[string]string{
-		"X-Content-Type-Options": "nosniff",
-		"Referrer-Policy":        "strict-origin-when-cross-origin",
-		"Permissions-Policy":     "interest-cohort=()",
-		// 'self', not 'none': the dashboard shell frames /legacy/index.html
-		// on the same origin, and 'none' blocks same-origin ancestors too.
-		"Content-Security-Policy": "frame-ancestors 'self'",
+		"X-Content-Type-Options":  "nosniff",
+		"Referrer-Policy":         "strict-origin-when-cross-origin",
+		"Permissions-Policy":      "interest-cohort=()",
+		"Content-Security-Policy": "frame-ancestors 'none'",
 	}
 	for header, fragment := range wantContains {
 		got := rec.Header().Get(header)

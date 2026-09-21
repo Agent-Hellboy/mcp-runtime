@@ -46,13 +46,17 @@ spec:
     # component: kube-apiserver, not component: apiserver in default. Selecting
     # it by label therefore matches nothing and silently denies API egress,
     # which breaks registry push (it resolves namespaces through the API).
-    # Allow 443 by CIDR instead, matching the mcp-platform-api policy.
+    # Allow the service-facing 443 and the host-facing 6443 port. k3s exposes
+    # the kubernetes ClusterIP on 443 but forwards to its embedded API server
+    # on 6443 before the network policy is evaluated on some CNIs.
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0
       ports:
         - protocol: TCP
           port: 443
+        - protocol: TCP
+          port: 6443 # MCP_KUBERNETES_API_PORT
     - to:
         - namespaceSelector:
             matchLabels:

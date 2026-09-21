@@ -85,20 +85,20 @@ describe("visibleWorkspaceTabs", () => {
   const ids = (auth: AuthStatus) => visibleWorkspaceTabs(auth).map((tab) => tab.id);
 
   it("shows only public workspaces when signed out", () => {
-    expect(ids({ authenticated: false })).toEqual(["servers", "legacy"]);
+    expect(ids({ authenticated: false })).toEqual(["servers"]);
   });
 
   it("shows Activity and Keys to a tenant user", () => {
-    expect(ids(TENANT as AuthStatus)).toEqual(["servers", "activity", "keys", "legacy"]);
+    expect(ids(TENANT as AuthStatus)).toEqual(["servers", "access", "activity", "keys"]);
   });
 
   it("hides Activity from admins but keeps Keys when they have an identity", () => {
     // Legacy: Activity is data-user-only; Keys needs a user subject.
-    expect(ids(ADMIN as AuthStatus)).toEqual(["servers", "admin", "keys", "legacy"]);
+    expect(ids(ADMIN as AuthStatus)).toEqual(["servers", "access", "keys", "admin"]);
   });
 
   it("hides both from a session with no user identity", () => {
-    expect(ids(API_KEY_SESSION as AuthStatus)).toEqual(["servers", "admin", "legacy"]);
+    expect(ids(API_KEY_SESSION as AuthStatus)).toEqual(["servers", "access", "admin"]);
   });
 });
 
@@ -144,17 +144,34 @@ describe("workspace navigation", () => {
     expect(screen.getByTestId("catalog-signed-out")).toBeInTheDocument();
   });
 
-  it("keeps the legacy fallback reachable", async () => {
+  it("no longer offers the retired More workspaces entry", async () => {
+    stubApp(TENANT);
+
+    renderApp();
+    await screen.findByTestId("workspace-tab-servers");
+
+    expect(screen.queryByTestId("workspace-tab-legacy")).not.toBeInTheDocument();
+    expect(screen.queryByTitle("MCP Sentinel dashboard")).not.toBeInTheDocument();
+  });
+
+  it("puts the active workspace in the URL so it can be shared", async () => {
     const user = userEvent.setup();
     stubApp(TENANT);
 
     renderApp();
-    await user.click(await screen.findByTestId("workspace-tab-legacy"));
+    await user.click(await screen.findByTestId("workspace-tab-keys"));
+    await screen.findByTestId("api-keys-empty");
 
-    expect(screen.getByTitle("MCP Sentinel dashboard")).toHaveAttribute(
-      "src",
-      "/legacy/index.html"
-    );
+    expect(window.location.hash).toBe("#/keys");
+  });
+
+  it("opens a shared deep link straight into that workspace", async () => {
+    window.location.hash = "#/activity";
+    stubApp(TENANT);
+
+    renderApp();
+
+    expect(await screen.findByTestId("usage-summary")).toBeInTheDocument();
   });
 });
 

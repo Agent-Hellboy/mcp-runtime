@@ -111,41 +111,18 @@ afterEach(() => {
 
 describe("admin navigation gating", () => {
   it("lists the admin tab only for an admin role", () => {
-    expect(visibleWorkspaceTabs(ADMIN).map((tab) => tab.id)).toEqual([
-      "servers",
-      "admin",
-      "legacy",
-    ]);
+    expect(visibleWorkspaceTabs(ADMIN).map((tab) => tab.id)).toEqual(["servers", "access", "admin"]);
     const user = { authenticated: true, principal: { role: "user" } } as AuthStatus;
     expect(visibleWorkspaceTabs(user).map((tab) => tab.id)).not.toContain("admin");
   });
 });
 
 describe("admin accessibility", () => {
-  it("has no detectable violations on access control", async () => {
-    stub();
-    const { container } = renderAdmin(ADMIN);
-    await screen.findByTestId("grants-table");
-
-    expect(await axe(container, AXE_OPTIONS)).toHaveNoViolations();
-  });
-
-  it("has no detectable violations on the grant drill-down", async () => {
-    const user = userEvent.setup();
-    stub();
-    const { container } = renderAdmin(ADMIN);
-    await screen.findByTestId("grants-table");
-    await user.click(screen.getAllByTestId("grant-drilldown")[0]);
-    await screen.findByTestId("access-detail");
-
-    expect(await axe(container, AXE_OPTIONS)).toHaveNoViolations();
-  });
-
   it("has no detectable violations on operations", async () => {
     const user = userEvent.setup();
     stub();
     const { container } = renderAdmin(ADMIN);
-    await screen.findByTestId("grants-table");
+    await screen.findByTestId("teams-table");
     await user.click(screen.getByTestId("admin-section-operations"));
     await screen.findByTestId("operations-users-table");
 
@@ -156,9 +133,9 @@ describe("admin accessibility", () => {
     const user = userEvent.setup();
     stub();
     const { container } = renderAdmin(ADMIN);
-    await screen.findByTestId("grants-table");
+    await screen.findByTestId("teams-table");
     await user.click(screen.getByTestId("admin-section-platform"));
-    await screen.findByTestId("platform-table");
+    await screen.findByTestId("platform-components");
 
     expect(await axe(container, AXE_OPTIONS)).toHaveNoViolations();
   });

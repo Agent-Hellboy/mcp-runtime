@@ -3,6 +3,7 @@ package doctor
 import (
 	"encoding/base64"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -133,6 +134,21 @@ func firstNonEmpty(values []string, fallback string) string {
 	return fallback
 }
 
+// doctorClusterDomain returns the Kubernetes cluster DNS domain used by
+// in-cluster service probes. Kubernetes defaults this to cluster.local, but
+// distributions and operators can be installed with a different domain.
+func doctorClusterDomain() string {
+	domain := strings.TrimSpace(os.Getenv("MCP_CLUSTER_DOMAIN"))
+	if domain == "" {
+		return "cluster.local"
+	}
+	return strings.Trim(strings.TrimSuffix(domain, "."), ".")
+}
+
+func doctorServiceDNS(service, namespace string) string {
+	return fmt.Sprintf("%s.%s.svc.%s", service, namespace, doctorClusterDomain())
+}
+
 func filterNonEmptyLines(value string) []string {
 	raw := strings.Split(value, "\n")
 	out := make([]string, 0, len(raw))
@@ -213,6 +229,12 @@ func resolveDoctorSmokeImage(kubectl core.KubectlRunner, preferredNamespace stri
 }
 
 func resolveDoctorSmokeTarget(kubectl core.KubectlRunner, preferredNamespace string) doctorSmokeTarget {
+	if image := strings.TrimSpace(os.Getenv("MCP_DOCTOR_SMOKE_IMAGE")); image != "" {
+		return doctorSmokeTarget{Image: image, Port: 8088, Source: "MCP_DOCTOR_SMOKE_IMAGE", WaitForReady: false}
+	}
+	if image, err := readKubectlOutput(kubectl, []string{"get", "configmap", "mcp-sentinel-config", "-n", doctorSentinelNamespace, "-o", "jsonpath={.data.MCP_DOCTOR_SMOKE_IMAGE}"}); err == nil && strings.TrimSpace(image) != "" {
+		return doctorSmokeTarget{Image: strings.TrimSpace(image), Port: 8088, Source: "mcp-sentinel-config/MCP_DOCTOR_SMOKE_IMAGE", WaitForReady: true}
+	}
 	mcpServerNames, haveMCPServerNames := readDoctorMCPServerNames(kubectl, preferredNamespace)
 	out, err := readKubectlOutput(kubectl, []string{"get", "deploy", "-n", preferredNamespace, "-o", "jsonpath={range .items[*]}{.metadata.name}|{.status.readyReplicas}|{.spec.template.spec.containers[0].image}|{.spec.template.spec.containers[0].ports[0].containerPort}{\"\\n\"}{end}"})
 	if err == nil {

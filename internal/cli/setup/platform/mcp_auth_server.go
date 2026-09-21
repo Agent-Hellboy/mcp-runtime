@@ -196,12 +196,23 @@ func renderMCPAuthServerManifest(raw string, opts mcpAuthServerOptions) (string,
 
 	manifest := strings.ReplaceAll(raw, "image: docker.io/princekrroshan01/mcp-auth-server:latest", "image: "+opts.Image)
 	manifest = strings.ReplaceAll(manifest, "MCP_AUTH_ISSUER_VALUE", issuer)
+	// Every resolved resource has to reach the authorization server, not just
+	// the first: a deployment fronting two MCP servers would otherwise mint
+	// tokens for one of them and reject the other's resource parameter with
+	// "resource is not recognized" at /authorize. MCP_AUTH_RESOURCES is the
+	// multi-resource setting and takes precedence server-side.
+	manifest = strings.ReplaceAll(manifest, "MCP_AUTH_RESOURCES_VALUE", strconv.Quote(strings.Join(resources, ",")))
 	manifest = strings.ReplaceAll(manifest, "MCP_AUTH_RESOURCE_VALUE", strconv.Quote(resources[0]))
 	// Quoted: a container env value is a string, and a bare true/false renders
 	// as a YAML boolean that the API server rejects on the EnvVar.Value field.
 	manifest = strings.ReplaceAll(manifest, "MCP_AUTH_LOCAL_DEVELOPMENT_VALUE", strconv.FormatBool(opts.TestMode))
 	manifest = strings.ReplaceAll(manifest, "MCP_AUTH_LOCAL_TOKEN_EXCHANGE_VALUE", strconv.FormatBool(opts.TestMode))
 	manifest = strings.ReplaceAll(manifest, "MCP_AUTH_REQUIRE_HTTPS_VALUE", strconv.FormatBool(!opts.TestMode))
+	// The platform always fronts the authorization server with an ingress
+	// that terminates TLS, and k8s/23-mcp-auth-server.yaml restricts ingress
+	// to that controller, so the forwarded-proto header can be trusted here.
+	// A deployment that exposes the pod directly must not set this.
+	manifest = strings.ReplaceAll(manifest, "MCP_AUTH_TRUST_PROXY_TLS_VALUE", strconv.FormatBool(!opts.TestMode))
 	store := "sqlite"
 	databaseURL := "/data/mcp-auth.db"
 	dataVolume := "persistentVolumeClaim:\n            claimName: mcp-auth-server-data"
@@ -341,10 +352,12 @@ func unresolvedManifestPlaceholders(manifest string) []string {
 	var remaining []string
 	for _, placeholder := range []string{
 		"MCP_AUTH_ISSUER_VALUE",
+		"MCP_AUTH_RESOURCES_VALUE",
 		"MCP_AUTH_RESOURCE_VALUE",
 		"MCP_AUTH_LOCAL_DEVELOPMENT_VALUE",
 		"MCP_AUTH_LOCAL_TOKEN_EXCHANGE_VALUE",
 		"MCP_AUTH_REQUIRE_HTTPS_VALUE",
+		"MCP_AUTH_TRUST_PROXY_TLS_VALUE",
 		"MCP_AUTH_STORE_VALUE",
 		"MCP_AUTH_DATABASE_URL_VALUE",
 		"MCP_AUTH_DATA_VOLUME_BLOCK",

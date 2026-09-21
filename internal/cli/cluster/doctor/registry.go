@@ -3,6 +3,8 @@ package doctor
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -121,7 +123,17 @@ func doctorRegistryServiceURL(kubectl core.KubectlRunner) string {
 	if doctorRegistryInternalTLSConfigured(kubectl) {
 		scheme = "https"
 	}
-	return fmt.Sprintf("%s://registry.registry.svc.cluster.local:5000/v2/", scheme)
+	return fmt.Sprintf("%s://%s:%d/v2/", scheme, doctorServiceDNS("registry", "registry"), doctorRegistryServicePort(kubectl))
+}
+
+func doctorRegistryServicePort(kubectl core.KubectlRunner) int {
+	out, err := readKubectlOutput(kubectl, []string{"get", "svc", "registry", "-n", "registry", "-o", "jsonpath={.spec.ports[0].port}"})
+	if err == nil {
+		if port, parseErr := strconv.Atoi(strings.TrimSpace(out)); parseErr == nil && port > 0 {
+			return port
+		}
+	}
+	return 5000
 }
 
 func doctorRegistryServiceScheme(registryURL string) string {
@@ -229,10 +241,15 @@ func checkMCPServersImagePullSmoke(kubectl core.KubectlRunner, namespace string)
 		}
 	}
 	if err := waitForDoctorPodImagePulled(kubectl, podName, namespace, 90*time.Second); err != nil {
+		describe, describeErr := readKubectlOutput(kubectl, []string{"describe", "pod", podName, "-n", namespace})
+		detail := fmt.Sprintf("pod image was not pulled: %v", err)
+		if describeErr == nil && strings.TrimSpace(describe) != "" {
+			detail += "; " + firstMatchingSnippet(describe, "Events:", "Failed", "ErrImagePull", "ImagePullBackOff", "Back-off")
+		}
 		return DoctorCheck{
 			Name:   "mcp-servers image pull smoke",
 			OK:     false,
-			Detail: fmt.Sprintf("pod image was not pulled: %v", err),
+			Detail: detail,
 			Remedy: "inspect pod events: `kubectl -n mcp-servers describe pod " + podName + "`",
 		}
 	}
@@ -876,6 +893,20 @@ func checkMCPServerReconcileSmoke(kubectl core.KubectlRunner, namespace string) 
 		}
 		pullSecretYAML = "  imagePullSecrets:\n" + strings.Join(items, "\n") + "\n"
 	}
+	ingressClass := strings.TrimSpace(os.Getenv("MCP_DEFAULT_INGRESS_CLASS"))
+	if ingressClass == "" {
+		ingressClass = "traefik"
+	}
+	ingressEntryPoints := strings.TrimSpace(os.Getenv("MCP_DEFAULT_INGRESS_ENTRYPOINTS"))
+	if ingressEntryPoints == "" {
+		ingressEntryPoints = "web"
+	}
+	servicePort := target.Port
+	if configured := strings.TrimSpace(os.Getenv("MCP_DEFAULT_SERVICE_PORT")); configured != "" {
+		if parsed, err := strconv.Atoi(configured); err == nil && parsed > 0 && parsed <= 65535 {
+			servicePort = int32(parsed)
+		}
+	}
 	manifest := fmt.Sprintf(`apiVersion: mcpruntime.org/v1alpha1
 kind: MCPServer
 metadata:
@@ -885,12 +916,12 @@ spec:
   image: %s
 %s
   port: %d
-  servicePort: 80
+  servicePort: %d
   publicPathPrefix: %s
-  ingressClass: traefik
+  ingressClass: %s
   ingressAnnotations:
-    traefik.ingress.kubernetes.io/router.entrypoints: web
-`, name, namespace, strings.TrimSpace(target.Image), pullSecretYAML, target.Port, name)
+    traefik.ingress.kubernetes.io/router.entrypoints: %s
+`, name, namespace, strings.TrimSpace(target.Image), pullSecretYAML, target.Port, servicePort, name, ingressClass, ingressEntryPoints)
 	cleanup := func() {
 		_ = kubectl.Run([]string{"delete", "mcpserver", name, "-n", namespace, "--ignore-not-found"})
 		_ = kubectl.Run([]string{"delete", "deploy", name, "-n", namespace, "--ignore-not-found"})

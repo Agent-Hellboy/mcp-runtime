@@ -12,6 +12,54 @@ export type NamespaceEntry = {
   team_slug?: string;
 };
 
+export type InventoryItem = {
+  name: string;
+  description?: string;
+  labels?: Record<string, string>;
+};
+
+// GET /runtime/servers's liveInventory field
+// (services/runtime-api/internal/runtimeapi/live_inventory.go): what the
+// server itself reported the last time its live MCP session was inspected,
+// as opposed to `prompts`/`resources`/`tasks` below, which are declared on
+// the MCPServer spec and may drift from what the server actually serves.
+export type LiveInventory = {
+  fetchedAt?: string;
+  protocolVersion?: string;
+  tools?: Array<{ name: string; description?: string }>;
+  prompts?: InventoryItem[];
+  resources?: InventoryItem[];
+};
+
+export type ObservabilityPrometheusQueryLink = {
+  id: string;
+  name: string;
+  description?: string;
+  url: string;
+  query?: string;
+};
+
+// GET /runtime/servers's observability field
+// (services/runtime-api/internal/runtimeapi/observability.go). Omitted by
+// the backend entirely when the requesting principal can't observe this
+// server (serverInfoObservableByPrincipal) - its presence is itself the
+// access check, not just its contents.
+export type ObservabilityLinks = {
+  namespace: string;
+  server: string;
+  team_id?: string;
+  prometheus: {
+    queries: ObservabilityPrometheusQueryLink[];
+    direct_admin_only: boolean;
+  };
+  grafana: {
+    available: boolean;
+    url?: string;
+    direct_admin_only: boolean;
+    reason?: string;
+  };
+};
+
 export type ServerSummary = {
   name: string;
   namespace: string;
@@ -23,8 +71,36 @@ export type ServerSummary = {
   status: string;
   age?: string;
   endpoint?: string;
+  // spec.auth.mode: "oauth" | "mtls" | "header" | "none". Omitted by runtime-api
+  // builds older than the ServerInfoFromMCPServer projection.
   authMode?: string;
-  tools?: Array<{ name?: string }>;
+  // The server's declared tools, with the governance metadata the gateway
+  // enforces. Same shape as the catalog rows, scoped to this server.
+  tools?: Array<{
+    name?: string;
+    description?: string;
+    requiredTrust?: string;
+    sideEffect?: string;
+    riskLevel?: string;
+  }>;
+  prompts?: InventoryItem[];
+  resources?: InventoryItem[];
+  tasks?: InventoryItem[];
+  liveInventory?: LiveInventory | null;
+  liveInventoryError?: string;
+  // The full MCP client config for this server ({"mcpServers": {...}}), only
+  // present when the runtime resolved a public connect endpoint for it.
+  access_json?: Record<string, unknown>;
+  observability?: ObservabilityLinks;
+};
+
+// GET /runtime/servers's publish_policy field
+// (services/runtime-api/internal/runtimeapi/servers.go). Only meaningful for
+// a non-admin principal - the runtime does not cap admin publishing.
+export type PublishPolicy = {
+  active_server_limit_enabled?: boolean;
+  active_server_count?: number;
+  active_server_limit?: number;
 };
 
 export type ToolRow = {
@@ -41,6 +117,9 @@ export type ToolRow = {
   side_effect?: string;
   risk_level?: string;
   labels?: Record<string, string>;
+  // Identical to the owning server's access_json - repeated per tool so a
+  // tool-level copy action doesn't need the server record in scope.
+  connect_config?: Record<string, unknown>;
 };
 
 export type Principal = {
@@ -59,8 +138,99 @@ export function serverKey(server: Pick<ServerSummary, "name" | "namespace">): st
   return `${server.namespace}/${server.name}`;
 }
 
+// Prompts and resources can be declared on the MCPServer spec, reported by
+// the server's own live MCP session, both, or neither - union by name so a
+// live-only or declared-only entry isn't dropped. Tasks have no live source,
+// so they're declared-only.
+function mergedInventoryNames(declared: InventoryItem[] | undefined, live: Array<{ name: string }> | undefined): string[] {
+  const names = new Set<string>();
+  for (const item of declared || []) {
+    names.add(item.name);
+  }
+  for (const item of live || []) {
+    names.add(item.name);
+  }
+  return Array.from(names).sort();
+}
+
+export type AuthModeInfo = {
+  label: string;
+  tone: "info" | "warning" | "neutral" | "unknown";
+  detail: string;
+};
+
+// What a client has to present to reach this server. Unset means the runtime
+// API did not report a mode, which is not the same as "no auth required".
+export function authModeInfo(mode: string | undefined): AuthModeInfo {
+  switch ((mode || "").trim().toLowerCase()) {
+    case "oauth":
+      return {
+        label: "OAuth",
+        tone: "info",
+        detail:
+          "Callers must present a bearer token from the server's configured issuer. An MCP client needs to complete the OAuth flow first.",
+      };
+    case "mtls":
+      return {
+        label: "mTLS",
+        tone: "info",
+        detail:
+          "Callers must present a client certificate from the workload trust domain. Use `mcp-runtime adapter enroll` to obtain one.",
+      };
+    case "header":
+      return {
+        label: "Header identity",
+        tone: "neutral",
+        detail:
+          "The gateway reads identity from request headers. There is no token exchange, so the headers must come from a trusted hop.",
+      };
+    case "none":
+      return {
+        label: "No auth",
+        tone: "warning",
+        detail: "The gateway does not authenticate callers for this server.",
+      };
+    default:
+      return {
+        label: "Auth not reported",
+        tone: "unknown",
+        detail:
+          "This runtime-api build did not report an auth mode for the server. Check the MCPServer spec.auth.mode directly.",
+      };
+  }
+}
+
+export function serverPrompts(server: ServerSummary): string[] {
+  return mergedInventoryNames(server.prompts, server.liveInventory?.prompts);
+}
+
+export function serverResources(server: ServerSummary): string[] {
+  return mergedInventoryNames(server.resources, server.liveInventory?.resources);
+}
+
+export function serverTasks(server: ServerSummary): string[] {
+  return (server.tasks || []).map((item) => item.name).sort();
+}
+
 export function toolKey(tool: ToolRow): string {
   return `${tool.namespace}/${tool.server_name}/${tool.tool_name}`;
+}
+
+// "count/limit" once the runtime enforces a cap, otherwise "off":
+// "off" when the limit isn't enforced, otherwise "count/limit". Callers
+// gate visibility themselves - the runtime only enforces this for non-admin
+// principals, so it is only meaningful (and only ever visible)
+// for a tenant user.
+export function formatPublishQuota(policy: PublishPolicy | null | undefined): string {
+  if (!policy || policy.active_server_limit_enabled !== true) {
+    return "off";
+  }
+  const limit = Number(policy.active_server_limit || 0);
+  if (!limit) {
+    return "off";
+  }
+  const count = Number(policy.active_server_count || 0);
+  return `${count}/${limit}`;
 }
 
 // A server is "ready" when its readiness string reports every replica up.
@@ -267,9 +437,37 @@ export type UsageResponse = {
   window_days?: number;
   actors?: Array<{ human_id: string; agent_id: string; events: number; unique_servers: number; unique_tools: number; denied: number }>;
   decisions?: Array<{ decision: string; events: number }>;
+  series?: UsageTimePoint[];
+  recent?: RecentActivity[];
+  filters?: {
+    namespaces?: string[];
+    team_ids?: string[];
+    server?: string;
+    decision?: string;
+    tool_name?: string;
+  };
 };
 
-// Legacy role gating, reproduced exactly (services/ui/static/legacy/app.js).
+export type UsageTimePoint = {
+  bucket: string;
+  events: number;
+  allowed: number;
+  denied: number;
+};
+
+export type RecentActivity = {
+  timestamp: string;
+  server?: string;
+  namespace?: string;
+  human_id?: string;
+  agent_id?: string;
+  session_id?: string;
+  decision?: string;
+  tool_name?: string;
+  event_type?: string;
+};
+
+// Role gating helpers shared across every workspace.
 // Activity is tenant-only; API keys additionally require a user identity.
 export function isAdminPrincipal(status: AuthStatus): boolean {
   return status.authenticated && status.principal?.role === "admin";

@@ -1,85 +1,96 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 
-import { AccessControlPanel, type AccessSelection } from "./AccessControlPanel";
-import { AccessDetail } from "./AccessDetail";
 import { AdminGuard } from "./AdminGuard";
+import { ADMIN_GROUPS, ADMIN_SECTIONS, adminSection, type AdminSectionId } from "./adminSections";
 import { OperationsPanel } from "./OperationsPanel";
 import { PlatformHealthPanel } from "./PlatformHealthPanel";
 import { TeamsPanel } from "./TeamsPanel";
 import { UsageAnalyticsPanel } from "./UsageAnalyticsPanel";
+import { SelectField } from "../../ui/Field";
 import type { AuthStatus } from "../../api/types";
-import "../../styles/admin-workflows.css";
 
-export type AdminSectionId = "access" | "teams" | "operations" | "platform" | "analytics";
-
-type AdminSection = {
-  id: AdminSectionId;
-  label: string;
-};
-
-const SECTIONS: AdminSection[] = [
-  { id: "access", label: "Access control" },
-  { id: "teams", label: "Teams" },
-  { id: "operations", label: "Operations" },
-  { id: "platform", label: "Platform" },
-  { id: "analytics", label: "Analytics" },
-];
+export type { AdminSectionId };
 
 type AdminWorkspaceProps = {
   auth: AuthStatus;
   onSignIn: () => void;
+  // Supplied by the shell so the section is part of the URL. Standalone
+  // renders fall back to local state.
+  section?: AdminSectionId;
+  onSectionChange?: (section: AdminSectionId) => void;
 };
 
-export function AdminWorkspace({ auth, onSignIn }: AdminWorkspaceProps) {
-  const [section, setSection] = useState<AdminSectionId>("access");
-  const [namespace, setNamespace] = useState("");
-  const [selection, setSelection] = useState<AccessSelection | null>(null);
+export function AdminWorkspace({ auth, onSignIn, section, onSectionChange }: AdminWorkspaceProps) {
+  const [localSection, setLocalSection] = useState<AdminSectionId>("teams");
+  const active = section ?? localSection;
+
+  const select = useCallback(
+    (next: AdminSectionId) => {
+      if (onSectionChange) {
+        onSectionChange(next);
+      } else {
+        setLocalSection(next);
+      }
+    },
+    [onSectionChange]
+  );
 
   return (
     <AdminGuard auth={auth} onSignIn={onSignIn}>
-      <div className="admin-workspace">
-        <nav className="admin-nav" aria-label="Administration sections">
-          <ul className="admin-nav-list">
-            {SECTIONS.map((item) => {
-              const isActive = item.id === section && !selection;
-              return (
-                <li key={item.id}>
-                  <button
-                    type="button"
-                    className={isActive ? "admin-tab active" : "admin-tab"}
-                    aria-current={isActive ? "page" : undefined}
-                    data-testid={`admin-section-${item.id}`}
-                    onClick={() => {
-                      setSection(item.id);
-                      setSelection(null);
-                    }}
-                  >
-                    {item.label}
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
+      <div className="admin-layout">
+        <nav className="admin-rail" aria-label="Administration sections">
+          {ADMIN_GROUPS.map((group) => {
+            const items = ADMIN_SECTIONS.filter((item) => item.group === group);
+            if (items.length === 0) {
+              return null;
+            }
+            return (
+              <div className="admin-rail-group" key={group}>
+                <h2>{group}</h2>
+                <ul className="admin-rail-list">
+                  {items.map((item) => (
+                    <li key={item.id}>
+                      <button
+                        type="button"
+                        className="admin-rail-item"
+                        aria-current={item.id === active ? "page" : undefined}
+                        data-testid={`admin-section-${item.id}`}
+                        onClick={() => select(item.id)}
+                      >
+                        {item.label}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            );
+          })}
         </nav>
 
-        {selection ? (
-          <AccessDetail selection={selection} onBack={() => setSelection(null)} />
-        ) : section === "access" ? (
-          <AccessControlPanel
-            namespace={namespace}
-            onNamespaceChange={setNamespace}
-            onSelect={setSelection}
-            onSignIn={onSignIn}
+        <div className="admin-section-select">
+          <SelectField
+            label="Administration section"
+            value={active}
+            data-testid="admin-section-select"
+            options={ADMIN_SECTIONS.map((item) => ({
+              value: item.id,
+              label: `${item.group} · ${item.label}`,
+            }))}
+            onChange={(event) => select(event.target.value as AdminSectionId)}
           />
-        ) : section === "teams" ? (
-          <TeamsPanel onSignIn={onSignIn} />
-        ) : section === "operations" ? (
-          <OperationsPanel onSignIn={onSignIn} />
-        ) : section === "analytics" ? (
-          <UsageAnalyticsPanel onSignIn={onSignIn} />
-        ) : (
-          <PlatformHealthPanel onSignIn={onSignIn} />
-        )}
+        </div>
+
+        <div>
+          {active === "teams" ? (
+            <TeamsPanel onSignIn={onSignIn} />
+          ) : active === "operations" ? (
+            <OperationsPanel onSignIn={onSignIn} />
+          ) : active === "analytics" ? (
+            <UsageAnalyticsPanel onSignIn={onSignIn} />
+          ) : (
+            <PlatformHealthPanel onSignIn={onSignIn} />
+          )}
+        </div>
       </div>
     </AdminGuard>
   );

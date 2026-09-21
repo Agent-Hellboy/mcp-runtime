@@ -1,4 +1,7 @@
-import { useId, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
+
+import { Button } from "../../ui/Button";
+import { TextField } from "../../ui/Field";
 
 type CreateKeyFormProps = {
   onCreate: (name: string) => Promise<void>;
@@ -25,8 +28,6 @@ export function validateKeyName(raw: string): string {
 export function CreateKeyForm({ onCreate, busy, error }: CreateKeyFormProps) {
   const [name, setName] = useState("");
   const [validation, setValidation] = useState("");
-  const nameId = useId();
-  const errorId = useId();
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -45,35 +46,32 @@ export function CreateKeyForm({ onCreate, busy, error }: CreateKeyFormProps) {
   const shown = validation || error;
 
   return (
-    <form className="create-key-form" onSubmit={handleSubmit} data-testid="create-key-form">
-      <div className="field grow">
-        <label htmlFor={nameId}>Key name</label>
-        <input
-          id={nameId}
-          type="text"
+    <form className="form-panel" onSubmit={handleSubmit} data-testid="create-key-form" noValidate>
+      <h2 className="form-panel-title">Create an API key</h2>
+      <div className="filter-bar" style={{ marginBottom: 0 }}>
+        <TextField
+          label="Key name"
+          fieldClassName="grow"
           value={name}
           maxLength={MAX_NAME_LENGTH}
           autoComplete="off"
           placeholder="Laptop, CI runner, …"
-          aria-invalid={shown ? true : undefined}
-          aria-describedby={shown ? errorId : undefined}
+          hint="Shown in this list and in the audit trail. The key value itself is displayed once, right after creation."
+          error={shown || undefined}
+          errorTestId="create-key-error"
+          announceError
+          data-testid="create-key-name"
           onChange={(event) => {
             setName(event.target.value);
             if (validation) {
               setValidation("");
             }
           }}
-          data-testid="create-key-name"
         />
+        <Button type="submit" variant="primary" icon="plus" busy={busy} data-testid="create-key-submit">
+          {busy ? "Creating…" : "Create key"}
+        </Button>
       </div>
-      <button type="submit" className="button primary" disabled={busy} data-testid="create-key-submit">
-        {busy ? "Creating…" : "Create key"}
-      </button>
-      {shown ? (
-        <p className="form-error" id={errorId} role="alert" data-testid="create-key-error">
-          {shown}
-        </p>
-      ) : null}
     </form>
   );
 }

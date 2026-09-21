@@ -39,7 +39,8 @@ mcpruntime_org_kubectl patch configmap mcp-sentinel-config -n mcp-sentinel --typ
     "PLATFORM_TEAM_TRAEFIK_WATCH": "${PLATFORM_TEAM_TRAEFIK_WATCH:-disabled}",
     "PLATFORM_TRAEFIK_NAMESPACE": "${PLATFORM_TRAEFIK_NAMESPACE:-kube-system}",
     "MCP_REGISTRY_ENDPOINT": "${REGISTRY_HOST}",
-    "MCP_REGISTRY_INGRESS_HOST": "${REGISTRY_HOST}"
+    "MCP_REGISTRY_INGRESS_HOST": "${REGISTRY_HOST}",
+    "MCP_DOCTOR_SMOKE_IMAGE": "${REGISTRY_HOST}/mcp-runtime-doctor-smoke:${TAG}"
   }
 }
 PATCH
@@ -59,6 +60,8 @@ done
 
 echo "Building mcp-sentinel-ui:${TAG} (${PLATFORM})..."
 docker build --platform "$PLATFORM" -f services/ui/Dockerfile -t "${REGISTRY_INTERNAL}/mcp-sentinel-ui:${TAG}" .
+echo "Building mcp-runtime-doctor-smoke:${TAG} (${PLATFORM})..."
+docker build --platform "$PLATFORM" -f services/doctor-smoke/Dockerfile -t "${REGISTRY_INTERNAL}/mcp-runtime-doctor-smoke:${TAG}" .
 
 MCP_REGISTRY_PF_PID="$(mcpruntime_org_registry_ensure_port_forward "$PF_PORT" "$MCP_REGISTRY_PF_PID")"
 
@@ -71,6 +74,10 @@ for entry in "${API_SERVICES[@]}"; do
 done
 if ! mcpruntime_org_registry_push_via_port_forward "$REGISTRY_INTERNAL" "$PF_PORT" "mcp-sentinel-ui" "$TAG"; then
   echo "failed to push mcp-sentinel-ui:${TAG}" >&2
+  exit 1
+fi
+if ! mcpruntime_org_registry_push_via_port_forward "$REGISTRY_INTERNAL" "$PF_PORT" "mcp-runtime-doctor-smoke" "$TAG"; then
+  echo "failed to push mcp-runtime-doctor-smoke:${TAG}" >&2
   exit 1
 fi
 

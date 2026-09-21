@@ -322,3 +322,58 @@ Extensibility cases:
 
 If a mode or case cannot be exercised, mark it skipped with a reason and the
 command or fixture needed to cover it later.
+
+## React console structure (after `ui/servers_console_redesign`)
+
+The console is hash-routed, so every screen is directly addressable and
+back/forward work. Drive coverage from these URLs rather than clicking through:
+
+| Route | Screen |
+| --- | --- |
+| `#/servers` | Servers home (default; summary, server fleet, tool catalog) |
+| `#/servers?server=<ns>/<name>` | Server inspector open |
+| `#/servers?tool=<ns>/<server>/<tool>` | Tool inspector open |
+| `#/activity` | Tenant activity |
+| `#/keys` | Personal API keys |
+| `#/admin/access` `#/admin/teams` `#/admin/operations` `#/admin/platform` `#/admin/analytics` | Administration sections |
+| `#/signin` | Sign-in |
+
+Things that changed and will break an older script:
+
+- There is no "More workspaces" tab and no iframe. `workspace-tab-legacy` and
+  `getByTitle('MCP Sentinel dashboard')` no longer exist. The legacy assets are
+  still served at `/legacy/index.html` for the one unmigrated drill-down.
+- Sign-in has separate Account and API-key modes: click
+  `signin-mode-api-key` before filling `login-api-key`.
+- `window.confirm` is gone. Destructive actions open a shared dialog:
+  `access-confirm` / `teams-confirm` / `platform-confirm` / `revoke-confirm`,
+  each with `-yes` and `-cancel` buttons. Escape cancels.
+- Administration is a grouped rail (`admin-section-<id>`) plus
+  `admin-section-select` below 900px.
+- Operations is tabbed: `operations-tab-users|audit|images`. Only the active
+  tab's table is in the DOM.
+- Platform health is a card grid (`platform-components`, `platform-component`),
+  not `platform-table`. `restart-all` sits in a separated disruptive-actions
+  area.
+- The tool catalog paginates at 25 rows: `tool-table-next-page`,
+  `tool-table-prev-page`, `tool-table-pagination-status`.
+- Server and tool search are separate and scoped: `server-search` matches server
+  metadata only, `tool-search` matches tool metadata only.
+
+Assertions worth keeping in any sweep, because they encode truthfulness rules:
+
+- An unknown metric renders `—`, never `0`.
+- A session with `revoked=false` and a past `expiresAt` reads "Expired".
+- An analytics outage renders an error state, not an empty table.
+
+## Serving a candidate build against the cluster
+
+The deployed UI pod may be older than the source and only proxies the catalog
+paths, so admin/keys/analytics reads 404 against it. Run the candidate service
+locally and point the Vite dev server at it — the full recipe is in
+`docs/ui-console-design-system.md`, "Local development against a cluster".
+`npm run dev` honours `MCP_DEV_UPSTREAM` (default `http://localhost:18080`).
+
+Repeated scripted sign-ins trip the UI login rate limiter (429). Raise
+`UI_LOGIN_RATE_CAPACITY` on the local candidate process, or sign in once per
+browser context and reuse it.

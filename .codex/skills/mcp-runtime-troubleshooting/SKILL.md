@@ -1,6 +1,6 @@
 ---
 name: mcp-runtime-troubleshooting
-description: Debug MCP Runtime cluster, ingress, registry, Sentinel auth, MCPServer pods, and platform UI failures on Kind or k3s. Use when setup, doctor, e2e, or live traffic fails; when investigating 401/404/ImagePullBackOff/ACME/TLS/registry push errors; or when AGENTS.md points here for the full failure-mode checklist.
+description: Debug MCP Runtime cluster, ingress, registry, Sentinel auth, MCPServer pods, and platform UI failures on Kind or k3s. Use when setup, doctor, e2e, or live traffic fails; when investigating 401/404/ImagePullBackOff/ACME/TLS/registry push errors; when a real MCP client (Cursor, Claude Desktop) cannot connect and you need its own logs; or when AGENTS.md points here for the full failure-mode checklist.
 ---
 
 # MCP Runtime — cluster troubleshooting
@@ -28,6 +28,26 @@ For public k3s / `mcpruntime.org` deploys, also read `.codex/skills/k3s-public-o
 ## Full checklist
 
 Read **[reference.md](reference.md) end-to-end** before diagnosing (ingress, registry, cert-manager, ImagePullBackOff, UI redirect loops, registry push timeouts, k3s NetworkPolicy, duplicate Traefik, and more). Public TLS/DNS detail: `mcp-runtime-platform-public` skill.
+
+## Client can't connect (Cursor, Claude Desktop)
+
+When `curl` against the server succeeds but a real client fails, the client's own log is the
+only place the real error appears — it does discovery, metadata schema validation, dynamic
+client registration, and PKCE that curl does not.
+
+```bash
+D=$(ls -td ~/Library/Application\ Support/Cursor/logs/*/ | head -1)   # newest launch
+tail -n 100 "$D"/mcp-server-user-*.log                                # Cursor: the live log
+tail -n 100 ~/Library/Logs/Claude/mcp*.log                            # Claude Desktop
+```
+
+`mcp-server-user-<name>.log` **at the log-directory root** is the file that matters. The
+`exthost/anysphere.cursor-mcp/MCP user-<name>.log` path is a legacy location that can sit
+frozen for hours while the real log is live — trust mtime, not the filename.
+
+Full recipe, the OAuth state machine, and symptom→cause table (SSE 404 red herring,
+`subject_types_supported` schema rejection, consent-page 404, RFC 7591 echo, RFC 8707
+`resource is not recognized`): **[reference.md](reference.md) → MCP client-side debugging**.
 
 ## MCPServer pod / gateway sidecar
 

@@ -154,7 +154,7 @@ func checkSentinelAPIAuthProbe(kubectl core.KubectlRunner) DoctorCheck {
 		"--connect-timeout", "5",
 		"--max-time", "20",
 		"-H", "x-api-key: " + apiKey,
-		fmt.Sprintf("http://%s.%s.svc.cluster.local:%d/api/v1/runtime/components", doctorRuntimeAPIService, doctorSentinelNamespace, doctorRuntimeAPIPort),
+		fmt.Sprintf("http://%s:%d/api/v1/runtime/components", doctorServiceDNS(doctorRuntimeAPIService, doctorSentinelNamespace), doctorRuntimeAPIPort),
 	}
 	defer func() {
 		_ = kubectl.Run([]string{"delete", "pod", podName, "-n", doctorSentinelNamespace, "--ignore-not-found"})
@@ -221,6 +221,96 @@ func checkSentinelAPIAuthProbe(kubectl core.KubectlRunner) DoctorCheck {
 	}
 }
 
+// checkSentinelRuntimeCatalogProbe exercises the endpoints the dashboard uses
+// for its server catalog. Readiness alone cannot detect a broken Kubernetes
+// API route, an incomplete NetworkPolicy, or an API key accepted by the UI but
+// rejected by runtime-api.
+func checkSentinelRuntimeCatalogProbe(kubectl core.KubectlRunner) DoctorCheck {
+	if _, err := readKubectlOutput(kubectl, []string{"get", "namespace", doctorSentinelNamespace, "-o", "jsonpath={.metadata.name}"}); err != nil {
+		return DoctorCheck{Name: "sentinel runtime catalog probe", OK: true, Detail: "namespace mcp-sentinel not found; skipping runtime catalog probe"}
+	}
+	encoded, err := readKubectlOutput(kubectl, []string{"get", "secret", "mcp-sentinel-secrets", "-n", doctorSentinelNamespace, "-o", "jsonpath={.data.ADMIN_API_KEYS}"})
+	if err != nil {
+		return DoctorCheck{Name: "sentinel runtime catalog probe", OK: false, Detail: "ADMIN_API_KEYS not available in mcp-sentinel-secrets", Remedy: "configure an admin API key before probing runtime catalog routes"}
+	}
+	decoded, err := decodeBase64(encoded)
+	if err != nil {
+		return DoctorCheck{Name: "sentinel runtime catalog probe", OK: false, Detail: fmt.Sprintf("ADMIN_API_KEYS is not valid base64: %v", err), Remedy: "patch mcp-sentinel-secrets with valid Kubernetes secret data"}
+	}
+	adminKeys := splitCommaTrim(decoded)
+	apiKeysEncoded, err := readKubectlOutput(kubectl, []string{"get", "secret", "mcp-sentinel-secrets", "-n", doctorSentinelNamespace, "-o", "jsonpath={.data.API_KEYS}"})
+	if err != nil {
+		return DoctorCheck{Name: "sentinel runtime catalog probe", OK: false, Detail: "API_KEYS not available in mcp-sentinel-secrets", Remedy: "configure the admin probe key in both API_KEYS and ADMIN_API_KEYS"}
+	}
+	apiKeysDecoded, err := decodeBase64(apiKeysEncoded)
+	if err != nil {
+		return DoctorCheck{Name: "sentinel runtime catalog probe", OK: false, Detail: fmt.Sprintf("API_KEYS is not valid base64: %v", err), Remedy: "patch mcp-sentinel-secrets with valid Kubernetes secret data"}
+	}
+	apiKeys := splitCommaTrim(apiKeysDecoded)
+	keys := intersectSecretKeys(apiKeys, adminKeys)
+	if len(keys) == 0 {
+		return DoctorCheck{Name: "sentinel runtime catalog probe", OK: false, Detail: "API_KEYS and ADMIN_API_KEYS have no common key", Remedy: "include at least one identical admin credential in both API_KEYS and ADMIN_API_KEYS"}
+	}
+	for _, path := range []string{"/api/v1/runtime/servers", "/api/v1/runtime/tools"} {
+		status, probeErr := runSentinelAuthenticatedProbe(kubectl, keys[0], path)
+		if probeErr != nil {
+			return DoctorCheck{Name: "sentinel runtime catalog probe", OK: false, Detail: fmt.Sprintf("%s probe failed: %v", path, probeErr), Remedy: "inspect runtime-api NetworkPolicy, Kubernetes API reachability, service endpoints, and API_KEYS/ADMIN_API_KEYS alignment"}
+		}
+		if status != "200" {
+			return DoctorCheck{Name: "sentinel runtime catalog probe", OK: false, Detail: fmt.Sprintf("%s returned HTTP %s", path, status), Remedy: "verify runtime-api authentication and catalog dependencies; /health can remain green while these routes fail"}
+		}
+	}
+	return DoctorCheck{Name: "sentinel runtime catalog probe", OK: true, Detail: "authenticated runtime servers and tools catalog endpoints returned HTTP 200"}
+}
+
+func intersectSecretKeys(apiKeys, adminKeys []string) []string {
+	adminSet := make(map[string]struct{}, len(adminKeys))
+	for _, key := range adminKeys {
+		adminSet[key] = struct{}{}
+	}
+	keys := make([]string, 0)
+	for _, key := range apiKeys {
+		if _, ok := adminSet[key]; ok {
+			keys = append(keys, key)
+		}
+	}
+	return keys
+}
+
+func runSentinelAuthenticatedProbe(kubectl core.KubectlRunner, apiKey, path string) (string, error) {
+	podName := fmt.Sprintf("doctor-sentinel-catalog-%d", time.Now().UnixNano())
+	image := "curlimages/curl:8.7.1"
+	curlArgs := []string{
+		"-sS", "-o", "/tmp/doctor-response", "-w", "%{http_code}",
+		"--connect-timeout", "5", "--max-time", "20",
+		"-H", "x-api-key: " + apiKey,
+		fmt.Sprintf("http://%s:%d%s", doctorServiceDNS(doctorRuntimeAPIService, doctorSentinelNamespace), doctorRuntimeAPIPort, path),
+	}
+	defer func() {
+		_ = kubectl.Run([]string{"delete", "pod", podName, "-n", doctorSentinelNamespace, "--ignore-not-found"})
+	}()
+	cmd, err := kubectl.CommandArgs([]string{
+		"run", podName, "-n", doctorSentinelNamespace, "--restart=Never",
+		"--image=" + image,
+		"--overrides=" + restrictedRunOverrides(podName, image, "curl", curlArgs...),
+	})
+	if err != nil {
+		return "", err
+	}
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("failed creating probe pod: %v: %s", err, strings.TrimSpace(string(out)))
+	}
+	if err := waitForDoctorPodSucceeded(kubectl, podName, doctorSentinelNamespace, 90*time.Second); err != nil {
+		return "", err
+	}
+	logs, err := readKubectlOutput(kubectl, []string{"logs", podName, "-n", doctorSentinelNamespace})
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(logs), nil
+}
+
 func checkSentinelPlatformAPIReadiness(kubectl core.KubectlRunner) DoctorCheck {
 	return checkSentinelServiceHealthReadiness(
 		kubectl,
@@ -265,7 +355,7 @@ func checkSentinelServiceHealthReadiness(kubectl core.KubectlRunner, checkName, 
 		}
 	}
 
-	baseURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", service, doctorSentinelNamespace, port)
+	baseURL := fmt.Sprintf("http://%s:%d", doctorServiceDNS(service, doctorSentinelNamespace), port)
 	for _, path := range []string{"/health", "/ready"} {
 		status, probeErr := doctorCurlServiceEndpoint(kubectl, baseURL+path)
 		if probeErr != nil {

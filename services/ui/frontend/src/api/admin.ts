@@ -177,5 +177,8 @@ export async function listUsage(limit = "10"): Promise<UsageResponse> {
     actors: payload.actors || [],
     tools: payload.tools || [],
     decisions: payload.decisions || [],
+    series: payload.series || [],
+    recent: payload.recent || [],
+    filters: payload.filters || {},
   };
 }

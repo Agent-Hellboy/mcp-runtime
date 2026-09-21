@@ -1,22 +1,24 @@
 import { useQuery } from "@tanstack/react-query";
-import { useId, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { TeamMembershipPanel } from "./TeamMembershipPanel";
-import { UsageSummary } from "./UsageSummary";
-import { ServerUsageTable, ToolUsageTable } from "./UsageTables";
-import { EmptyState } from "../EmptyState";
-import { ErrorState } from "../ErrorState";
-import { LoadingState } from "../LoadingState";
+import { UsageMetrics } from "../usage/UsageMetrics";
+import { RecentActivityTable, ServerUsageRanking, ServerUsageTable, ToolUsageTable } from "../usage/UsageTables";
+import { Button } from "../../ui/Button";
+import { SelectField } from "../../ui/Field";
+import { FilterBar } from "../../ui/FilterBar";
+import { PageHeader } from "../../ui/PageHeader";
+import { EmptyState, ErrorState, LoadingState } from "../../ui/States";
 import { UnauthorizedError } from "../../api/client";
 import { listTeams, readUserUsage } from "../../api/userWorkflows";
 import type { AuthStatus } from "../../api/types";
 import { isTenantUser } from "../../api/types";
 
 const WINDOW_OPTIONS = [
-  { value: 1, label: "24 hours" },
-  { value: 7, label: "7 days" },
-  { value: 30, label: "30 days" },
-  { value: 90, label: "90 days" },
+  { value: "1", label: "Last 24 hours" },
+  { value: "7", label: "Last 7 days" },
+  { value: "30", label: "Last 30 days" },
+  { value: "90", label: "Last 90 days" },
 ];
 
 type ActivityWorkspaceProps = {
@@ -27,10 +29,8 @@ type ActivityWorkspaceProps = {
 export function ActivityWorkspace({ auth, onSignIn }: ActivityWorkspaceProps) {
   const [windowDays, setWindowDays] = useState(7);
   const [server, setServer] = useState("");
-  const windowId = useId();
-  const serverId = useId();
 
-  // Legacy data-user-only gate: Activity is the tenant view. Admins use the
+  // Activity is the tenant view. Admins use the
   // org-wide Analytics surface instead.
   const enabled = isTenantUser(auth);
 
@@ -46,65 +46,125 @@ export function ActivityWorkspace({ auth, onSignIn }: ActivityWorkspaceProps) {
     enabled,
   });
 
+  // A response filtered to one server no longer lists the others, so the
+  // options are remembered from the unfiltered reads instead of collapsing to
+  // the single selected server.
+  const [knownServers, setKnownServers] = useState<string[]>([]);
+  useEffect(() => {
+    const names = (usageQuery.data?.servers ?? []).map((row) => row.server).filter(Boolean);
+    if (names.length === 0) {
+      return;
+    }
+    setKnownServers((current) => {
+      const merged = new Set([...current, ...names]);
+      const next = [...merged].sort();
+      return next.length === current.length && next.every((name, index) => name === current[index])
+        ? current
+        : next;
+    });
+  }, [usageQuery.data]);
+
+  const serverOptions = useMemo(
+    () => [
+      { value: "", label: "All servers" },
+      ...knownServers.map((name) => ({ value: name, label: name })),
+    ],
+    [knownServers]
+  );
+
   if (!auth.authenticated) {
     return (
-      <section className="panel" aria-labelledby="activity-signed-out-title">
-        <h2 id="activity-signed-out-title">My activity</h2>
+      <>
+        <PageHeader title="Activity" />
         <EmptyState
+          icon="activity"
           title="Sign in to see your activity."
           detail="Usage is scoped to the MCP servers in your user and team namespaces."
           testId="activity-signed-out"
           action={
-            <button type="button" className="button primary" onClick={onSignIn}>
+            <Button variant="primary" icon="login" onClick={onSignIn}>
               Sign in
-            </button>
+            </Button>
           }
         />
-      </section>
+      </>
     );
   }
 
   if (!enabled) {
     return (
-      <section className="panel" aria-labelledby="activity-admin-title">
-        <h2 id="activity-admin-title">My activity</h2>
+      <>
+        <PageHeader title="Activity" />
         <EmptyState
+          icon="activity"
           title="This view is for tenant accounts."
-          detail="Administrators see org-wide usage in the Analytics workspace instead."
+          detail="Administrators see org-wide usage in Administration → Usage analytics."
           testId="activity-admin-hidden"
         />
-      </section>
+      </>
     );
   }
 
+  const windowLabel = WINDOW_OPTIONS.find((option) => option.value === String(windowDays))?.label ?? "";
+  const scope = server ? `${server}, ${windowLabel.toLowerCase()}` : `your namespaces, ${windowLabel.toLowerCase()}`;
+
+  const header = (
+    <PageHeader
+      title="Activity"
+      description="Gateway decisions for the MCP servers in your user and team namespaces."
+      actions={
+        <Button
+          variant="secondary"
+          icon="refresh"
+          busy={usageQuery.isFetching && !usageQuery.isPending}
+          onClick={() => void usageQuery.refetch()}
+          data-testid="activity-refresh"
+        >
+          {usageQuery.isFetching && !usageQuery.isPending ? "Refreshing…" : "Refresh"}
+        </Button>
+      }
+    />
+  );
+
   if (usageQuery.isPending) {
-    return <LoadingState label="Loading your activity…" testId="activity-loading" />;
+    return (
+      <>
+        {header}
+        <LoadingState label="Loading your activity…" testId="activity-loading" />
+      </>
+    );
   }
 
   if (usageQuery.error instanceof UnauthorizedError) {
     return (
-      <ErrorState
-        title="Your session expired."
-        detail="Sign in again to see your activity."
-        onRetry={onSignIn}
-        retryLabel="Sign in"
-        testId="activity-unauthorized"
-      />
+      <>
+        {header}
+        <ErrorState
+          title="Your session expired."
+          detail="Sign in again to see your activity."
+          onRetry={onSignIn}
+          retryLabel="Sign in"
+          testId="activity-unauthorized"
+        />
+      </>
     );
   }
 
   if (usageQuery.error) {
     return (
-      <ErrorState
-        title="Your activity could not be loaded."
-        detail={
-          usageQuery.error instanceof Error
-            ? usageQuery.error.message
-            : "The analytics service did not respond."
-        }
-        onRetry={() => void usageQuery.refetch()}
-        testId="activity-error"
-      />
+      <>
+        {header}
+        <ErrorState
+          title="Activity is unavailable."
+          detail={
+            usageQuery.error instanceof Error
+              ? `The analytics service did not answer: ${usageQuery.error.message}`
+              : "The analytics service did not respond."
+          }
+          onRetry={() => void usageQuery.refetch()}
+          testId="activity-error"
+        />
+      </>
     );
   }
 
@@ -113,59 +173,67 @@ export function ActivityWorkspace({ auth, onSignIn }: ActivityWorkspaceProps) {
   const tools = usage?.tools ?? [];
 
   return (
-    <div className="user-workspace">
-      <section className="panel" aria-labelledby="activity-title">
-        <div className="panel-head">
-          <div>
-            <h2 id="activity-title">My MCP activity</h2>
-            <p className="panel-lede">
-              Usage for MCP servers in your user and team namespaces.
-            </p>
+    <>
+      {header}
+
+      <FilterBar label="Filter activity">
+        <SelectField
+          label="Server"
+          value={server}
+          options={serverOptions}
+          data-testid="activity-server-filter"
+          onChange={(event) => setServer(event.target.value)}
+        />
+        <SelectField
+          label="Time range"
+          value={String(windowDays)}
+          options={WINDOW_OPTIONS}
+          data-testid="activity-window-filter"
+          onChange={(event) => setWindowDays(Number(event.target.value))}
+        />
+      </FilterBar>
+
+      {usage ? <UsageMetrics totals={usage.totals} scope={scope} /> : null}
+
+      {servers.length > 0 ? (
+        <section className="section">
+          <div className="section-head">
+            <h2 className="section-title" id="activity-ranking-title">
+              Requests by server
+            </h2>
+            <p className="section-note">Totals for the selected window, not a trend over time.</p>
           </div>
-          <form className="toolbar inline" onSubmit={(event) => event.preventDefault()}>
-            <div className="field">
-              <label htmlFor={serverId}>Server</label>
-              <select
-                id={serverId}
-                value={server}
-                onChange={(event) => setServer(event.target.value)}
-                data-testid="activity-server-filter"
-              >
-                <option value="">All servers</option>
-                {servers.map((row) => (
-                  <option key={`${row.namespace}/${row.server}`} value={row.server}>
-                    {row.server}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="field">
-              <label htmlFor={windowId}>Time range</label>
-              <select
-                id={windowId}
-                value={String(windowDays)}
-                onChange={(event) => setWindowDays(Number(event.target.value))}
-                data-testid="activity-window-filter"
-              >
-                {WINDOW_OPTIONS.map((option) => (
-                  <option key={option.value} value={String(option.value)}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </form>
+          <ServerUsageRanking rows={servers} />
+        </section>
+      ) : null}
+
+      <section className="section">
+        <div className="section-head">
+          <h2 className="section-title" id="activity-servers-title">
+            Servers
+          </h2>
         </div>
-
-        {usage ? <UsageSummary totals={usage.totals} /> : null}
-
-        <h3 className="section-heading">Servers</h3>
         <ServerUsageTable rows={servers} />
+      </section>
 
-        <h3 className="section-heading">Tools</h3>
+      <section className="section">
+        <div className="section-head">
+          <h2 className="section-title" id="activity-tools-title">
+            Tools
+          </h2>
+        </div>
         <ToolUsageTable rows={tools} />
       </section>
 
+      <section className="section">
+        <div className="section-head">
+          <h2 className="section-title" id="activity-recent-title">Recent activity</h2>
+        </div>
+        <RecentActivityTable rows={usage?.recent ?? []} />
+      </section>
+
+      {/* Team membership is an independent read: a usage outage must not hide it,
+          and a membership outage must not hide usage. */}
       {teamsQuery.isPending ? (
         <LoadingState label="Loading your teams…" testId="teams-loading" />
       ) : teamsQuery.error ? (
@@ -178,6 +246,6 @@ export function ActivityWorkspace({ auth, onSignIn }: ActivityWorkspaceProps) {
       ) : (
         <TeamMembershipPanel teams={teamsQuery.data ?? []} />
       )}
-    </div>
+    </>
   );
 }

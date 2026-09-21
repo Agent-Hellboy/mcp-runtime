@@ -1,0 +1,154 @@
+/* Design tokens for the MCP Sentinel console.
+ *
+ * Every repeated visual decision lives here as a semantic token. Components
+ * reference the semantic name (--surface-raised), never a raw hex value, so a
+ * theme change is a token change and light mode cannot inherit a dark
+ * foreground by accident.
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* Surfaces, from furthest back to closest. */
+  --canvas: #070b13;
+  --surface: #0f1724;
+  --surface-raised: #131e2f;
+  --surface-hover: #172640;
+  --surface-selected: #16273f;
+  --surface-sunken: #0b1220;
+
+  /* Ambient depth. Kept behind content and never used for text contrast. */
+  --ambient-teal: rgba(124, 231, 211, 0.14);
+  --ambient-blue: rgba(115, 167, 255, 0.17);
+  --grid-line: rgba(150, 184, 224, 0.055);
+  --edge-highlight: rgba(255, 255, 255, 0.045);
+  --elevation-1: 0 1px 0 var(--edge-highlight) inset, 0 10px 26px -22px rgba(0, 0, 0, 0.9);
+  --elevation-2: 0 1px 0 var(--edge-highlight) inset, 0 20px 44px -28px rgba(0, 0, 0, 0.95);
+  --accent-glow: 0 0 0 1px var(--accent-line), 0 12px 32px -20px rgba(124, 231, 211, 0.55);
+
+  /* Text. */
+  --text: #f4f7fb;
+  --text-secondary: #a7b6ca;
+  --text-tertiary: #8ea0b6;
+  --text-on-accent: #04211c;
+
+  /* Lines. */
+  --border: #1f2e45;
+  --border-strong: #2c3f5c;
+
+  /* Brand and interactive. */
+  --accent: #7ce7d3;
+  --accent-hover: #9aeede;
+  --accent-soft: rgba(124, 231, 211, 0.13);
+  --accent-line: rgba(124, 231, 211, 0.45);
+  --link: #93bcff;
+  --link-hover: #b3d0ff;
+
+  /* Status. */
+  --success: #4ade80;
+  --success-soft: rgba(74, 222, 128, 0.14);
+  --warning: #fbbf24;
+  --warning-soft: rgba(251, 191, 36, 0.14);
+  --danger: #fb8a8a;
+  --danger-soft: rgba(248, 113, 113, 0.14);
+  --danger-line: rgba(248, 113, 113, 0.42);
+  --text-on-danger: #2b0606;
+  --neutral-soft: rgba(154, 170, 192, 0.14);
+
+  --focus: #8bd3ff;
+  --backdrop: rgba(4, 8, 14, 0.66);
+  --shadow-overlay: 0 26px 60px -22px rgba(0, 0, 0, 0.78);
+  --shadow-sheet: 0 18px 44px -26px rgba(0, 0, 0, 0.8);
+  --skeleton: rgba(154, 170, 192, 0.14);
+  --skeleton-shine: rgba(154, 170, 192, 0.24);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --canvas: #eef3f9;
+  --surface: #ffffff;
+  --surface-raised: #ffffff;
+  --surface-hover: #f2f7fd;
+  --surface-selected: #e7f1fb;
+  --surface-sunken: #f4f8fc;
+
+  --ambient-teal: rgba(8, 127, 115, 0.07);
+  --ambient-blue: rgba(53, 109, 204, 0.09);
+  --grid-line: rgba(31, 66, 105, 0.045);
+  --edge-highlight: rgba(255, 255, 255, 0.9);
+  --elevation-1: 0 1px 2px rgba(16, 32, 51, 0.05), 0 8px 20px -18px rgba(16, 32, 51, 0.5);
+  --elevation-2: 0 1px 2px rgba(16, 32, 51, 0.06), 0 18px 38px -26px rgba(16, 32, 51, 0.55);
+  --accent-glow: 0 0 0 1px var(--accent-line), 0 10px 26px -20px rgba(6, 95, 86, 0.45);
+
+  --text: #102033;
+  --text-secondary: #455567;
+  --text-tertiary: #556677;
+  --text-on-accent: #ffffff;
+
+  --border: #dae4f0;
+  --border-strong: #bfcedf;
+
+  --accent: #065f56;
+  --accent-hover: #04524a;
+  --accent-soft: rgba(6, 95, 86, 0.1);
+  --accent-line: rgba(6, 95, 86, 0.42);
+  --link: #2757ad;
+  --link-hover: #1c4084;
+
+  --success: #11603a;
+  --success-soft: rgba(17, 96, 58, 0.11);
+  --warning: #845700;
+  --warning-soft: rgba(132, 87, 0, 0.12);
+  --danger: #a01d14;
+  --danger-soft: rgba(160, 29, 20, 0.1);
+  --danger-line: rgba(160, 29, 20, 0.34);
+  --text-on-danger: #ffffff;
+  --neutral-soft: rgba(83, 101, 123, 0.1);
+
+  --focus: #1d5ca8;
+  --backdrop: rgba(16, 32, 51, 0.38);
+  --shadow-overlay: 0 24px 54px -24px rgba(16, 32, 51, 0.35);
+  --shadow-sheet: 0 16px 40px -28px rgba(16, 32, 51, 0.4);
+  --skeleton: rgba(83, 101, 123, 0.13);
+  --skeleton-shine: rgba(83, 101, 123, 0.2);
+}
+
+:root {
+  /* 4px scale. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-pill: 999px;
+
+  --control-h: 36px;
+  --control-h-sm: 30px;
+  --control-h-lg: 40px;
+  --topbar-h: 58px;
+
+  --fs-page: 28px;
+  --fs-section: 17px;
+  --fs-body: 14px;
+  --fs-meta: 12px;
+
+  --font-sans: "Space Grotesk", "Helvetica Neue", Arial, sans-serif;
+  --font-serif: "DM Serif Display", Georgia, serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  --page-max: 1360px;
+  --transition: 150ms cubic-bezier(0.2, 0, 0.2, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --transition: 1ms linear;
+  }
+}

@@ -1,7 +1,6 @@
 import type { ReactNode } from "react";
 
-import { ErrorState } from "../ErrorState";
-import { LoadingState } from "../LoadingState";
+import { ErrorState, LoadingState } from "../../ui/States";
 import { adminErrorMessage, adminStatusOf } from "../../hooks/useAdminData";
 
 type AsyncSectionProps = {
@@ -11,11 +10,13 @@ type AsyncSectionProps = {
   onRetry?: () => void;
   onSignIn?: () => void;
   testId: string;
+  loadingVariant?: "rows" | "cards";
   children: ReactNode;
 };
 
 // Renders the loading / session-expired / error states for one admin query and
-// only yields to `children` once the read succeeded.
+// only yields to `children` once the read succeeded, so a failed read can never
+// be mistaken for an empty result.
 export function AsyncSection({
   query,
   loadingLabel,
@@ -23,12 +24,13 @@ export function AsyncSection({
   onRetry,
   onSignIn,
   testId,
+  loadingVariant = "rows",
   children,
 }: AsyncSectionProps) {
   const status = adminStatusOf(query);
 
   if (status === "loading") {
-    return <LoadingState label={loadingLabel} testId={`${testId}-loading`} />;
+    return <LoadingState label={loadingLabel} testId={`${testId}-loading`} variant={loadingVariant} />;
   }
 
   if (status === "unauthorized") {
