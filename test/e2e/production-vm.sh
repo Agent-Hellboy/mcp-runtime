@@ -114,13 +114,8 @@ install_dependencies() {
 
 restore_backup_state() {
   # The backup is intentionally outside WORK_DIR and every cleanup target.
-  # Prefer the VM-side platform snapshot because it is captured from the live
-  # cluster and includes the TLS/auth material needed for repeatable runs.
-  if [[ -L "${BACKUP_DIR}/platform-runtime/latest" && -d "${BACKUP_DIR}/platform-runtime/latest" ]]; then
-    load_platform_backup_helpers
-    log "restoring platform runtime snapshot captured on the VM"
-    mcpruntime_org_restore_platform_runtime
-  elif [[ -x "${BACKUP_DIR}/restore.sh" ]]; then
+  # Legacy hooks/manifests may provision prerequisites before setup.
+  if [[ -x "${BACKUP_DIR}/restore.sh" ]]; then
     log "restoring E2E certificates and credentials through backup hook"
     E2E_BACKUP_DIR="${BACKUP_DIR}" KUBECONFIG="${KUBECONFIG}" \
       bash "${BACKUP_DIR}/restore.sh"
@@ -129,6 +124,17 @@ restore_backup_state() {
     kubectl apply -R -f "${BACKUP_DIR}/manifests"
   else
     log "no Kubernetes backup restore hook/manifests found; setup will provision fresh TLS state"
+  fi
+}
+
+restore_platform_runtime_after_setup() {
+  if [[ ! -L "${BACKUP_DIR}/platform-runtime/latest" || ! -d "${BACKUP_DIR}/platform-runtime/latest" ]]; then
+    return 0
+  fi
+  load_platform_backup_helpers
+  log "restoring platform runtime snapshot captured on the VM"
+  if ! mcpruntime_org_restore_platform_runtime; then
+    log "WARNING: platform runtime snapshot restore failed"
   fi
 }
 
@@ -207,6 +213,8 @@ fi
 
 log "running production-style setup"
 "${BIN}" "${SETUP_ARGS[@]}" 2>&1 | tee "${ARTIFACT_DIR}/setup.log"
+
+restore_platform_runtime_after_setup
 
 log "running post-setup diagnostics"
 "${BIN}" cluster diagnostics | tee "${ARTIFACT_DIR}/diagnostics-after.log"
