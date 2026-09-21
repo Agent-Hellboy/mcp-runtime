@@ -679,5 +679,22 @@ before `setup` to validate whether the cluster can support MCP Runtime:
 - Streams the current check before running it, including helper pod probes and waits, so a slow run shows what it is doing.
 - Prints the distribution-specific registry remediation hint only when registry or image-pull checks fail; Traefik and Sentinel failures use their own check-specific remedies.
 
+Cluster-specific values are discovered where Kubernetes exposes them. When a
+platform intentionally uses non-default values, configure the small set of
+remaining policy inputs instead of changing code:
+
+```bash
+export MCP_CLUSTER_DOMAIN=cluster.local          # custom Service DNS suffix
+export MCP_DEFAULT_INGRESS_CLASS=traefik         # active IngressClass
+export MCP_DEFAULT_INGRESS_ENTRYPOINTS=web       # smoke route entrypoint(s)
+export MCP_DEFAULT_SERVICE_PORT=8088              # smoke service port, if non-default
+```
+
+The doctor never assumes k3s' API port, a fixed CoreDNS label, or a particular
+registry NodePort. It reads node/runtime, DNS, ingress, registry, storage,
+architecture, and workload state from the active cluster. These environment
+values are only explicit overrides for information Kubernetes cannot reliably
+infer from an MCPServer smoke object.
+
 Run `bootstrap` and then `cluster doctor` before `setup` on a fresh cluster.
 Run `cluster diagnostics` after setup or after any platform change.
