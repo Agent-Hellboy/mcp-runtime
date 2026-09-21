@@ -212,7 +212,7 @@ which server it hit, and whether it was allowed.
 - [ ] Registry mode `bundled-https` or external registry
 - [ ] Sessions have reasonable `--expires-in` (4h–24h for day-to-day work)
 - [ ] Admin credentials rotated from default
-- [ ] `cluster doctor --after-setup` passes the post-setup diagnostics
+- [ ] `cluster diagnostics` passes all post-setup checks
 - [ ] Troubleshooting page bookmarked: [Troubleshooting](../troubleshooting.md)
 
 ---

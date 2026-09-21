@@ -17,13 +17,9 @@ type AppShellProps = {
   children: ReactNode;
 };
 
-function principalName(status: AuthStatus): string {
-  const principal = status.principal;
-  return (principal?.email || principal?.subject || "").trim();
-}
-
 function principalRole(status: AuthStatus): string {
-  return (status.principal?.role || "user").trim();
+  const role = (status.principal?.role || "user").trim();
+  return role ? role.charAt(0).toUpperCase() + role.slice(1) : "User";
 }
 
 export function AppShell({
@@ -40,8 +36,6 @@ export function AppShell({
   const [menuOpen, setMenuOpen] = useState(false);
   const tabs = visibleWorkspaceTabs(auth);
   const nextTheme = theme === "dark" ? "light" : "dark";
-  const who = principalName(auth);
-
   // The compact menu is a navigation affordance, not state worth keeping: any
   // route change closes it.
   useEffect(() => {
@@ -91,9 +85,6 @@ export function AppShell({
           <div className="topbar-actions">
             {auth.authenticated ? (
               <span className="account-chip" data-testid="account-state">
-                <span className="account-who" title={who || "Signed in"}>
-                  {who || "Signed in"}
-                </span>
                 <span className="account-role">{principalRole(auth)}</span>
               </span>
             ) : (

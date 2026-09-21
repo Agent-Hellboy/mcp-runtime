@@ -17,8 +17,9 @@ func (s *apiServer) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/ready", s.handleReady)
 
 	platforminternal.Handler{
-		Store: s.platform,
-		Token: s.internalAuthToken,
+		Store:               s.platform,
+		Token:               s.internalAuthToken,
+		AuthenticateRequest: s.authenticateRequest,
 	}.Register(mux)
 
 	auth := s.authentic.Middleware

@@ -107,6 +107,10 @@ export async function createTeam(slug: string, name: string): Promise<void> {
   await fetchJSON("/runtime/teams", jsonBody({ slug, name }));
 }
 
+export async function deleteTeam(slug: string): Promise<void> {
+  await fetchJSON(`/runtime/teams/${segment(slug)}`, { method: "DELETE" });
+}
+
 export async function listTeamMembers(slug: string): Promise<import("./types").TeamMembership[]> {
   return asArray<import("./types").TeamMembership>(
     await fetchJSON(`/runtime/teams/${segment(slug)}/members`),

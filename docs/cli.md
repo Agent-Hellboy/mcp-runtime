@@ -9,14 +9,15 @@ a single working script.
 | Goal | Commands |
 |---|---|
 | Log in | `auth login` → `auth use <profile>` |
-| Deploy a server | `server init` → `server validate` → `server build image` → `registry push` → `server deploy` |
+| Deploy a server | `server init` → `server validate` → `server build image` → `server push` → `server deploy` |
 | Grant an agent access | `access grant init` → `server validate --grant-file` → `access grant apply` |
 | Create a session manually | `access session init` → `access session apply` |
 | Connect an MCP client | `adapter proxy --server ... --agent ... --auto-refresh` |
 | Check platform health | `status` |
 | Inspect a running server | `server list` · `server get` · `server policy inspect` |
 | View analytics logs | `sentinel status` · `sentinel logs api` |
-| Diagnose cluster issues | `cluster doctor` |
+| Check setup readiness | `cluster doctor` |
+| Diagnose an installed cluster | `cluster diagnostics` |
 
 **Example servers in this repo:**
 
@@ -93,6 +94,11 @@ mcp-runtime auth logout
 | `cluster` | Operator | Stable | Initialize clusters, manage cert-manager | [Deployment targets](deployment-targets.md) |
 | `server validate` | User | Alpha | Validate metadata and grant/session YAML | [server](#server-validate) |
 | `server init --from-server` | User | Alpha | Auto-discover tools from a running server | [server init](#server-init) |
+
+`server push` is the user-facing image publishing workflow. It accepts the
+same `--image`, `--name`, and `--scope` options as `registry push` and uses the
+authenticated platform API. `registry push` remains available for explicit
+registry workflows and existing runbooks.
 
 **Status labels:** `Stable` — works end-to-end, tested in production use. `Alpha` — functional but API or UX may change.
 
@@ -638,8 +644,7 @@ mcp-runtime cluster cert status
 mcp-runtime cluster cert apply
 mcp-runtime cluster cert wait --timeout 10m
 
-mcp-runtime cluster doctor --kubeconfig ~/.kube/config --after-setup  # full post-setup diagnostic
-# k3s hosts can use --kubeconfig /etc/rancher/k3s/k3s.yaml; it is auto-detected when ~/.kube/config is absent
+KUBECONFIG=~/.kube/config mcp-runtime cluster diagnostics    # post-setup diagnostic
 ```
 
 

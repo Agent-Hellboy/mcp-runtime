@@ -211,6 +211,7 @@ func checkMCPServersImagePullSecrets(kubectl core.KubectlRunner, namespace strin
 
 func checkMCPServersImagePullSmoke(kubectl core.KubectlRunner, namespace string) DoctorCheck {
 	image, imageSource := resolveDoctorSmokeImage(kubectl, namespace)
+	pullSecrets := resolveDoctorImagePullSecrets(kubectl, namespace)
 	podName := fmt.Sprintf("doctor-pull-%d", time.Now().UnixNano())
 	defer func() {
 		_ = kubectl.Run([]string{"delete", "pod", podName, "-n", namespace, "--ignore-not-found"})
@@ -220,7 +221,7 @@ func checkMCPServersImagePullSmoke(kubectl core.KubectlRunner, namespace string)
 		"-n", namespace,
 		"--restart=Never",
 		"--image=" + image,
-		"--overrides=" + restrictedRunOverrides(podName, image, ""),
+		"--overrides=" + restrictedRunOverridesWithPullSecrets(podName, image, "", pullSecrets),
 	})
 	if cmdErr != nil {
 		return DoctorCheck{
@@ -257,6 +258,24 @@ func checkMCPServersImagePullSmoke(kubectl core.KubectlRunner, namespace string)
 		OK:     true,
 		Detail: fmt.Sprintf("pull/ready succeeded using image %s (%s)", image, imageSource),
 	}
+}
+
+func resolveDoctorImagePullSecrets(kubectl core.KubectlRunner, namespace string) []string {
+	if out, err := readKubectlOutput(kubectl, []string{"get", "deploy", "-n", namespace, "-o", "jsonpath={range .items[*]}{.status.readyReplicas}|{.spec.template.spec.imagePullSecrets[*].name}{\"\\n\"}{end}"}); err == nil {
+		for _, line := range filterNonEmptyLines(out) {
+			parts := strings.SplitN(line, "|", 2)
+			if len(parts) == 2 && strings.TrimSpace(parts[0]) != "" && strings.TrimSpace(parts[0]) != "0" && strings.TrimSpace(parts[1]) != "" {
+				return strings.Fields(parts[1])
+			}
+		}
+	}
+	for _, serviceAccount := range []string{"mcp-workload", "default"} {
+		out, err := readKubectlOutput(kubectl, []string{"get", "serviceaccount", serviceAccount, "-n", namespace, "-o", "jsonpath={.imagePullSecrets[*].name}"})
+		if err == nil && strings.TrimSpace(out) != "" {
+			return strings.Fields(out)
+		}
+	}
+	return nil
 }
 
 func waitForDoctorPodImagePulled(kubectl core.KubectlRunner, name, namespace string, timeout time.Duration) error {
@@ -349,6 +368,10 @@ func isImagePullWaitingReason(reason string) bool {
 }
 
 func restrictedRunOverrides(containerName, image, command string, args ...string) string {
+	return restrictedRunOverridesWithPullSecrets(containerName, image, command, nil, args...)
+}
+
+func restrictedRunOverridesWithPullSecrets(containerName, image, command string, pullSecrets []string, args ...string) string {
 	container := map[string]any{
 		"name":       strings.TrimSpace(containerName),
 		"image":      strings.TrimSpace(image),
@@ -380,6 +403,17 @@ func restrictedRunOverrides(containerName, image, command string, args ...string
 			},
 			"containers": []map[string]any{container},
 		},
+	}
+	if len(pullSecrets) > 0 {
+		refs := make([]map[string]string, 0, len(pullSecrets))
+		for _, name := range pullSecrets {
+			if strings.TrimSpace(name) != "" {
+				refs = append(refs, map[string]string{"name": strings.TrimSpace(name)})
+			}
+		}
+		if len(refs) > 0 {
+			overrides["spec"].(map[string]any)["imagePullSecrets"] = refs
+		}
 	}
 	data, err := json.Marshal(overrides)
 	if err != nil {
@@ -849,7 +883,16 @@ func hasRegistryHTTPPullMismatchMessage(messages []string) bool {
 
 func checkMCPServerReconcileSmoke(kubectl core.KubectlRunner, namespace string) DoctorCheck {
 	target := resolveDoctorSmokeTarget(kubectl, namespace)
+	pullSecrets := resolveDoctorImagePullSecrets(kubectl, namespace)
 	name := fmt.Sprintf("doctor-smoke-%d", time.Now().UnixNano()%1_000_000)
+	pullSecretYAML := ""
+	if len(pullSecrets) > 0 {
+		items := make([]string, 0, len(pullSecrets))
+		for _, secret := range pullSecrets {
+			items = append(items, fmt.Sprintf("    - %s", secret))
+		}
+		pullSecretYAML = "  imagePullSecrets:\n" + strings.Join(items, "\n") + "\n"
+	}
 	ingressClass := strings.TrimSpace(os.Getenv("MCP_DEFAULT_INGRESS_CLASS"))
 	if ingressClass == "" {
 		ingressClass = "traefik"
@@ -858,6 +901,12 @@ func checkMCPServerReconcileSmoke(kubectl core.KubectlRunner, namespace string) 
 	if ingressEntryPoints == "" {
 		ingressEntryPoints = "web"
 	}
+	servicePort := target.Port
+	if configured := strings.TrimSpace(os.Getenv("MCP_DEFAULT_SERVICE_PORT")); configured != "" {
+		if parsed, err := strconv.ParseUint(configured, 10, 16); err == nil && parsed > 0 {
+			servicePort = int32(parsed)
+		}
+	}
 	manifest := fmt.Sprintf(`apiVersion: mcpruntime.org/v1alpha1
 kind: MCPServer
 metadata:
@@ -865,13 +914,14 @@ metadata:
   namespace: %s
 spec:
   image: %s
+%s
   port: %d
-  servicePort: 80
+  servicePort: %d
   publicPathPrefix: %s
   ingressClass: %s
   ingressAnnotations:
     traefik.ingress.kubernetes.io/router.entrypoints: %s
-`, name, namespace, strings.TrimSpace(target.Image), target.Port, name, ingressClass, ingressEntryPoints)
+`, name, namespace, strings.TrimSpace(target.Image), pullSecretYAML, target.Port, servicePort, name, ingressClass, ingressEntryPoints)
 	cleanup := func() {
 		_ = kubectl.Run([]string{"delete", "mcpserver", name, "-n", namespace, "--ignore-not-found"})
 		_ = kubectl.Run([]string{"delete", "deploy", name, "-n", namespace, "--ignore-not-found"})

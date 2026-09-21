@@ -26,7 +26,7 @@ Every distribution needs the same high-level shape:
 5. Run `./bin/mcp-runtime bootstrap`.
 6. Run `./bin/mcp-runtime setup` with the registry and TLS mode that matches
    the cluster.
-7. Run `./bin/mcp-runtime cluster doctor`.
+7. Run `./bin/mcp-runtime cluster diagnostics`.
 8. Deploy the first MCP server and verify the dashboard/API.
 
 For production-like installs, prefer:
@@ -147,7 +147,7 @@ production.
 
    ```bash
    ./bin/mcp-runtime status
-   ./bin/mcp-runtime cluster doctor
+   ./bin/mcp-runtime cluster diagnostics
    kubectl get pods -n mcp-sentinel
    ```
 
@@ -222,7 +222,7 @@ Then use the same production-style setup command:
 ```bash
 ./bin/mcp-runtime bootstrap
 ./bin/mcp-runtime setup --with-tls --strict-prod
-./bin/mcp-runtime cluster doctor
+./bin/mcp-runtime cluster diagnostics
 ```
 
 ## Managed Kubernetes
@@ -338,7 +338,7 @@ Run the same checks on every distribution:
 
 ```bash
 ./bin/mcp-runtime status
-./bin/mcp-runtime cluster doctor
+./bin/mcp-runtime cluster diagnostics
 
 kubectl get pods -n mcp-runtime
 kubectl get pods -n mcp-sentinel

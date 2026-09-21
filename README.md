@@ -29,7 +29,7 @@ The public platform at `platform.mcpruntime.org` is a live preview of the deploy
 - **Give agents a clean integration path.** The stdio and Streamable HTTP adapters let IDEs, agent frameworks, and scripts attach platform-issued governance identity without each client reimplementing grants or session handling.
 - **Support internal catalog models.** Run private tenant namespaces, an org-wide catalog, or a public preview-style catalog while keeping the same CLI, CRDs, platform UI, and operator model.
 - **Separate teams without separate platforms.** Team namespaces, RBAC, `teamID`, subject matching, and namespace-scoped grants/sessions let multiple teams publish and govern MCP servers on one cluster.
-- **Own the day-two path.** Setup, registry workflows, image pull wiring, ingress, rollout readiness, `cluster doctor`, status commands, dashboards, audit, analytics, and Sentinel services are part of the platform rather than afterthoughts.
+- **Own the day-two path.** Setup, registry workflows, image pull wiring, ingress, rollout readiness, `cluster diagnostics`, status commands, dashboards, audit, analytics, and Sentinel services are part of the platform rather than afterthoughts.
 - **Fit different cluster shapes.** The documented paths cover disposable Kind development, laptop evaluation, k3s labs, self-managed production clusters, and managed Kubernetes with external registries.
 
 ## What ships

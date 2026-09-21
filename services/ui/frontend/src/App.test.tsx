@@ -111,9 +111,10 @@ describe("App", () => {
     await user.type(screen.getByTestId("login-password"), "admin@123");
     await user.click(screen.getByTestId("login-submit"));
 
-    await waitFor(() =>
-      expect(screen.getByTestId("account-state")).toHaveTextContent("admin@mcpruntime.org")
-    );
+    await waitFor(() => {
+      expect(screen.getByTestId("account-state")).toHaveTextContent("Admin");
+      expect(screen.getByTestId("account-state")).not.toHaveTextContent("admin@mcpruntime.org");
+    });
     expect(screen.getByTestId("logout-button")).toBeInTheDocument();
 
     const loginCall = calls.find((call) => call.url === "/auth/login");

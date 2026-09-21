@@ -209,15 +209,17 @@ kubectl rollout status deployment/mcp-platform-api -n mcp-sentinel --timeout=120
 
 ## Platform and cluster health
 
-### `cluster doctor` reports failures
+### `cluster diagnostics` reports failures
 
 ```bash
-KUBECONFIG=~/.kube/config mcp-runtime cluster doctor --after-setup
+KUBECONFIG=~/.kube/config mcp-runtime cluster diagnostics
 ```
 
-The doctor runs a broad set of post-install checks and prints a remedy for each failure. Follow the printed
+Diagnostics runs the full post-setup check suite and prints a remedy for each failure. Follow the printed
 instructions — most failures point to missing ingress, stale certificates, or
 image pull errors with specific `kubectl` commands to fix them.
+
+Before setup, run `KUBECONFIG=~/.kube/config mcp-runtime cluster doctor`.
 
 ---
 
@@ -249,6 +251,6 @@ kubectl patch ns <namespace> \
 ## Getting more help
 
 - Run `mcp-runtime <command> --help` for flag reference
-- Run `mcp-runtime cluster doctor --for-setup` before setup and `mcp-runtime cluster doctor --after-setup` after setup
+- Run `mcp-runtime cluster diagnostics` for the full post-setup cluster diagnostic
 - Check [GitHub Issues](https://github.com/Agent-Hellboy/mcp-runtime/issues)
 - [Contributor Troubleshooting](contributor/troubleshooting.md) for development-environment specific issues

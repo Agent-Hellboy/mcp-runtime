@@ -1,0 +1,82 @@
+name: Production E2E (Disposable VM)
+
+on:
+  workflow_dispatch:
+    inputs:
+      run-multitenancy:
+        description: Run the destructive multi-team CLI/API scenario suite.
+        required: true
+        default: true
+        type: boolean
+
+concurrency:
+  group: production-e2e-disposable-vm
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  production-e2e:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build CLI for disposable VM
+        run: go build -o bin/mcp-runtime ./cmd/mcp-runtime
+
+      - name: Package repository
+        run: |
+          tar --exclude=.git --exclude=.agent-flightdeck --exclude='*/node_modules' \
+            -czf /tmp/mcp-runtime-e2e.tgz .
+
+      - name: Install SSH client
+        run: sudo apt-get update && sudo apt-get install -y sshpass
+
+      - name: Configure pinned VM host key
+        env:
+          E2E_VM_KNOWN_HOSTS: ${{ secrets.E2E_VM_KNOWN_HOSTS }}
+        run: |
+          test -n "${E2E_VM_KNOWN_HOSTS}"
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "${E2E_VM_KNOWN_HOSTS}" > ~/.ssh/mcp-runtime-e2e-known-hosts
+          chmod 600 ~/.ssh/mcp-runtime-e2e-known-hosts
+
+      - name: Upload repository to disposable VM
+        env:
+          SSHPASS: ${{ secrets.E2E_VM_PASSWORD }}
+        run: |
+          sshpass -e scp \
+            -o UserKnownHostsFile="$HOME/.ssh/mcp-runtime-e2e-known-hosts" -o StrictHostKeyChecking=yes \
+            /tmp/mcp-runtime-e2e.tgz \
+            "${{ secrets.E2E_VM_USER }}@${{ secrets.E2E_VM_HOST }}:/tmp/mcp-runtime-e2e.tgz"
+
+      - name: Run production E2E
+        env:
+          SSHPASS: ${{ secrets.E2E_VM_PASSWORD }}
+          RUN_MULTITENANCY: ${{ inputs.run-multitenancy }}
+        run: |
+          sshpass -e ssh \
+            -o UserKnownHostsFile="$HOME/.ssh/mcp-runtime-e2e-known-hosts" -o StrictHostKeyChecking=yes \
+            "${{ secrets.E2E_VM_USER }}@${{ secrets.E2E_VM_HOST }}" \
+            "set -eu; rm -rf /opt/mcp-runtime-e2e; mkdir -p /opt/mcp-runtime-e2e; tar -xzf /tmp/mcp-runtime-e2e.tgz -C /opt/mcp-runtime-e2e; E2E_RUN_MULTITENANCY='${RUN_MULTITENANCY}' bash /opt/mcp-runtime-e2e/test/e2e/production-vm.sh"
+
+      - name: Collect E2E artifacts
+        if: always()
+        env:
+          SSHPASS: ${{ secrets.E2E_VM_PASSWORD }}
+        run: |
+          mkdir -p e2e-artifacts
+          sshpass -e scp -r \
+            -o UserKnownHostsFile="$HOME/.ssh/mcp-runtime-e2e-known-hosts" -o StrictHostKeyChecking=yes \
+            "${{ secrets.E2E_VM_USER }}@${{ secrets.E2E_VM_HOST }}:/var/lib/mcp-runtime-e2e-backup/runs" \
+            e2e-artifacts/ || true
+
+      - name: Upload E2E artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: production-e2e-artifacts
+          path: e2e-artifacts

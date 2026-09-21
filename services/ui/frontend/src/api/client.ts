@@ -40,6 +40,7 @@ export const SESSION_PROXY_WRITE_PATHS: Array<{
   { path: "/runtime/sessions/", methods: ["PATCH", "DELETE"], segments: 2 },
   { path: "/runtime/sessions", methods: ["POST"] },
   { path: "/runtime/teams", methods: ["POST"] },
+  { path: "/runtime/teams/", methods: ["DELETE"], segments: 1 },
   { path: "/runtime/teams/", methods: ["POST"], segments: 2, suffixes: ["members", "users"] },
   { path: "/runtime/teams/", methods: ["PUT", "DELETE"], segments: 3, suffixes: ["members"], suffixIndex: 1 },
   { path: "/runtime/actions/restart", methods: ["POST"] },

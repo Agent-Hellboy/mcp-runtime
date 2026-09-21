@@ -27,6 +27,15 @@ spec:
     - to:
         - podSelector:
             matchLabels:
+              app: otel-collector
+      ports:
+        - protocol: TCP
+          port: 4318
+        - protocol: TCP
+          port: 4317
+    - to:
+        - podSelector:
+            matchLabels:
               app: prometheus
       ports:
         - protocol: TCP
@@ -88,6 +97,15 @@ spec:
         - protocol: TCP
           port: 9000
     - to:
+        - podSelector:
+            matchLabels:
+              app: otel-collector
+      ports:
+        - protocol: TCP
+          port: 4318
+        - protocol: TCP
+          port: 4317
+    - to:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: kube-system
@@ -126,6 +144,15 @@ spec:
       ports:
         - protocol: TCP
           port: 5432
+    - to:
+        - podSelector:
+            matchLabels:
+              app: otel-collector
+      ports:
+        - protocol: TCP
+          port: 4318
+        - protocol: TCP
+          port: 4317
     - to:
         - namespaceSelector:
             matchLabels:

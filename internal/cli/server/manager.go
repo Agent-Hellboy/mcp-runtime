@@ -31,6 +31,7 @@ import (
 // ServerManager handles MCP server operations with injected dependencies.
 type ServerManager struct {
 	kubectl *core.KubectlClient
+	exec    core.Executor
 	logger  *zap.Logger
 	// useKube forces direct Kubernetes mode; when false, supported commands require platform API auth.
 	useKube bool
@@ -40,6 +41,7 @@ type ServerManager struct {
 func NewServerManager(kubectl *core.KubectlClient, logger *zap.Logger) *ServerManager {
 	return &ServerManager{
 		kubectl: kubectl,
+		exec:    core.DefaultExecutor(),
 		logger:  logger,
 	}
 }

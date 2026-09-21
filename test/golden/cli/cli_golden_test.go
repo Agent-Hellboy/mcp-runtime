@@ -62,6 +62,7 @@ func TestCLIHelpGoldens(t *testing.T) {
 		{name: "server_status_help", args: []string{"server", "status", "--help"}, golden: "mcp-runtime_server_status_help.golden"},
 		{name: "server_build_help", args: []string{"server", "build", "--help"}, golden: "mcp-runtime_server_build_help.golden"},
 		{name: "server_build_image_help", args: []string{"server", "build", "image", "--help"}, golden: "mcp-runtime_server_build_image_help.golden"},
+		{name: "server_push_help", args: []string{"server", "push", "--help"}, golden: "mcp-runtime_server_push_help.golden"},
 		{name: "registry_help", args: []string{"registry", "--help"}, golden: "mcp-runtime_registry_help.golden"},
 		{name: "registry_status_help", args: []string{"registry", "status", "--help"}, golden: "mcp-runtime_registry_status_help.golden"},
 		{name: "registry_info_help", args: []string{"registry", "info", "--help"}, golden: "mcp-runtime_registry_info_help.golden"},
@@ -79,6 +80,7 @@ func TestCLIHelpGoldens(t *testing.T) {
 		{name: "cluster_cert_apply_help", args: []string{"cluster", "cert", "apply", "--help"}, golden: "mcp-runtime_cluster_cert_apply_help.golden"},
 		{name: "cluster_cert_wait_help", args: []string{"cluster", "cert", "wait", "--help"}, golden: "mcp-runtime_cluster_cert_wait_help.golden"},
 		{name: "cluster_doctor_help", args: []string{"cluster", "doctor", "--help"}, golden: "mcp-runtime_cluster_doctor_help.golden"},
+		{name: "cluster_diagnostics_help", args: []string{"cluster", "diagnostics", "--help"}, golden: "mcp-runtime_cluster_diagnostics_help.golden"},
 	}
 
 	for _, tc := range cases {

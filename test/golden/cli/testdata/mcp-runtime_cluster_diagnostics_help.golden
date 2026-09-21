@@ -1,0 +1,10 @@
+Run post-setup diagnostics for the Kubernetes distribution, MCP Runtime services, registry, image pulls, Sentinel dependencies, authentication, and MCPServer reconciliation. Each failure includes a targeted remediation.
+
+Usage:
+  mcp-runtime cluster diagnostics [flags]
+
+Flags:
+  -h, --help   help for diagnostics
+
+Global Flags:
+      --debug   Enable debug mode with structured error logging

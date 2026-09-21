@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -32,8 +33,10 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/util/retry"
 )
 
@@ -357,6 +360,9 @@ func deployAnalyticsManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap
 			return err
 		}
 	}
+	if err := ensureRuntimeKubernetesAPIEgressClientGo(); err != nil {
+		return err
+	}
 
 	if err := applyPlatformIngressIfConfigured(); err != nil {
 		return err
@@ -409,6 +415,82 @@ func deployAnalyticsManifestsWithKubectl(kubectl core.KubectlRunner, logger *zap
 	}
 	return core.WrapWithSentinelAndContext(core.ErrOperatorDeploymentFailed, cause, msg, ctx)
 }
+
+// ensureRuntimeKubernetesAPIEgressClientGo adds the discovered Kubernetes API
+// destination to the runtime API NetworkPolicy. Service IPs are inside the
+// cluster CIDR, so a broad public 0.0.0.0/0 rule does not reliably cover them
+// on k3s/Cilium and similar CNIs. Discovering the Service and client endpoint
+// keeps setup portable across distributions and API ports.
+func ensureRuntimeKubernetesAPIEgressClientGo() error {
+	clients, err := platformKubernetesClients()
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+	policy, err := clients.Clientset.NetworkingV1().NetworkPolicies(core.DefaultAnalyticsNamespace).Get(ctx, "mcp-runtime-api-platform-egress", metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read runtime API NetworkPolicy: %w", err)
+	}
+
+	addCIDR := func(cidr string, port int32) {
+		if strings.TrimSpace(cidr) == "" {
+			return
+		}
+		for _, rule := range policy.Spec.Egress {
+			for _, peer := range rule.To {
+				if peer.IPBlock == nil || peer.IPBlock.CIDR != cidr {
+					continue
+				}
+				for _, rulePort := range rule.Ports {
+					if rulePort.Port != nil && rulePort.Port.IntVal == port {
+						return
+					}
+				}
+			}
+		}
+		policy.Spec.Egress = append(policy.Spec.Egress, networkingv1.NetworkPolicyEgressRule{
+			To:    []networkingv1.NetworkPolicyPeer{{IPBlock: &networkingv1.IPBlock{CIDR: cidr}}},
+			Ports: []networkingv1.NetworkPolicyPort{{Protocol: protocolPtr(corev1.ProtocolTCP), Port: intstrPtr(port)}},
+		})
+	}
+
+	if service, getErr := clients.Clientset.CoreV1().Services("default").Get(ctx, "kubernetes", metav1.GetOptions{}); getErr == nil {
+		if ip := net.ParseIP(strings.TrimSpace(service.Spec.ClusterIP)); ip != nil {
+			addCIDR(networkHostCIDR(ip), 443)
+		}
+	}
+	if clients.Config != nil {
+		if parsed, parseErr := url.Parse(clients.Config.Host); parseErr == nil {
+			host := parsed.Hostname()
+			if ip := net.ParseIP(host); ip != nil {
+				port := int32(443)
+				if parsed.Port() != "" {
+					if parsedPort, convErr := strconv.ParseInt(parsed.Port(), 10, 32); convErr == nil {
+						port = int32(parsedPort)
+					}
+				}
+				addCIDR(networkHostCIDR(ip), port)
+			}
+		}
+	}
+	if _, err := clients.Clientset.NetworkingV1().NetworkPolicies(core.DefaultAnalyticsNamespace).Update(ctx, policy, metav1.UpdateOptions{}); err != nil {
+		return fmt.Errorf("update runtime API Kubernetes API egress: %w", err)
+	}
+	return nil
+}
+
+func networkHostCIDR(ip net.IP) string {
+	if ip.To4() == nil {
+		return ip.String() + "/128"
+	}
+	return ip.String() + "/32"
+}
+
+func protocolPtr(value corev1.Protocol) *corev1.Protocol { return &value }
+func intstrPtr(value int32) *intstr.IntOrString          { result := intstr.FromInt(int(value)); return &result }
 
 func waitForAnalyticsTargetsClientGo(targets []struct{ kind, name string }, rolloutTimeout time.Duration) ([]string, []analyticsFailedRollout) {
 	var rolloutFailures []string

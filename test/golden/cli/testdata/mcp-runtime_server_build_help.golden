@@ -1,4 +1,4 @@
-Build MCP server images (push via `registry push`)
+Build MCP server images (push via `server push`)
 
 Usage:
   mcp-runtime server build [command]

@@ -6,7 +6,8 @@ Usage:
 Available Commands:
   cert        Manage cert-manager resources
   config      Configure cluster settings
-  doctor      Diagnose MCP Runtime cluster readiness and installed components
+  diagnostics Diagnose an installed MCP Runtime cluster
+  doctor      Check whether a cluster is ready for MCP Runtime setup
   init        Initialize cluster configuration
   provision   Provision a new cluster
   status      Check cluster status
