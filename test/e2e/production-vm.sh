@@ -61,6 +61,63 @@ wait_for_node_registration() {
   fail "no Kubernetes node registered within ${timeout}s"
 }
 
+# k3s installs its bundled Traefik through helm-controller only after the node
+# goes Ready, so a doctor run that starts the moment the node registers sees no
+# IngressClass, no deployment, and no web entrypoint. Wait for the ingress to
+# converge before any preflight that asserts on it.
+traefik_namespace() {
+  local candidate
+  for candidate in kube-system traefik; do
+    if kubectl -n "${candidate}" get deploy traefik >/dev/null 2>&1; then
+      printf '%s' "${candidate}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Mirrors the doctor "traefik service exposure" check, which accepts either a
+# LoadBalancer address or a NodePort for the web entrypoint.
+traefik_is_exposed() {
+  local namespace="$1" address ports
+  address="$(kubectl -n "${namespace}" get svc traefik \
+    -o jsonpath='{.status.loadBalancer.ingress[0].ip}{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null)"
+  [[ -n "${address}" ]] && return 0
+  ports="$(kubectl -n "${namespace}" get svc traefik -o jsonpath='{.spec.ports[*].nodePort}' 2>/dev/null)"
+  [[ -n "${ports// /}" ]]
+}
+
+wait_for_traefik() {
+  local timeout="${1:-300}"
+  local deadline=$((SECONDS + timeout))
+  local namespace=""
+  log "waiting for the bundled Traefik ingress to become ready"
+  while ((SECONDS < deadline)); do
+    if namespace="$(traefik_namespace)" &&
+      kubectl -n "${namespace}" rollout status deploy/traefik --timeout=30s >/dev/null 2>&1; then
+      break
+    fi
+    namespace=""
+    sleep 5
+  done
+  if [[ -z "${namespace}" ]]; then
+    fail "bundled Traefik did not become ready within ${timeout}s"
+    return 1
+  fi
+  log "Traefik deployment is ready in namespace ${namespace}"
+
+  # Exposure is what ACME HTTP-01 needs. Warn rather than abort: setup still
+  # gets a chance to wire ingress, and post-setup diagnostics is the real gate.
+  while ((SECONDS < deadline)); do
+    if traefik_is_exposed "${namespace}"; then
+      log "Traefik web entrypoint is externally exposed"
+      return 0
+    fi
+    sleep 5
+  done
+  log "WARNING: Traefik has no LoadBalancer address or NodePort yet; continuing into setup"
+}
+
 capture_cluster_state() {
   [[ -f "${KUBECONFIG}" ]] || return 0
   kubectl get nodes -o wide >"${ARTIFACT_DIR}/nodes.txt" 2>&1 || true
@@ -206,8 +263,15 @@ if [[ ! -x "${BIN}" ]]; then
   go build -o "${BIN}" ./cmd/mcp-runtime
 fi
 
+wait_for_traefik 300
+
+# Advisory only: this is a baseline snapshot of a cluster that has not been set
+# up yet, so checks covering components setup installs are expected to be unmet.
+# The post-setup `cluster diagnostics` run below is the gate.
 log "running pre-setup cluster doctor"
-"${BIN}" cluster doctor | tee "${ARTIFACT_DIR}/doctor-before.log"
+if ! "${BIN}" cluster doctor 2>&1 | tee "${ARTIFACT_DIR}/doctor-before.log"; then
+  log "pre-setup doctor reported unmet requirements; continuing because setup provisions them"
+fi
 
 SETUP_ARGS=(
   setup
