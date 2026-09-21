@@ -903,7 +903,7 @@ func checkMCPServerReconcileSmoke(kubectl core.KubectlRunner, namespace string) 
 	}
 	servicePort := target.Port
 	if configured := strings.TrimSpace(os.Getenv("MCP_DEFAULT_SERVICE_PORT")); configured != "" {
-		if parsed, err := strconv.Atoi(configured); err == nil && parsed > 0 && parsed <= 65535 {
+		if parsed, err := strconv.ParseUint(configured, 10, 16); err == nil && parsed > 0 {
 			servicePort = int32(parsed)
 		}
 	}
