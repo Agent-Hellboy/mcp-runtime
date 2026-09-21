@@ -200,6 +200,37 @@ restore_backup_state() {
   fi
 }
 
+# Production setup refuses to run without a platform admin identity, and the
+# secret builder clears the admin pair unless BOTH the address and the password
+# are present. Default the address to the ACME contact, which the workflow
+# already supplies, and mint a password on first run so the credential never
+# lives in the repo. It is persisted in the 0600 env file inside the preserved
+# backup directory so repeat runs keep the same admin account.
+ensure_platform_admin_config() {
+  local env_file="${BACKUP_DIR}/e2e.env"
+  local email="${E2E_PLATFORM_ADMIN_EMAIL:-${E2E_ACME_EMAIL}}"
+  local password="${E2E_PLATFORM_ADMIN_PASSWORD:-}"
+
+  if [[ -z "${password}" ]]; then
+    # `tr </dev/urandom | head -c` dies of SIGPIPE, which pipefail turns into a
+    # script abort, so bound the randomness upstream and slice it in bash.
+    local raw
+    raw="$(head -c 512 /dev/urandom | LC_ALL=C tr -dc 'A-Za-z0-9')"
+    password="${raw:0:32}"
+    [[ ${#password} -eq 32 ]] || fail "failed to generate a platform admin password"
+    touch "${env_file}"
+    chmod 600 "${env_file}"
+    printf 'E2E_PLATFORM_ADMIN_PASSWORD=%s\n' "${password}" >>"${env_file}"
+    log "generated a platform admin password and stored it in ${env_file}"
+  fi
+
+  export MCP_PLATFORM_ADMIN_EMAIL="${email}"
+  export MCP_PLATFORM_ADMIN_PASSWORD="${password}"
+  export E2E_PLATFORM_ADMIN_EMAIL="${email}"
+  export E2E_PLATFORM_ADMIN_PASSWORD="${password}"
+  log "platform admin configured for ${email}"
+}
+
 restore_platform_runtime_after_setup() {
   if [[ ! -L "${BACKUP_DIR}/platform-runtime/latest" || ! -d "${BACKUP_DIR}/platform-runtime/latest" ]]; then
     return 0
@@ -291,6 +322,8 @@ if [[ "${E2E_WITH_MCP_AUTH:-0}" == "1" ]]; then
   [[ -n "${E2E_MCP_AUTH_TLS_SECRET:-}" ]] && SETUP_ARGS+=(--mcp-auth-tls-secret "${E2E_MCP_AUTH_TLS_SECRET}")
   [[ -n "${E2E_MCP_AUTH_SIGNING_KEY_SECRET:-}" ]] && SETUP_ARGS+=(--mcp-auth-signing-key-secret "${E2E_MCP_AUTH_SIGNING_KEY_SECRET}")
 fi
+
+ensure_platform_admin_config
 
 log "running production-style setup"
 "${BIN}" "${SETUP_ARGS[@]}" 2>&1 | tee "${ARTIFACT_DIR}/setup.log"
