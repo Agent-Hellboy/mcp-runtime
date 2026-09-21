@@ -27,7 +27,17 @@ set -euo pipefail
 #   RESET=1 hack/deploy/mcpruntime-org/multitenancy-test.sh       # delete demo resources via platform API
 #   SKIP_SETUP=1 hack/deploy/mcpruntime-org/multitenancy-test.sh  # only run verification
 
-ROOT_DIR="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
+# The production E2E VM receives the repo as a tarball packaged with
+# `tar --exclude=.git`, so git metadata is absent there and `rev-parse` exits
+# 128. Prefer an explicitly supplied root, then git, then this script's own
+# location, which is always <root>/hack/deploy/mcpruntime-org.
+ROOT_DIR="${MCPRUNTIME_ORG_ROOT:-}"
+if [[ -z "$ROOT_DIR" ]]; then
+  ROOT_DIR="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel 2>/dev/null || true)"
+fi
+if [[ -z "$ROOT_DIR" ]]; then
+  ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+fi
 BIN="${BIN:-$ROOT_DIR/bin/mcp-runtime}"
 
 if [[ -f "$ROOT_DIR/.env" ]]; then
