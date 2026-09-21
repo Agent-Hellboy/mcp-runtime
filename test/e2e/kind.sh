@@ -3462,9 +3462,9 @@ if cache_mode_enabled; then
   rollout_status_with_logs mcp-runtime deploy mcp-runtime-operator-controller-manager 180s
 fi
 if cache_mode_enabled; then
-  run_logged_stage "cluster doctor" run_with_retry "cluster doctor" ./bin/mcp-runtime cluster doctor
+  run_logged_stage "cluster diagnostics" run_with_retry "cluster diagnostics" ./bin/mcp-runtime cluster diagnostics
 else
-  run_logged_stage "cluster doctor" ./bin/mcp-runtime cluster doctor
+  run_logged_stage "cluster diagnostics" ./bin/mcp-runtime cluster diagnostics
 fi
 run_cli_allowing_cert_prereq_failure cluster-cert-status ./bin/mcp-runtime cluster cert status
 run_cli_allowing_cert_prereq_failure cluster-cert-apply-dry-run ./bin/mcp-runtime cluster cert apply --dry-run

@@ -177,6 +177,22 @@ log "running production-style setup"
 log "running post-setup diagnostics"
 "${BIN}" cluster diagnostics | tee "${ARTIFACT_DIR}/diagnostics-after.log"
 
+resolve_platform_token() {
+  if curl --fail --silent --show-error \
+    -H "x-api-key: ${E2E_PLATFORM_API_TOKEN}" \
+    -H "authorization: Bearer ${E2E_PLATFORM_API_TOKEN}" \
+    "${PLATFORM_URL}/api/v1/auth/me" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local encoded generated
+  encoded="$(kubectl get secret mcp-sentinel-secrets -n mcp-sentinel -o jsonpath='{.data.ADMIN_API_KEYS}')"
+  generated="$(printf '%s' "${encoded}" | base64 --decode | cut -d',' -f1 | tr -d '\r\n')"
+  [[ -n "${generated}" ]] || fail "E2E_PLATFORM_API_TOKEN was rejected and setup did not produce an ADMIN_API_KEYS value"
+  export E2E_PLATFORM_API_TOKEN="${generated}"
+  log "using the first generated admin API key from mcp-sentinel-secrets for this run"
+}
+
 log "checking CLI command surfaces"
 for command in auth bootstrap cluster catalog registry server access adapter admin setup status sentinel team; do
   "${BIN}" "${command}" --help >"${ARTIFACT_DIR}/help-${command}.txt"
@@ -185,6 +201,7 @@ done
 "${BIN}" cluster diagnostics --help >"${ARTIFACT_DIR}/help-cluster-diagnostics.txt"
 "${BIN}" server push --help >"${ARTIFACT_DIR}/help-server-push.txt"
 
+resolve_platform_token
 printf '%s' "${E2E_PLATFORM_API_TOKEN}" | "${BIN}" auth login --api-url "${PLATFORM_URL}" --profile e2e --token-stdin
 MCP_PLATFORM_API_PROFILE=e2e "${BIN}" status | tee "${ARTIFACT_DIR}/cli-status.txt"
 MCP_PLATFORM_API_PROFILE=e2e "${BIN}" server list | tee "${ARTIFACT_DIR}/cli-server-list.txt"

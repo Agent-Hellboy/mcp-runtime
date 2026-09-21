@@ -14,12 +14,17 @@ The workflow requires these GitHub Actions secrets:
 | `E2E_VM_HOST` | Dedicated disposable VM hostname or address |
 | `E2E_VM_USER` | SSH user with permission to install k3s |
 | `E2E_VM_PASSWORD` | SSH password for that VM |
+| `E2E_VM_KNOWN_HOSTS` | Pinned `known_hosts` line(s) for the VM SSH host key |
 
 The VM must have the wildcard DNS record configured for the four setup hosts:
 
 ```text
 *.e2e.mcpruntime.org
 ```
+
+Populate `E2E_VM_KNOWN_HOSTS` from a host-key fingerprint verified against the
+VM provider console, for example `ssh-keyscan -H <verified-vm-host>`. The
+workflow rejects unknown or changed host keys and never uses host-key bypasses.
 
 Keep E2E-only values in `/var/lib/mcp-runtime-e2e-backup/e2e.env`, outside the
 checkout and outside every cleanup path:

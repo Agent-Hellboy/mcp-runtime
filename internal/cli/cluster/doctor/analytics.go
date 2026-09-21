@@ -183,7 +183,15 @@ func checkSentinelPostgresCredentialDrift(kubectl core.KubectlRunner) DoctorChec
 	if err != nil || strings.TrimSpace(pod) == "" {
 		return DoctorCheck{Name: "sentinel Postgres credential drift", OK: false, Detail: "no running Postgres pod was found", Remedy: "inspect `kubectl -n mcp-sentinel get pods -l app=mcp-sentinel-postgres`"}
 	}
-	actual, err := readKubectlOutput(kubectl, []string{"exec", "-n", doctorSentinelNamespace, strings.TrimSpace(pod), "--", "env", "MCP_EXPECTED_PASSWORD=" + expected, "sh", "-c", `PGPASSWORD="$MCP_EXPECTED_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -Atqc 'select 1'`})
+	probe, err := kubectl.CommandArgs([]string{"exec", "-i", "-n", doctorSentinelNamespace, strings.TrimSpace(pod), "--", "sh", "-c", `IFS= read -r MCP_EXPECTED_PASSWORD || exit 1; PGPASSWORD="$MCP_EXPECTED_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -Atqc 'select 1'`})
+	if err == nil {
+		probe.SetStdin(strings.NewReader(expected + "\n"))
+	}
+	var actualBytes []byte
+	if err == nil {
+		actualBytes, err = probe.CombinedOutput()
+	}
+	actual := string(actualBytes)
 	if err != nil {
 		return DoctorCheck{Name: "sentinel Postgres credential drift", OK: false, Detail: "the managed POSTGRES_PASSWORD failed a TCP authentication probe against the live database", Remedy: "rerun setup to apply ALTER USER and restart all Secret consumers; do not test only the local Postgres socket because peer auth can bypass the password"}
 	}

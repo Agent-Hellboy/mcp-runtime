@@ -310,6 +310,9 @@ func doctorSetupCheckSpecs(kubectl core.KubectlRunner, distro Distribution) []do
 	return []doctorCheckSpec{
 		{Name: "Kubernetes nodes ready", Detail: "checking that the Kubernetes API is reachable and every node is Ready", Run: func() DoctorCheck { return checkClusterNodesReady(kubectl) }},
 		{Name: "node capacity", Detail: "checking allocatable node capacity before scheduling Runtime workloads", Run: func() DoctorCheck { return checkNodeCapacity(kubectl) }},
+		{Name: "node kubelet/runtime health", Detail: "checking node Ready conditions, pressure conditions, kubelet versions, and reported container runtimes", Run: func() DoctorCheck { return checkNodeRuntimeHealth(kubectl) }},
+		{Name: "node architecture compatibility", Detail: "discovering node architectures and detecting mixed-architecture clusters", Run: func() DoctorCheck { return checkNodeArchitectureCompatibility(kubectl) }},
+		{Name: "runtime class compatibility", Detail: "checking configured RuntimeClass references before workloads are installed", Run: func() DoctorCheck { return checkRuntimeClassCompatibility(kubectl) }},
 		{Name: "storage class readiness", Detail: "discovering the default or configured StorageClass before setup", Run: func() DoctorCheck { return checkStorageClassReadiness(kubectl) }},
 		{Name: "traefik ingressClass", Detail: "checking that the traefik IngressClass exists", Run: func() DoctorCheck { return checkTraefikIngressClass(kubectl) }},
 		{Name: "traefik deployment readiness", Detail: "reading ready and desired replicas for Traefik", Run: func() DoctorCheck { return checkTraefikDeploymentReady(kubectl, distro) }},

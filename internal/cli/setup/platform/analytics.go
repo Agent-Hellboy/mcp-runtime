@@ -459,7 +459,7 @@ func ensureRuntimeKubernetesAPIEgressClientGo() error {
 
 	if service, getErr := clients.Clientset.CoreV1().Services("default").Get(ctx, "kubernetes", metav1.GetOptions{}); getErr == nil {
 		if ip := net.ParseIP(strings.TrimSpace(service.Spec.ClusterIP)); ip != nil {
-			addCIDR(ip.String()+"/32", 443)
+			addCIDR(networkHostCIDR(ip), 443)
 		}
 	}
 	if clients.Config != nil {
@@ -472,7 +472,7 @@ func ensureRuntimeKubernetesAPIEgressClientGo() error {
 						port = int32(parsedPort)
 					}
 				}
-				addCIDR(ip.String()+"/32", port)
+				addCIDR(networkHostCIDR(ip), port)
 			}
 		}
 	}
@@ -480,6 +480,13 @@ func ensureRuntimeKubernetesAPIEgressClientGo() error {
 		return fmt.Errorf("update runtime API Kubernetes API egress: %w", err)
 	}
 	return nil
+}
+
+func networkHostCIDR(ip net.IP) string {
+	if ip.To4() == nil {
+		return ip.String() + "/128"
+	}
+	return ip.String() + "/32"
 }
 
 func protocolPtr(value corev1.Protocol) *corev1.Protocol { return &value }
