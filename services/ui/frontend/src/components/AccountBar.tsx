@@ -14,9 +14,8 @@ function principalLabel(status: AuthStatus): string {
   if (!principal) {
     return "Signed in";
   }
-  const role = (principal.role || "user").trim();
-  const who = (principal.email || principal.subject || "").trim();
-  return who ? `${who} · ${role}` : role;
+  const role = (principal.role || "user").trim().toLowerCase();
+  return role === "admin" ? "Admin" : "Signed in";
 }
 
 export function AccountBar({

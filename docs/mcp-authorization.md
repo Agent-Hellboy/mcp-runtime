@@ -378,7 +378,7 @@ disable connector validation.
 After an installation that enables mcp-auth, run:
 
 ```bash
-./bin/mcp-runtime cluster doctor
+./bin/mcp-runtime cluster diagnostics
 ```
 
 The doctor skips mcp-auth when it is not installed. When it is installed, it

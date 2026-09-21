@@ -35,6 +35,9 @@ func (s *RuntimeServer) HandleRuntimeTeamItemPath(w http.ResponseWriter, r *http
 	case len(parts) == 1 && r.Method == http.MethodGet:
 		s.handleRuntimeTeamGet(w, r, p, teamSlug)
 		return
+	case len(parts) == 1 && r.Method == http.MethodDelete:
+		s.handleRuntimeTeamDelete(w, r, p, teamSlug)
+		return
 	case len(parts) == 2 && parts[1] == "members" && r.Method == http.MethodGet:
 		s.handleRuntimeTeamMemberList(w, r, p, teamSlug)
 		return
@@ -54,6 +57,24 @@ func (s *RuntimeServer) HandleRuntimeTeamItemPath(w http.ResponseWriter, r *http
 		w.Header().Set("allow", "GET, POST, PUT, DELETE")
 		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed")
 	}
+}
+
+func (s *RuntimeServer) handleRuntimeTeamDelete(w http.ResponseWriter, r *http.Request, p principal, teamSlug string) {
+	if p.Role != roleAdmin {
+		writeAPIError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	if err := s.identity.DeleteTeamBySlug(ctx, teamSlug); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeAPIError(w, http.StatusNotFound, "team not found")
+			return
+		}
+		writeAPIError(w, http.StatusInternalServerError, "failed to delete team")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *RuntimeServer) handleRuntimeTeamMemberList(w http.ResponseWriter, r *http.Request, p principal, teamSlug string) {

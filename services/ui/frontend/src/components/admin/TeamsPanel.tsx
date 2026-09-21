@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import {
   createTeam,
   createTeamUser,
+  deleteTeam,
   listTeamMembers,
   removeTeamMember,
   setTeamMemberRole,
@@ -78,6 +79,26 @@ export function TeamsPanel({ onSignIn }: TeamsPanelProps) {
     finally { setBusyKey(""); }
   }
 
+  async function removeTeam(team: TeamRecord): Promise<void> {
+    if (!window.confirm(`Delete team “${team.name || team.slug}”? This removes its identity and memberships.`)) {
+      return;
+    }
+    setBusyKey(`team:${team.slug}`);
+    setError("");
+    try {
+      await deleteTeam(team.slug);
+      if (selectedSlug === team.slug) {
+        setSelectedSlug("");
+        setMembers([]);
+      }
+      reload();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Team deletion failed.");
+    } finally {
+      setBusyKey("");
+    }
+  }
+
   async function changeRole(member: TeamMembership): Promise<void> {
     const role = member.role === "owner" ? "member" : "owner";
     if (!window.confirm(`Set ${member.email || member.user_id} to ${role}?`)) return;
@@ -95,6 +116,24 @@ export function TeamsPanel({ onSignIn }: TeamsPanelProps) {
     finally { setBusyKey(""); }
   }
 
+  const teamColumns: Array<AdminColumn<TeamRecord>> = [
+    ...COLUMNS,
+    {
+      id: "actions",
+      header: "Actions",
+      cell: (team) => (
+        <button
+          type="button"
+          className="button ghost compact danger"
+          disabled={busyKey !== ""}
+          onClick={() => void removeTeam(team)}
+        >
+          {busyKey === `team:${team.slug}` ? "Deleting…" : "Delete"}
+        </button>
+      ),
+    },
+  ];
+
   const memberColumns: Array<AdminColumn<TeamMembership>> = [
     { id: "email", header: "Member", rowHeader: true, cell: (member) => member.email || member.user_id },
     { id: "role", header: "Role", cell: (member) => member.role },
@@ -109,7 +148,7 @@ export function TeamsPanel({ onSignIn }: TeamsPanelProps) {
       {teamFormOpen ? <form className="toolbar admin-form" onSubmit={(event) => void submitTeam(event)} data-testid="team-create-form"><div className="field"><label htmlFor="team-slug">Slug</label><input id="team-slug" name="slug" required /></div><div className="field grow"><label htmlFor="team-name">Name</label><input id="team-name" name="name" required /></div><button className="button" disabled={busyKey === "create-team"}>{busyKey === "create-team" ? "Creating…" : "Create"}</button></form> : null}
       {userFormOpen ? <form className="toolbar admin-form" onSubmit={(event) => void submitUser(event)} data-testid="team-user-form"><div className="field grow"><label htmlFor="team-user-email">Email</label><input id="team-user-email" name="email" type="email" required /></div><div className="field"><label htmlFor="team-user-password">Temporary password</label><input id="team-user-password" name="password" type="password" minLength={8} required /></div><div className="field"><label htmlFor="team-user-role">Role</label><select id="team-user-role" name="role" defaultValue="member"><option value="member">Member</option><option value="owner">Owner</option></select></div><button className="button" disabled={busyKey === "create-user"}>{busyKey === "create-user" ? "Adding…" : "Add"}</button></form> : null}
       {error ? <p className="inline-error" role="alert" data-testid="teams-action-error">{error}</p> : null}
-      <AsyncSection query={teamsQuery} loadingLabel="Loading teams…" errorTitle="Teams could not be loaded." onRetry={reload} onSignIn={onSignIn} testId="teams"><AdminTable caption="Tenant teams with slug, namespace, and identifier." columns={COLUMNS} rows={teams} rowKey={(team) => team.id || team.slug} emptyMessage="No teams found." testId="teams-table" /></AsyncSection>
+      <AsyncSection query={teamsQuery} loadingLabel="Loading teams…" errorTitle="Teams could not be loaded." onRetry={reload} onSignIn={onSignIn} testId="teams"><AdminTable caption="Tenant teams with slug, namespace, identifier, and lifecycle actions." columns={teamColumns} rows={teams} rowKey={(team) => team.id || team.slug} emptyMessage="No teams found." testId="teams-table" /></AsyncSection>
       <div className="toolbar"><div className="field grow"><label htmlFor="team-select">Manage members for</label><select id="team-select" value={selectedSlug} onChange={(event) => setSelectedSlug(event.target.value)} data-testid="team-select"><option value="">Select a team</option>{teams.map((team) => <option key={team.slug} value={team.slug}>{team.name || team.slug}</option>)}</select></div></div>
       <h3 className="subsection-title">Team members</h3>
       {membersLoading ? <p>Loading team members…</p> : <AdminTable caption="Members of the selected team." columns={memberColumns} rows={members} rowKey={(member) => member.user_id} emptyMessage={selectedSlug ? "No members in this team." : "Select a team."} testId="team-members-table" />}

@@ -203,6 +203,24 @@ func newTestClusterCommand(mgr *ClusterManager) *cobra.Command {
 	return cmd
 }
 
+func TestClusterDiagnosticsCommandsHaveSeparateLifecycleSemantics(t *testing.T) {
+	mock := &core.MockExecutor{}
+	kubectl := core.NewTestKubectlClient(mock)
+	mgr := NewClusterManager(kubectl, mock, zap.NewNop())
+
+	doctor := newClusterDoctorCmd(mgr)
+	if doctor.Use != "doctor" {
+		t.Fatalf("doctor command Use = %q", doctor.Use)
+	}
+	if doctor.Flags().Lookup("for-setup") != nil {
+		t.Fatal("doctor must not expose the removed --for-setup flag")
+	}
+	diagnostics := newClusterDiagnosticsCmd(mgr)
+	if diagnostics.Use != "diagnostics" {
+		t.Fatalf("diagnostics command Use = %q", diagnostics.Use)
+	}
+}
+
 func hasCommand(cmds []core.ExecSpec, name string, args ...string) bool {
 	for _, cmd := range cmds {
 		if cmd.Name != name {

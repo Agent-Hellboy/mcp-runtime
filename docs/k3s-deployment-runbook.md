@@ -445,7 +445,7 @@ kubectl wait pod -n cert-manager --all --for=condition=Ready --timeout=120s
 ### Post-setup check
 
 ```bash
-./bin/mcp-runtime cluster doctor
+./bin/mcp-runtime cluster diagnostics
 
 # Confirm TLS certs are Ready
 kubectl get certificate registry-cert -n registry

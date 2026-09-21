@@ -270,10 +270,10 @@ After this command, push the exact image reference produced by the build output 
 
 ```bash
 mcp-runtime auth login --api-url https://platform.example.com
-./bin/mcp-runtime registry push --scope org --image <exact-image-ref-from-build>
+./bin/mcp-runtime server push --scope org --image <exact-image-ref-from-build>
 ```
 
-`registry push` requires platform credentials from `mcp-runtime auth login` or
+`server push` requires platform credentials from `mcp-runtime auth login` or
 `MCP_PLATFORM_API_TOKEN` with a saved or explicit `MCP_PLATFORM_API_URL`;
 unauthenticated pushes are
 rejected before Docker or the in-cluster helper starts. `<exact-image-ref-from-build>`

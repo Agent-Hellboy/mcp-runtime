@@ -27,7 +27,10 @@ on the day-to-day loop for contributors.
 3. Use a disposable Kind cluster for platform, UI, operator, registry, gateway,
    and Sentinel changes.
 
-   Start with [Local Kind and Test Mode](local-kind.md).
+Start with [Local Kind and Test Mode](local-kind.md).
+
+For a real production-style install on the disposable VM, use
+[Production-mode E2E](production-e2e.md).
 
 4. Rebuild only the changed service while iterating.
 

@@ -37,8 +37,9 @@ type PlatformStore interface {
 }
 
 type Handler struct {
-	Store PlatformStore
-	Token string
+	Store               PlatformStore
+	Token               string
+	AuthenticateRequest func(*http.Request) (platformauth.Principal, bool, error)
 }
 
 func (h Handler) Register(mux *http.ServeMux) {
@@ -76,12 +77,27 @@ func (h Handler) resolveAuth(w http.ResponseWriter, r *http.Request) {
 		apihttp.WriteEnvelope(w, http.StatusBadRequest, apihttp.CodeInvalidRequestBody, "invalid request body")
 		return
 	}
-	principal, ok, err := h.Store.AuthenticateUserAPIKey(r.Context(), request.APIKey)
+	principal, ok, err := h.resolvePrincipalForAPIKey(r, request.APIKey)
 	if err != nil {
 		apihttp.WriteEnvelope(w, http.StatusInternalServerError, apihttp.CodeAuthFailed, "failed to resolve API key")
 		return
 	}
 	writeJSON(w, http.StatusOK, internalapi.AuthResolveResponse{OK: ok, Principal: principal})
+}
+
+// resolvePrincipalForAPIKey uses the platform's complete public authentication
+// policy for internal service-to-service key resolution. Falling back to the
+// store keeps the handler useful in isolated tests and older embedders, while
+// the production route can now resolve both user API keys and configured
+// service/admin API keys consistently with /api/v1/auth/me.
+func (h Handler) resolvePrincipalForAPIKey(r *http.Request, rawKey string) (platformauth.Principal, bool, error) {
+	if h.AuthenticateRequest != nil {
+		clone := r.Clone(r.Context())
+		clone.Header.Set("x-api-key", strings.TrimSpace(rawKey))
+		clone.Header.Del("authorization")
+		return h.AuthenticateRequest(clone)
+	}
+	return h.Store.AuthenticateUserAPIKey(r.Context(), rawKey)
 }
 
 func (h Handler) resolvePrincipal(w http.ResponseWriter, r *http.Request) {

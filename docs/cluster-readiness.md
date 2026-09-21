@@ -42,7 +42,7 @@ workarounds for kubelet image pulls. In production, prefer a registry name that
 resolves through normal DNS and is trusted by every node without bypassing TLS
 verification.
 
-`./bin/mcp-runtime cluster doctor` is useful in both modes. For the bundled
+`./bin/mcp-runtime cluster diagnostics` validates the installed registry. For the bundled
 registry it probes the in-cluster `registry/registry` Service and selects HTTP
 or HTTPS from the installed registry state: if `registry/registry-internal-tls`
 exists, doctor probes `https://registry.registry.svc.cluster.local:5000/v2/`;
@@ -129,7 +129,7 @@ and [Deployment Targets - bundled HTTPS](deployment-targets.md#option-a-bundled-
 
 When using the built-in issuer for internal registry pod TLS, setup creates
 `cert-manager/mcp-runtime-ca` if it is missing; export its `tls.crt` and add that
-certificate to each node runtime trust store. After setup, `cluster doctor` uses
+certificate to each node runtime trust store. After setup, `cluster diagnostics` uses
 the `registry-internal-tls` Secret as the signal to probe the registry Service
 over HTTPS; a successful doctor registry probe confirms in-cluster push-helper
 reachability, while kubelet image pulls still depend on node/containerd trust
@@ -656,9 +656,19 @@ Missing pieces are warnings, not errors — the command surfaces them so you can
 
 `bootstrap --apply --provider k3s` is the only automated apply path today: run it on the k3s server node and it applies the bundled CoreDNS and local-path manifests under `/var/lib/rancher/k3s/server/manifests`, then waits for both rollouts. Other providers (`rke2`, `kubeadm`, `generic`) print guidance instead.
 
-## `cluster doctor`
+## `cluster doctor` and `cluster diagnostics`
 
-`./bin/mcp-runtime cluster doctor` runs post-install diagnostics by default:
+`./bin/mcp-runtime cluster doctor` is the pre-setup readiness command. Run it
+before `setup` to validate whether the cluster can support MCP Runtime:
+
+- Kubernetes API connectivity, Ready nodes, kubelet-reported container runtimes, and node pressure conditions.
+- Node architecture, StorageClasses, Pending PVCs, and RuntimeClass references.
+- Traefik ingress readiness and exposure.
+- Public host resolution from `MCP_PLATFORM_DOMAIN` or the explicit `MCP_PLATFORM_INGRESS_HOST`, `MCP_REGISTRY_INGRESS_HOST`, and `MCP_MCP_INGRESS_HOST` env vars.
+- Local DNS resolution for configured public hosts.
+- cert-manager deployment readiness, the configured `MCP_TLS_CLUSTER_ISSUER`, and ACME HTTP-01 prerequisites.
+
+`./bin/mcp-runtime cluster diagnostics` runs post-install diagnostics:
 
 - Detects your distribution (k3s / kind / minikube / docker-desktop / generic).
 - Checks the installed MCP Runtime namespaces, CRDs, operator, Traefik ingress, registry, Sentinel, and MCPServer reconciliation path. The MCPServer smoke uses an existing ready app image when available; otherwise it falls back to `registry.k8s.io/pause:3.9` and validates deployment/service/ingress reconciliation plus pod scheduling without a TCP readiness wait.
@@ -669,14 +679,5 @@ Missing pieces are warnings, not errors — the command surfaces them so you can
 - Streams the current check before running it, including helper pod probes and waits, so a slow run shows what it is doing.
 - Prints the distribution-specific registry remediation hint only when registry or image-pull checks fail; Traefik and Sentinel failures use their own check-specific remedies.
 
-For setup preflight, run `./bin/mcp-runtime cluster doctor --for-setup`. That mode focuses on:
-
-- Traefik ingress readiness and exposure.
-- Public host resolution from `MCP_PLATFORM_DOMAIN` or the explicit `MCP_PLATFORM_INGRESS_HOST`, `MCP_REGISTRY_INGRESS_HOST`, and `MCP_MCP_INGRESS_HOST` env vars.
-- Local DNS resolution for those configured public hosts.
-- cert-manager deployment readiness when TLS preflight is requested.
-- `MCP_TLS_CLUSTER_ISSUER` existence when configured.
-- `MCP_ACME_EMAIL` HTTP-01 readiness, including whether the active Traefik web entrypoint is on service port `80`.
-
-Run `bootstrap` before `setup` on a fresh cluster. Run `cluster doctor` after
-setup, or use `cluster doctor --for-setup` before a host-based TLS install.
+Run `bootstrap` and then `cluster doctor` before `setup` on a fresh cluster.
+Run `cluster diagnostics` after setup or after any platform change.

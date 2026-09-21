@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"mcp-runtime/internal/cli/core"
+	registrycli "mcp-runtime/internal/cli/registry"
 	"mcp-runtime/pkg/metadata"
 )
 
@@ -35,7 +36,7 @@ require --use-kube. For platform workflows, use mcp-runtime auth login
 delete, status, and policy.
 
 For building images from source, use 'server build'.
-For pushing images, use 'registry push'.`,
+For pushing images, use 'server push' (or the equivalent 'registry push').`,
 	}
 
 	mgr.BindUseKubeFlag(cmd)
@@ -311,11 +312,31 @@ For pushing images, use 'registry push'.`,
 
 	buildCmd := &cobra.Command{
 		Use:   "build",
-		Short: "Build MCP server images (push via `registry push`)",
+		Short: "Build MCP server images (push via `server push`)",
 	}
 	buildCmd.AddCommand(newBuildImageCmd(mgr.Logger()))
 
-	cmd.AddCommand(initCmd, listCmd, getCmd, createCmd, applyCmd, deployCmd, generateCmd, exportCmd, patchCmd, deleteCmd, logsCmd, statusCmd, connectCmd, policyCmd, buildCmd, newValidateCmd())
+	var pushImage string
+	var pushName string
+	var pushScope string
+	pushCmd := &cobra.Command{
+		Use:   "push",
+		Short: "Push a server image through the platform API",
+		Long:  "Save a local Docker image and publish it through the authenticated platform registry API. This is an ergonomic alias for `registry push` and supports tenant, org, and public scopes.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			executor := mgr.exec
+			if executor == nil {
+				executor = core.DefaultExecutor()
+			}
+			registryManager := registrycli.NewRegistryManager(mgr.kubectl, executor, mgr.logger)
+			return registrycli.RunRegistryPush(cmd.Context(), registryManager, pushImage, "", pushName, pushScope)
+		},
+	}
+	pushCmd.Flags().StringVar(&pushImage, "image", "", "Local image to push (required)")
+	pushCmd.Flags().StringVar(&pushName, "name", "", "Override target repository/name")
+	pushCmd.Flags().StringVar(&pushScope, "scope", "", "Publish scope: tenant, org, or public")
+
+	cmd.AddCommand(initCmd, listCmd, getCmd, createCmd, applyCmd, deployCmd, generateCmd, exportCmd, patchCmd, deleteCmd, logsCmd, statusCmd, connectCmd, policyCmd, buildCmd, pushCmd, newValidateCmd())
 	return cmd
 }
 

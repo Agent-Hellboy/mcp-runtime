@@ -100,7 +100,7 @@ func WrapWithSentinelAndContext(base, cause error, msg string, context map[strin
 }
 
 func NewSetupStepFailedError() error {
-	return newWithSentinel(ErrSetupStepFailed, "cluster doctor found unmet prerequisites; see docs/cluster-readiness.md")
+	return newWithSentinel(ErrSetupStepFailed, "cluster readiness or diagnostics found unmet requirements; see docs/cluster-readiness.md")
 }
 
 // Sentinel errors for CLI operations.

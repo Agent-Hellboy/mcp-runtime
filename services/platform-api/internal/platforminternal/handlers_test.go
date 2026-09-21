@@ -96,6 +96,28 @@ func newTestServer(store PlatformStore) http.Handler {
 	return mux
 }
 
+func TestResolveAuthUsesPlatformAuthenticatorForServiceKeys(t *testing.T) {
+	mux := http.NewServeMux()
+	handler := Handler{
+		Store: &fakeStore{},
+		Token: "internal-token",
+		AuthenticateRequest: func(r *http.Request) (platformauth.Principal, bool, error) {
+			if got := r.Header.Get("x-api-key"); got != "service-key" {
+				t.Fatalf("x-api-key = %q, want service-key", got)
+			}
+			return platformauth.Principal{Role: platformauth.RoleAdmin, AuthType: "service_api_key"}, true, nil
+		},
+	}
+	handler.Register(mux)
+	req := httptest.NewRequest(http.MethodPost, "/internal/auth/resolve", bytes.NewBufferString(`{"api_key":"service-key"}`))
+	req.Header.Set("Authorization", "Bearer internal-token")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte(`"role":"admin"`)) {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestInternalEndpointsRequireBearerToken(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/internal/auth/resolve", bytes.NewBufferString(`{"api_key":"key"}`))
 	rec := httptest.NewRecorder()

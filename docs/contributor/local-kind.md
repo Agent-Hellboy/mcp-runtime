@@ -52,7 +52,7 @@ Check the platform:
 ./bin/mcp-runtime cluster status
 ./bin/mcp-runtime registry status
 ./bin/mcp-runtime sentinel status   # admin kubectl
-./bin/mcp-runtime cluster doctor
+./bin/mcp-runtime cluster diagnostics
 ```
 
 Expose the dashboard and MCP routes:
