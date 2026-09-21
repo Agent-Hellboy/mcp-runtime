@@ -342,7 +342,10 @@ resolve_platform_token() {
   fi
 
   local encoded generated
-  encoded="$(kubectl get secret mcp-sentinel-secrets -n mcp-sentinel -o jsonpath='{.data.ADMIN_API_KEYS}')"
+  # Tolerate a missing secret here so the explicit message below is what the
+  # run reports, instead of set -e aborting on the assignment with no context.
+  encoded="$(kubectl get secret mcp-sentinel-secrets -n mcp-sentinel \
+    -o jsonpath='{.data.ADMIN_API_KEYS}' 2>/dev/null || true)"
   generated="$(printf '%s' "${encoded}" | base64 --decode | cut -d',' -f1 | tr -d '\r\n')"
   [[ -n "${generated}" ]] || fail "E2E_PLATFORM_API_TOKEN was rejected and setup did not produce an ADMIN_API_KEYS value"
   export E2E_PLATFORM_API_TOKEN="${generated}"
