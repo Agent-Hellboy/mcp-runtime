@@ -150,11 +150,30 @@ func checkStorageReadiness(kubectl core.KubectlRunner) DoctorCheck {
 			defaults++
 		}
 	}
-	pending, pendingErr := readKubectlOutput(kubectl, []string{"get", "pvc", "-A", "--field-selector=status.phase=Pending", "-o", "custom-columns=NS:.metadata.namespace,NAME:.metadata.name", "--no-headers"})
+	pendingRaw, pendingErr := readKubectlOutput(kubectl, []string{"get", "pvc", "-A", "-o", "json"})
 	if pendingErr != nil {
-		return DoctorCheck{Name: "storage readiness", OK: false, Detail: fmt.Sprintf("failed checking Pending PVCs: %v", pendingErr), Remedy: "check PVC list permissions and the cluster storage controller"}
+		return DoctorCheck{Name: "storage readiness", OK: false, Detail: fmt.Sprintf("failed checking PVCs: %v", pendingErr), Remedy: "check PVC list permissions and the cluster storage controller"}
 	}
-	pendingLines := filterNonEmptyLines(pending)
+	var claims struct {
+		Items []struct {
+			Metadata struct {
+				Namespace string `json:"namespace"`
+				Name      string `json:"name"`
+			} `json:"metadata"`
+			Status struct {
+				Phase string `json:"phase"`
+			} `json:"status"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(pendingRaw), &claims); err != nil {
+		return DoctorCheck{Name: "storage readiness", OK: false, Detail: fmt.Sprintf("failed parsing PVC status: %v", err), Remedy: "inspect PVC objects and storage provisioner events"}
+	}
+	pendingLines := make([]string, 0)
+	for _, claim := range claims.Items {
+		if strings.TrimSpace(claim.Status.Phase) == "Pending" {
+			pendingLines = append(pendingLines, fmt.Sprintf("%s/%s", claim.Metadata.Namespace, claim.Metadata.Name))
+		}
+	}
 	if len(classes.Items) == 0 {
 		return DoctorCheck{Name: "storage readiness", OK: false, Detail: "no StorageClass is installed", Remedy: "install a StorageClass before enabling Kafka or other persistent components"}
 	}
