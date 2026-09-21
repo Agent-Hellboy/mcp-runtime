@@ -19,6 +19,12 @@ AUTH_URL="${E2E_AUTH_URL:-https://auth.e2e.mcpruntime.org}"
 mkdir -p "${ARTIFACT_DIR}" "${WORK_DIR}"
 chmod 700 "${BACKUP_DIR}" "${ARTIFACT_DIR}" "${WORK_DIR}"
 
+# The CLI resolves manifests as repo-relative paths (CRDs, ingress overlays,
+# registry overlays), so setup must run from the repo root. The workflow starts
+# this script over SSH, where the working directory is the login home, which is
+# why `kubectl apply -f config/crd/bases/...` failed with exit status 1.
+cd "${ROOT_DIR}"
+
 if [[ -f "${BACKUP_DIR}/e2e.env" ]]; then
   # shellcheck disable=SC1091
   set -a
