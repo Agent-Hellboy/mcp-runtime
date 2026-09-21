@@ -33,6 +33,10 @@ export MCP_REGISTRY_INGRESS_HOST="registry.e2e.mcpruntime.org"
 export MCP_MCP_INGRESS_HOST="mcp.e2e.mcpruntime.org"
 export MCP_AUTH_INGRESS_HOST="auth.e2e.mcpruntime.org"
 export E2E_ARTIFACT_DIR="${ARTIFACT_DIR}"
+export MCPRUNTIME_ORG_ROOT="${ROOT_DIR}"
+export MCP_TLS_BACKUP_DIR="${BACKUP_DIR}/platform-runtime"
+
+PLATFORM_BACKUP_HELPERS_LOADED=0
 
 log() { printf '[prod-e2e] %s\n' "$*"; }
 fail() { log "ERROR: $*" >&2; return 1; }
@@ -54,6 +58,31 @@ capture_cluster_state() {
     kubectl -n "${namespace}" get pods -o wide >"${ARTIFACT_DIR}/${namespace}-pods.txt" 2>&1 || true
     kubectl -n "${namespace}" logs --all-containers --prefix --tail=300 -l app=mcp-runtime-api >"${ARTIFACT_DIR}/${namespace}-runtime-api.log" 2>&1 || true
   done
+}
+
+load_platform_backup_helpers() {
+  if [[ "${PLATFORM_BACKUP_HELPERS_LOADED}" == "1" ]]; then
+    return 0
+  fi
+  # Reuse the deployment backup implementation so the VM-side snapshot covers
+  # TLS, platform credentials, auth-server secrets, and OIDC configuration.
+  # Do not load the deployment dotenv here: the E2E runner owns its environment.
+  # shellcheck disable=SC1091
+  source "${ROOT_DIR}/hack/deploy/mcpruntime-org/lib/backup.sh"
+  PLATFORM_BACKUP_HELPERS_LOADED=1
+}
+
+backup_platform_runtime() {
+  [[ -f "${KUBECONFIG}" ]] || return 0
+  if ! kubectl get nodes >/dev/null 2>&1; then
+    log "skipping platform backup because the Kubernetes API is unavailable"
+    return 0
+  fi
+  load_platform_backup_helpers
+  log "capturing platform runtime backup from the VM before cluster cleanup"
+  if ! mcpruntime_org_backup_platform_runtime; then
+    log "WARNING: platform runtime backup failed; preserving any previous snapshot"
+  fi
 }
 
 install_dependencies() {
@@ -84,9 +113,14 @@ install_dependencies() {
 }
 
 restore_backup_state() {
-  # The backup is intentionally outside WORK_DIR and every cleanup target. A
-  # deployment may provide either a tested restore hook or declarative files.
-  if [[ -x "${BACKUP_DIR}/restore.sh" ]]; then
+  # The backup is intentionally outside WORK_DIR and every cleanup target.
+  # Prefer the VM-side platform snapshot because it is captured from the live
+  # cluster and includes the TLS/auth material needed for repeatable runs.
+  if [[ -L "${BACKUP_DIR}/platform-runtime/latest" && -d "${BACKUP_DIR}/platform-runtime/latest" ]]; then
+    load_platform_backup_helpers
+    log "restoring platform runtime snapshot captured on the VM"
+    mcpruntime_org_restore_platform_runtime
+  elif [[ -x "${BACKUP_DIR}/restore.sh" ]]; then
     log "restoring E2E certificates and credentials through backup hook"
     E2E_BACKUP_DIR="${BACKUP_DIR}" KUBECONFIG="${KUBECONFIG}" \
       bash "${BACKUP_DIR}/restore.sh"
@@ -106,6 +140,7 @@ cleanup() {
   fi
   if [[ "${E2E_CLEANUP:-1}" == "1" ]]; then
     log "cleaning disposable Kubernetes/VM state; preserving ${BACKUP_DIR}"
+    backup_platform_runtime
     if [[ -x /usr/local/bin/k3s-uninstall.sh ]]; then
       /usr/local/bin/k3s-uninstall.sh >"${ARTIFACT_DIR}/k3s-uninstall.log" 2>&1 || true
     fi
@@ -118,7 +153,6 @@ cleanup() {
 trap cleanup EXIT
 
 : "${E2E_ACME_EMAIL:?set E2E_ACME_EMAIL in ${BACKUP_DIR}/e2e.env}"
-: "${E2E_PLATFORM_API_TOKEN:?set E2E_PLATFORM_API_TOKEN in ${BACKUP_DIR}/e2e.env}"
 
 install_dependencies
 require_command curl
