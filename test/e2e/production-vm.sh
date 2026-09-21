@@ -45,6 +45,22 @@ require_command() {
   command -v "$1" >/dev/null 2>&1 || fail "missing required command: $1"
 }
 
+# k3s writes the kubeconfig before the apiserver serves traffic and before the
+# kubelet registers its Node object. `kubectl wait --all` does not wait for a
+# resource to appear: it exits non-zero with "no matching resources found" the
+# moment the selector matches nothing. Poll for registration first.
+wait_for_node_registration() {
+  local timeout="${1:-180}"
+  local deadline=$((SECONDS + timeout))
+  while ((SECONDS < deadline)); do
+    if kubectl get nodes -o name 2>/dev/null | grep -q .; then
+      return 0
+    fi
+    sleep 3
+  done
+  fail "no Kubernetes node registered within ${timeout}s"
+}
+
 capture_cluster_state() {
   [[ -f "${KUBECONFIG}" ]] || return 0
   kubectl get nodes -o wide >"${ARTIFACT_DIR}/nodes.txt" 2>&1 || true
@@ -180,6 +196,7 @@ fi
 
 [[ -f "${KUBECONFIG}" ]] || fail "k3s kubeconfig was not created"
 require_command kubectl
+wait_for_node_registration 180
 kubectl wait --for=condition=Ready nodes --all --timeout=180s
 
 restore_backup_state
