@@ -53,6 +53,18 @@ jobs:
             /tmp/mcp-runtime-e2e.tgz \
             "${{ secrets.E2E_VM_USER }}@${{ secrets.E2E_VM_HOST }}:/tmp/mcp-runtime-e2e.tgz"
 
+      - name: Ensure E2E runtime configuration
+        env:
+          E2E_ACME_EMAIL: ${{ secrets.E2E_ACME_EMAIL }}
+          SSHPASS: ${{ secrets.E2E_VM_PASSWORD }}
+        run: |
+          test -n "${E2E_ACME_EMAIL}"
+          printf 'E2E_ACME_EMAIL=%s\n' "${E2E_ACME_EMAIL}" | \
+            sshpass -e ssh \
+              -o UserKnownHostsFile="$HOME/.ssh/mcp-runtime-e2e-known-hosts" -o StrictHostKeyChecking=yes \
+              "${{ secrets.E2E_VM_USER }}@${{ secrets.E2E_VM_HOST }}" \
+              'set -eu; backup_dir=/var/lib/mcp-runtime-e2e-backup; env_file="$backup_dir/e2e.env"; install -d -m 700 "$backup_dir"; touch "$env_file"; chmod 600 "$env_file"; IFS= read -r line; tmp="${env_file}.tmp"; awk -F= -v replacement="$line" '\''$1 != "E2E_ACME_EMAIL" { print } END { print replacement }'\'' "$env_file" > "$tmp"; mv "$tmp" "$env_file"'
+
       - name: Run production E2E
         env:
           SSHPASS: ${{ secrets.E2E_VM_PASSWORD }}

@@ -178,7 +178,7 @@ log "running post-setup diagnostics"
 "${BIN}" cluster diagnostics | tee "${ARTIFACT_DIR}/diagnostics-after.log"
 
 resolve_platform_token() {
-  if curl --fail --silent --show-error \
+  if [[ -n "${E2E_PLATFORM_API_TOKEN:-}" ]] && curl --fail --silent --show-error \
     -H "x-api-key: ${E2E_PLATFORM_API_TOKEN}" \
     -H "authorization: Bearer ${E2E_PLATFORM_API_TOKEN}" \
     "${PLATFORM_URL}/api/v1/auth/me" >/dev/null 2>&1; then
