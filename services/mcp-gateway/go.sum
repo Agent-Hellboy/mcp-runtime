@@ -1,5 +1,5 @@
-github.com/Agent-Hellboy/mcp-auth/auth-client/go v0.1.1 h1:2bM0hkSZbOqAHcQP7i5TthuXddH8vo588bgkOOY/udc=
-github.com/Agent-Hellboy/mcp-auth/auth-client/go v0.1.1/go.mod h1:zfxloKVlq0CwrNI8mPqxsaijqQUVeaAKBQkr42Qpjmg=
+github.com/Agent-Hellboy/mcp-auth/auth-client/go v0.2.0 h1:P9xSKsqiPJXtlzi7hrnEWc02XUIi/ggK1Ugcw+aEUxg=
+github.com/Agent-Hellboy/mcp-auth/auth-client/go v0.2.0/go.mod h1:zfxloKVlq0CwrNI8mPqxsaijqQUVeaAKBQkr42Qpjmg=
 github.com/beorn7/perks v1.0.1 h1:VlbKKnNfV8bJzeqoa4cOKqO6bYr3WgKZxO8Z16+hsOM=
 github.com/beorn7/perks v1.0.1/go.mod h1:G2ZrVWU2WbWT9wwq4/hrbKbnv/1ERSJQ0ibhJ6rlkpw=
 github.com/cenkalti/backoff/v5 v5.0.3 h1:ZN+IMa753KfX5hd8vVaMixjnqRZ3y8CuJKRKj1xcsSM=
