@@ -477,7 +477,17 @@ if [[ "${E2E_WITH_MCP_AUTH:-0}" == "1" ]]; then
   curl --fail --silent --show-error "${AUTH_URL}/.well-known/oauth-authorization-server" >"${ARTIFACT_DIR}/auth-server-metadata.json"
 fi
 
-if [[ "${E2E_RUN_MULTITENANCY:-1}" == "1" ]]; then
+# The workflow passes a GitHub boolean input, which arrives as "true"/"false",
+# while older callers pass 1/0. Accept both: testing only for "1" silently
+# skipped the multi-team suite on every run.
+e2e_flag_enabled() {
+  case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
+    1 | true | yes | on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+if e2e_flag_enabled "${E2E_RUN_MULTITENANCY:-1}"; then
   PLATFORM_URL="${PLATFORM_URL}" MCP_URL="${MCP_URL}" REGISTRY_HOST="${REGISTRY_HOST}" \
     ADMIN_TOKEN_INPUT="${E2E_PLATFORM_API_TOKEN}" \
     BIN="${BIN}" WORK_DIR="${WORK_DIR}/multitenancy" \
