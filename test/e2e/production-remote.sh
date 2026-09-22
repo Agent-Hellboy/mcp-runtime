@@ -57,25 +57,27 @@ require_command() {
 # shellcheck source=test/e2e/lib/cluster-wait.sh
 source "${ROOT_DIR}/test/e2e/lib/cluster-wait.sh"
 
+# BatchMode is deliberately kept out of this array: the two auth paths need
+# opposite values, and slicing it back out by index is easy to get wrong.
 ssh_opts=(
-  -o BatchMode="${E2E_SSH_BATCH:-yes}"
   -o StrictHostKeyChecking="${E2E_SSH_STRICT_HOST_KEY:-yes}"
   -o ConnectTimeout=15
   -o ServerAliveInterval=30
+  -o ServerAliveCountMax=20
 )
 if [[ -n "${E2E_VM_KNOWN_HOSTS:-}" ]]; then
   ssh_opts+=(-o UserKnownHostsFile="${E2E_VM_KNOWN_HOSTS}")
 fi
 
-# Password auth is only used when SSHPASS is exported; otherwise the agent or a
-# key file is expected, and BatchMode keeps a missing key from hanging on a
-# prompt.
+# Password auth is only used when SSHPASS is exported, and sshpass needs
+# BatchMode off to answer the prompt. Otherwise an agent or key file is
+# expected, and BatchMode keeps a missing key from hanging on one.
 vm_ssh() {
+  # shellcheck disable=SC2029 # the remote command is composed locally on purpose
   if [[ -n "${SSHPASS:-}" ]]; then
-    sshpass -e ssh -o BatchMode=no "${ssh_opts[@]:1}" "${VM_USER}@${VM_HOST}" "$@"
+    sshpass -e ssh -o BatchMode=no "${ssh_opts[@]}" "${VM_USER}@${VM_HOST}" "$@"
   else
-    # shellcheck disable=SC2029 # the remote command is composed locally on purpose
-    ssh "${ssh_opts[@]}" "${VM_USER}@${VM_HOST}" "$@"
+    ssh -o BatchMode="${E2E_SSH_BATCH:-yes}" "${ssh_opts[@]}" "${VM_USER}@${VM_HOST}" "$@"
   fi
 }
 
