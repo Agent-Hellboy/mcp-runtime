@@ -108,6 +108,100 @@ persist_vm_env() {
     printf '%s=%s\n' '${key}' '${value}' >>'${VM_BACKUP_DIR}/e2e.env'"
 }
 
+# Certificates are the only snapshot material the E2E needs: losing them means
+# re-issuing from Let's Encrypt on every run, and its rate limits make repeat
+# runs fail. Credentials are deliberately excluded. Setup generates fresh ones
+# and runs syncPostgresPasswordClientGo against the new database, so re-applying
+# an older mcp-sentinel-secrets afterwards would leave the API pods holding a
+# password the database no longer accepts.
+E2E_TLS_SNAPSHOT_FILES=(
+  letsencrypt-prod-clusterissuer.yaml
+  registry-tls.yaml
+  registry-cert.yaml
+  mcp-sentinel-platform-tls.yaml
+  mcp-sentinel-platform-cert.yaml
+)
+LOCAL_SNAPSHOT_DIR="${WORK_DIR}/platform-runtime"
+VM_SNAPSHOT_DIR="${VM_BACKUP_DIR}/platform-runtime/tls"
+
+snapshot_tls_state() {
+  kubectl get nodes >/dev/null 2>&1 || {
+    log "skipping TLS snapshot because the Kubernetes API is unavailable"
+    return 0
+  }
+  mkdir -p "${LOCAL_SNAPSHOT_DIR}"
+  local captured=0
+  _grab() {
+    local file="$1"
+    shift
+    if kubectl "$@" -o yaml >"${LOCAL_SNAPSHOT_DIR}/${file}" 2>/dev/null &&
+      [[ -s "${LOCAL_SNAPSHOT_DIR}/${file}" ]]; then
+      captured=$((captured + 1))
+      return 0
+    fi
+    rm -f "${LOCAL_SNAPSHOT_DIR}/${file}"
+  }
+  _grab letsencrypt-prod-clusterissuer.yaml get clusterissuer letsencrypt-prod
+  _grab registry-tls.yaml get secret registry-tls -n registry
+  _grab registry-cert.yaml get certificate registry-cert -n registry
+  _grab mcp-sentinel-platform-tls.yaml get secret mcp-sentinel-platform-tls -n mcp-sentinel
+  _grab mcp-sentinel-platform-cert.yaml get certificate mcp-sentinel-platform-tls -n mcp-sentinel
+
+  # A failed run can reach this with nothing issued yet. Publishing that would
+  # replace a usable snapshot with an empty one, so only ship a capture that
+  # actually holds the public certificates.
+  if [[ ! -s "${LOCAL_SNAPSHOT_DIR}/registry-tls.yaml" ||
+    ! -s "${LOCAL_SNAPSHOT_DIR}/mcp-sentinel-platform-tls.yaml" ]]; then
+    log "TLS snapshot incomplete (${captured} object(s)); keeping the previous snapshot"
+    return 0
+  fi
+  vm_ssh "install -d -m 700 '${VM_SNAPSHOT_DIR}.new'" >/dev/null 2>&1 || return 0
+  if tar -C "${LOCAL_SNAPSHOT_DIR}" -czf - . |
+    vm_ssh "tar -C '${VM_SNAPSHOT_DIR}.new' -xzf - && rm -rf '${VM_SNAPSHOT_DIR}' && mv '${VM_SNAPSHOT_DIR}.new' '${VM_SNAPSHOT_DIR}'"; then
+    log "stored TLS snapshot (${captured} objects) on ${VM_HOST}"
+  else
+    log "WARNING: could not store the TLS snapshot on ${VM_HOST}"
+  fi
+}
+
+restore_tls_state() {
+  mkdir -p "${LOCAL_SNAPSHOT_DIR}"
+  if ! vm_ssh "test -d '${VM_SNAPSHOT_DIR}'" >/dev/null 2>&1; then
+    log "no TLS snapshot on ${VM_HOST}; certificates will be issued fresh"
+    return 0
+  fi
+  vm_ssh "tar -C '${VM_SNAPSHOT_DIR}' -czf - ." | tar -C "${LOCAL_SNAPSHOT_DIR}" -xzf - 2>/dev/null || {
+    log "WARNING: could not fetch the TLS snapshot from ${VM_HOST}"
+    return 0
+  }
+  # This runs before setup on purpose. cert-manager only skips issuance when a
+  # valid secret is already present when it reconciles the Certificate, so
+  # restoring afterwards would overwrite a cert ACME had just issued rather than
+  # avoiding the request. The secrets need namespaces, which setup has not
+  # created yet.
+  local namespace
+  for namespace in registry mcp-sentinel; do
+    kubectl create namespace "${namespace}" --dry-run=client -o yaml 2>/dev/null | kubectl apply -f - >/dev/null 2>&1 || true
+  done
+
+  load_platform_backup_helpers
+  local file
+  for file in "${E2E_TLS_SNAPSHOT_FILES[@]}"; do
+    [[ -s "${LOCAL_SNAPSHOT_DIR}/${file}" ]] || continue
+    mcpruntime_org_backup_strip_and_apply "${LOCAL_SNAPSHOT_DIR}/${file}" "${file%.yaml}" || true
+  done
+  log "restored issued certificates; cert-manager will reuse them instead of asking ACME"
+}
+
+PLATFORM_BACKUP_HELPERS_LOADED=0
+load_platform_backup_helpers() {
+  [[ "${PLATFORM_BACKUP_HELPERS_LOADED}" == "1" ]] && return 0
+  # backup.sh only defines functions; it never loads the deployment dotenv.
+  # shellcheck disable=SC1091
+  source "${ROOT_DIR}/hack/deploy/mcpruntime-org/lib/backup.sh"
+  PLATFORM_BACKUP_HELPERS_LOADED=1
+}
+
 capture_cluster_state() {
   [[ -f "${KUBECONFIG_FILE}" ]] || return 0
   kubectl get nodes -o wide >"${ARTIFACT_DIR}/nodes.txt" 2>&1 || true
@@ -130,19 +224,38 @@ cleanup() {
     capture_cluster_state
   fi
   if [[ "${E2E_CLEANUP:-1}" == "1" ]]; then
+    snapshot_tls_state
     log "wiping disposable state on ${VM_HOST}; preserving only ${VM_BACKUP_DIR}"
-    # Everything except the backup directory goes: k3s and its CNI/kubelet
-    # state, every Docker image, container, volume and build cache, and any
-    # repo or scratch directory an earlier on-VM run left behind. Leftovers are
-    # what filled the disk and got pods evicted for ephemeral storage.
+    # Reclaim everything that does not require tearing down the network first,
+    # because uninstalling k3s drops CNI and resets this very SSH session --
+    # anything sequenced after it is simply lost.
     vm_ssh "set -u
-      if [ -x /usr/local/bin/k3s-uninstall.sh ]; then /usr/local/bin/k3s-uninstall.sh || true; fi
-      rm -rf /etc/rancher /var/lib/rancher /var/lib/kubelet /var/lib/cni /etc/cni /run/k3s /run/flannel
-      if command -v docker >/dev/null 2>&1; then docker system prune -af --volumes || true; fi
       rm -rf /opt/mcp-runtime-e2e /var/tmp/mcp-runtime-e2e-* /tmp/mcp-runtime-e2e.tgz /tmp/mcp-img-*.tar
-      df -h / | awk 'NR==2 {print \"free after cleanup: \" \$4 \" (\" \$5 \" used)\"}'" \
+      if command -v docker >/dev/null 2>&1; then docker system prune -af --volumes || true; fi" \
       >"${ARTIFACT_DIR}/vm-cleanup.log" 2>&1 || true
-    tail -1 "${ARTIFACT_DIR}/vm-cleanup.log" 2>/dev/null | sed 's/^/[remote-e2e] /' || true
+
+    # Detach the k3s teardown so it survives the connection it kills, then
+    # reconnect to confirm rather than trusting a command whose output cannot
+    # come back.
+    vm_ssh "setsid nohup sh -c '
+      if [ -x /usr/local/bin/k3s-uninstall.sh ]; then /usr/local/bin/k3s-uninstall.sh; fi
+      rm -rf /etc/rancher /var/lib/rancher /var/lib/kubelet /var/lib/cni /etc/cni /run/k3s /run/flannel
+    ' >/tmp/k3s-uninstall.log 2>&1 </dev/null &" >>"${ARTIFACT_DIR}/vm-cleanup.log" 2>&1 || true
+
+    local waited=0
+    while ((waited < 180)); do
+      if vm_ssh "test ! -d /etc/rancher && test ! -d /var/lib/rancher" >/dev/null 2>&1; then
+        log "VM teardown confirmed"
+        break
+      fi
+      sleep 10
+      waited=$((waited + 10))
+    done
+    if ((waited >= 180)); then
+      log "WARNING: VM teardown not confirmed within ${waited}s; check ${VM_BACKUP_DIR} host state"
+    fi
+    vm_ssh "df -h / | awk 'NR==2 {print \"free after cleanup: \" \$4 \" (\" \$5 \" used)\"}'" 2>/dev/null \
+      | sed 's/^/[remote-e2e] /' || true
   fi
   rm -rf "${WORK_DIR}"
   log "run ${RUN_ID} finished with status ${status}; artifacts in ${ARTIFACT_DIR}"
@@ -211,6 +324,17 @@ export MCP_MCP_INGRESS_HOST="mcp.e2e.mcpruntime.org"
 export MCP_AUTH_INGRESS_HOST="auth.e2e.mcpruntime.org"
 export E2E_ARTIFACT_DIR="${ARTIFACT_DIR}"
 export MCPRUNTIME_ORG_ROOT="${ROOT_DIR}"
+
+# kubelet resolves names through the node's resolver, not CoreDNS, so it cannot
+# reach the default in-cluster pull host registry.registry.svc.cluster.local and
+# every platform pod lands in ImagePullBackOff with "lookup ...: Try again".
+# For a bundled-HTTPS public install the supported endpoint is the public
+# registry hostname: the node resolves it through public DNS, its Let's Encrypt
+# certificate is already trusted, and setup provisions the matching pull secret
+# and attaches it to the operator. The in-cluster skopeo helper rewrites this
+# back to Service DNS when pushing, because the registry stores images by
+# repository path and is reachable under either name.
+export MCP_REGISTRY_ENDPOINT="${E2E_REGISTRY_ENDPOINT:-${REGISTRY_HOST}}"
 
 # The kubelet evicts pods once ephemeral storage runs low, which setup reports
 # only as "deployment timeout" ten minutes later. Say so up front instead.
@@ -282,6 +406,8 @@ if [[ "${E2E_WITH_MCP_AUTH:-0}" == "1" ]]; then
   [[ -n "${E2E_MCP_AUTH_TLS_SECRET:-}" ]] && SETUP_ARGS+=(--mcp-auth-tls-secret "${E2E_MCP_AUTH_TLS_SECRET}")
   [[ -n "${E2E_MCP_AUTH_SIGNING_KEY_SECRET:-}" ]] && SETUP_ARGS+=(--mcp-auth-signing-key-secret "${E2E_MCP_AUTH_SIGNING_KEY_SECRET}")
 fi
+
+restore_tls_state
 
 log "running production-style setup against ${VM_HOST}"
 "${BIN}" "${SETUP_ARGS[@]}" 2>&1 | tee "${ARTIFACT_DIR}/setup.log"

@@ -42,6 +42,17 @@ export E2E_ARTIFACT_DIR="${ARTIFACT_DIR}"
 export MCPRUNTIME_ORG_ROOT="${ROOT_DIR}"
 export MCP_TLS_BACKUP_DIR="${BACKUP_DIR}/platform-runtime"
 
+# kubelet resolves names through the node's resolver, not CoreDNS, so it cannot
+# reach the default in-cluster pull host registry.registry.svc.cluster.local and
+# every platform pod lands in ImagePullBackOff with "lookup ...: Try again".
+# For a bundled-HTTPS public install the supported endpoint is the public
+# registry hostname: the node resolves it through public DNS, its Let's Encrypt
+# certificate is already trusted, and setup provisions the matching pull secret
+# and attaches it to the operator. The in-cluster skopeo helper rewrites this
+# back to Service DNS when pushing, because the registry stores images by
+# repository path and is reachable under either name.
+export MCP_REGISTRY_ENDPOINT="${E2E_REGISTRY_ENDPOINT:-${REGISTRY_HOST}}"
+
 PLATFORM_BACKUP_HELPERS_LOADED=0
 
 log() { printf '[prod-e2e] %s\n' "$*"; }
@@ -155,6 +166,15 @@ backup_platform_runtime() {
   [[ -f "${KUBECONFIG}" ]] || return 0
   if ! kubectl get nodes >/dev/null 2>&1; then
     log "skipping platform backup because the Kubernetes API is unavailable"
+    return 0
+  fi
+  # The EXIT trap reaches here on failed runs too, and the snapshot helper
+  # repoints `latest` before capturing anything while treating missing objects
+  # as successful skips. Without this guard a run that died before issuance
+  # silently replaces the last usable snapshot with an empty one.
+  if ! kubectl -n registry get secret registry-tls >/dev/null 2>&1 ||
+    ! kubectl -n mcp-sentinel get secret mcp-sentinel-platform-tls >/dev/null 2>&1; then
+    log "skipping platform backup: public certificates are not issued yet; keeping the previous snapshot"
     return 0
   fi
   load_platform_backup_helpers
@@ -321,10 +341,21 @@ ensure_platform_admin_config() {
   log "platform admin configured for ${email}"
 }
 
-restore_platform_runtime_after_setup() {
+# Runs before setup, not after. Restoring afterwards re-applied an older
+# mcp-sentinel-secrets over a database setup had just initialised with freshly
+# generated credentials and synchronised via syncPostgresPasswordClientGo, so
+# the API pods came back holding a password the database no longer accepted.
+# Restoring first means setup treats these as the existing state and
+# initialises the database to match. It also lets cert-manager find already
+# issued certificates, which is the only way to avoid a fresh ACME order.
+restore_platform_runtime_before_setup() {
   if [[ ! -L "${BACKUP_DIR}/platform-runtime/latest" || ! -d "${BACKUP_DIR}/platform-runtime/latest" ]]; then
     return 0
   fi
+  local namespace
+  for namespace in registry mcp-sentinel; do
+    kubectl create namespace "${namespace}" --dry-run=client -o yaml 2>/dev/null | kubectl apply -f - >/dev/null 2>&1 || true
+  done
   load_platform_backup_helpers
   log "restoring platform runtime snapshot captured on the VM"
   if ! mcpruntime_org_restore_platform_runtime; then
@@ -430,10 +461,10 @@ fi
 
 ensure_platform_admin_config
 
+restore_platform_runtime_before_setup
+
 log "running production-style setup"
 "${BIN}" "${SETUP_ARGS[@]}" 2>&1 | tee "${ARTIFACT_DIR}/setup.log"
-
-restore_platform_runtime_after_setup
 
 log "running post-setup diagnostics"
 "${BIN}" cluster diagnostics | tee "${ARTIFACT_DIR}/diagnostics-after.log"
