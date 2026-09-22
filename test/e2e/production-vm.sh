@@ -417,6 +417,21 @@ for host in "platform.e2e.mcpruntime.org" "registry.e2e.mcpruntime.org" "mcp.e2e
   getent hosts "${host}" >/dev/null || fail "DNS does not resolve ${host}"
 done
 
+# kubelet verifies the registry certificate against this node's trust store, and
+# with the staging CA that certificate is signed by a root nothing trusts, so
+# image pulls fail with "x509: certificate signed by unknown authority". Install
+# the roots before k3s exists so containerd starts with them.
+if e2e_flag_enabled "${E2E_ACME_STAGING:-1}"; then
+  log "installing Let's Encrypt staging roots on this node"
+  install -d -m 755 /usr/local/share/ca-certificates
+  curl -fsSL https://letsencrypt.org/certs/staging/letsencrypt-stg-root-x1.pem \
+    -o /usr/local/share/ca-certificates/le-staging-x1.crt || true
+  curl -fsSL https://letsencrypt.org/certs/staging/letsencrypt-stg-root-x2.pem \
+    -o /usr/local/share/ca-certificates/le-staging-x2.crt || true
+  update-ca-certificates >/dev/null 2>&1 || true
+  if systemctl is-active --quiet k3s 2>/dev/null; then systemctl restart k3s || true; fi
+fi
+
 if [[ ! -f "${KUBECONFIG}" ]]; then
   log "installing k3s on the disposable VM"
   curl -sfL https://get.k3s.io | sh -s - --write-kubeconfig-mode 644

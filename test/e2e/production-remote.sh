@@ -338,6 +338,30 @@ for host in "platform.e2e.mcpruntime.org" "registry.e2e.mcpruntime.org" \
     fail "DNS does not resolve ${host}"
 done
 
+# kubelet verifies the registry certificate against the node's own trust store,
+# not the runner's. With the staging CA the registry certificate is signed by a
+# root no node trusts, so every image pull fails with "x509: certificate signed
+# by unknown authority" and the operator never becomes ready. Install the roots
+# before k3s exists, so containerd has them from its first start -- Go caches the
+# system pool per process, so adding them afterwards needs a restart.
+install_staging_roots_on_vm() {
+  log "installing Let's Encrypt staging roots on ${VM_HOST}"
+  if ! vm_ssh "set -eu
+    install -d -m 755 /usr/local/share/ca-certificates
+    curl -fsSL https://letsencrypt.org/certs/staging/letsencrypt-stg-root-x1.pem \
+      -o /usr/local/share/ca-certificates/le-staging-x1.crt
+    curl -fsSL https://letsencrypt.org/certs/staging/letsencrypt-stg-root-x2.pem \
+      -o /usr/local/share/ca-certificates/le-staging-x2.crt
+    update-ca-certificates >/dev/null 2>&1
+    if systemctl is-active --quiet k3s; then systemctl restart k3s; fi"; then
+    log "WARNING: could not install staging roots on ${VM_HOST}; image pulls will fail certificate verification"
+  fi
+}
+
+if e2e_flag_enabled "${E2E_ACME_STAGING:-1}"; then
+  install_staging_roots_on_vm
+fi
+
 log "provisioning k3s on ${VM_HOST}"
 # k3s already adds the node's public IP to the API server certificate SANs, so
 # the kubeconfig only needs its loopback server URL rewritten to reach it.
