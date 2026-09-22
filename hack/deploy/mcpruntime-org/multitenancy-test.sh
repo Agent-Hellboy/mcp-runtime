@@ -40,9 +40,31 @@ if [[ -z "$ROOT_DIR" ]]; then
 fi
 BIN="${BIN:-$ROOT_DIR/bin/mcp-runtime}"
 
+# A dotenv is a convenience for local runs, not an override. Sourcing it under
+# `set -a` replaced values the caller had already exported, so a run explicitly
+# aimed at one environment was silently redirected to whichever one .env named
+# -- a caller passing PLATFORM_URL for a disposable E2E host had it swapped for
+# the production platform, and KUBECONFIG along with it. Fill gaps only.
 if [[ -f "$ROOT_DIR/.env" ]]; then
-  # shellcheck disable=SC1091
-  set -a && source "$ROOT_DIR/.env" && set +a
+  while IFS= read -r dotenv_line || [[ -n "$dotenv_line" ]]; do
+    dotenv_line="${dotenv_line#"${dotenv_line%%[![:space:]]*}"}"
+    case "$dotenv_line" in
+      '' | '#'*) continue ;;
+    esac
+    dotenv_line="${dotenv_line#export }"
+    [[ "$dotenv_line" == *=* ]] || continue
+    dotenv_key="${dotenv_line%%=*}"
+    [[ "$dotenv_key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+    dotenv_value="${dotenv_line#*=}"
+    case "$dotenv_value" in
+      \"*\") dotenv_value="${dotenv_value:1:${#dotenv_value}-2}" ;;
+      \'*\') dotenv_value="${dotenv_value:1:${#dotenv_value}-2}" ;;
+    esac
+    if [[ -z "${!dotenv_key:-}" ]]; then
+      export "$dotenv_key=$dotenv_value"
+    fi
+  done <"$ROOT_DIR/.env"
+  unset dotenv_line dotenv_key dotenv_value
 fi
 
 require_env() {
