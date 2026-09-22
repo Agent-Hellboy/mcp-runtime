@@ -63,6 +63,7 @@ func New(runtime *core.Runtime, clusterMgr setupplatform.ClusterManagerAPI) *cob
 	var ingressManifest string
 	var forceIngressInstall bool
 	var tlsEnabled bool
+	var providedTLSSecrets bool
 	var testMode bool
 	var parallelBuilds bool
 	var strictProd bool
@@ -180,6 +181,7 @@ will use to push and pull container images.`,
 
 			// TLS
 			envBool("with-tls", &tlsEnabled, "MCP_SETUP_WITH_TLS")
+			envBool("provided-tls-secrets", &providedTLSSecrets, "MCP_SETUP_PROVIDED_TLS_SECRETS")
 			envStr("acme-email", &acmeEmail, "MCP_ACME_EMAIL")
 			envBool("acme-staging", &acmeStaging, "MCP_ACME_STAGING")
 			envStr("tls-cluster-issuer", &tlsClusterIssuer, "MCP_SETUP_TLS_CLUSTER_ISSUER", "MCP_TLS_CLUSTER_ISSUER")
@@ -255,7 +257,7 @@ will use to push and pull container images.`,
 				cmd.Flags().Changed("operator-leader-elect"),
 			)
 
-			if err := setupplatform.ValidateTLSSetupCLIFlags(tlsEnabled, acmeEmail, tlsClusterIssuer, acmeStaging, skipCertManagerInstall); err != nil {
+			if err := setupplatform.ValidateTLSSetupCLIFlags(tlsEnabled, providedTLSSecrets, acmeEmail, tlsClusterIssuer, acmeStaging, skipCertManagerInstall); err != nil {
 				return err
 			}
 			if err := setupplatform.ValidateRegistryTLSMode(registryMode, tlsEnabled, acmeEmail); err != nil {
@@ -281,6 +283,7 @@ will use to push and pull container images.`,
 				IngressManifestChanged:  cmd.Flags().Changed("ingress-manifest"),
 				ForceIngressInstall:     forceIngressInstall,
 				TLSEnabled:              tlsEnabled,
+				ProvidedTLSSecrets:      providedTLSSecrets,
 				TestMode:                testMode,
 				ParallelBuilds:          parallelBuilds,
 				StrictProd:              strictProd,
@@ -320,6 +323,7 @@ will use to push and pull container images.`,
 	cmd.Flags().StringVar(&ingressManifest, "ingress-manifest", "config/ingress/overlays/http", "Manifest to apply when installing the ingress controller")
 	cmd.Flags().BoolVar(&forceIngressInstall, "force-ingress-install", false, "Force repo-managed ingress install when only an IngressClass exists; refuses active external Traefik")
 	cmd.Flags().BoolVar(&tlsEnabled, "with-tls", false, "Enable TLS overlays (ingress/registry). Use --acme-email for public Let's Encrypt, --tls-cluster-issuer for an org ClusterIssuer, or the bundled mcp-runtime-ca private CA (no ACME) when neither is set")
+	cmd.Flags().BoolVar(&providedTLSSecrets, "provided-tls-secrets", false, "Use operator-created Kubernetes TLS Secrets instead of issuing certificates. Requires --with-tls; do not combine with --acme-email or --tls-cluster-issuer")
 	cmd.Flags().StringVar(&acmeEmail, "acme-email", "", "Contact email for Let's Encrypt (HTTP-01 via cert-manager). Mutually exclusive with --tls-cluster-issuer. Overrides env MCP_ACME_EMAIL")
 	cmd.Flags().StringVar(&tlsClusterIssuer, "tls-cluster-issuer", "", "Use an existing cert-manager ClusterIssuer (e.g. internal CA; setup does not create it). Mutually exclusive with --acme-email. Overrides env MCP_SETUP_TLS_CLUSTER_ISSUER")
 	cmd.Flags().StringVar(&mtlsClusterIssuer, "mtls-cluster-issuer", "", "Enable the mTLS auth path with this cert-manager ClusterIssuer for gateway and adapter client certificates (requires --with-tls). Name an enterprise issuer, or the bundled mcp-runtime-ca to have setup provision it. Test mode defaults to mcp-runtime-ca. Overrides env MCP_SETUP_MTLS_CLUSTER_ISSUER")

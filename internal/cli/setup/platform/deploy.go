@@ -956,7 +956,7 @@ func operatorEnvOverrides(gatewayProxyImage, existingGatewayOTLPEndpoint string)
 	}
 	if mcpHost := strings.TrimSpace(core.GetMcpIngressHost()); mcpHost != "" {
 		envVars = append(envVars, operatorEnvVar{Name: "MCP_DEFAULT_INGRESS_HOST", Value: mcpHost})
-		if strings.TrimSpace(core.GetRegistryClusterIssuerName()) != "" {
+		if strings.TrimSpace(core.GetRegistryClusterIssuerName()) != "" || core.GetProvidedTLSSecrets() {
 			envVars = append(envVars,
 				operatorEnvVar{Name: "MCP_DEFAULT_INGRESS_ENTRYPOINTS", Value: "websecure"},
 				operatorEnvVar{Name: "MCP_DEFAULT_INGRESS_TLS", Value: "true"},
@@ -1029,7 +1029,12 @@ func applySetupPlanToCLIConfig(plan setupplan.Plan) {
 			core.DefaultCLIConfig.RegistryEndpoint = fmt.Sprintf("%s:%d", registryServiceDNS(), core.GetRegistryPort())
 		}
 	}
+	core.DefaultCLIConfig.ProvidedTLSSecrets = plan.TLSEnabled && plan.ProvidedTLSSecrets
 	if !plan.TLSEnabled {
+		core.DefaultCLIConfig.RegistryClusterIssuerName = ""
+		return
+	}
+	if plan.ProvidedTLSSecrets {
 		core.DefaultCLIConfig.RegistryClusterIssuerName = ""
 		return
 	}

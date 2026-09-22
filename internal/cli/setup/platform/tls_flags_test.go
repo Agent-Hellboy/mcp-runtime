@@ -12,24 +12,28 @@ func TestValidateTLSSetupCLIFlags(t *testing.T) {
 	cases := []struct {
 		name        string
 		tls         bool
+		provided    bool
 		acme, tlsCI string
 		staging     bool
 		skipCM      bool
 		wantErr     bool
 		wantIsField bool
 	}{
-		{"ok disabled", false, "", "", false, false, false, false},
-		{"ok with-tls acme", true, "a@b.com", "", false, false, false, false},
-		{"mutual exclusivity", false, "a@b.com", "issuer", false, false, true, true},
-		{"acme without with-tls", false, "a@b.com", "", false, false, true, true},
-		{"tls-cluster-issuer without with-tls", false, "", "issuer", false, false, true, true},
-		{"staging without with-tls", false, "", "", true, false, true, true},
-		{"skip-cm without with-tls", false, "", "", false, true, true, true},
-		{"with-tls staging no email", true, "", "", true, true, false, false},
+		{"ok disabled", false, false, "", "", false, false, false, false},
+		{"ok with-tls acme", true, false, "a@b.com", "", false, false, false, false},
+		{"provided secrets", true, true, "", "", false, false, false, false},
+		{"provided secrets cannot use ACME", true, true, "a@b.com", "", false, false, true, true},
+		{"provided secrets require tls", false, true, "", "", false, false, true, true},
+		{"mutual exclusivity", false, false, "a@b.com", "issuer", false, false, true, true},
+		{"acme without with-tls", false, false, "a@b.com", "", false, false, true, true},
+		{"tls-cluster-issuer without with-tls", false, false, "", "issuer", false, false, true, true},
+		{"staging without with-tls", false, false, "", "", true, false, true, true},
+		{"skip-cm without with-tls", false, false, "", "", false, true, true, true},
+		{"with-tls staging no email", true, false, "", "", true, true, false, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := ValidateTLSSetupCLIFlags(tc.tls, tc.acme, tc.tlsCI, tc.staging, tc.skipCM)
+			err := ValidateTLSSetupCLIFlags(tc.tls, tc.provided, tc.acme, tc.tlsCI, tc.staging, tc.skipCM)
 			if tc.wantErr {
 				if err == nil {
 					t.Fatal("expected error")

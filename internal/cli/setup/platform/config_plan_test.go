@@ -28,3 +28,17 @@ func TestApplySetupPlanToCLIConfig_TLSClusterIssuer(t *testing.T) {
 		t.Fatalf("expected cleared when TLS off, got %q", core.GetRegistryClusterIssuerName())
 	}
 }
+
+func TestApplySetupPlanToCLIConfig_ProvidedTLSSecrets(t *testing.T) {
+	orig := core.DefaultCLIConfig
+	t.Cleanup(func() { core.DefaultCLIConfig = orig })
+	core.DefaultCLIConfig = &core.CLIConfig{RegistryClusterIssuerName: "old-issuer"}
+
+	applySetupPlanToCLIConfig(setupplan.Plan{TLSEnabled: true, ProvidedTLSSecrets: true})
+	if core.GetRegistryClusterIssuerName() != "" {
+		t.Fatalf("provided TLS Secrets must not configure a cert-manager issuer, got %q", core.GetRegistryClusterIssuerName())
+	}
+	if !core.GetProvidedTLSSecrets() {
+		t.Fatal("expected provided TLS Secrets mode")
+	}
+}

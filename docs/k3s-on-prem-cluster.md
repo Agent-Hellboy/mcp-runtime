@@ -356,6 +356,46 @@ MCP_SETUP_WAIT_TIMEOUT=1200 ./bin/mcp-runtime setup \
 Pass `--external-registry-username` and `PROVISIONED_REGISTRY_PASSWORD` when the
 registry needs credentials.
 
+## Enterprise-provided TLS certificate files
+
+Use this mode when enterprise IT supplies a certificate chain (`fullchain.pem`)
+and its matching private key (`privkey.pem`) but does **not** operate a
+cert-manager `ClusterIssuer`. It is different from `--tls-cluster-issuer`:
+Runtime references the Secrets below and never creates a cert-manager
+`Certificate` or renews it.
+
+Verify that the certificate SANs cover every public Runtime hostname, and keep
+the PEM files outside the repository and shell history. Kubernetes Secrets are
+namespace-scoped, so import the pair once for each Runtime ingress namespace:
+
+```bash
+kubectl -n registry create secret tls registry-tls \
+  --cert=/secure/fullchain.pem --key=/secure/privkey.pem \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+kubectl -n mcp-sentinel create secret tls mcp-sentinel-platform-tls \
+  --cert=/secure/fullchain.pem --key=/secure/privkey.pem \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
+
+Then run setup with static Secret mode:
+
+```bash
+./bin/mcp-runtime setup --with-tls --provided-tls-secrets --strict-prod
+```
+
+Do not combine `--provided-tls-secrets` with `--acme-email` or
+`--tls-cluster-issuer`. If you also deploy bundled mcp-auth, create its TLS
+Secret in `mcp-sentinel` and pass its name through `--mcp-auth-tls-secret`.
+
+### Renewal
+
+This mode is intentionally operator-managed. Before the enterprise certificate
+expires, IT supplies a replacement matching pair; rerun the two `kubectl create
+secret tls ... --dry-run=client -o yaml | kubectl apply -f -` commands above.
+Traefik observes Secret updates and serves the replacement certificate. Verify
+the public endpoint's hostname and expiry after each rotation.
+
 ## Validate
 
 Run the platform checks:

@@ -16,6 +16,7 @@ import (
 	"mcp-runtime/internal/cli/certmanager"
 	"mcp-runtime/internal/cli/core"
 	"mcp-runtime/internal/cli/kube"
+	"mcp-runtime/internal/cli/setup/ingressmanifest"
 	setupplan "mcp-runtime/internal/cli/setup/plan"
 	"mcp-runtime/pkg/k8sclient"
 
@@ -27,14 +28,17 @@ import (
 // requires --with-tls when any TLS or cert-manager-related options are set.
 func ValidateTLSSetupCLIFlags(
 	tlsEnabled bool,
-	acmeEmailResolved, tlsCIResolved string,
+	providedTLSSecrets bool, acmeEmailResolved, tlsCIResolved string,
 	acmeStagingResolved, skipCertManagerInstall bool,
 ) error {
+	if providedTLSSecrets && (acmeEmailResolved != "" || tlsCIResolved != "") {
+		return core.NewWithSentinel(core.ErrFieldRequired, "--provided-tls-secrets cannot be combined with --acme-email or --tls-cluster-issuer; import enterprise TLS Secrets before setup instead")
+	}
 	if acmeEmailResolved != "" && tlsCIResolved != "" {
 		return core.NewWithSentinel(core.ErrFieldRequired, "use either --acme-email (or MCP_ACME_EMAIL) for public Let's Encrypt, or --tls-cluster-issuer (or MCP_TLS_CLUSTER_ISSUER) for an existing internal ClusterIssuer, not both")
 	}
-	if !tlsEnabled && (tlsCIResolved != "" || acmeEmailResolved != "" || acmeStagingResolved || skipCertManagerInstall) {
-		return core.NewWithSentinel(core.ErrFieldRequired, "--with-tls is required when using --acme-email, --tls-cluster-issuer, --acme-staging, --skip-cert-manager-install, or related environment variables (MCP_ACME_EMAIL, MCP_ACME_STAGING, MCP_TLS_CLUSTER_ISSUER)")
+	if !tlsEnabled && (providedTLSSecrets || tlsCIResolved != "" || acmeEmailResolved != "" || acmeStagingResolved || skipCertManagerInstall) {
+		return core.NewWithSentinel(core.ErrFieldRequired, "--with-tls is required when using --provided-tls-secrets, --acme-email, --tls-cluster-issuer, --acme-staging, --skip-cert-manager-install, or related environment variables")
 	}
 	return nil
 }
@@ -111,6 +115,9 @@ func setupWorkloadPKI(logger *zap.Logger, plan setupplan.Plan) error {
 //
 //lint:ignore U1000 retained as the legacy kubectl implementation for focused tests and fallback patches.
 func setupTLSWithKubectlAndPlan(kubectl core.KubectlRunner, logger *zap.Logger, plan setupplan.Plan) error {
+	if plan.ProvidedTLSSecrets {
+		return setupTLSProvidedSecretsWithKubectl(kubectl, plan)
+	}
 	if strings.TrimSpace(plan.ACMEmail) != "" {
 		return setupTLSLetsEncrypt(kubectl, logger, plan)
 	}
@@ -121,6 +128,9 @@ func setupTLSWithKubectlAndPlan(kubectl core.KubectlRunner, logger *zap.Logger, 
 }
 
 func setupTLSWithClientGoAndPlan(logger *zap.Logger, plan setupplan.Plan) error {
+	if plan.ProvidedTLSSecrets {
+		return setupTLSProvidedSecrets(plan)
+	}
 	if strings.TrimSpace(plan.ACMEmail) != "" {
 		return setupTLSLetsEncryptClientGo(logger, plan)
 	}
@@ -128,6 +138,44 @@ func setupTLSWithClientGoAndPlan(logger *zap.Logger, plan setupplan.Plan) error 
 		return setupTLSWithExistingClusterIssuerClientGo(logger, plan)
 	}
 	return setupTLSPrivateCAClientGo(logger, plan)
+}
+
+// setupTLSProvidedSecrets verifies operator-managed TLS Secrets. It deliberately
+// does not create Certificate resources: enterprise IT owns issuance and rotation.
+func setupTLSProvidedSecrets(plan setupplan.Plan) error {
+	return setupTLSProvidedSecretsWithKubectl(core.DefaultKubectlClient(), plan)
+}
+
+func setupTLSProvidedSecretsWithKubectl(kubectl core.KubectlRunner, plan setupplan.Plan) error {
+	checks := []struct{ namespace, name, purpose string }{}
+	if plan.RegistryMode != setupplan.RegistryModeExternal {
+		checks = append(checks, struct{ namespace, name, purpose string }{core.NamespaceRegistry, certmanager.RegistryTLSSecretName, "registry"})
+	}
+	if strings.TrimSpace(core.GetPlatformIngressHost()) != "" {
+		checks = append(checks, struct{ namespace, name, purpose string }{core.DefaultAnalyticsNamespace, ingressmanifest.PlatformTLSSecretName, "platform"})
+	}
+	for _, check := range checks {
+		if err := checkTLSSecretWithKubectl(kubectl, check.namespace, check.name, check.purpose); err != nil {
+			return err
+		}
+	}
+	core.Success("Using operator-provided TLS Secrets; cert-manager will not manage their renewal")
+	return nil
+}
+
+func checkTLSSecretWithKubectl(kubectl core.KubectlRunner, namespace, name, purpose string) error {
+	for _, key := range []string{"tls.crt", "tls.key"} {
+		keyPath := strings.ReplaceAll(key, ".", `\.`)
+		cmd, err := kubectl.CommandArgs([]string{"get", "secret", name, "-n", namespace, "-o", "jsonpath={.data." + keyPath + "}"})
+		if err != nil {
+			return fmt.Errorf("prepare %s TLS Secret check: %w", purpose, err)
+		}
+		value, err := cmd.Output()
+		if err != nil || strings.TrimSpace(string(value)) == "" {
+			return fmt.Errorf("%s TLS Secret %q in namespace %q must exist with non-empty tls.crt and tls.key; create it with `kubectl -n %s create secret tls %s --cert=fullchain.pem --key=privkey.pem` before setup", purpose, name, namespace, namespace, name)
+		}
+	}
+	return nil
 }
 
 func setupTLSLetsEncryptClientGo(logger *zap.Logger, plan setupplan.Plan) error {

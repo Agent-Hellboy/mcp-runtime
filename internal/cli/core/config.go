@@ -36,14 +36,17 @@ type CLIConfig struct {
 	// setup --with-tls for TLS-rendered resources (e.g. platform UI ingress).
 	// The registry Secret itself is owned by an explicit registry-cert Certificate.
 	RegistryClusterIssuerName string
-	SkopeoImage               string
-	OperatorImage             string // Override for operator image
-	GatewayProxyImage         string // Optional default image for the MCP gateway sidecar
-	ImagePlatform             string // Optional Docker image platform for setup-built images, e.g. linux/amd64
-	GatewayOTLPEndpoint       string // Optional OTLP/HTTP endpoint for MCP gateway sidecar tracing
-	AnalyticsIngestURL        string // Optional analytics ingest URL override for the MCP gateway sidecar
-	IngressReadinessMode      string // Optional operator ingress readiness mode: strict or permissive
-	ClusterName               string // Optional cluster label attached to analytics/audit events
+	// ProvidedTLSSecrets selects operator-managed TLS Secrets in place of
+	// cert-manager-issued Certificates.
+	ProvidedTLSSecrets   bool
+	SkopeoImage          string
+	OperatorImage        string // Override for operator image
+	GatewayProxyImage    string // Optional default image for the MCP gateway sidecar
+	ImagePlatform        string // Optional Docker image platform for setup-built images, e.g. linux/amd64
+	GatewayOTLPEndpoint  string // Optional OTLP/HTTP endpoint for MCP gateway sidecar tracing
+	AnalyticsIngestURL   string // Optional analytics ingest URL override for the MCP gateway sidecar
+	IngressReadinessMode string // Optional operator ingress readiness mode: strict or permissive
+	ClusterName          string // Optional cluster label attached to analytics/audit events
 
 	// Server defaults
 	DefaultServerPort int
@@ -190,6 +193,12 @@ func GetPlatformIngressHost() string {
 // GetRegistryClusterIssuerName returns the setup-selected cert-manager ClusterIssuer name (empty if unset).
 func GetRegistryClusterIssuerName() string {
 	return DefaultCLIConfig.RegistryClusterIssuerName
+}
+
+// GetProvidedTLSSecrets reports whether setup references operator-provided TLS
+// Secrets rather than cert-manager-issued Certificates.
+func GetProvidedTLSSecrets() bool {
+	return DefaultCLIConfig.ProvidedTLSSecrets
 }
 
 // GetSkopeoImage returns the skopeo image for in-cluster operations.

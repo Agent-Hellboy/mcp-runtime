@@ -63,13 +63,17 @@ func (s preflightStep) Run(logger *zap.Logger, _ SetupDeps, ctx *SetupContext) e
 		// intentional for local Kind clusters and these checks would always fire.
 		if !ctx.Plan.TestMode {
 			issues = append(issues, checkRegistryHostForTLS()...)
-			issues = append(issues, checkStaleRegistryCertificate(bg, clients)...)
-			issues = append(issues, checkOrphanedRegistryTLSSecret(bg, clients)...)
 		}
-		issues = append(issues, checkCertManagerCRDs(bg, clients, ctx.Plan.InstallCertManager)...)
-		issues = append(issues, checkClusterIssuerExists(bg, clients, ctx.Plan.TLSClusterIssuer)...)
-		issues = append(issues, checkFailedCertificateRequests(bg, clients)...)
-		issues = append(issues, checkConflictingSecretOwners(bg, clients)...)
+		if !ctx.Plan.ProvidedTLSSecrets {
+			if !ctx.Plan.TestMode {
+				issues = append(issues, checkStaleRegistryCertificate(bg, clients)...)
+				issues = append(issues, checkOrphanedRegistryTLSSecret(bg, clients)...)
+			}
+			issues = append(issues, checkCertManagerCRDs(bg, clients, ctx.Plan.InstallCertManager)...)
+			issues = append(issues, checkClusterIssuerExists(bg, clients, ctx.Plan.TLSClusterIssuer)...)
+			issues = append(issues, checkFailedCertificateRequests(bg, clients)...)
+			issues = append(issues, checkConflictingSecretOwners(bg, clients)...)
+		}
 	}
 	if issuer := strings.TrimSpace(ctx.Plan.MTLSClusterIssuer); issuer != "" {
 		if !ctx.Plan.TLSEnabled {

@@ -2794,6 +2794,7 @@ kubectl clients, terminal output, and test doubles.
 - [`func GetMcpIngressHost() string`](#cli-core-func-getmcpingresshost-string)
 - [`func GetOperatorImageOverride() string`](#cli-core-func-getoperatorimageoverride-string)
 - [`func GetPlatformIngressHost() string`](#cli-core-func-getplatformingresshost-string)
+- [`func GetProvidedTLSSecrets() bool`](#cli-core-func-getprovidedtlssecrets-bool)
 - [`func GetRegistryClusterIssuerName() string`](#cli-core-func-getregistryclusterissuername-string)
 - [`func GetRegistryEndpoint() string`](#cli-core-func-getregistryendpoint-string)
 - [`func GetRegistryIngressHost() string`](#cli-core-func-getregistryingresshost-string)
@@ -3309,6 +3310,14 @@ func GetPlatformIngressHost() string
 
 ```
 
+<a id="cli-core-func-getprovidedtlssecrets-bool"></a>
+```text
+func GetProvidedTLSSecrets() bool
+    GetProvidedTLSSecrets reports whether setup references operator-provided TLS
+    Secrets rather than cert-manager-issued Certificates.
+
+```
+
 <a id="cli-core-func-getregistryclusterissuername-string"></a>
 ```text
 func GetRegistryClusterIssuerName() string
@@ -3537,14 +3546,17 @@ type CLIConfig struct {
 	// setup --with-tls for TLS-rendered resources (e.g. platform UI ingress).
 	// The registry Secret itself is owned by an explicit registry-cert Certificate.
 	RegistryClusterIssuerName string
-	SkopeoImage               string
-	OperatorImage             string // Override for operator image
-	GatewayProxyImage         string // Optional default image for the MCP gateway sidecar
-	ImagePlatform             string // Optional Docker image platform for setup-built images, e.g. linux/amd64
-	GatewayOTLPEndpoint       string // Optional OTLP/HTTP endpoint for MCP gateway sidecar tracing
-	AnalyticsIngestURL        string // Optional analytics ingest URL override for the MCP gateway sidecar
-	IngressReadinessMode      string // Optional operator ingress readiness mode: strict or permissive
-	ClusterName               string // Optional cluster label attached to analytics/audit events
+	// ProvidedTLSSecrets selects operator-managed TLS Secrets in place of
+	// cert-manager-issued Certificates.
+	ProvidedTLSSecrets   bool
+	SkopeoImage          string
+	OperatorImage        string // Override for operator image
+	GatewayProxyImage    string // Optional default image for the MCP gateway sidecar
+	ImagePlatform        string // Optional Docker image platform for setup-built images, e.g. linux/amd64
+	GatewayOTLPEndpoint  string // Optional OTLP/HTTP endpoint for MCP gateway sidecar tracing
+	AnalyticsIngestURL   string // Optional analytics ingest URL override for the MCP gateway sidecar
+	IngressReadinessMode string // Optional operator ingress readiness mode: strict or permissive
+	ClusterName          string // Optional cluster label attached to analytics/audit events
 
 	// Server defaults
 	DefaultServerPort int
@@ -6185,7 +6197,7 @@ Ingress.
 ### Index
 
 - [`Constants`](#cli-setup-ingress-manifests-constants)
-- [`func RenderPlatformUIIngress(host, issuerName, analyticsNamespace string) string`](#cli-setup-ingress-manifests-func-renderplatformuiingress-host-issuername-analyticsnamespace-string-string)
+- [`func RenderPlatformUIIngress(host, issuerName string, tlsEnabled bool, analyticsNamespace string) string`](#cli-setup-ingress-manifests-func-renderplatformuiingress-host-issuername-string-tlsenabled-bool-analyticsnamespace-string-string)
 - [`type APIPath struct`](#cli-setup-ingress-manifests-type-apipath-struct)
 - [`func PlatformAPIPaths() []APIPath`](#cli-setup-ingress-manifests-func-platformapipaths-apipath)
 
@@ -6208,9 +6220,9 @@ const (
 <a id="cli-setup-ingress-manifests-functions"></a>
 ### Functions
 
-<a id="cli-setup-ingress-manifests-func-renderplatformuiingress-host-issuername-analyticsnamespace-string-string"></a>
+<a id="cli-setup-ingress-manifests-func-renderplatformuiingress-host-issuername-string-tlsenabled-bool-analyticsnamespace-string-string"></a>
 ```text
-func RenderPlatformUIIngress(host, issuerName, analyticsNamespace string) string
+func RenderPlatformUIIngress(host, issuerName string, tlsEnabled bool, analyticsNamespace string) string
     RenderPlatformUIIngress emits an Ingress that maps platform.<domain> to the
     dashboard UI and /api/v1/* to the split API services. Server-side UI auth
     still uses API_UPSTREAM against platform-api. A separate admin-gated Ingress
@@ -6354,6 +6366,7 @@ type Input struct {
 	IngressManifestChanged  bool
 	ForceIngressInstall     bool
 	TLSEnabled              bool
+	ProvidedTLSSecrets      bool
 	TestMode                bool
 	ParallelBuilds          bool
 	StrictProd              bool
@@ -6399,6 +6412,7 @@ type Plan struct {
 	Ingress                 cluster.IngressOptions
 	RegistryManifest        string
 	TLSEnabled              bool
+	ProvidedTLSSecrets      bool
 	TestMode                bool
 	ParallelBuilds          bool
 	StrictProd              bool
@@ -6540,7 +6554,7 @@ func ValidateStorageMode(mode string) error
 ```text
 func ValidateTLSSetupCLIFlags(
 	tlsEnabled bool,
-	acmeEmailResolved, tlsCIResolved string,
+	providedTLSSecrets bool, acmeEmailResolved, tlsCIResolved string,
 	acmeStagingResolved, skipCertManagerInstall bool,
 ) error
     validateTLSSetupCLIFlags enforces ACME / internal-issuer mutual exclusion
