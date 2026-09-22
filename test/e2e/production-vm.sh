@@ -42,6 +42,17 @@ export E2E_ARTIFACT_DIR="${ARTIFACT_DIR}"
 export MCPRUNTIME_ORG_ROOT="${ROOT_DIR}"
 export MCP_TLS_BACKUP_DIR="${BACKUP_DIR}/platform-runtime"
 
+# kubelet resolves names through the node's resolver, not CoreDNS, so it cannot
+# reach the default in-cluster pull host registry.registry.svc.cluster.local and
+# every platform pod lands in ImagePullBackOff with "lookup ...: Try again".
+# For a bundled-HTTPS public install the supported endpoint is the public
+# registry hostname: the node resolves it through public DNS, its Let's Encrypt
+# certificate is already trusted, and setup provisions the matching pull secret
+# and attaches it to the operator. The in-cluster skopeo helper rewrites this
+# back to Service DNS when pushing, because the registry stores images by
+# repository path and is reachable under either name.
+export MCP_REGISTRY_ENDPOINT="${E2E_REGISTRY_ENDPOINT:-${REGISTRY_HOST}}"
+
 PLATFORM_BACKUP_HELPERS_LOADED=0
 
 log() { printf '[prod-e2e] %s\n' "$*"; }
