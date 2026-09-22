@@ -88,7 +88,7 @@ SERVER_PID=$!
 
 mcp-runtime server init workspace-demo \
   --from-server http://localhost:8088
-# Discovered: aaa-ping, add, create_task, echo, lower, slugify, upper
+# Discovered: aaa-ping, add, create_task, draft_release_note, echo, lower, slugify, upper
 
 kill $SERVER_PID
 ```
@@ -101,12 +101,15 @@ mcp-runtime server validate --metadata-dir .mcp
 mcp-runtime server build image workspace-demo --tag v1
 # Prints the exact image ref, e.g.: registry.mcpruntime.org/myteam/workspace-demo:v1
 
-mcp-runtime registry push \
+mcp-runtime server push \
   --image registry.mcpruntime.org/myteam/workspace-demo:v1 \
   --scope tenant
 
 mcp-runtime server deploy workspace-demo --scope tenant --metadata-dir .mcp
 ```
+
+`server push` is the developer-facing push path. `registry push` takes the same
+`--image`, `--name`, and `--scope` options if you prefer the registry command.
 
 Confirm it is running:
 
@@ -118,12 +121,13 @@ mcp-runtime server list
 
 ## 4. Grant access and connect
 
-Create a grant that allows an agent to call `echo` and `add`:
+Create a grant that allows an agent to call `echo` and `add`. Replace `myteam`
+with your actual team slug:
 
 ```bash
 mcp-runtime access grant init workspace-cursor \
   --server workspace-demo \
-  --namespace mcp-team-myteam \    # replace myteam with your actual team slug
+  --namespace mcp-team-myteam \
   --agent-id cursor \
   --tool echo \
   --tool add \
@@ -133,7 +137,10 @@ mcp-runtime server validate --metadata-dir .mcp --grant-file grant.yaml
 mcp-runtime access grant apply --file grant.yaml
 ```
 
-Start the adapter proxy — it creates and refreshes the agent session automatically:
+With that grant applied, start the adapter proxy — it issues and refreshes the
+agent session automatically. The platform issues a session only when an enabled
+grant matches the server, the signed-in user, and the agent, so the grant has to
+exist first:
 
 ```bash
 mcp-runtime adapter proxy \

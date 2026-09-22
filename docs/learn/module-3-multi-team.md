@@ -7,6 +7,11 @@ explicit grants. This is the isolation model you will use in production.
 - Module 2 completed (you have deployed a server and understand grants)
 - Admin credentials on the platform
 
+MCP Runtime is alpha software. This module walks through the production-shaped
+isolation model — team namespaces, cross-team grants, scoped sessions — but it
+is a learning walkthrough, not a production sign-off. Validate the shape
+against your own security review before running it for real workloads.
+
 ---
 
 ## What we are building

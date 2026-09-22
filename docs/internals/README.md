@@ -102,8 +102,8 @@ flowchart TD
     Events --> Ingest[services/ingest]
     Ingest --> Processor[services/processor]
     Processor --> Analytics[(analytics store)]
-    PlatformAPI[platform-api] --> Grants[MCPAccessGrant]
-    API --> Sessions[MCPAgentSession]
+    RuntimeAPI[runtime-api] --> Grants[MCPAccessGrant]
+    RuntimeAPI --> Sessions[MCPAgentSession]
     Grants --> Authz
     Sessions --> Authz
 ```

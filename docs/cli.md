@@ -13,17 +13,20 @@ a single working script.
 | Grant an agent access | `access grant init` → `server validate --grant-file` → `access grant apply` |
 | Create a session manually | `access session init` → `access session apply` |
 | Connect an MCP client | `adapter proxy --server ... --agent ... --auto-refresh` |
+| Find a tool | `catalog tools` · `catalog tool <name>` |
+| Create a team and its users | `team create` → `team user create` |
 | Check platform health | `status` |
 | Inspect a running server | `server list` · `server get` · `server policy inspect` |
 | View analytics logs | `sentinel status` · `sentinel logs api` |
 | Check setup readiness | `cluster doctor` |
 | Diagnose an installed cluster | `cluster diagnostics` |
+| Check an OIDC provider before mcp-auth | `auth provider-check` |
 
 **Example servers in this repo:**
 
 | Server | Language | Run command | Tools |
 |---|---|---|---|
-| `workspace-assistant-mcp` | Go | `go run .` | `echo`, `add`, `upper`, `lower`, `create_task`, `draft_release_note`, `slugify` |
+| `workspace-assistant-mcp` | Go | `go run .` | `aaa-ping`, `echo`, `add`, `upper`, `lower`, `slugify`, `create_task`, `draft_release_note` |
 | `data-utility-mcp` | Python | `python app.py` | `echo`, `add`, `multiply`, `upper`, `lower`, `ping`, `reverse` |
 | `text-analysis-mcp` | Rust | `cargo run` | `repeat`, `word_count`, `extract_keywords` |
 
@@ -79,28 +82,29 @@ mcp-runtime auth logout
 
 ## Command map
 
-| Command | Role | Status | What it does | Guide |
-|---|---|---|---|---|
-| `auth` | User | Stable | Save and switch platform credentials | [auth](#auth) |
-| `status` | User | Stable | Platform health at a glance | [status](#status) |
-| `server` | User / Admin | Stable | Scaffold, validate, build, push, deploy, manage | [Publish a server](publish-mcp-server.md) |
-| `registry` | User / Operator | Stable | Push images; inspect the registry | [registry](#registry) |
-| `access` | User / Admin | Stable | Grants and sessions for gateway policy | [API reference](api.md) |
-| `adapter` | User | Stable | HTTP proxy and stdio shim for agents | [Agent adapters](agent-adapters.md) |
-| `team` | Admin | Stable | Create teams and add password users | [Multi-team](multi-team.md) |
-| `sentinel` | Operator | Stable | Inspect and operate the analytics stack | [Sentinel](sentinel.md) |
-| `bootstrap` | Operator | Stable | Pre-install cluster checks | [Cluster readiness](cluster-readiness.md) |
-| `setup` | Operator | Stable | Install the full platform stack | [setup](#setup) |
-| `cluster` | Operator | Stable | Initialize clusters, manage cert-manager | [Deployment targets](deployment-targets.md) |
-| `server validate` | User | Alpha | Validate metadata and grant/session YAML | [server](#server-validate) |
-| `server init --from-server` | User | Alpha | Auto-discover tools from a running server | [server init](#server-init) |
+| Command | Role | What it does | Guide |
+|---|---|---|---|
+| `auth` | User | Save and switch platform credentials | [auth](#auth) |
+| `auth provider-check` | Operator | Inspect an OIDC provider before `setup --with-mcp-auth-server` | [MCP authorization](mcp-authorization.md) |
+| `status` | User | Platform health at a glance | [status](#status) |
+| `catalog` | User | Search tools across visible servers | [catalog](#catalog) |
+| `server` | User / Admin | Scaffold, validate, build, push, deploy, manage | [Publish a server](publish-mcp-server.md) |
+| `registry` | User / Operator | Push images; inspect the registry | [registry](#registry) |
+| `access` | User / Admin | Grants and sessions for gateway policy | [API reference](api.md) |
+| `adapter` | User | HTTP proxy, stdio shim, and mTLS enrollment for agents | [Agent adapters](agent-adapters.md) |
+| `team` | Admin | Create teams and add password users | [Multi-team](multi-team.md) |
+| `sentinel` | Operator | Inspect and operate the analytics stack | [Sentinel](sentinel.md) |
+| `bootstrap` | Operator | Pre-install cluster checks | [Cluster readiness](cluster-readiness.md) |
+| `setup` | Operator | Install the full platform stack | [setup](#setup) |
+| `cluster` | Operator | Initialize clusters, run readiness and post-install checks, manage cert-manager | [Deployment targets](deployment-targets.md) |
 
 `server push` is the user-facing image publishing workflow. It accepts the
 same `--image`, `--name`, and `--scope` options as `registry push` and uses the
 authenticated platform API. `registry push` remains available for explicit
 registry workflows and existing runbooks.
 
-**Status labels:** `Stable` — works end-to-end, tested in production use. `Alpha` — functional but API or UX may change.
+MCP Runtime is alpha software as a whole: every command, flag, and output shape
+on this page may still change between releases.
 
 ---
 
@@ -127,6 +131,19 @@ mcp-runtime auth use alice
 mcp-runtime auth status
 mcp-runtime auth logout
 ```
+
+`--api-url` takes scheme and host only, with no `/api` path. `--username` is an
+alias for `--email`; prefer `--email`.
+
+**[Operator]** — check an OIDC provider before enabling the bundled mcp-auth
+authorization server. The command fetches
+`/.well-known/openid-configuration` and reports what setup needs:
+
+```bash
+mcp-runtime auth provider-check --issuer-url https://keycloak.example.com/realms/mcp
+```
+
+See [MCP authorization](mcp-authorization.md) for the full provider flow.
 
 ---
 
@@ -210,12 +227,24 @@ errors at the gateway at runtime.
 ```bash
 mcp-runtime server validate --metadata-dir .mcp
 
+# Point at a servers.yaml outside the default .mcp directory
+mcp-runtime server validate --metadata-file config/servers.yaml
+
 # Validate a grant alongside the metadata
 mcp-runtime server validate --metadata-dir .mcp --grant-file grant.yaml
+
+# Validate a session manifest, or several grants and sessions at once
+mcp-runtime server validate --metadata-dir .mcp --session-file session.yaml
+mcp-runtime server validate --metadata-dir .mcp \
+  --grant-file grant.yaml --grant-file grant-cross.yaml \
+  --session-file session.yaml --session-file session-cross.yaml
 
 # Cross-check against the locally running server
 mcp-runtime server validate --metadata-dir .mcp --from-server http://localhost:8088
 ```
+
+`--grant-file` and `--session-file` are repeatable. `--metadata-file`
+overrides `--metadata-dir`.
 
 ### server build image
 
@@ -234,19 +263,23 @@ registry.example.com/acme/workspace-demo:v1
 
 Use `--platform linux/amd64` when building on Apple Silicon for k3s or EKS nodes.
 
-### registry push
+### server push
 
 Use the exact ref printed by `server build image`:
 
 ```bash
-mcp-runtime registry push \
+mcp-runtime server push \
   --image registry.example.com/acme/workspace-demo:v1 \
   --scope tenant
 
 # Other scopes
-mcp-runtime registry push --image ... --scope org      # org-wide catalog
-mcp-runtime registry push --image ... --scope public   # anonymous catalog
+mcp-runtime server push --image ... --scope org      # org-wide catalog
+mcp-runtime server push --image ... --scope public   # anonymous catalog
 ```
+
+`server push` is the preferred developer path. `registry push` is equivalent —
+same flags, same platform API — and stays available for registry-centric
+runbooks. Both require platform credentials.
 
 ### server deploy
 
@@ -278,7 +311,7 @@ mcp-runtime auth use alice
 mcp-runtime server build image workspace-demo --tag v1
 # prints: registry.example.com/acme/workspace-demo:v1
 
-mcp-runtime registry push \
+mcp-runtime server push \
   --image registry.example.com/acme/workspace-demo:v1 \
   --scope tenant
 
@@ -349,6 +382,9 @@ mcp-runtime registry push \
   --image registry.example.com/acme/workspace-demo:v1 \
   --scope tenant
 ```
+
+`registry push` and [`server push`](#server-push) are equivalent; `server push`
+is the preferred path in the developer flow.
 
 ---
 
@@ -487,14 +523,23 @@ reaches the MCP server. When `--server` is set, the adapter creates the session
 automatically. `--agent` (session name) is required in that case. `--agent-id`
 sets the identity header forwarded to the server.
 
+The adapter never creates grants. Apply an enabled `MCPAccessGrant` that matches
+the server, the signed-in user, and the agent first (`access grant apply`);
+otherwise the platform refuses to issue or refresh the session and the adapter
+exits with a 403.
+
+`--platform-url` takes scheme and host only, with no `/api` path; it defaults to
+the URL saved by `auth login` or `$MCP_PLATFORM_API_URL`.
+
 ```bash
 # Enterprise mTLS enrollment. Generates client.key locally and writes the
 # issued client.crt and ca.crt into the output directory.
 mcp-runtime adapter enroll \
-  --platform-url https://platform.example.com/api \
+  --platform-url https://platform.example.com \
   --server workspace-demo \
   --namespace mcp-servers \
   --agent cursor \
+  --trust-domain mcpruntime.org \
   --output-dir ~/.config/mcp-runtime/workspace-demo
 
 # HTTP proxy — MCP clients connect to http://127.0.0.1:8099
@@ -518,6 +563,34 @@ mcp-runtime adapter stdio \
 Once the adapter is running, point any MCP client at `http://127.0.0.1:8099`.
 Session creation and governance headers are handled transparently.
 
+For servers running with `auth.mode: mtls`, either enroll once and pass the
+files, or let the adapter enroll a session-bound certificate in memory with
+`--auth mtls`:
+
+```bash
+# Reuse enroll output
+mcp-runtime adapter proxy \
+  --runtime-url https://mcp.example.com/workspace-demo/mcp \
+  --tls-client-cert ~/.config/mcp-runtime/workspace-demo/client.crt \
+  --tls-client-key  ~/.config/mcp-runtime/workspace-demo/client.key \
+  --tls-ca-bundle   ~/.config/mcp-runtime/workspace-demo/ca.crt
+
+# One-command in-memory enrollment
+mcp-runtime adapter proxy \
+  --auth mtls \
+  --runtime-url https://mcp.example.com/workspace-demo/mcp \
+  --platform-url https://platform.example.com \
+  --server workspace-demo \
+  --namespace mcp-servers \
+  --agent cursor \
+  --trust-domain mcpruntime.org \
+  --auto-refresh
+```
+
+`--auth mtls` requires an `https` runtime URL, and `--trust-domain` must match
+`spec.auth.trustDomain` on the target MCPServer. See
+[Agent adapters](agent-adapters.md#enterprise-mtls-and-spiffe).
+
 ---
 
 ## team
@@ -532,7 +605,7 @@ MCP_PLATFORM_API_PROFILE=admin mcp-runtime team list
 MCP_PLATFORM_API_PROFILE=admin mcp-runtime team create acme --name "Acme Corp"
 
 MCP_PLATFORM_API_PROFILE=admin mcp-runtime team user create acme \
-  --username alice@acme.com --password '...' --role owner
+  --email alice@acme.com --password '...' --role owner
 
 MCP_PLATFORM_API_PROFILE=admin mcp-runtime team user list acme
 ```
@@ -614,6 +687,74 @@ mcp-runtime setup --without-sentinel                         # skip analytics
 mcp-runtime setup --test-mode                                # local Kind dev
 ```
 
+### Defaults worth knowing
+
+| Flag | Default | Notes |
+|---|---|---|
+| `--ingress` | `traefik` | `none` leaves an existing ingress controller alone |
+| `--ingress-manifest` | `config/ingress/overlays/http` | Use the HTTP overlay for local Kind installs |
+| `--registry-mode` | `auto` | Uses a provisioned registry config when present, otherwise the bundled registry |
+| `--registry-type` | `docker` | Harbor is not available yet |
+| `--registry-storage` | `20Gi` | Bundled registry PVC size |
+| `--platform-mode` | `tenant` | `org` and `public` change the default publish namespace |
+| `--storage-mode` | `dynamic` | Use `hostpath` for single-node k3s/minikube/kind with no provisioner |
+
+### Production guardrails
+
+```bash
+# Require production-style registry and TLS validation
+mcp-runtime setup --registry-mode bundled-https --with-tls --strict-prod
+
+# Enterprise mTLS for gateway and adapter client certificates (requires --with-tls)
+mcp-runtime setup \
+  --with-tls \
+  --tls-cluster-issuer letsencrypt-prod \
+  --mtls-cluster-issuer company-workload-ca
+```
+
+`--strict-prod` requires TLS, rejects dev-only registry assumptions such as
+`registry.local`, and forces a stable production-style registry endpoint.
+`--mtls-cluster-issuer` names the cert-manager `ClusterIssuer` for workload
+certificates; name your enterprise issuer, or the bundled `mcp-runtime-ca` to
+have setup provision one. `--test-mode` defaults it to `mcp-runtime-ca`. Full
+flow: [Agent adapters](agent-adapters.md#enterprise-mtls-and-spiffe).
+
+### Local and single-node clusters
+
+```bash
+# Single-node cluster without a dynamic provisioner
+mcp-runtime setup --test-mode --storage-mode hostpath \
+  --ingress-manifest config/ingress/overlays/http
+
+# Build and publish the setup images in parallel
+mcp-runtime setup --test-mode --parallel-builds
+```
+
+`--parallel-builds` only parallelizes image build and publish; cluster,
+registry, TLS, and rollout sequencing are unchanged.
+
+### Optional mcp-auth authorization server
+
+The bundled OAuth authorization server is opt-in. Check the provider first with
+`auth provider-check`, then enable it:
+
+```bash
+mcp-runtime setup \
+  --with-tls \
+  --with-mcp-auth-server \
+  --mcp-auth-issuer-url https://auth.example.com \
+  --mcp-auth-resource-url https://mcp.example.com/payments/mcp \
+  --mcp-auth-connectors-file connectors.json \
+  --mcp-auth-connector keycloak \
+  --mcp-auth-tls-secret mcp-auth-tls \
+  --mcp-auth-signing-key-secret mcp-auth-signing-key
+```
+
+Outside `--test-mode`, the issuer URL, at least one resource URL, the TLS
+Secret, and the signing-key Secret are required. Each resource URL must match
+that server's `auth.audience`. Full walkthrough:
+[MCP authorization](mcp-authorization.md).
+
 Key env vars for `--env-file` (see `config/deployments/mcpruntime-org.env.example`):
 
 | Env var | Flag |
@@ -621,10 +762,16 @@ Key env vars for `--env-file` (see `config/deployments/mcpruntime-org.env.exampl
 | `MCP_PLATFORM_DOMAIN=example.com` | derives all three ingress hostnames |
 | `MCP_SETUP_WITH_TLS=1` | `--with-tls` |
 | `MCP_SETUP_TLS_CLUSTER_ISSUER=letsencrypt-prod` | `--tls-cluster-issuer` |
+| `MCP_SETUP_MTLS_CLUSTER_ISSUER=company-workload-ca` | `--mtls-cluster-issuer` |
+| `MCP_ACME_EMAIL=ops@example.com` | `--acme-email` |
 | `MCP_SETUP_REGISTRY_MODE=bundled-https` | `--registry-mode` |
 | `MCP_SETUP_PLATFORM_MODE=tenant` | `--platform-mode` |
 | `MCP_SETUP_INGRESS=none` | `--ingress` |
 | `MCP_SETUP_SKIP_CERT_MANAGER_INSTALL=1` | `--skip-cert-manager-install` |
+
+Deeper guides: [Cluster readiness](cluster-readiness.md),
+[Deployment targets](deployment-targets.md), and
+[Getting started](getting-started.md#4-production-style-install).
 
 ---
 
@@ -644,6 +791,7 @@ mcp-runtime cluster cert status
 mcp-runtime cluster cert apply
 mcp-runtime cluster cert wait --timeout 10m
 
+mcp-runtime cluster doctor                                   # pre-setup readiness
 KUBECONFIG=~/.kube/config mcp-runtime cluster diagnostics    # post-setup diagnostic
 ```
 

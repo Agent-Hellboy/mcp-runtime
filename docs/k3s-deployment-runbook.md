@@ -115,7 +115,7 @@ redirect URI, scopes, and certificates are operated by the platform user.
 Discovery is served at the authorization-server metadata URL:
 
 ```bash
-curl -s https://auth.<domain>/mcp-auth/.well-known/oauth-authorization-server
+curl -s https://auth.<domain>/.well-known/oauth-authorization-server/mcp-auth
 ```
 
 The protected MCP resource separately publishes Protected Resource Metadata;

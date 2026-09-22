@@ -36,12 +36,12 @@ The public platform at `platform.mcpruntime.org` is a live preview of the deploy
 
 ## What ships
 
-- `mcp-runtime` CLI for `setup`, `status`, `registry`, `server`, `cluster`, `access`, and `sentinel`
+- `mcp-runtime` CLI for `auth`, `bootstrap`, `setup`, `status`, `registry`, `server`, `catalog`, `cluster`, `access`, `team`, and `sentinel`
 - `mcp-runtime adapter proxy` and `mcp-runtime adapter stdio` subcommands for
   governed HTTP and stdio agent integrations. Both can fetch identity from
-  the platform with `--server <name> --agent <id> [--auto-refresh]`, or
-  accept explicit `MCP_RUNTIME_*` env vars (see
-  [Agent Adapters](docs/agent-adapters.md))
+  the platform with `--server <name> --agent <id> [--auto-refresh]` once an
+  enabled grant exists for that server and agent, or accept explicit
+  `MCP_RUNTIME_*` env vars (see [Agent Adapters](docs/agent-adapters.md))
 - Platform UI for authenticated MCP catalog browsing, platform state, and web operations
 - `MCPServer`, `MCPAccessGrant`, and `MCPAgentSession` CRDs
 - Kubernetes operator for `Deployment`, `Service`, `Ingress`, and policy materialization
@@ -85,7 +85,7 @@ This comparison was reviewed on June 4, 2026 with AI assistance against the refe
 
 Host tools:
 
-- Go `1.25+`
+- Go `1.26+` (matches the repository `go.mod` files)
 - Make
 - Docker or a Docker-compatible client, with the daemon running
 - `kubectl` on `PATH`, configured for the target cluster
@@ -134,9 +134,13 @@ Notes:
 ./bin/mcp-runtime bootstrap              # preflight cluster prerequisites
 ./bin/mcp-runtime setup                  # install platform stack
 ./bin/mcp-runtime status                 # show platform health
+./bin/mcp-runtime auth login --api-url <platform-url>   # save platform credentials
+./bin/mcp-runtime team create acme --name "Acme Corp"   # create a team namespace (admin)
 ./bin/mcp-runtime registry status        # inspect registry
 ./bin/mcp-runtime server status          # inspect MCP servers
+./bin/mcp-runtime catalog tools          # search tools across visible servers
 ./bin/mcp-runtime access grant list      # inspect access grants
+./bin/mcp-runtime adapter proxy --server <name> --agent <id> --auto-refresh   # connect an MCP client
 ./bin/mcp-runtime sentinel status        # inspect Sentinel stack
 ```
 

@@ -20,6 +20,8 @@ Traefik ingress (`internal/cli/setup/ingressmanifest/paths.go`, `k8s/10-gateway.
 
 Platform login (`POST /api/v1/auth/login`) issues JWTs whose `aud` claim includes `platform-api`, `runtime-api`, and `analytics-api` so one bearer token works across the split surface (`pkg/platformauth`).
 
+Each API service also serves unauthenticated `GET /health` and `GET /ready` outside `/api/v1`. `/ready` reports dependency health and returns `503` when it is missing: Postgres for platform-api, the Kubernetes client for runtime-api, and ClickHouse for analytics-api. The `mcp-gateway` sidecar has its own `/health`, `/ready`, `/config/status`, and `/metrics` endpoints; see [`docs/runtime.md`](runtime.md#gateway-policy-snapshots).
+
 ```mermaid
 flowchart LR
     subgraph CRDs
@@ -60,9 +62,9 @@ flowchart LR
 
 | Enum | Values | Notes |
 |---|---|---|
-| **auth.mode** | `none`, `header`, `oauth` | `oauth` enables MCP protected-resource metadata and JWT validation at the gateway; `header` remains the default identity-extraction path. |
-| **policy.mode** | `allow-list`, `observe` | `allow-list` enforces deny-by-default; `observe` keeps the decision path visible. |
-| **trust** | `low`, `medium`, `high` | Used on tools, grants, sessions. Effective trust = min(grant, session). |
+| **auth.mode** | `none`, `header`, `oauth`, `mtls` | `header` is the default identity-extraction path. `oauth` enables MCP protected-resource metadata and JWT validation at the gateway. `mtls` ignores client-supplied governance headers and derives identity from the ingress-verified SPIFFE header, matched against `auth.trustDomain`. |
+| **policy.mode** | `allow-list`, `observe` | `allow-list` enforces deny-by-default. `observe` skips identity, grant, session, side-effect, and trust enforcement — calls are forwarded, and audit events still record the tool and risk level. |
+| **trust** | `low`, `medium`, `high` | Used on tools, grants, sessions. Effective trust = min(grant `maxTrust`, session `consentedTrust`); required trust = max(tool `requiredTrust`, matching tool rule `requiredTrust`). |
 | **tool sideEffect** | `read`, `write`, `destructive` | Required on each listed tool. Grants must include the tool's side effect in `allowedSideEffects` before a tool call can pass. |
 | **tool riskLevel** | `low`, `medium`, `high` | Optional informational catalog/audit badge. If omitted, the platform computes a default from trust and side effect. It does not gate calls. |
 | **rollout.strategy** | `RollingUpdate`, `Recreate`, `Canary` | Available on `spec.rollout`. |
@@ -71,12 +73,14 @@ flowchart LR
 
 - Analytics emission requires `gateway.enabled`; setting `analytics.disabled: true` (or omitting the analytics block) is the way to opt out per server.
 - `gateway.port` must differ from `spec.port`.
-- Every listed `tools[]` entry must declare `sideEffect`.
+- Every listed `tools[]` entry must declare `sideEffect`. A tool called at runtime that the server never declared has no side effect to check, so the gateway fails closed with `403 tool_side_effect_unknown`.
 - Canary rollouts require positive `canaryReplicas` strictly less than total replicas.
+- `auth.mode: mtls` requires `gateway.enabled`, a non-empty `auth.trustDomain`, and the `traefik` ingress class.
+- `auth.mode: oauth` requires `auth.issuerURL` (with the gateway enabled) and an `auth.audience` that is an absolute URI without a fragment.
 
 ### Status
 
-`MCPServer.status` exposes `phase`, `message`, `conditions[]`, and per-resource readiness booleans for `deployment`, `service`, `ingress`, `gateway`, `policy`. `MCPAccessGrant` and `MCPAgentSession` expose `phase`, `message`, and `conditions[]`.
+`MCPServer.status` exposes `phase`, `message`, `conditions[]`, and per-resource readiness booleans `deploymentReady`, `serviceReady`, `ingressReady`, `gatewayReady`, `policyReady`, plus `canaryReady` for canary rollouts. `MCPAccessGrant` and `MCPAgentSession` expose `phase`, `message`, and `conditions[]`.
 
 ### MCPServer example
 
@@ -226,7 +230,7 @@ OIDC connector, a TLS Secret, and a persistent signing-key Secret.
 
 When its public issuer is `https://auth.example.com/mcp-auth`, it exposes:
 
-- `GET /.well-known/oauth-authorization-server/oauth` (and OIDC discovery compatibility paths)
+- `GET https://auth.example.com/.well-known/oauth-authorization-server/mcp-auth` — RFC 8414 inserts the issuer path segment before the issuer path, so the discovery document does not live under the issuer URL (OIDC discovery compatibility paths are also served)
 - `GET /oauth/jwks.json`
 - `GET, POST /oauth/authorize` with mandatory S256 PKCE
 - `POST /oauth/token` for authorization-code and rotating refresh-token grants
@@ -315,9 +319,9 @@ sequenceDiagram
     participant Gateway as mcp-gateway
     participant Server as MCP server
     Client->>Gateway: POST /payments/mcp tools/call
-    Note right of Gateway: Read X-MCP-Human-ID,<br/>X-MCP-Agent-ID,<br/>X-MCP-Agent-Session
+    Note right of Gateway: Read X-MCP-Human-ID,<br/>X-MCP-Agent-ID,<br/>X-MCP-Team-ID,<br/>X-MCP-Agent-Session
     Gateway->>Gateway: Lookup grant + session
-    Gateway->>Gateway: Check sideEffect + min(tool, grant.maxTrust, session.consentedTrust)
+    Gateway->>Gateway: Check sideEffect + min(grant.maxTrust, session.consentedTrust)
     alt allowed
         Gateway->>Server: forward
         Server-->>Gateway: response
@@ -330,23 +334,29 @@ sequenceDiagram
 
 - **Enforcement point:** authorization is evaluated at `call_tool` / `tools/call`, not at discovery time.
 - **Allow-list first:** missing grants deny by default unless the policy explicitly overrides the default decision. Empty `toolRules` means name-unrestricted access, still constrained by `allowedSideEffects` and trust.
-- **Side-effect guard:** `allowedSideEffects` is fail-closed. If it is omitted or empty, no tool side-effect class is allowed by that grant.
+- **Side-effect guard:** `allowedSideEffects` is fail-closed. If it is omitted or empty, no tool side-effect class is allowed by that grant. A tool that the server did not declare in `tools[]` is denied for the same reason: there is no declared side effect to authorize.
+- **Observe mode:** `policy.mode: observe` returns an allow before identity, session, grant, side-effect, and trust checks run. Traffic is still proxied and audited, so use it for visibility only, never as an enforcement setting.
 - **Audit on allow and deny:** the gateway emits decision, reason, trust levels, required side effect, human, agent, session, server, cluster, and namespace fields.
 
 ```text
 X-MCP-Human-ID:    user-123
 X-MCP-Agent-ID:    ops-agent
+X-MCP-Team-ID:     7d0a0b8f-7c25-4761-a632-3cf0108e31d6
 X-MCP-Agent-Session: sess-8f1b9d
 ```
+
+In `auth.mode: mtls`, these headers are ignored. Traefik verifies the client
+certificate, injects the caller's verified SPIFFE identity, and the gateway
+resolves that identity to a rendered session binding inside `auth.trustDomain`.
 
 ## Dashboard API
 
 Overview statistics and usage analytics for the admin and user dashboards.
 
 ```text
-GET /api/v1/dashboard/summary
-GET /api/v1/analytics/usage?limit=10
-GET /api/v1/user/analytics/usage?window_days=7&server=payments
+GET /api/v1/dashboard/summary                                    # admin only
+GET /api/v1/analytics/usage?limit=10                             # admin only
+GET /api/v1/user/analytics/usage?window_days=7&server=payments   # any authenticated user
 ```
 
 The admin dashboard endpoints require admin authentication. For direct
@@ -385,6 +395,7 @@ For `POST /api/v1/runtime/grants` and admin-only direct `POST /api/v1/runtime/se
 
 ```text
 GET  /api/v1/runtime/servers              # List authenticated MCP catalog entries
+GET  /api/v1/runtime/tools                # Tool inventory rows across visible servers
 GET  /api/v1/runtime/servers/{namespace}/{name} # Get one MCPServer catalog entry
 POST /api/v1/runtime/servers              # Create MCPServer; set update=true to redeploy an existing one
 DELETE /api/v1/runtime/servers/{namespace}/{name} # Retire one MCPServer
@@ -398,12 +409,15 @@ GET  /api/v1/runtime/sessions/{namespace}/{name} # Get one MCPAgentSession
 POST /api/v1/runtime/sessions             # Admin/internal direct MCPAgentSession apply
 DELETE /api/v1/runtime/sessions/{namespace}/{name} # Delete one MCPAgentSession
 POST /api/v1/runtime/adapter/sessions     # Issue/reuse an adapter MCPAgentSession for a human/user principal
+POST /api/v1/runtime/adapter/certificates # Sign an adapter CSR for an owned session (mTLS enrollment)
+GET  /api/v1/runtime/observability/links  # Scoped Prometheus/Grafana links for one server
+GET  /api/v1/runtime/observability/grafana/dashboard  # Scoped Grafana dashboard for one server
+GET  /api/v1/runtime/observability/prometheus/query   # Allowlisted PromQL query IDs for one server
 GET  /api/v1/runtime/teams                # Admin: all teams; user: caller memberships
 POST /api/v1/runtime/teams                # Admin-only team + namespace provisioning
 GET  /api/v1/runtime/teams/{team}         # Team metadata (admin/member)
 GET  /api/v1/runtime/teams/{team}/members # List team memberships (admin/member)
 PUT  /api/v1/runtime/teams/{team}/members/{userID} # Admin/team-owner membership upsert
-POST /api/v1/users                          # Admin-only password user create
 DELETE /api/v1/runtime/teams/{team}/members/{userID}
 POST /api/v1/runtime/registry/push        # Multipart docker-save upload; in-cluster skopeo push to platform registry
 GET  /api/v1/runtime/namespaces           # Allowed namespaces + org catalog metadata
@@ -503,6 +517,7 @@ POST /api/v1/runtime/actions/restart     # Body: {component: "platform-api"} or 
 Additional authenticated routes on the split API services (see [route ownership](#route-ownership)):
 
 ```text
+POST /api/v1/users                        # platform-api: admin-only password user create
 GET  /api/v1/deployments                  # User-scoped deployment list
 POST /api/v1/deployments                  # Apply a platform-managed Deployment + Service
 DELETE /api/v1/deployments/{namespace}/{name}
@@ -564,12 +579,18 @@ not emit a full raw push ledger.
 
 Read API over the ClickHouse-backed event stream.
 
+The raw event, stats, source, event-type, and admin usage routes are
+**admin-only**: they return unscoped cluster-wide data and require the `admin`
+role. `GET /api/v1/user/analytics/usage` is the non-admin path, scoped to the
+caller's team namespaces.
+
 ```text
-GET /api/v1/events?limit=100
-GET /api/v1/stats
-GET /api/v1/sources
-GET /api/v1/event-types
-GET /api/v1/analytics/usage?limit=10
+GET /api/v1/events?limit=100          # admin only
+GET /api/v1/stats                     # admin only
+GET /api/v1/sources                   # admin only
+GET /api/v1/event-types               # admin only
+GET /api/v1/analytics/usage?limit=10  # admin only
+GET /api/v1/user/analytics/usage      # any authenticated user, team-scoped
 GET /api/v1/events?trace_id=<trace>&server=payments&decision=deny&agent_id=ops-agent&limit=50
 ```
 

@@ -42,10 +42,10 @@ The API uses this principal to authorize control-plane actions.
 | Actor | Allowed actions | Why |
 |---|---|---|
 | Anonymous caller | Health, login, OIDC exchange, and explicitly public catalog reads | These routes are public by design |
-| Authenticated user | Read visible teams, namespaces, servers, and deployments | Visibility is scoped by the principal's namespaces and teams |
+| Authenticated user | Read visible teams, namespaces, servers, and deployments, plus team-scoped analytics on `GET /api/v1/user/analytics/usage` | Visibility is scoped by the principal's namespaces and teams |
 | Server owner | Change their server and administer its grants and sessions | The server carries the owner's platform user label |
 | Team owner | Manage team members and administer servers and access resources in the team's namespace | Team-owner membership grants administrative authority within that team |
-| Platform administrator | Manage teams, users, namespaces, platform operations, and resources across tenants | The `admin` role is the platform-wide control-plane authority |
+| Platform administrator | Manage teams, users, namespaces, platform operations, and resources across tenants, and read the unscoped analytics routes (`/api/v1/events`, `/stats`, `/sources`, `/event-types`, `/analytics/usage`) | The `admin` role is the platform-wide control-plane authority |
 | Service API key | Only the API operations permitted by its assigned role | Service authentication does not automatically create a human or agent identity |
 
 Creating or changing an access grant requires authority over the referenced
@@ -95,6 +95,15 @@ adapter, ingress path, and gateway form a trust boundary: untrusted clients
 should not be able to bypass the adapter and inject governance headers directly.
 OAuth-configured servers additionally authenticate the bearer token at the
 gateway.
+
+`auth.mode: mtls` removes the header trust assumption. Traefik verifies the
+client certificate, injects the caller's verified SPIFFE identity, and the
+gateway rejects any request that did not arrive over that verified mTLS hop.
+Client-supplied governance headers are never consulted; the SPIFFE identity is
+resolved to a rendered session inside `spec.auth.trustDomain`. The mode requires
+`gateway.enabled`, a `trustDomain`, and the Traefik ingress class. Adapters
+obtain their client certificate by posting a CSR to
+`POST /api/v1/runtime/adapter/certificates` for a session they own.
 
 ## Grant: administrator-approved authority
 
@@ -185,8 +194,9 @@ tools:
 ```
 
 The gateway does not infer risk by inspecting tool implementation. The declared
-metadata is the policy input. Missing or unknown side-effect metadata causes a
-denial rather than silently treating the tool as safe.
+metadata is the policy input. A tool that the server never declared, or whose
+side-effect metadata is missing or unknown, is denied with
+`tool_side_effect_unknown` rather than silently treated as safe.
 
 ## Gateway decision for every `tools/call`
 
@@ -224,6 +234,11 @@ The evaluation order is:
     server.
 11. Emit an audit event containing the identity, tool, decision, reason, trust
     values, server, namespace, and policy version.
+
+`policy.mode: observe` short-circuits this sequence after step 2: the call is
+allowed without any identity, session, grant, side-effect, or trust check, and
+only the audit trail keeps visibility. Treat it as a reporting mode, never as
+enforcement.
 
 Example:
 

@@ -24,10 +24,16 @@ Every distribution needs the same high-level shape:
 3. Make sure nodes can pull the registry host that MCP Runtime will use.
 4. Decide ingress, DNS, TLS, storage, and image credential ownership.
 5. Run `./bin/mcp-runtime bootstrap`.
-6. Run `./bin/mcp-runtime setup` with the registry and TLS mode that matches
+6. Run `./bin/mcp-runtime cluster doctor` as the pre-setup readiness check.
+7. Run `./bin/mcp-runtime setup` with the registry and TLS mode that matches
    the cluster.
-7. Run `./bin/mcp-runtime cluster diagnostics`.
-8. Deploy the first MCP server and verify the dashboard/API.
+8. Run `./bin/mcp-runtime cluster diagnostics` as the post-setup check suite.
+9. Deploy the first MCP server and verify the dashboard/API.
+
+Keep the environment for a given install in a file and pass it with
+`--env-file` instead of exporting variables ad hoc, so reruns use the same
+configuration (`config/deployments/mcpruntime-org.env.example` is the template;
+variables already present in the environment are not overridden).
 
 For production-like installs, prefer:
 
@@ -221,6 +227,7 @@ Then use the same production-style setup command:
 
 ```bash
 ./bin/mcp-runtime bootstrap
+./bin/mcp-runtime cluster doctor
 ./bin/mcp-runtime setup --with-tls --strict-prod
 ./bin/mcp-runtime cluster diagnostics
 ```
@@ -356,5 +363,5 @@ curl -k -I https://platform.<domain>/
 curl -k -I -H "x-api-key: $ADMIN_API_KEY" https://registry.<domain>/v2/
 ```
 
-Then continue with [Getting Started - Connect your first MCP
-server](getting-started.md#8-connect-your-first-mcp-server).
+Then continue with [Getting Started - Deploy your first
+server](getting-started.md#7-deploy-your-first-server).

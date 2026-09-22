@@ -138,15 +138,16 @@ right fit unless the names and HTTP-01 challenge path are publicly reachable.
 
 ## Install k3s
 
-Install the first node as the single k3s server. Disable the packaged k3s
-Traefik so MCP Runtime can install and own the repo-managed Traefik manifests.
+Install the first node as the single k3s server. Keep the packaged k3s Traefik
+in `kube-system`: this guide reuses it as the ingress controller and installs
+MCP Runtime with `--ingress none`, so the cluster never runs two ingress
+stacks.
 
 Run on `mcp-cp-1`:
 
 ```bash
 curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="server \
   --node-name mcp-cp-1 \
-  --disable traefik \
   --write-kubeconfig-mode 0644 \
   --node-ip <cp-node-ip> \
   --node-external-ip <cp-node-public-ip> \
@@ -155,6 +156,13 @@ curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="server \
   --tls-san registry.example.com \
   --tls-san mcp.example.com" sh -
 ```
+
+If you intentionally want MCP Runtime to own ingress instead, add
+`--disable traefik` to the server install command. Then run setup without
+`--ingress none` so it installs the repo-managed Traefik into the `traefik`
+namespace, and leave `PLATFORM_TRAEFIK_NAMESPACE` unset (it defaults to
+`traefik`). Every Traefik and ServiceLB check below then uses the `traefik`
+namespace instead of `kube-system`.
 
 If nodes have more than one network interface, add `--flannel-iface <iface>` to
 the server and every agent install command so pod networking uses the intended
@@ -219,11 +227,11 @@ ServiceLB label from it:
 kubectl label node <node-name> svccontroller.k3s.cattle.io/enablelb- --overwrite
 ```
 
-After setup installs Traefik, verify the `svclb-traefik` pods land only on the
-ingress node:
+Verify the `svclb-traefik` pods land only on the ingress node:
 
 ```bash
-kubectl -n traefik get pods -o wide
+kubectl -n kube-system get pods -o wide \
+  -l svccontroller.k3s.cattle.io/svcname=traefik
 ```
 
 If one node also serves non-Kubernetes docs or a website with Docker/nginx, keep
