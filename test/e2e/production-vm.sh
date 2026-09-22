@@ -191,6 +191,90 @@ install_dependencies() {
   esac
 }
 
+# Rank a "goX.Y[.Z]" string as X*1000+Y so toolchains can be compared.
+go_version_rank() {
+  local raw="${1#go}" major minor
+  major="${raw%%.*}"
+  raw="${raw#*.}"
+  minor="${raw%%.*}"
+  [[ "${major}" =~ ^[0-9]+$ ]] || return 1
+  [[ "${minor}" =~ ^[0-9]+$ ]] || return 1
+  printf '%d' "$((major * 1000 + minor))"
+}
+
+go_directive_version() {
+  awk '/^go [0-9]/ { print $2; exit }' "${ROOT_DIR}/go.mod"
+}
+
+install_go_toolchain() {
+  local want arch url
+  want="$(go_directive_version)"
+  [[ -n "${want}" ]] || { fail "could not read the go directive from go.mod"; return 1; }
+  case "$(uname -m)" in
+    x86_64) arch=amd64 ;;
+    aarch64 | arm64) arch=arm64 ;;
+    *) fail "unsupported architecture $(uname -m) for Go installation"; return 1 ;;
+  esac
+  url="https://go.dev/dl/go${want}.linux-${arch}.tar.gz"
+  log "installing Go ${want} for ${arch}"
+  curl -fsSL "${url}" -o "${WORK_DIR}/go.tar.gz" || { fail "failed to download ${url}"; return 1; }
+  # Unpack beside the existing toolchain and swap only once the new tree is
+  # complete, so a partial download never leaves the VM without a working Go.
+  rm -rf /usr/local/go.new /usr/local/go.prev
+  mkdir -p /usr/local/go.new
+  if ! tar -C /usr/local/go.new --strip-components=1 -xzf "${WORK_DIR}/go.tar.gz"; then
+    rm -rf /usr/local/go.new
+    fail "failed to unpack Go ${want}"
+    return 1
+  fi
+  if [[ -d /usr/local/go ]]; then
+    mv /usr/local/go /usr/local/go.prev
+  fi
+  mv /usr/local/go.new /usr/local/go
+  rm -rf /usr/local/go.prev
+  rm -f "${WORK_DIR}/go.tar.gz"
+}
+
+# Ubuntu ships an old distro Go on PATH (1.18 on 22.04) while a current
+# toolchain often sits unused under /usr/local/go. go.mod pins a far newer
+# release, and Go only learned to fetch toolchains on demand in 1.21, so the
+# distro binary rejects the go directive outright -- "invalid go version
+# '1.24.0': must match format 1.23" -- and the operator image build fails.
+# Put the newest usable toolchain first on PATH, installing one if needed.
+select_go_toolchain() {
+  local candidate version rank best="" best_rank=0 best_version=""
+  for candidate in /usr/local/go/bin/go /usr/lib/go-*/bin/go "$(command -v go 2>/dev/null || true)"; do
+    [[ -n "${candidate}" && -x "${candidate}" ]] || continue
+    # GOTOOLCHAIN=local reports the installed toolchain instead of triggering a
+    # download just to answer the question.
+    version="$(GOTOOLCHAIN=local "${candidate}" env GOVERSION 2>/dev/null || true)"
+    [[ -n "${version}" ]] || continue
+    rank="$(go_version_rank "${version}" 2>/dev/null || true)"
+    [[ -n "${rank}" ]] || continue
+    if ((rank > best_rank)); then
+      best_rank="${rank}"
+      best="${candidate}"
+      best_version="${version}"
+    fi
+  done
+
+  # 1.21 is the first release that can download the toolchain go.mod asks for.
+  if ((best_rank < 1021)); then
+    if ((best_rank == 0)); then
+      log "no Go toolchain found on the VM"
+    else
+      log "Go ${best_version} cannot honor the go directive in go.mod"
+    fi
+    install_go_toolchain || return 1
+    best="/usr/local/go/bin/go"
+    best_version="$(GOTOOLCHAIN=local "${best}" env GOVERSION 2>/dev/null || echo unknown)"
+  fi
+
+  PATH="$(dirname "${best}"):${PATH}"
+  export PATH
+  log "using Go toolchain ${best_version} from $(dirname "${best}")"
+}
+
 restore_backup_state() {
   # The backup is intentionally outside WORK_DIR and every cleanup target.
   # Legacy hooks/manifests may provision prerequisites before setup.
@@ -294,6 +378,8 @@ wait_for_node_registration 180
 kubectl wait --for=condition=Ready nodes --all --timeout=180s
 
 restore_backup_state
+
+select_go_toolchain
 
 if [[ ! -x "${BIN}" ]]; then
   require_command go
