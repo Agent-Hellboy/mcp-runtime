@@ -48,6 +48,7 @@ type Input struct {
 	IngressManifestChanged  bool
 	ForceIngressInstall     bool
 	TLSEnabled              bool
+	ProvidedTLSSecrets      bool
 	TestMode                bool
 	ParallelBuilds          bool
 	StrictProd              bool
@@ -89,6 +90,7 @@ type Plan struct {
 	Ingress                 cluster.IngressOptions
 	RegistryManifest        string
 	TLSEnabled              bool
+	ProvidedTLSSecrets      bool
 	TestMode                bool
 	ParallelBuilds          bool
 	StrictProd              bool
@@ -223,6 +225,7 @@ func Build(input Input) Plan {
 		},
 		RegistryManifest:        registryManifest,
 		TLSEnabled:              input.TLSEnabled,
+		ProvidedTLSSecrets:      input.ProvidedTLSSecrets,
 		TestMode:                input.TestMode,
 		ParallelBuilds:          input.ParallelBuilds,
 		StrictProd:              input.StrictProd,

@@ -749,7 +749,7 @@ func applyPlatformIngressIfConfigured() error {
 	if host == "" {
 		return nil
 	}
-	manifest := ingressmanifest.RenderPlatformUIIngress(host, core.GetRegistryClusterIssuerName(), core.DefaultAnalyticsNamespace)
+	manifest := ingressmanifest.RenderPlatformUIIngress(host, core.GetRegistryClusterIssuerName(), core.GetRegistryClusterIssuerName() != "" || core.GetProvidedTLSSecrets(), core.DefaultAnalyticsNamespace)
 	core.Info(fmt.Sprintf("Applying platform UI ingress for %s", host))
 	if err := applyManifestYAML(manifest, "", os.Stdout); err != nil {
 		return core.WrapWithSentinel(core.ErrSetupApplyPlatformUIIngressFailed, err, fmt.Sprintf("apply platform UI ingress: %v", err))
@@ -955,7 +955,7 @@ func renderAnalyticsConfigManifestWithReaders(content, platformMode string, imag
 	if strings.TrimSpace(manifest.Data["OAUTH_ISSUER_URL"]) == "" {
 		if platformHost := strings.TrimSpace(core.GetPlatformIngressHost()); platformHost != "" {
 			scheme := "http"
-			if strings.TrimSpace(core.GetRegistryClusterIssuerName()) != "" {
+			if strings.TrimSpace(core.GetRegistryClusterIssuerName()) != "" || core.GetProvidedTLSSecrets() {
 				scheme = "https"
 			}
 			manifest.Data["OAUTH_ISSUER_URL"] = scheme + "://" + platformHost + "/oauth"

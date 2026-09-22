@@ -35,7 +35,7 @@ const (
 // the UI service, which redirects to HTTPS.
 // (We can't rely on Traefik's entrypoint-level redirect because the prod
 // overlay disables it to keep HTTP-01 ACME challenges working on first issue.)
-func RenderPlatformUIIngress(host, issuerName, analyticsNamespace string) string {
+func RenderPlatformUIIngress(host, issuerName string, tlsEnabled bool, analyticsNamespace string) string {
 	host = strings.TrimSpace(host)
 	issuerName = strings.TrimSpace(issuerName)
 	analyticsNamespace = strings.TrimSpace(analyticsNamespace)
@@ -51,17 +51,19 @@ func RenderPlatformUIIngress(host, issuerName, analyticsNamespace string) string
 	b.WriteString(analyticsNamespace)
 	b.WriteString("\n")
 	b.WriteString("  annotations:\n")
-	if issuerName != "" {
+	if tlsEnabled {
 		b.WriteString("    traefik.ingress.kubernetes.io/router.entrypoints: websecure\n")
-		b.WriteString("    cert-manager.io/cluster-issuer: ")
-		b.WriteString(issuerName)
-		b.WriteString("\n")
+		if issuerName != "" {
+			b.WriteString("    cert-manager.io/cluster-issuer: ")
+			b.WriteString(issuerName)
+			b.WriteString("\n")
+		}
 	} else {
 		b.WriteString("    traefik.ingress.kubernetes.io/router.entrypoints: web\n")
 	}
 	b.WriteString("spec:\n")
 	b.WriteString("  ingressClassName: traefik\n")
-	if issuerName != "" {
+	if tlsEnabled {
 		b.WriteString("  tls:\n")
 		b.WriteString("    - hosts:\n")
 		b.WriteString("        - ")
@@ -105,7 +107,7 @@ func RenderPlatformUIIngress(host, issuerName, analyticsNamespace string) string
 	b.WriteString("    traefik.ingress.kubernetes.io/router.middlewares: sentinel-admin-auth@file\n")
 	b.WriteString("spec:\n")
 	b.WriteString("  ingressClassName: traefik\n")
-	if issuerName != "" {
+	if tlsEnabled {
 		b.WriteString("  tls:\n")
 		b.WriteString("    - hosts:\n")
 		b.WriteString("        - ")
@@ -129,7 +131,7 @@ func RenderPlatformUIIngress(host, issuerName, analyticsNamespace string) string
 	b.WriteString("                port:\n")
 	b.WriteString("                  number: 3000\n")
 
-	if issuerName != "" {
+	if tlsEnabled {
 		// HTTP-only ingress on the same host so plain `http://platform.<domain>/`
 		// hits the UI service (which 308s to HTTPS) instead of falling through to
 		// the host-less dev gateway ingress in k8s/10-gateway.yaml.
