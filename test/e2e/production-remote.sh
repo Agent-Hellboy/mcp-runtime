@@ -50,6 +50,16 @@ fail() {
   return 1
 }
 
+# The workflow passes a GitHub boolean input, which arrives as "true"/"false",
+# while older callers pass 1/0. Accept both: testing only for "1" silently
+# skipped the multi-team suite on every run.
+e2e_flag_enabled() {
+  case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
+    1 | true | yes | on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 require_command() {
   command -v "$1" >/dev/null 2>&1 || fail "missing required command: $1"
 }
@@ -200,6 +210,44 @@ load_platform_backup_helpers() {
   # shellcheck disable=SC1091
   source "${ROOT_DIR}/hack/deploy/mcpruntime-org/lib/backup.sh"
   PLATFORM_BACKUP_HELPERS_LOADED=1
+}
+
+# Let's Encrypt allows five certificates per exact set of identifiers per week,
+# so a production-CA run can only succeed five times before every further run
+# dies at Step 3 with a 429 and a retry-after roughly a day out. Staging has far
+# higher limits and exercises the identical ACME order, HTTP-01 challenge and
+# cert-manager path; only the signing CA differs. Its roots are not publicly
+# trusted, so teach this process to trust them before anything calls the hosts,
+# rather than weakening the checks with curl -k.
+trust_acme_staging_roots() {
+  local bundle="${WORK_DIR}/acme-staging-ca.pem" url system
+  : >"${bundle}"
+  for url in https://letsencrypt.org/certs/staging/letsencrypt-stg-root-x1.pem \
+    https://letsencrypt.org/certs/staging/letsencrypt-stg-root-x2.pem; do
+    if ! curl -fsSL "${url}" >>"${bundle}"; then
+      log "WARNING: could not fetch ${url}; staging certificates will not verify"
+      return 0
+    fi
+  done
+  # The bundle replaces the default trust store rather than adding to it, so it
+  # must carry the platform roots as well or every other HTTPS call this run
+  # makes would stop verifying. If no system bundle is found, leave the default
+  # trust alone and say so instead of shipping a staging-only bundle.
+  local found=""
+  for system in /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt; do
+    if [[ -r "${system}" ]]; then
+      cat "${system}" >>"${bundle}"
+      found="${system}"
+      break
+    fi
+  done
+  if [[ -z "${found}" ]]; then
+    log "WARNING: no system CA bundle found; leaving default trust in place, so staging certificates will not verify"
+    return 0
+  fi
+  export CURL_CA_BUNDLE="${bundle}"
+  export SSL_CERT_FILE="${bundle}"
+  log "trusting Let's Encrypt staging roots for this run"
 }
 
 capture_cluster_state() {
@@ -398,6 +446,12 @@ SETUP_ARGS=(
   --registry-mode "${E2E_REGISTRY_MODE:-bundled-https}"
   --kubeconfig "${KUBECONFIG_FILE}"
 )
+# Default to the staging CA so repeat runs are not capped at five a week. Set
+# E2E_ACME_STAGING=0 for an occasional run against the production CA.
+if e2e_flag_enabled "${E2E_ACME_STAGING:-1}"; then
+  SETUP_ARGS+=(--acme-staging)
+  trust_acme_staging_roots
+fi
 if [[ "${E2E_WITH_MCP_AUTH:-0}" == "1" ]]; then
   SETUP_ARGS+=(--with-mcp-auth-server)
   [[ -n "${E2E_MCP_AUTH_CONNECTORS_FILE:-}" ]] && SETUP_ARGS+=(--mcp-auth-connectors-file "${E2E_MCP_AUTH_CONNECTORS_FILE}")
@@ -464,16 +518,6 @@ if [[ "${E2E_WITH_MCP_AUTH:-0}" == "1" ]]; then
   curl --fail --silent --show-error "${AUTH_URL}/.well-known/oauth-authorization-server" \
     >"${ARTIFACT_DIR}/auth-server-metadata.json"
 fi
-
-# The workflow passes a GitHub boolean input, which arrives as "true"/"false",
-# while older callers pass 1/0. Accept both: testing only for "1" silently
-# skipped the multi-team suite on every run.
-e2e_flag_enabled() {
-  case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
-    1 | true | yes | on) return 0 ;;
-    *) return 1 ;;
-  esac
-}
 
 if e2e_flag_enabled "${E2E_RUN_MULTITENANCY:-1}"; then
   PLATFORM_URL="${PLATFORM_URL}" MCP_URL="${MCP_URL}" REGISTRY_HOST="${REGISTRY_HOST}" \
