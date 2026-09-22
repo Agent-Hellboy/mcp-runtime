@@ -1,11 +1,41 @@
 # Production-mode E2E on the disposable VM
 
-The repository contains an on-demand GitHub Actions workflow, `Production E2E
-(Disposable VM)`, for exercising the same CLI and HTTP flows used against a
-real installation. It is intentionally separate from the Kind suite: the
-workflow installs k3s on the dedicated VM, runs pre-setup `cluster doctor`,
-runs production-style `setup`, runs post-setup `cluster diagnostics`, checks
-the CLI/API/UI surfaces, and optionally runs the destructive multi-team suite.
+The repository exercises the same CLI and HTTP flows used against a real
+installation on a dedicated disposable VM. Both runners install k3s, run
+pre-setup `cluster doctor`, run production-style `setup`, run post-setup
+`cluster diagnostics`, check the CLI/API/UI surfaces, and optionally run the
+destructive multi-team suite. They are intentionally separate from the Kind
+suite.
+
+## Two runners
+
+| Runner | Workflow | Where the CLI runs |
+| --- | --- | --- |
+| `test/e2e/production-remote.sh` | `Production E2E (Remote Cluster)` | On the runner, against the VM's kubeconfig |
+| `test/e2e/production-vm.sh` | `Production E2E (Disposable VM)` | On the VM itself, over SSH |
+
+Prefer the remote runner. It models how an operator actually installs MCP
+Runtime -- the CLI on a workstation or CI runner, the cluster reached through a
+kubeconfig -- and it avoids a class of environment failures the on-VM runner is
+exposed to:
+
+- No repository tarball, so no missing `.git` for scripts that need it.
+- No login-shell working directory, so repo-relative manifest paths resolve.
+- The runner's own Go toolchain and Docker, rather than whatever the VM has.
+- Long-running work does not depend on one SSH session staying open. A dropped
+  connection during a multi-minute image build fails the on-VM job with exit
+  255 while the remote run keeps going, producing a false negative and leaving
+  the VM dirty.
+
+Image pushes need no registry reachability from the runner. Setup runs
+`docker save` locally and starts a short-lived helper pod inside the cluster
+that pushes into the internal registry, so only the Kubernetes API must be
+reachable. k3s already lists the node's public IP in the API server
+certificate SANs, so the fetched kubeconfig only needs its loopback server URL
+rewritten.
+
+Both workflows share one concurrency group, so they can never drive the VM at
+the same time.
 
 The workflow requires these GitHub Actions secrets:
 
@@ -60,15 +90,44 @@ issuer and test user.
 If certificates, registry credentials, or an identity-provider installation
 must survive a VM reset, place encrypted or otherwise access-controlled backup
 material in the same directory. The runner supports either an executable
-`restore.sh` hook or declarative files below `manifests/`. Cleanup removes the
-disposable k3s state and working directory only; it never removes the backup
-directory. Failed runs leave cluster snapshots and logs in
+`restore.sh` hook or declarative files below `manifests/`. Cleanup removes
+everything except the backup directory: k3s with its CNI and kubelet state,
+all Docker images, containers, volumes and build cache, and any repository or
+scratch directory an earlier run left behind. Reclaiming images matters --
+setup builds one per service component, and letting them accumulate filled the
+VM disk until the kubelet evicted pods for ephemeral storage, which surfaces
+only as an unexplained deployment timeout. The remote runner checks free disk
+before setup for that reason, and the VM wants roughly 6 GiB free
+(`E2E_MIN_DISK_GIB` overrides the threshold). Failed runs leave cluster
+snapshots and logs in
 `/var/lib/mcp-runtime-e2e-backup/runs/<run-id>` and upload them as workflow
 artifacts.
 
 Run the workflow manually after changing setup, registry, auth, ingress,
 doctor/diagnostics, or CLI behavior. Use the input to disable the destructive
-multi-team scenario while iterating on a narrower failure.
+multi-team scenario while iterating on a narrower failure; the runners accept
+`1`/`true`/`yes`/`on` for `E2E_RUN_MULTITENANCY`, and default to running it.
+
+The remote runner can also be driven directly, which is the fastest way to
+iterate on a failure:
+
+```bash
+E2E_VM_HOST=<vm-address> E2E_CLEANUP=0 bash test/e2e/production-remote.sh
+```
+
+`E2E_CLEANUP=0` keeps the cluster up so a failure can be inspected. Any
+`E2E_*` value already exported wins; anything missing is read from the VM's
+`e2e.env`, so a local run needs no more configuration than a CI one. When the
+cluster nodes and the machine running the CLI differ in architecture, setup
+resolves the image platform from the node and builds for it, so a non-amd64
+workstation needs an emulator registered
+(`docker run --privileged --rm tonistiigi/binfmt --install amd64`).
+
+The on-VM runner additionally needs a Go toolchain on the VM new enough to
+honor the `go` directive in `go.mod`. Go only learned to download toolchains on
+demand in 1.21, so a distro Go older than that fails the operator image build
+with `invalid go version`. The runner selects the newest installed toolchain
+and installs one when none is new enough.
 
 The local Kind suite remains the fast test-mode path:
 
