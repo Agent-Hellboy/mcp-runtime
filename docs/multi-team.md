@@ -13,8 +13,9 @@ The source-of-truth data plane is:
   every non-empty field by exact string equality.
 - A subject with only `teamID` grants or binds any authenticated principal in
   that team.
-- The gateway reads team identity from `spec.auth.teamIDHeader` in header mode
-  or from OAuth `team_id`, `tenant_id`, or `tid` claims in OAuth mode.
+- The gateway reads team identity from `spec.auth.teamIDHeader` in header mode,
+  from OAuth `team_id`, `tenant_id`, or `tid` claims in OAuth mode, or from the
+  session that the verified SPIFFE identity resolves to in mtls mode.
 
 ## When To Use This
 
@@ -163,7 +164,10 @@ Header mode defaults:
 
 Override the team header per server with `spec.auth.teamIDHeader`. In OAuth
 mode, the proxy validates the token and reads team identity from `team_id`,
-`tenant_id`, or `tid`, in that order. First-party OAuth tokens with multiple
+`tenant_id`, or `tid`, in that order. In `mtls` mode the gateway ignores these
+headers entirely and takes `humanID`, `agentID`, and `teamID` from the rendered
+session that the ingress-verified SPIFFE identity resolves to, inside
+`spec.auth.trustDomain`. First-party OAuth tokens with multiple
 memberships use `team_ids`; the gateway selects the policy server's team ID
 when present, or the sole team ID when there is only one.
 
@@ -176,15 +180,18 @@ default:
 | Mode | Default namespace behavior | Non-admin behavior |
 |---|---|---|
 | `tenant` | Principal team namespace | Authenticated users read and write only team namespaces for teams they belong to. |
-| `org` | `mcp-servers-org` | Authenticated users publish and browse the org catalog and can still select team namespaces. |
-| `public` | `mcp-servers-public` | Anonymous users can read the public preview catalog; signed-in users publish to the public catalog namespace and can still select team namespaces. |
+| `org` | `mcp-servers-org` | Authenticated users publish and browse the org catalog together with their authorized team namespaces. |
+| `public` | `mcp-servers-public` | Anonymous users can read the public preview catalog; signed-in users publish to the public catalog namespace and browse it together with their authorized team namespaces. |
 
 - In `tenant` and `org` modes, anonymous callers cannot read the MCP server
   catalog.
 - In `tenant` mode, non-admin callers listing MCP servers without a `namespace`
   query see MCPs in their team namespaces.
-- In `org` and `public` modes, non-admin callers are scoped to the active mode
-  catalog namespace (`mcp-servers-org` or `mcp-servers-public` by default).
+- In `org` and `public` modes, non-admin listings cover the active catalog
+  namespace (`mcp-servers-org` or `mcp-servers-public` by default, plus any
+  `PLATFORM_CATALOG_NAMESPACES` entries) **and** the team namespaces authorized
+  on the caller's principal. Anonymous public-mode reads are limited to the
+  catalog namespaces.
 - Server publish requests may pass `scope: tenant`, `scope: org`, or
   `scope: public` instead of spelling the catalog namespace directly. The API
   resolves `org` and `public` only when the matching platform mode is enabled;

@@ -11,6 +11,7 @@ try the platform in under 10 minutes without a cluster, see the
 - Docker or a Docker-compatible client, with the daemon running and reachable
 - `kubectl` on `PATH`, configured for the target cluster
 - `curl`, `jq`, and `python3` for documented dev and traffic-generation flows
+- `kind` for the contributor test-mode cluster in step 3
 - A Kubernetes cluster (k3s, kind, minikube, Docker Desktop Kubernetes, EKS, GKE, AKS, or equivalent). If you are choosing a target, start with [Deployment Targets](deployment-targets.md), then use [Cluster Readiness](cluster-readiness.md) for distribution-specific prep.
 
 Host bootstrap:
@@ -93,20 +94,27 @@ test-mode path. The contributor docs own this path completely:
 - [Contributor Guide](contributor/README.md)
 - [Local Kind and Test Mode](contributor/local-kind.md)
 
-Quick path:
+Quick path (requires `kind` on `PATH`):
 
 ```bash
 make deps && make build
 kind create cluster --name mcp-runtime
+./bin/mcp-runtime bootstrap
+./bin/mcp-runtime cluster doctor
 ./bin/mcp-runtime setup --test-mode --ingress-manifest config/ingress/overlays/http
 kubectl port-forward -n traefik svc/traefik 18080:8000
 ./bin/mcp-runtime cluster diagnostics
 ```
 
+`bootstrap` and `cluster doctor` run before setup: `bootstrap` reports (and on
+k3s can install) missing cluster prerequisites, `cluster doctor` checks nodes,
+storage, ingress, DNS, and TLS readiness. `cluster diagnostics` runs after setup
+to validate what was installed.
+
 Local surfaces: platform `http://localhost:18080/`, MCP routes `http://localhost:18080/<server-name>/mcp`.
 
 
-## 5. Production-style install
+## 4. Production-style install
 
 Use this path when the cluster is not just a disposable contributor environment.
 That includes staging, internal shared clusters, externally reachable installs,
@@ -209,7 +217,7 @@ Do not use the contributor `--test-mode` flow as a production install guide.
 local cert-manager workload CA for mTLS tests and still builds
 and pushes local images and assumes the contributor registry and ingress shape.
 
-## 6. Install the platform stack
+## 5. Install the platform stack
 
 ```bash
 ./bin/mcp-runtime setup
@@ -260,7 +268,31 @@ Common variants:
 ./bin/mcp-runtime setup --platform-mode public # public preview catalog namespace
 ./bin/mcp-runtime setup --without-sentinel    # skip the request-path stack
 ./bin/mcp-runtime setup --test-mode           # local Kind/dev build+push path
+./bin/mcp-runtime setup --storage-mode hostpath # single-node cluster with no dynamic provisioner
+./bin/mcp-runtime setup --parallel-builds     # build and publish setup images in parallel
 ```
+
+Defaults if you pass nothing: `--ingress traefik`, `--ingress-manifest
+config/ingress/overlays/http`, `--registry-mode auto`, `--registry-type docker`,
+`--registry-storage 20Gi`, `--platform-mode tenant`, and `--storage-mode
+dynamic`. `--parallel-builds` changes image build and publish only; cluster,
+registry, TLS, and rollout sequencing stay the same.
+
+To enable the mTLS auth path for gateway and adapter client certificates, add
+`--mtls-cluster-issuer <cluster-issuer>` alongside `--with-tls`. Name an
+enterprise cert-manager issuer, or the bundled `mcp-runtime-ca` to have setup
+provision one; `--test-mode` defaults to `mcp-runtime-ca`. See
+[Agent Adapters](agent-adapters.md#enterprise-mtls-and-spiffe).
+
+The bundled mcp-auth authorization server is optional and off by default. Check
+the provider with `./bin/mcp-runtime auth provider-check --issuer-url <issuer>`,
+then enable it with `--with-mcp-auth-server`; outside test mode it also needs
+`--mcp-auth-issuer-url`, `--mcp-auth-resource-url`, `--mcp-auth-tls-secret`, and
+`--mcp-auth-signing-key-secret`. See
+[MCP authorization](mcp-authorization.md).
+
+Every setup flag and its default is listed in the
+[CLI reference](cli.md#setup).
 
 ### Local development notes
 
@@ -274,7 +306,7 @@ kubectl port-forward -n traefik svc/traefik 18080:8000
 
 Then use `http://127.0.0.1:18080/<publicPathPrefix>/mcp` for local MCP traffic. Keep the default strict readiness mode for production clusters that rely on published load-balancer status.
 
-## 7. Confirm health
+## 6. Confirm health
 
 ```bash
 ./bin/mcp-runtime status
@@ -283,7 +315,7 @@ Then use `http://127.0.0.1:18080/<publicPathPrefix>/mcp` for local MCP traffic. 
 ./bin/mcp-runtime sentinel status
 ```
 
-## 8. Deploy your first server
+## 7. Deploy your first server
 
 The server deploy flow (init → validate → build → push → deploy → grant → adapter)
 is covered step-by-step in the learning modules:
@@ -297,12 +329,12 @@ Quick reference:
 mcp-runtime server init my-server --from-server http://localhost:8088
 mcp-runtime server validate --metadata-dir .mcp
 mcp-runtime server build image my-server --tag v1
-mcp-runtime registry push --image ... --scope tenant
+mcp-runtime server push --image ... --scope tenant   # registry push is equivalent
 mcp-runtime server deploy my-server --scope tenant --metadata-dir .mcp
 ```
 
 
-## 10. Observe live traffic and policy
+## 8. Observe live traffic and policy
 
 Use the platform dashboard and API first:
 

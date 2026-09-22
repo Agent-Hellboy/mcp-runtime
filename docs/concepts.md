@@ -102,8 +102,10 @@ need explicit control over expiry, trust ceiling, or revocation.
 
 ## Trust levels
 
-Trust is a ceiling — the gateway only allows a tool call if the session's
-`consentedTrust` meets or exceeds the tool's `requiredTrust`.
+Trust is a ceiling. The gateway computes effective trust as
+`min(grant.maxTrust, session.consentedTrust)` and allows the call only when it
+meets the required trust, which is the higher of the tool's `requiredTrust` and
+the matching tool rule's `requiredTrust`.
 
 | Level | Meaning |
 |---|---|
@@ -135,13 +137,17 @@ allow list.
 
 ## The gateway
 
-The gateway is a sidecar container that sits in front of every MCP server
-(when `gateway.enabled: true` on the MCPServer). Every request goes through it
-before reaching your server.
+The gateway — `mcp-gateway` — is a sidecar container that sits in front of every
+MCP server (when `gateway.enabled: true` on the MCPServer). Every request goes
+through it before reaching your server. It is not the cluster ingress: Traefik
+routes the public path to the pod, and `mcp-gateway` makes the authorization
+decision inside it.
 
 On each tool call the gateway:
 
-1. Reads the `X-MCP-Agent-ID`, `X-MCP-Team-ID`, and `X-MCP-Agent-Session` headers
+1. Reads the `X-MCP-Human-ID`, `X-MCP-Agent-ID`, `X-MCP-Team-ID`, and
+   `X-MCP-Agent-Session` headers (in `auth.mode: mtls` it instead uses the
+   ingress-verified SPIFFE identity, and in `oauth` mode the validated token)
 2. Looks up the active `MCPAgentSession` and `MCPAccessGrant` for that agent+server pair
 3. Checks trust level, side-effect class, and per-tool allow/deny rules
 4. Either forwards the call to your server or returns a denial with a reason code
@@ -157,8 +163,9 @@ The adapter is a local proxy that runs on the developer's machine (or inside an
 agent process). It:
 
 - Calls the platform API to create a session for the agent
-- Injects the correct governance headers (`X-MCP-Agent-ID`, `X-MCP-Agent-Session`, etc.)
-  on every outbound request to the MCP server
+- Injects the correct governance headers (`X-MCP-Human-ID`, `X-MCP-Agent-ID`,
+  `X-MCP-Team-ID`, `X-MCP-Agent-Session`) on every outbound request to the MCP
+  server, replacing any caller-supplied values
 - Refreshes the session automatically before it expires (`--auto-refresh`)
 
 Without the adapter, an agent would have to manage platform sessions and inject
@@ -180,6 +187,10 @@ browse the catalog without logging in.
 | `tenant` (default) | Only team members | Per-team namespaces |
 | `org` | All signed-in users | `mcp-servers-org` |
 | `public` | Anyone, no login | `mcp-servers-public` |
+
+In `org` and `public` modes the catalog namespace is added to what a signed-in
+user already sees, so their listings cover the shared catalog plus every team
+namespace they are authorized for.
 
 Set with `--platform-mode` on `setup` or `MCP_SETUP_PLATFORM_MODE` in your env file.
 

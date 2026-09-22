@@ -71,6 +71,11 @@ Local URLs:
 
 Keep the Traefik port-forward running while using the browser or `curl`.
 
+These URLs are plain HTTP over a port-forward because `--test-mode` with the
+HTTP ingress overlay is a local-only shape. Any shared or public install uses
+`--with-tls` and the `platform`, `registry`, and `mcp` hostnames instead; see
+[Deployment Targets](../deployment-targets.md).
+
 ## Seeded Logins
 
 `setup --test-mode` seeds local-only platform logins:
@@ -164,7 +169,8 @@ kubectl delete mcpaccessgrant <grant-name> -n <namespace> --ignore-not-found
 kubectl delete mcpserver <server-name> -n <namespace> --ignore-not-found
 kubectl delete secret <server-name>-analytics-creds -n <namespace> --ignore-not-found
 ```
-# Optional bundled mcp-auth integration fixture
+
+## Optional: Bundled mcp-auth Integration Fixture
 
 The bundled authorization server is opt-in and separate from MCP application
 deployment. Setup pulls `princekrroshan01/mcp-auth-server:latest` from Docker

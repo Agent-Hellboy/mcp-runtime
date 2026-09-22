@@ -169,7 +169,7 @@ kubectl create secret docker-registry mcp-runtime-registry-pull \
    KUBECONFIG=~/.kube/config mcp-runtime sentinel logs processor --since 5m
    ```
 
-3. Check ClickHouse has the `mcp.events` topic:
+3. Check Kafka has the `mcp.events` topic:
    ```bash
    kubectl exec -n mcp-sentinel kafka-0 -- \
      kafka-topics --list --bootstrap-server localhost:9092
@@ -187,7 +187,7 @@ kubectl create secret docker-registry mcp-runtime-registry-pull \
    Healthy output shows three Kafka pods, three `mcp.events` partitions, replica
    factor `3`, and all assigned replicas in ISR.
 
-4. If Kafka reports `InconsistentClusterIdException`, do not delete the Kafka
+5. If Kafka reports `InconsistentClusterIdException`, do not delete the Kafka
    PVC automatically. The stored broker metadata no longer matches the
    configured KRaft cluster ID. Back up any data you need, scale Kafka to zero,
    delete all three `kafka-data-kafka-{0,1,2}` PVCs, then rerun setup.

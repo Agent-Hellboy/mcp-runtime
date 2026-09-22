@@ -224,10 +224,14 @@ export MCP_SETUP_MCP_AUTH_CONNECTOR=keycloak
 
 ## Verify the flow
 
-Check that the authorization server and Keycloak publish metadata:
+Check that the authorization server and Keycloak publish metadata. For a
+path-mounted issuer such as `https://auth.example.com/mcp-auth`, RFC 8414
+inserts the well-known segment before the issuer path, so discovery is served
+at `https://auth.example.com/.well-known/oauth-authorization-server/mcp-auth`,
+not under the issuer URL:
 
 ```bash
-curl -fsS https://auth.example.com/mcp-auth/.well-known/oauth-authorization-server
+curl -fsS https://auth.example.com/.well-known/oauth-authorization-server/mcp-auth
 curl -fsS https://keycloak.example.com/realms/mcp-runtime/.well-known/openid-configuration
 kubectl -n mcp-sentinel rollout status deploy/mcp-auth-server
 ```

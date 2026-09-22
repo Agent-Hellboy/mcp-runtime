@@ -63,6 +63,7 @@ nav:
   - Developer Guide:
       - Publish an MCP Server: publish-mcp-server.md
       - Agent Adapters: agent-adapters.md
+      - MCP Authorization: mcp-authorization.md
       - Multi-Team Isolation: multi-team.md
   - Operator Guide:
       - Deployment Targets: deployment-targets.md
@@ -75,6 +76,7 @@ nav:
   - Reference:
       - CLI: cli.md
       - API: api.md
+      - API Authn/Authz Matrix: security/authz-matrix.md
   - Learn:
       - Overview: learn/README.md
       - "Module 1: Core Concepts": learn/module-1-concepts.md
@@ -85,6 +87,7 @@ nav:
       - Local Kind and Test Mode: contributor/local-kind.md
       - Service Iteration: contributor/service-iteration.md
       - Runtime MCP Testing: contributor/runtime-mcp-testing.md
+      - Production-Mode E2E: contributor/production-e2e.md
       - Troubleshooting: contributor/troubleshooting.md
   - Internals:
       - Overview: internals/README.md
@@ -96,4 +99,5 @@ nav:
       - Runtime CLI Cmd: internals/cmd-mcp-runtime.md
       - Metadata Package: internals/pkg-metadata.md
       - Config and Examples: internals/config-and-examples.md
+      - Gateway and Platform Inspirations: internals/gateway-platform-inspirations.md
       - Tests: internals/tests.md

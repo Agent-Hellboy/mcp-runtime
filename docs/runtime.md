@@ -36,7 +36,7 @@ For every `MCPServer`, the operator reconciles:
 - `phase` — `Pending` → `PartiallyReady` → `Ready`.
 - `message` — human-readable progress.
 - `conditions` — standard Kubernetes condition slice.
-- Per-resource readiness booleans: `deploymentReady`, `serviceReady`, `ingressReady`, `gatewayReady`, `policyReady`.
+- Per-resource readiness booleans: `deploymentReady`, `serviceReady`, `ingressReady`, `gatewayReady`, `policyReady`, and `canaryReady` when a canary rollout is configured.
 - `ingressReady` defaults to strict mode: the Ingress must publish `status.loadBalancer.ingress[]`. Set operator env `MCP_INGRESS_READINESS_MODE=permissive` for dev or NodePort-style ingress controllers that route traffic without publishing load-balancer status; permissive mode treats an Ingress with rules as ready.
 
 ### Useful defaults
@@ -94,8 +94,9 @@ flowchart LR
 |---|---|
 | **Direct** | No `gateway.enabled`. Service points at the MCP server directly. Server is exposed at `/{server-name}/mcp`. |
 | **Gateway** | `spec.gateway.enabled: true`. Traffic flows through the proxy sidecar; identity, policy, audit, and telemetry happen in one place. |
-| **Trust evaluation** | Tool `requiredTrust`, grant `maxTrust`, and session `consentedTrust` combine to determine effective trust at tool-call time. |
-| **Side-effect evaluation** | Each listed tool must declare `sideEffect: read`, `write`, or `destructive`; a grant only authorizes tools whose side effect is present in `allowedSideEffects`. Omitted or empty `allowedSideEffects` allows no side-effect classes. |
+| **Trust evaluation** | At tool-call time, effective trust is `min(grant.maxTrust, session.consentedTrust)` and must meet the required trust, which is the higher of the tool's `requiredTrust` and the matching tool rule's `requiredTrust`. |
+| **Side-effect evaluation** | Each listed tool must declare `sideEffect: read`, `write`, or `destructive`; a grant only authorizes tools whose side effect is present in `allowedSideEffects`. Omitted or empty `allowedSideEffects` allows no side-effect classes, and a tool the server never declared is denied because it has no side effect to authorize. |
+| **Observe mode** | `policy.mode: observe` allows the call before identity, session, grant, side-effect, and trust checks run. Requests are still proxied and audited, so it gives visibility without enforcement. |
 
 ### Gateway headers
 
@@ -206,10 +207,22 @@ Implemented and stable enough to evaluate:
 - Grants, sessions, gateway policy generation.
 - Trust evaluation and audit-event flow.
 - Multi-ingress class support (Traefik, NGINX, Istio, generic).
+- OAuth: with `spec.auth.mode: oauth` the gateway acts as an MCP protected
+  resource — it publishes protected-resource metadata, validates the token
+  issuer and resource audience, and strips the bearer token before forwarding.
+  Tokens come either from the opt-in bundled `mcp-auth-server`
+  (`setup --with-mcp-auth-server`, authorization code with S256 PKCE, refresh
+  rotation, CIMD or DCR client registration) or from an external authorization
+  server you operate. Runtime never owns your identity provider's accounts, the
+  bundled server federates to one configured OIDC connector per process, and
+  policy decisions always stay in the gateway. See
+  [MCP authorization](mcp-authorization.md).
+- mTLS: `spec.auth.mode: mtls` derives identity from the ingress-verified
+  SPIFFE certificate instead of governance headers. It requires
+  `gateway.enabled`, `auth.trustDomain`, and the Traefik ingress class.
 
 Not yet:
 
-- Full OAuth 2.1 authorization server flows.
 - Multi-cluster federation.
 
 ## Next

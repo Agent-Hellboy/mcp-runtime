@@ -44,6 +44,11 @@ in the rest. The override survives every auto-refresh tick.
 
 ## Platform-issued sessions — quickstart
 
+Apply the grant first. The platform issues — and later refreshes — an adapter
+session only when an enabled `MCPAccessGrant` matches the server, the signed-in
+principal, and the agent; without one the session call returns 403 and the
+adapter refuses to start. See [Required grant](#required-grant) below.
+
 ```bash
 mcp-runtime auth login --api-url https://platform.example.com
 
@@ -422,7 +427,7 @@ Enroll an external adapter after signing in to the platform:
 
 ```bash
 mcp-runtime adapter enroll \
-  --platform-url https://platform.example.com/api \
+  --platform-url https://platform.example.com \
   --server workspace-assistant \
   --namespace mcp-servers \
   --agent cursor \
@@ -433,6 +438,9 @@ mcp-runtime adapter enroll \
 The command generates `client.key` locally and submits only a CSR. The platform
 checks that the SPIFFE URI identifies a session owned by the signed-in
 principal, then returns short-lived `client.crt` and `ca.crt` files.
+`--platform-url` takes scheme and host with no `/api` path, and defaults to the
+URL saved by `auth login` or `$MCP_PLATFORM_API_URL`. Because enrollment is
+session-bound, the grant prerequisite above applies here too.
 
 ```bash
 mcp-runtime adapter proxy \
@@ -452,7 +460,7 @@ written to disk) and feeds it straight to the runtime transport:
 mcp-runtime adapter proxy \
   --auth mtls \
   --runtime-url https://mcp.example.com/workspace-assistant/mcp \
-  --platform-url https://platform.example.com/api \
+  --platform-url https://platform.example.com \
   --server workspace-assistant \
   --namespace mcp-servers \
   --agent cursor \

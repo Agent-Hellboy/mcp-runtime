@@ -8,9 +8,13 @@ Identify gateway and platform capabilities that MCP Runtime can adopt from
 current MCP-native and AI gateway projects without turning the runtime into a
 generic API or model gateway.
 
-This document is an inspiration and gap analysis, not a proposal to copy
-third-party source. Any implementation must be designed against MCP Runtime's
-existing CRDs, policy contract, sidecar model, and Sentinel services.
+This document is background research: an inspiration and gap analysis, not an
+implementation spec, roadmap commitment, or proposal to copy third-party
+source. Nothing here describes shipped behavior beyond the "What MCP Runtime
+already has" table, and the numbered items, milestones, and example YAML are
+sketches. Any implementation must be designed against MCP Runtime's existing
+CRDs, policy contract, sidecar model, and Sentinel services, and reviewed with
+the `design-principles` skill before it becomes a contract.
 
 ## Sources reviewed
 

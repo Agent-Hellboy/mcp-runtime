@@ -11,7 +11,7 @@ Most use cases sit on one or more of these planes:
 ```mermaid
 flowchart LR
     User["User, admin, CI, or agent"] --> Entry["CLI, browser, Docker, or MCP client"]
-    Entry --> Control["Control plane\nAPI, UI, CLI, Kubernetes"]
+    Entry --> Control["Control plane\nplatform-api, runtime-api, UI, CLI, Kubernetes"]
     Entry --> Runtime["Runtime plane\nIngress, gateway, MCP server"]
     Entry --> Registry["Registry plane\nDocker registry and authz"]
     Control --> Policy["Policy plane\nMCPAccessGrant, MCPAgentSession, rendered ConfigMap"]
@@ -28,14 +28,17 @@ emission, ingest, Kafka, processor, and analytics query paths.
 
 ## Control Plane
 
-Setup, server deployment, and server updates start in the CLI or platform API
-and end when the operator reconciles Kubernetes resources.
+Setup, server deployment, and server updates start in the CLI or the split API
+services and end when the operator reconciles Kubernetes resources. Only
+runtime-api talks to the Kubernetes API; platform-api authenticates the caller
+and owns identity state in Postgres.
 
 ```mermaid
 sequenceDiagram
     participant User
     participant CLI as mcp-runtime CLI
-    participant API as Platform API
+    participant Platform as platform-api
+    participant API as runtime-api
     participant K8s as Kubernetes API
     participant Operator
     participant Registry
@@ -43,7 +46,9 @@ sequenceDiagram
 
     User->>CLI: setup, bootstrap, server deploy, registry push
     CLI->>Registry: build, tag, push, or mirror images
+    CLI->>Platform: auth login, identity, registry credentials
     CLI->>API: platform-backed server/access/team requests
+    API->>Platform: POST /internal/auth/resolve (service token)
     CLI->>K8s: --use-kube admin/dev/test requests
     API->>K8s: MCPServer, grants, sessions, Deployments, RBAC
     K8s-->>Operator: watch MCPServer/grant/session changes
@@ -122,7 +127,7 @@ session headers manually.
 sequenceDiagram
     participant Agent
     participant Adapter as local adapter proxy or stdio
-    participant API as Platform API
+    participant API as runtime-api
     participant K8s as Kubernetes API
     participant Operator
     participant Gateway
@@ -207,7 +212,7 @@ Access resources are the bridge between platform intent and gateway enforcement.
 ```mermaid
 sequenceDiagram
     participant Caller as UI, CLI, or API client
-    participant API as Platform API
+    participant API as runtime-api
     participant K8s as Kubernetes API
     participant Operator
     participant Gateway
@@ -233,15 +238,15 @@ Primary request paths:
 
 ## Registry Publish And Pull
 
-Registry requests enter through the registry Ingress. Traefik calls the API as a
-forward-auth service before the Docker registry receives the request.
+Registry requests enter through the registry Ingress. Traefik calls platform-api
+as a forward-auth service before the Docker registry receives the request.
 
 ```mermaid
 sequenceDiagram
     participant Docker as docker or registry push
     participant Ingress as registry Ingress
     participant Authz as /api/v1/registry/authz
-    participant API as Platform API
+    participant API as platform-api
     participant DB as Postgres
     participant Registry
 
@@ -275,20 +280,23 @@ or mutate.
 ```mermaid
 sequenceDiagram
     participant Admin
-    participant API as Platform API
+    participant API as runtime-api
+    participant Platform as platform-api
     participant DB as Postgres
     participant K8s as Kubernetes API
     participant Traefik
     participant User
 
     Admin->>API: POST /api/v1/runtime/teams
-    API->>DB: create team and namespace record
+    API->>Platform: team and namespace record
+    Platform->>DB: persist team and namespace
     API->>K8s: create namespace, RBAC, NetworkPolicy
     API->>Traefik: patch watched namespaces when bundled Traefik is used
-    Admin->>API: POST /api/v1/users
-    API->>DB: create password user
+    Admin->>Platform: POST /api/v1/users
+    Platform->>DB: create password user
     Admin->>API: PUT /api/v1/runtime/teams/{slug}/members/{userID}
-    API->>DB: create membership
+    API->>Platform: create membership
+    Platform->>DB: persist membership
     User->>API: GET /api/v1/runtime/namespaces
     API-->>User: user, team, org, public, and shared catalog namespaces
     User->>API: GET /api/v1/runtime/servers?namespace=<allowed>
@@ -322,14 +330,15 @@ flowchart LR
     Ingest --> Kafka
     Kafka --> Processor
     Processor --> ClickHouse
-    API["Platform API"] --> ClickHouse
-    API --> Admin["/api/v1/admin/*"]
+    Analytics["analytics-api"] --> ClickHouse
+    Platform["platform-api"] --> Admin["/api/v1/admin/*"]
 ```
 
 Primary request paths:
 
 - Public observability: `/grafana/*`, `/prometheus/*`
-- Service metrics: `/metrics` on API, ingest, processor, and adapter proxy
+- Service metrics: `/metrics` on platform-api, runtime-api, analytics-api,
+  ingest, processor, and adapter proxy
 - Ingest: `GET /health`, `GET /live`, `GET /ready`, `POST /events`
 - Processor: metrics server `/health`, `/metrics`
 - Admin: `/api/v1/admin/namespaces`, `/api/v1/admin/audit`,

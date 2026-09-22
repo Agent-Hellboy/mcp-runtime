@@ -12,7 +12,7 @@
 | **processor** | Consumes Kafka, batches, writes into ClickHouse with indexed audit fields. |
 | **api** | Three HTTP services behind Traefik path routing: **platform-api** (Postgres identity/auth/registry), **runtime-api** (Kubernetes runtime governance + registry push), **analytics-api** (ClickHouse events/stats/usage). OpenAPI at `GET /api/v1/openapi.yaml` per service. |
 | **ui** | Control-plane dashboard: user MCP server dashboard, MCP server catalog and connect config, user API keys, analytics dashboard, governance, MCP operations, and platform management. |
-| **gateway** | Kubernetes deployment fronting the sentinel API, ingest, and UI surfaces. |
+| **gateway** | The Traefik ingress Deployment fronting the API, ingest, and UI surfaces. Despite the shared word, it is cluster ingress and makes no policy decisions — `mcp-gateway` above is the per-server enforcement sidecar. |
 | **workspace assistant sample** | Sample MCP server in `examples/workspace-assistant-mcp` for end-to-end smoke tests. |
 
 ## Kubernetes awareness and hardening
@@ -103,10 +103,10 @@ For local `setup --test-mode` clusters, setup seeds two email/password logins:
 | Surface | Public path in dev | In-cluster service | Notes |
 |---|---|---|---|
 | **UI** | `/` | `mcp-sentinel-ui:8082` | Browser app and server-side auth/OIDC upstream to platform-api. Traefik routes `/api/v1/*` directly to the API services. |
-| **platform-api** | `/api/v1/auth/*`, `/api/v1/registry/authz`, `/api/v1/admin/*` | `mcp-platform-api:8080` | Login, identity, registry forwardAuth, admin namespaces/audit. |
+| **platform-api** | `/api/v1/auth/*`, `/api/v1/users`, `/api/v1/registry/authz`, `/api/v1/admin/namespaces`, `/api/v1/admin/audit` | `mcp-platform-api:8080` | Login, identity, registry forwardAuth, admin namespaces/audit. Other `/api/v1/admin/*` prefixes route to runtime-api. |
 | **mcp-auth-server (opt-in)** | `/mcp-auth/*` | `mcp-auth-server:8080` | Optional bundled OAuth authorization-server fixture; setup deploys it only when explicitly enabled. |
-| **runtime-api** | `/api/v1/runtime/*`, `/api/v1/deployments/*` | `mcp-runtime-api:8084` | Runtime governance, registry push, dashboard summary. |
-| **analytics-api** | `/api/v1/stats`, `/api/v1/events`, `/api/v1/user/analytics/usage` | `mcp-analytics-api:8085` | ClickHouse query surfaces. |
+| **runtime-api** | `/api/v1/runtime/*` (servers, tools, grants, sessions, adapter sessions/certificates, observability), `/api/v1/deployments/*`, `/api/v1/dashboard/*`, `/api/v1/user/api-keys` | `mcp-runtime-api:8084` | Runtime governance, registry push, dashboard summary. |
+| **analytics-api** | `/api/v1/stats`, `/api/v1/events`, `/api/v1/sources`, `/api/v1/event-types`, `/api/v1/analytics/*`, `/api/v1/user/analytics/*` | `mcp-analytics-api:8085` | ClickHouse query surfaces. All except `/api/v1/user/analytics/*` are admin-only. |
 | **Ingest** | `/ingest/events` | `mcp-sentinel-ingest:8081/events` | Event intake used by `mcp-gateway`; the public ingress strips `/ingest`. |
 | **Grafana** | `/grafana` | `grafana:3000` | Admin observability UI. The generated platform-host route is guarded by `sentinel-admin-auth@file`; Grafana still keeps its own login unless you wire auth proxy settings. Tenant-scoped access is intentionally not exposed by the user dashboard. |
 | **Prometheus** | Not exposed | `prometheus:9090` | Internal metrics backend and Grafana datasource. Use a temporary `kubectl port-forward` only for backend debugging. |
@@ -142,9 +142,9 @@ cardinality.
 
 | Service | Auth behavior |
 |---|---|
-| **platform-api** | `/health` and `/ready` are open. Authenticated `/api/v1/*` identity, admin, and registry routes accept `x-api-key`, user-generated API keys, platform JWT bearer tokens (audience `platform-api`), or OIDC JWT bearer tokens when OIDC is configured. Only keys listed in `ADMIN_API_KEYS` get admin role. Registry forward-auth (`/api/v1/registry/authz`) keeps admin credentials global and allows normal user credentials only on repository paths scoped to the caller's team slug or team namespace. Token-gated `/internal/*` serves runtime-api and analytics-api. |
-| **runtime-api** | `/health` and `/ready` are open. `/api/v1/runtime/*`, `/api/v1/deployments`, and admin operations routes accept platform JWTs (audience `runtime-api`) or scoped API keys via `pkg/platformauth`. |
-| **analytics-api** | `/health` and `/ready` are open. `/api/v1/events`, `/api/v1/stats`, and usage analytics accept platform JWTs (audience `analytics-api`) or scoped API keys. Admin-only routes require admin role. |
+| **platform-api** | `/health` and `/ready` are open (`/ready` returns `503` when Postgres is unreachable). Authenticated `/api/v1/*` identity, admin, and registry routes accept `x-api-key`, user-generated API keys, platform JWT bearer tokens (audience `platform-api`), or OIDC JWT bearer tokens when OIDC is configured. Only keys listed in `ADMIN_API_KEYS` get admin role. Registry forward-auth (`/api/v1/registry/authz`) keeps admin credentials global and allows normal user credentials only on repository paths scoped to the caller's team slug or team namespace. Token-gated `/internal/*` serves runtime-api and analytics-api. |
+| **runtime-api** | `/health` and `/ready` are open (`/ready` returns `503` until the Kubernetes client is available). `/api/v1/runtime/*`, `/api/v1/deployments`, and admin operations routes accept platform JWTs (audience `runtime-api`) or scoped API keys via `pkg/platformauth`. `/api/v1/dashboard/summary`, `/api/v1/runtime/components`, `/api/v1/runtime/actions/restart`, and the `/api/v1/admin/*` routes require the admin role. |
+| **analytics-api** | `/health` and `/ready` are open (`/ready` returns `503` when ClickHouse is unreachable). `/api/v1/events`, `/api/v1/stats`, `/api/v1/sources`, `/api/v1/event-types`, and `/api/v1/analytics/usage` require the admin role because they return unscoped cluster-wide data. `/api/v1/user/analytics/usage` is the non-admin path and is scoped to the caller's team namespaces. Both accept platform JWTs (audience `analytics-api`) or scoped API keys. |
 | **ui** | `/auth/login` creates an HttpOnly UI session from `api_key`, `id_token`, or `email`/`password`. Authenticated dashboard reads use same-origin allowlisted `GET /api/ui/v1/*`; the UI injects the stored bearer token or upstream API key and never returns that credential to the browser. All other `/api/v1/*` calls go through Traefik ingress to the owning API service. `/auth/admin-check` accepts admin UI sessions or keys from `ADMIN_API_KEYS`; it falls back to `API_KEYS` only when the explicit legacy dev/test fallback is enabled. Mutating cookie-backed BFF routes are not exposed yet; they will need CSRF protection when added. |
 | **ingest** | `/live`, `/ready`, and `/health` are open. `/events` accepts `x-api-key` from `INGEST_API_KEYS`, legacy `API_KEYS`, or a configured OIDC bearer token. If no API keys and no JWKS are configured, intake auth is bypassed. |
 | **processor** | No data API. It exposes metrics and a simple health check on the metrics port. |
@@ -259,12 +259,17 @@ emits audit events to `ANALYTICS_INGEST_URL` when configured.
 
 | Method | Path | Purpose |
 |---|---|---|
-| `GET` | `/health` | Sidecar health. |
+| `GET` | `/health` | Liveness. Always OK while the process is serving. |
+| `GET` | `/ready` | Readiness. Fails until a valid policy snapshot is activated. |
+| `GET` | `/config/status` | Sanitized applied-policy metadata: `schema_version`, `revision`, `loaded_at`, `last_reload_error`. Never the policy body. |
+| `GET` | `/metrics` | Prometheus metrics, including policy reload and active revision. |
 | `GET`, `HEAD` | `/.well-known/oauth-protected-resource...` | OAuth protected-resource metadata when the rendered policy uses OAuth. Returns `404` when OAuth is not enabled for the server. |
 | any | `/*` | Reverse proxy to the MCP server. `POST` JSON-RPC `tools/call` requests are inspected and authorized before forwarding. |
 
 The sidecar emits audit events on allowed and denied tool calls. Denied calls do
-not reach the upstream MCP server.
+not reach the upstream MCP server. With `policy.mode: observe` the call is
+allowed before identity, session, grant, side-effect, and trust checks run, so
+the audit trail keeps visibility while nothing is enforced.
 
 ### First-party OAuth authorization server
 

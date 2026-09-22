@@ -41,6 +41,11 @@ spec:
     enabled: true
 ```
 
+`namespace: mcp-servers` suits a single-team install. For a tenant deployment,
+use the team namespace (`mcp-team-<team-slug>`) and set `spec.teamID`: the
+platform API fills both when you publish with `server deploy --scope tenant`,
+but hand-written YAML must state them explicitly.
+
 ### What each field does
 
 - `metadata.name`
@@ -148,10 +153,18 @@ mcp-runtime auth login --api-url https://platform.example.com
   --expires-in 1h \
   --output session.yaml
 
+./bin/mcp-runtime server validate --metadata-dir .mcp \
+  --grant-file grant.yaml --session-file session.yaml
+
 ./bin/mcp-runtime access grant apply --file grant.yaml
 # Platform API session apply is admin-only — use adapter for agents:
 # ./bin/mcp-runtime access session apply --file session.yaml
 ```
+
+`server validate` cross-checks the grant and session manifests against the
+server metadata before they reach the cluster. Both `--grant-file` and
+`--session-file` are repeatable, and `--metadata-file <path>` replaces
+`--metadata-dir` when the metadata lives outside `.mcp`.
 
 Adapter-driven agents should skip manual session apply; use
 `mcp-runtime adapter stdio --server payments --agent cursor --auto-refresh`
@@ -258,13 +271,17 @@ Deploy from metadata:
 
 MCP Runtime supports two practical image flows. Keep these flows separate so tags stay consistent.
 
+`server push` is the preferred developer push command. `registry push` is
+equivalent — the same `--image`, `--name`, and `--scope` flags through the same
+platform API — and remains available for registry-centric runbooks.
+
 ### Flow A — metadata-driven build with the CLI
 
 ```bash
 ./bin/mcp-runtime server build image payments --tag v1.0.0 --platform linux/amd64
 ```
 
-`server build image` builds the image, resolves the target registry host, tags the local image with that resolved reference, and rewrites matching `.mcp` metadata (`image` and `imageTag`). The command defaults Docker builds to `linux/amd64`, matching common amd64 Kubernetes nodes; set `--platform` or `MCP_DOCKER_PLATFORM` when your target nodes use another architecture. Registry resolution prefers explicit registry env, then the cluster's `registry/registry` Ingress host, before falling back to the registry Service address. When metadata sets `scope: tenant`, the build command uses platform credentials to resolve the same team repository prefix that `registry push --scope tenant` uses, so log in first or set `MCP_PLATFORM_API_TOKEN` with a saved or explicit `MCP_PLATFORM_API_URL`.
+`server build image` builds the image, resolves the target registry host, tags the local image with that resolved reference, and rewrites matching `.mcp` metadata (`image` and `imageTag`). The command defaults Docker builds to `linux/amd64`, matching common amd64 Kubernetes nodes; set `--platform` or `MCP_DOCKER_PLATFORM` when your target nodes use another architecture. Registry resolution prefers explicit registry env, then the cluster's `registry/registry` Ingress host, before falling back to the registry Service address. When metadata sets `scope: tenant`, the build command uses platform credentials to resolve the same team repository prefix that `server push --scope tenant` uses, so log in first or set `MCP_PLATFORM_API_TOKEN` with a saved or explicit `MCP_PLATFORM_API_URL`.
 
 After this command, push the exact image reference produced by the build output (or read it from the rewritten metadata):
 
@@ -298,11 +315,11 @@ the `MCPServer` for you:
 ```bash
 docker build -t payments:v1.0.0 .
 mcp-runtime auth login --api-url https://platform.example.com
-./bin/mcp-runtime registry push --scope public --image payments:v1.0.0
+./bin/mcp-runtime server push --scope public --image payments:v1.0.0
 ./bin/mcp-runtime server deploy payments --scope public --image payments --tag v1.0.0
 ```
 
-Short names like `payments:v1.0.0` are valid for `registry push` when that
+Short names like `payments:v1.0.0` are valid for `server push` when that
 exact local image tag exists. For `server deploy`, the platform API accepts
 short names such as `payments` and resolves them to the configured registry and
 scope prefix, for example `<registry>/public/payments` in public mode or
@@ -330,7 +347,7 @@ admin/operator Kubernetes access. For the normal tenant platform path, use
 ```bash
 docker build -t payments:v1.0.0 .
 mcp-runtime auth login --api-url https://platform.example.com
-./bin/mcp-runtime registry push --scope tenant --image payments:v1.0.0
+./bin/mcp-runtime server push --scope tenant --image payments:v1.0.0
 ./bin/mcp-runtime server apply --file payments.yaml --use-kube
 ```
 
@@ -368,6 +385,11 @@ mcp-runtime auth login --api-url https://platform.example.com
 ./bin/mcp-runtime server get payments
 ./bin/mcp-runtime status
 ```
+
+Tenant deploys land in the team namespace, `mcp-team-<team-slug>`, not
+`mcp-servers`. Pass `--namespace mcp-team-acme` to `server get`,
+`server status`, `server policy inspect`, and the `access` commands when the
+server is not in your default namespace.
 
 If the server uses governed access:
 

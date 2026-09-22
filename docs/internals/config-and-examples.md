@@ -25,7 +25,7 @@
 - `test/e2e/Dockerfile` builds images for end-to-end tests.
 
 ## Scripts
-- `hack/dev/dev-setup.sh` automates local dev environment prep (kind cluster, registry, ingress installation, CRD apply) with informative logging.
+- `hack/dev/dev-setup.sh` prepares the developer toolchain, not a platform install: it installs `controller-gen` and `kustomize`, regenerates CRD manifests and DeepCopy code, runs `go fmt`/`go vet`, and can install and start a minikube cluster (`install`, `generate`, `format`, `validate`, `minikube`, or `all`). Use `mcp-runtime bootstrap`/`setup` or `test/e2e/kind.sh` for a Kind cluster.
 - `test/e2e/kind.sh` creates a kind cluster, builds/pushes test images through the registry flow, and runs e2e validation; `test/e2e/run-in-docker.sh` runs e2e flows inside Docker.
 
 ## Other assets
