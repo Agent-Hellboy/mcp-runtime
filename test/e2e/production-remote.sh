@@ -131,18 +131,36 @@ cleanup() {
   fi
   if [[ "${E2E_CLEANUP:-1}" == "1" ]]; then
     log "wiping disposable state on ${VM_HOST}; preserving only ${VM_BACKUP_DIR}"
-    # Everything except the backup directory goes: k3s and its CNI/kubelet
-    # state, every Docker image, container, volume and build cache, and any
-    # repo or scratch directory an earlier on-VM run left behind. Leftovers are
-    # what filled the disk and got pods evicted for ephemeral storage.
+    # Reclaim everything that does not require tearing down the network first,
+    # because uninstalling k3s drops CNI and resets this very SSH session --
+    # anything sequenced after it is simply lost.
     vm_ssh "set -u
-      if [ -x /usr/local/bin/k3s-uninstall.sh ]; then /usr/local/bin/k3s-uninstall.sh || true; fi
-      rm -rf /etc/rancher /var/lib/rancher /var/lib/kubelet /var/lib/cni /etc/cni /run/k3s /run/flannel
-      if command -v docker >/dev/null 2>&1; then docker system prune -af --volumes || true; fi
       rm -rf /opt/mcp-runtime-e2e /var/tmp/mcp-runtime-e2e-* /tmp/mcp-runtime-e2e.tgz /tmp/mcp-img-*.tar
-      df -h / | awk 'NR==2 {print \"free after cleanup: \" \$4 \" (\" \$5 \" used)\"}'" \
+      if command -v docker >/dev/null 2>&1; then docker system prune -af --volumes || true; fi" \
       >"${ARTIFACT_DIR}/vm-cleanup.log" 2>&1 || true
-    tail -1 "${ARTIFACT_DIR}/vm-cleanup.log" 2>/dev/null | sed 's/^/[remote-e2e] /' || true
+
+    # Detach the k3s teardown so it survives the connection it kills, then
+    # reconnect to confirm rather than trusting a command whose output cannot
+    # come back.
+    vm_ssh "setsid nohup sh -c '
+      if [ -x /usr/local/bin/k3s-uninstall.sh ]; then /usr/local/bin/k3s-uninstall.sh; fi
+      rm -rf /etc/rancher /var/lib/rancher /var/lib/kubelet /var/lib/cni /etc/cni /run/k3s /run/flannel
+    ' >/tmp/k3s-uninstall.log 2>&1 </dev/null &" >>"${ARTIFACT_DIR}/vm-cleanup.log" 2>&1 || true
+
+    local waited=0
+    while ((waited < 180)); do
+      if vm_ssh "test ! -d /etc/rancher && test ! -d /var/lib/rancher" >/dev/null 2>&1; then
+        log "VM teardown confirmed"
+        break
+      fi
+      sleep 10
+      waited=$((waited + 10))
+    done
+    if ((waited >= 180)); then
+      log "WARNING: VM teardown not confirmed within ${waited}s; check ${VM_BACKUP_DIR} host state"
+    fi
+    vm_ssh "df -h / | awk 'NR==2 {print \"free after cleanup: \" \$4 \" (\" \$5 \" used)\"}'" 2>/dev/null \
+      | sed 's/^/[remote-e2e] /' || true
   fi
   rm -rf "${WORK_DIR}"
   log "run ${RUN_ID} finished with status ${status}; artifacts in ${ARTIFACT_DIR}"
