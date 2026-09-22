@@ -344,7 +344,20 @@ cleanup() {
     if [[ -x /usr/local/bin/k3s-uninstall.sh ]]; then
       /usr/local/bin/k3s-uninstall.sh >"${ARTIFACT_DIR}/k3s-uninstall.log" 2>&1 || true
     fi
-    rm -rf /etc/rancher/k3s /var/lib/rancher/k3s "${WORK_DIR}"
+    rm -rf /etc/rancher /var/lib/rancher /var/lib/kubelet /var/lib/cni /etc/cni /run/k3s /run/flannel "${WORK_DIR}"
+    rm -rf /var/tmp/mcp-runtime-e2e-* /tmp/mcp-runtime-e2e.tgz
+    rm -f "${ROOT_DIR}"/mcp-img-*.tar
+    # Setup builds a service image per component and nothing reclaimed them, so
+    # successive runs filled the disk until the kubelet evicted pods under
+    # ephemeral-storage pressure.
+    if command -v docker >/dev/null 2>&1; then
+      docker system prune -af --volumes >"${ARTIFACT_DIR}/docker-prune.log" 2>&1 || true
+    fi
+    # ROOT_DIR is the directory this script is running from, so it cannot be
+    # removed here without risking bash's incremental reads of its own source.
+    # The workflow wipes it before each run, and the remote runner never ships
+    # the repository to the VM at all.
+    df -h / | awk 'NR==2 {print "[prod-e2e] free after cleanup: " $4 " (" $5 " used)"}'
     rm -f "${ROOT_DIR}/bin/mcp-runtime"
   fi
   log "E2E run ${RUN_ID} finished with status ${status}; backup preserved at ${BACKUP_DIR}"

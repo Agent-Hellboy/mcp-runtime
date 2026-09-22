@@ -81,6 +81,33 @@ vm_ssh() {
   fi
 }
 
+# production-vm.sh sources the VM's e2e.env directly because it runs there.
+# Do the equivalent from here, so a local run needs no more configuration than
+# an on-VM one. Values already in the environment win, which keeps CI secrets
+# authoritative over whatever the VM happens to remember.
+load_vm_env() {
+  local line key
+  while IFS= read -r line; do
+    case "${line}" in
+      E2E_*=*) ;;
+      *) continue ;;
+    esac
+    key="${line%%=*}"
+    if [[ -z "${!key:-}" ]]; then
+      export "${key}=${line#*=}"
+    fi
+  done < <(vm_ssh "cat '${VM_BACKUP_DIR}/e2e.env' 2>/dev/null" 2>/dev/null || true)
+}
+
+persist_vm_env() {
+  local key="$1" value="$2"
+  vm_ssh "set -eu
+    install -d -m 700 '${VM_BACKUP_DIR}'
+    touch '${VM_BACKUP_DIR}/e2e.env'
+    chmod 600 '${VM_BACKUP_DIR}/e2e.env'
+    printf '%s=%s\n' '${key}' '${value}' >>'${VM_BACKUP_DIR}/e2e.env'"
+}
+
 capture_cluster_state() {
   [[ -f "${KUBECONFIG_FILE}" ]] || return 0
   kubectl get nodes -o wide >"${ARTIFACT_DIR}/nodes.txt" 2>&1 || true
@@ -103,17 +130,25 @@ cleanup() {
     capture_cluster_state
   fi
   if [[ "${E2E_CLEANUP:-1}" == "1" ]]; then
-    log "uninstalling k3s on ${VM_HOST}; preserving ${VM_BACKUP_DIR}"
-    vm_ssh 'if [ -x /usr/local/bin/k3s-uninstall.sh ]; then /usr/local/bin/k3s-uninstall.sh; fi; rm -rf /etc/rancher/k3s /var/lib/rancher/k3s' \
-      >"${ARTIFACT_DIR}/k3s-uninstall.log" 2>&1 || true
+    log "wiping disposable state on ${VM_HOST}; preserving only ${VM_BACKUP_DIR}"
+    # Everything except the backup directory goes: k3s and its CNI/kubelet
+    # state, every Docker image, container, volume and build cache, and any
+    # repo or scratch directory an earlier on-VM run left behind. Leftovers are
+    # what filled the disk and got pods evicted for ephemeral storage.
+    vm_ssh "set -u
+      if [ -x /usr/local/bin/k3s-uninstall.sh ]; then /usr/local/bin/k3s-uninstall.sh || true; fi
+      rm -rf /etc/rancher /var/lib/rancher /var/lib/kubelet /var/lib/cni /etc/cni /run/k3s /run/flannel
+      if command -v docker >/dev/null 2>&1; then docker system prune -af --volumes || true; fi
+      rm -rf /opt/mcp-runtime-e2e /var/tmp/mcp-runtime-e2e-* /tmp/mcp-runtime-e2e.tgz /tmp/mcp-img-*.tar
+      df -h / | awk 'NR==2 {print \"free after cleanup: \" \$4 \" (\" \$5 \" used)\"}'" \
+      >"${ARTIFACT_DIR}/vm-cleanup.log" 2>&1 || true
+    tail -1 "${ARTIFACT_DIR}/vm-cleanup.log" 2>/dev/null | sed 's/^/[remote-e2e] /' || true
   fi
   rm -rf "${WORK_DIR}"
   log "run ${RUN_ID} finished with status ${status}; artifacts in ${ARTIFACT_DIR}"
   exit "${status}"
 }
 trap cleanup EXIT
-
-: "${E2E_ACME_EMAIL:?set E2E_ACME_EMAIL for the ACME contact address}"
 
 # Everything the CLI needs runs here, so check it before touching the VM.
 require_command ssh
@@ -124,6 +159,10 @@ require_command jq
 if [[ -n "${SSHPASS:-}" ]]; then
   require_command sshpass
 fi
+
+# Fill any gaps from the VM's preserved env file, then require what setup needs.
+load_vm_env
+: "${E2E_ACME_EMAIL:?set E2E_ACME_EMAIL, or record it in ${VM_BACKUP_DIR}/e2e.env on the VM}"
 
 if [[ ! -x "${BIN}" ]]; then
   require_command go
@@ -142,6 +181,11 @@ log "provisioning k3s on ${VM_HOST}"
 # k3s already adds the node's public IP to the API server certificate SANs, so
 # the kubeconfig only needs its loopback server URL rewritten to reach it.
 vm_ssh "set -eu
+  # Builds from earlier on-VM runs leave images behind, and the cluster's
+  # ephemeral storage shares this disk. A full disk evicts pods and surfaces as
+  # an unexplained deployment timeout. k3s uses containerd, so pruning Docker
+  # never touches running workloads.
+  command -v docker >/dev/null 2>&1 && docker system prune -af >/dev/null 2>&1 || true
   if [ ! -f /etc/rancher/k3s/k3s.yaml ]; then
     curl -sfL https://get.k3s.io | sh -s - --write-kubeconfig-mode 644 --tls-san '${VM_HOST}'
   fi
@@ -168,6 +212,24 @@ export MCP_AUTH_INGRESS_HOST="auth.e2e.mcpruntime.org"
 export E2E_ARTIFACT_DIR="${ARTIFACT_DIR}"
 export MCPRUNTIME_ORG_ROOT="${ROOT_DIR}"
 
+# The kubelet evicts pods once ephemeral storage runs low, which setup reports
+# only as "deployment timeout" ten minutes later. Say so up front instead.
+require_node_disk() {
+  local min_gib="${1:-6}" avail
+  avail="$(vm_ssh "df -BG --output=avail / 2>/dev/null | tail -1 | tr -dc '0-9'" 2>/dev/null || true)"
+  if [[ -z "${avail}" ]]; then
+    log "WARNING: could not determine free disk on ${VM_HOST}"
+    return 0
+  fi
+  if ((avail < min_gib)); then
+    fail "only ${avail}GiB free on ${VM_HOST}; setup needs about ${min_gib}GiB and the kubelet evicts pods under ephemeral-storage pressure"
+    return 1
+  fi
+  log "${avail}GiB free on ${VM_HOST}"
+}
+
+require_node_disk "${E2E_MIN_DISK_GIB:-6}"
+
 wait_for_node_registration 180
 kubectl wait --for=condition=Ready nodes --all --timeout=180s
 wait_for_traefik 300
@@ -177,19 +239,14 @@ wait_for_traefik 300
 ensure_platform_admin_config() {
   local email password
   email="${E2E_PLATFORM_ADMIN_EMAIL:-${E2E_ACME_EMAIL}}"
-  password="$(vm_ssh "sed -n 's/^E2E_PLATFORM_ADMIN_PASSWORD=//p' '${VM_BACKUP_DIR}/e2e.env' 2>/dev/null | tail -1" 2>/dev/null || true)"
-  password="${password//[$'\r\n']/}"
+  password="${E2E_PLATFORM_ADMIN_PASSWORD:-}"
 
   if [[ -z "${password}" ]]; then
     local raw
     raw="$(head -c 512 /dev/urandom | LC_ALL=C tr -dc 'A-Za-z0-9')"
     password="${raw:0:32}"
     [[ ${#password} -eq 32 ]] || fail "failed to generate a platform admin password"
-    vm_ssh "set -eu
-      install -d -m 700 '${VM_BACKUP_DIR}'
-      touch '${VM_BACKUP_DIR}/e2e.env'
-      chmod 600 '${VM_BACKUP_DIR}/e2e.env'
-      printf 'E2E_PLATFORM_ADMIN_PASSWORD=%s\n' '${password}' >>'${VM_BACKUP_DIR}/e2e.env'"
+    persist_vm_env E2E_PLATFORM_ADMIN_PASSWORD "${password}"
     log "generated a platform admin password and stored it on the VM"
   fi
 
