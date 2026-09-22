@@ -123,6 +123,18 @@ resolves the image platform from the node and builds for it, so a non-amd64
 workstation needs an emulator registered
 (`docker run --privileged --rm tonistiigi/binfmt --install amd64`).
 
+Both runners use the Let's Encrypt **staging** CA by default. The production CA
+allows five certificates per exact set of identifiers per week, so a suite that
+issues real certificates can only run five times before every further run fails
+at Step 3 with `429 rateLimited` and a retry-after roughly a day later. Staging
+exercises the identical ACME order, HTTP-01 challenge and cert-manager path;
+only the signing CA differs. The remote runner fetches the staging roots and
+prepends them to the platform trust store for the run, so the HTTPS checks keep
+verifying properly instead of falling back to `curl -k`. Set
+`E2E_ACME_STAGING=0` for an occasional run against the production CA, and
+remember that those five per week are shared with every other run against the
+same hostnames.
+
 The on-VM runner additionally needs a Go toolchain on the VM new enough to
 honor the `go` directive in `go.mod`. Go only learned to download toolchains on
 demand in 1.21, so a distro Go older than that fails the operator image build
