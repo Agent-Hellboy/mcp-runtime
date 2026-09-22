@@ -27,12 +27,44 @@ set -euo pipefail
 #   RESET=1 hack/deploy/mcpruntime-org/multitenancy-test.sh       # delete demo resources via platform API
 #   SKIP_SETUP=1 hack/deploy/mcpruntime-org/multitenancy-test.sh  # only run verification
 
-ROOT_DIR="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
+# The production E2E VM receives the repo as a tarball packaged with
+# `tar --exclude=.git`, so git metadata is absent there and `rev-parse` exits
+# 128. Prefer an explicitly supplied root, then git, then this script's own
+# location, which is always <root>/hack/deploy/mcpruntime-org.
+ROOT_DIR="${MCPRUNTIME_ORG_ROOT:-}"
+if [[ -z "$ROOT_DIR" ]]; then
+  ROOT_DIR="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel 2>/dev/null || true)"
+fi
+if [[ -z "$ROOT_DIR" ]]; then
+  ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+fi
 BIN="${BIN:-$ROOT_DIR/bin/mcp-runtime}"
 
+# A dotenv is a convenience for local runs, not an override. Sourcing it under
+# `set -a` replaced values the caller had already exported, so a run explicitly
+# aimed at one environment was silently redirected to whichever one .env named
+# -- a caller passing PLATFORM_URL for a disposable E2E host had it swapped for
+# the production platform, and KUBECONFIG along with it. Fill gaps only.
 if [[ -f "$ROOT_DIR/.env" ]]; then
-  # shellcheck disable=SC1091
-  set -a && source "$ROOT_DIR/.env" && set +a
+  while IFS= read -r dotenv_line || [[ -n "$dotenv_line" ]]; do
+    dotenv_line="${dotenv_line#"${dotenv_line%%[![:space:]]*}"}"
+    case "$dotenv_line" in
+      '' | '#'*) continue ;;
+    esac
+    dotenv_line="${dotenv_line#export }"
+    [[ "$dotenv_line" == *=* ]] || continue
+    dotenv_key="${dotenv_line%%=*}"
+    [[ "$dotenv_key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+    dotenv_value="${dotenv_line#*=}"
+    case "$dotenv_value" in
+      \"*\") dotenv_value="${dotenv_value:1:${#dotenv_value}-2}" ;;
+      \'*\') dotenv_value="${dotenv_value:1:${#dotenv_value}-2}" ;;
+    esac
+    if [[ -z "${!dotenv_key:-}" ]]; then
+      export "$dotenv_key=$dotenv_value"
+    fi
+  done <"$ROOT_DIR/.env"
+  unset dotenv_line dotenv_key dotenv_value
 fi
 
 require_env() {

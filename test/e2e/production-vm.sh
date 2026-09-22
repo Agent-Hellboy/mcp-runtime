@@ -19,6 +19,12 @@ AUTH_URL="${E2E_AUTH_URL:-https://auth.e2e.mcpruntime.org}"
 mkdir -p "${ARTIFACT_DIR}" "${WORK_DIR}"
 chmod 700 "${BACKUP_DIR}" "${ARTIFACT_DIR}" "${WORK_DIR}"
 
+# The CLI resolves manifests as repo-relative paths (CRDs, ingress overlays,
+# registry overlays), so setup must run from the repo root. The workflow starts
+# this script over SSH, where the working directory is the login home, which is
+# why `kubectl apply -f config/crd/bases/...` failed with exit status 1.
+cd "${ROOT_DIR}"
+
 if [[ -f "${BACKUP_DIR}/e2e.env" ]]; then
   # shellcheck disable=SC1091
   set -a
@@ -33,12 +39,89 @@ export MCP_REGISTRY_INGRESS_HOST="registry.e2e.mcpruntime.org"
 export MCP_MCP_INGRESS_HOST="mcp.e2e.mcpruntime.org"
 export MCP_AUTH_INGRESS_HOST="auth.e2e.mcpruntime.org"
 export E2E_ARTIFACT_DIR="${ARTIFACT_DIR}"
+export MCPRUNTIME_ORG_ROOT="${ROOT_DIR}"
+export MCP_TLS_BACKUP_DIR="${BACKUP_DIR}/platform-runtime"
+
+PLATFORM_BACKUP_HELPERS_LOADED=0
 
 log() { printf '[prod-e2e] %s\n' "$*"; }
 fail() { log "ERROR: $*" >&2; return 1; }
 
 require_command() {
   command -v "$1" >/dev/null 2>&1 || fail "missing required command: $1"
+}
+
+# k3s writes the kubeconfig before the apiserver serves traffic and before the
+# kubelet registers its Node object. `kubectl wait --all` does not wait for a
+# resource to appear: it exits non-zero with "no matching resources found" the
+# moment the selector matches nothing. Poll for registration first.
+wait_for_node_registration() {
+  local timeout="${1:-180}"
+  local deadline=$((SECONDS + timeout))
+  while ((SECONDS < deadline)); do
+    if kubectl get nodes -o name 2>/dev/null | grep -q .; then
+      return 0
+    fi
+    sleep 3
+  done
+  fail "no Kubernetes node registered within ${timeout}s"
+}
+
+# k3s installs its bundled Traefik through helm-controller only after the node
+# goes Ready, so a doctor run that starts the moment the node registers sees no
+# IngressClass, no deployment, and no web entrypoint. Wait for the ingress to
+# converge before any preflight that asserts on it.
+traefik_namespace() {
+  local candidate
+  for candidate in kube-system traefik; do
+    if kubectl -n "${candidate}" get deploy traefik >/dev/null 2>&1; then
+      printf '%s' "${candidate}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Mirrors the doctor "traefik service exposure" check, which accepts either a
+# LoadBalancer address or a NodePort for the web entrypoint.
+traefik_is_exposed() {
+  local namespace="$1" address ports
+  address="$(kubectl -n "${namespace}" get svc traefik \
+    -o jsonpath='{.status.loadBalancer.ingress[0].ip}{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null)"
+  [[ -n "${address}" ]] && return 0
+  ports="$(kubectl -n "${namespace}" get svc traefik -o jsonpath='{.spec.ports[*].nodePort}' 2>/dev/null)"
+  [[ -n "${ports// /}" ]]
+}
+
+wait_for_traefik() {
+  local timeout="${1:-300}"
+  local deadline=$((SECONDS + timeout))
+  local namespace=""
+  log "waiting for the bundled Traefik ingress to become ready"
+  while ((SECONDS < deadline)); do
+    if namespace="$(traefik_namespace)" &&
+      kubectl -n "${namespace}" rollout status deploy/traefik --timeout=30s >/dev/null 2>&1; then
+      break
+    fi
+    namespace=""
+    sleep 5
+  done
+  if [[ -z "${namespace}" ]]; then
+    fail "bundled Traefik did not become ready within ${timeout}s"
+    return 1
+  fi
+  log "Traefik deployment is ready in namespace ${namespace}"
+
+  # Exposure is what ACME HTTP-01 needs. Warn rather than abort: setup still
+  # gets a chance to wire ingress, and post-setup diagnostics is the real gate.
+  while ((SECONDS < deadline)); do
+    if traefik_is_exposed "${namespace}"; then
+      log "Traefik web entrypoint is externally exposed"
+      return 0
+    fi
+    sleep 5
+  done
+  log "WARNING: Traefik has no LoadBalancer address or NodePort yet; continuing into setup"
 }
 
 capture_cluster_state() {
@@ -54,6 +137,31 @@ capture_cluster_state() {
     kubectl -n "${namespace}" get pods -o wide >"${ARTIFACT_DIR}/${namespace}-pods.txt" 2>&1 || true
     kubectl -n "${namespace}" logs --all-containers --prefix --tail=300 -l app=mcp-runtime-api >"${ARTIFACT_DIR}/${namespace}-runtime-api.log" 2>&1 || true
   done
+}
+
+load_platform_backup_helpers() {
+  if [[ "${PLATFORM_BACKUP_HELPERS_LOADED}" == "1" ]]; then
+    return 0
+  fi
+  # Reuse the deployment backup implementation so the VM-side snapshot covers
+  # TLS, platform credentials, auth-server secrets, and OIDC configuration.
+  # Do not load the deployment dotenv here: the E2E runner owns its environment.
+  # shellcheck disable=SC1091
+  source "${ROOT_DIR}/hack/deploy/mcpruntime-org/lib/backup.sh"
+  PLATFORM_BACKUP_HELPERS_LOADED=1
+}
+
+backup_platform_runtime() {
+  [[ -f "${KUBECONFIG}" ]] || return 0
+  if ! kubectl get nodes >/dev/null 2>&1; then
+    log "skipping platform backup because the Kubernetes API is unavailable"
+    return 0
+  fi
+  load_platform_backup_helpers
+  log "capturing platform runtime backup from the VM before cluster cleanup"
+  if ! mcpruntime_org_backup_platform_runtime; then
+    log "WARNING: platform runtime backup failed; preserving any previous snapshot"
+  fi
 }
 
 install_dependencies() {
@@ -83,9 +191,93 @@ install_dependencies() {
   esac
 }
 
+# Rank a "goX.Y[.Z]" string as X*1000+Y so toolchains can be compared.
+go_version_rank() {
+  local raw="${1#go}" major minor
+  major="${raw%%.*}"
+  raw="${raw#*.}"
+  minor="${raw%%.*}"
+  [[ "${major}" =~ ^[0-9]+$ ]] || return 1
+  [[ "${minor}" =~ ^[0-9]+$ ]] || return 1
+  printf '%d' "$((major * 1000 + minor))"
+}
+
+go_directive_version() {
+  awk '/^go [0-9]/ { print $2; exit }' "${ROOT_DIR}/go.mod"
+}
+
+install_go_toolchain() {
+  local want arch url
+  want="$(go_directive_version)"
+  [[ -n "${want}" ]] || { fail "could not read the go directive from go.mod"; return 1; }
+  case "$(uname -m)" in
+    x86_64) arch=amd64 ;;
+    aarch64 | arm64) arch=arm64 ;;
+    *) fail "unsupported architecture $(uname -m) for Go installation"; return 1 ;;
+  esac
+  url="https://go.dev/dl/go${want}.linux-${arch}.tar.gz"
+  log "installing Go ${want} for ${arch}"
+  curl -fsSL "${url}" -o "${WORK_DIR}/go.tar.gz" || { fail "failed to download ${url}"; return 1; }
+  # Unpack beside the existing toolchain and swap only once the new tree is
+  # complete, so a partial download never leaves the VM without a working Go.
+  rm -rf /usr/local/go.new /usr/local/go.prev
+  mkdir -p /usr/local/go.new
+  if ! tar -C /usr/local/go.new --strip-components=1 -xzf "${WORK_DIR}/go.tar.gz"; then
+    rm -rf /usr/local/go.new
+    fail "failed to unpack Go ${want}"
+    return 1
+  fi
+  if [[ -d /usr/local/go ]]; then
+    mv /usr/local/go /usr/local/go.prev
+  fi
+  mv /usr/local/go.new /usr/local/go
+  rm -rf /usr/local/go.prev
+  rm -f "${WORK_DIR}/go.tar.gz"
+}
+
+# Ubuntu ships an old distro Go on PATH (1.18 on 22.04) while a current
+# toolchain often sits unused under /usr/local/go. go.mod pins a far newer
+# release, and Go only learned to fetch toolchains on demand in 1.21, so the
+# distro binary rejects the go directive outright -- "invalid go version
+# '1.24.0': must match format 1.23" -- and the operator image build fails.
+# Put the newest usable toolchain first on PATH, installing one if needed.
+select_go_toolchain() {
+  local candidate version rank best="" best_rank=0 best_version=""
+  for candidate in /usr/local/go/bin/go /usr/lib/go-*/bin/go "$(command -v go 2>/dev/null || true)"; do
+    [[ -n "${candidate}" && -x "${candidate}" ]] || continue
+    # GOTOOLCHAIN=local reports the installed toolchain instead of triggering a
+    # download just to answer the question.
+    version="$(GOTOOLCHAIN=local "${candidate}" env GOVERSION 2>/dev/null || true)"
+    [[ -n "${version}" ]] || continue
+    rank="$(go_version_rank "${version}" 2>/dev/null || true)"
+    [[ -n "${rank}" ]] || continue
+    if ((rank > best_rank)); then
+      best_rank="${rank}"
+      best="${candidate}"
+      best_version="${version}"
+    fi
+  done
+
+  # 1.21 is the first release that can download the toolchain go.mod asks for.
+  if ((best_rank < 1021)); then
+    if ((best_rank == 0)); then
+      log "no Go toolchain found on the VM"
+    else
+      log "Go ${best_version} cannot honor the go directive in go.mod"
+    fi
+    install_go_toolchain || return 1
+    best="/usr/local/go/bin/go"
+    best_version="$(GOTOOLCHAIN=local "${best}" env GOVERSION 2>/dev/null || echo unknown)"
+  fi
+
+  PATH="$(dirname "${best}"):${PATH}"
+  export PATH
+  log "using Go toolchain ${best_version} from $(dirname "${best}")"
+}
+
 restore_backup_state() {
-  # The backup is intentionally outside WORK_DIR and every cleanup target. A
-  # deployment may provide either a tested restore hook or declarative files.
+  # The backup is intentionally outside WORK_DIR and every cleanup target.
+  # Legacy hooks/manifests may provision prerequisites before setup.
   if [[ -x "${BACKUP_DIR}/restore.sh" ]]; then
     log "restoring E2E certificates and credentials through backup hook"
     E2E_BACKUP_DIR="${BACKUP_DIR}" KUBECONFIG="${KUBECONFIG}" \
@@ -98,6 +290,48 @@ restore_backup_state() {
   fi
 }
 
+# Production setup refuses to run without a platform admin identity, and the
+# secret builder clears the admin pair unless BOTH the address and the password
+# are present. Default the address to the ACME contact, which the workflow
+# already supplies, and mint a password on first run so the credential never
+# lives in the repo. It is persisted in the 0600 env file inside the preserved
+# backup directory so repeat runs keep the same admin account.
+ensure_platform_admin_config() {
+  local env_file="${BACKUP_DIR}/e2e.env"
+  local email="${E2E_PLATFORM_ADMIN_EMAIL:-${E2E_ACME_EMAIL}}"
+  local password="${E2E_PLATFORM_ADMIN_PASSWORD:-}"
+
+  if [[ -z "${password}" ]]; then
+    # `tr </dev/urandom | head -c` dies of SIGPIPE, which pipefail turns into a
+    # script abort, so bound the randomness upstream and slice it in bash.
+    local raw
+    raw="$(head -c 512 /dev/urandom | LC_ALL=C tr -dc 'A-Za-z0-9')"
+    password="${raw:0:32}"
+    [[ ${#password} -eq 32 ]] || fail "failed to generate a platform admin password"
+    touch "${env_file}"
+    chmod 600 "${env_file}"
+    printf 'E2E_PLATFORM_ADMIN_PASSWORD=%s\n' "${password}" >>"${env_file}"
+    log "generated a platform admin password and stored it in ${env_file}"
+  fi
+
+  export MCP_PLATFORM_ADMIN_EMAIL="${email}"
+  export MCP_PLATFORM_ADMIN_PASSWORD="${password}"
+  export E2E_PLATFORM_ADMIN_EMAIL="${email}"
+  export E2E_PLATFORM_ADMIN_PASSWORD="${password}"
+  log "platform admin configured for ${email}"
+}
+
+restore_platform_runtime_after_setup() {
+  if [[ ! -L "${BACKUP_DIR}/platform-runtime/latest" || ! -d "${BACKUP_DIR}/platform-runtime/latest" ]]; then
+    return 0
+  fi
+  load_platform_backup_helpers
+  log "restoring platform runtime snapshot captured on the VM"
+  if ! mcpruntime_org_restore_platform_runtime; then
+    log "WARNING: platform runtime snapshot restore failed"
+  fi
+}
+
 cleanup() {
   local status=$?
   if [[ ${status} -ne 0 ]]; then
@@ -106,10 +340,24 @@ cleanup() {
   fi
   if [[ "${E2E_CLEANUP:-1}" == "1" ]]; then
     log "cleaning disposable Kubernetes/VM state; preserving ${BACKUP_DIR}"
+    backup_platform_runtime
     if [[ -x /usr/local/bin/k3s-uninstall.sh ]]; then
       /usr/local/bin/k3s-uninstall.sh >"${ARTIFACT_DIR}/k3s-uninstall.log" 2>&1 || true
     fi
-    rm -rf /etc/rancher/k3s /var/lib/rancher/k3s "${WORK_DIR}"
+    rm -rf /etc/rancher /var/lib/rancher /var/lib/kubelet /var/lib/cni /etc/cni /run/k3s /run/flannel "${WORK_DIR}"
+    rm -rf /var/tmp/mcp-runtime-e2e-* /tmp/mcp-runtime-e2e.tgz
+    rm -f "${ROOT_DIR}"/mcp-img-*.tar
+    # Setup builds a service image per component and nothing reclaimed them, so
+    # successive runs filled the disk until the kubelet evicted pods under
+    # ephemeral-storage pressure.
+    if command -v docker >/dev/null 2>&1; then
+      docker system prune -af --volumes >"${ARTIFACT_DIR}/docker-prune.log" 2>&1 || true
+    fi
+    # ROOT_DIR is the directory this script is running from, so it cannot be
+    # removed here without risking bash's incremental reads of its own source.
+    # The workflow wipes it before each run, and the remote runner never ships
+    # the repository to the VM at all.
+    df -h / | awk 'NR==2 {print "[prod-e2e] free after cleanup: " $4 " (" $5 " used)"}'
     rm -f "${ROOT_DIR}/bin/mcp-runtime"
   fi
   log "E2E run ${RUN_ID} finished with status ${status}; backup preserved at ${BACKUP_DIR}"
@@ -118,7 +366,6 @@ cleanup() {
 trap cleanup EXIT
 
 : "${E2E_ACME_EMAIL:?set E2E_ACME_EMAIL in ${BACKUP_DIR}/e2e.env}"
-: "${E2E_PLATFORM_API_TOKEN:?set E2E_PLATFORM_API_TOKEN in ${BACKUP_DIR}/e2e.env}"
 
 install_dependencies
 require_command curl
@@ -140,17 +387,27 @@ fi
 
 [[ -f "${KUBECONFIG}" ]] || fail "k3s kubeconfig was not created"
 require_command kubectl
+wait_for_node_registration 180
 kubectl wait --for=condition=Ready nodes --all --timeout=180s
 
 restore_backup_state
+
+select_go_toolchain
 
 if [[ ! -x "${BIN}" ]]; then
   require_command go
   go build -o "${BIN}" ./cmd/mcp-runtime
 fi
 
+wait_for_traefik 300
+
+# Advisory only: this is a baseline snapshot of a cluster that has not been set
+# up yet, so checks covering components setup installs are expected to be unmet.
+# The post-setup `cluster diagnostics` run below is the gate.
 log "running pre-setup cluster doctor"
-"${BIN}" cluster doctor | tee "${ARTIFACT_DIR}/doctor-before.log"
+if ! "${BIN}" cluster doctor 2>&1 | tee "${ARTIFACT_DIR}/doctor-before.log"; then
+  log "pre-setup doctor reported unmet requirements; continuing because setup provisions them"
+fi
 
 SETUP_ARGS=(
   setup
@@ -171,14 +428,18 @@ if [[ "${E2E_WITH_MCP_AUTH:-0}" == "1" ]]; then
   [[ -n "${E2E_MCP_AUTH_SIGNING_KEY_SECRET:-}" ]] && SETUP_ARGS+=(--mcp-auth-signing-key-secret "${E2E_MCP_AUTH_SIGNING_KEY_SECRET}")
 fi
 
+ensure_platform_admin_config
+
 log "running production-style setup"
 "${BIN}" "${SETUP_ARGS[@]}" 2>&1 | tee "${ARTIFACT_DIR}/setup.log"
+
+restore_platform_runtime_after_setup
 
 log "running post-setup diagnostics"
 "${BIN}" cluster diagnostics | tee "${ARTIFACT_DIR}/diagnostics-after.log"
 
 resolve_platform_token() {
-  if curl --fail --silent --show-error \
+  if [[ -n "${E2E_PLATFORM_API_TOKEN:-}" ]] && curl --fail --silent --show-error \
     -H "x-api-key: ${E2E_PLATFORM_API_TOKEN}" \
     -H "authorization: Bearer ${E2E_PLATFORM_API_TOKEN}" \
     "${PLATFORM_URL}/api/v1/auth/me" >/dev/null 2>&1; then
@@ -186,7 +447,10 @@ resolve_platform_token() {
   fi
 
   local encoded generated
-  encoded="$(kubectl get secret mcp-sentinel-secrets -n mcp-sentinel -o jsonpath='{.data.ADMIN_API_KEYS}')"
+  # Tolerate a missing secret here so the explicit message below is what the
+  # run reports, instead of set -e aborting on the assignment with no context.
+  encoded="$(kubectl get secret mcp-sentinel-secrets -n mcp-sentinel \
+    -o jsonpath='{.data.ADMIN_API_KEYS}' 2>/dev/null || true)"
   generated="$(printf '%s' "${encoded}" | base64 --decode | cut -d',' -f1 | tr -d '\r\n')"
   [[ -n "${generated}" ]] || fail "E2E_PLATFORM_API_TOKEN was rejected and setup did not produce an ADMIN_API_KEYS value"
   export E2E_PLATFORM_API_TOKEN="${generated}"
@@ -226,7 +490,17 @@ if [[ "${E2E_WITH_MCP_AUTH:-0}" == "1" ]]; then
   curl --fail --silent --show-error "${AUTH_URL}/.well-known/oauth-authorization-server" >"${ARTIFACT_DIR}/auth-server-metadata.json"
 fi
 
-if [[ "${E2E_RUN_MULTITENANCY:-1}" == "1" ]]; then
+# The workflow passes a GitHub boolean input, which arrives as "true"/"false",
+# while older callers pass 1/0. Accept both: testing only for "1" silently
+# skipped the multi-team suite on every run.
+e2e_flag_enabled() {
+  case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
+    1 | true | yes | on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+if e2e_flag_enabled "${E2E_RUN_MULTITENANCY:-1}"; then
   PLATFORM_URL="${PLATFORM_URL}" MCP_URL="${MCP_URL}" REGISTRY_HOST="${REGISTRY_HOST}" \
     ADMIN_TOKEN_INPUT="${E2E_PLATFORM_API_TOKEN}" \
     BIN="${BIN}" WORK_DIR="${WORK_DIR}/multitenancy" \

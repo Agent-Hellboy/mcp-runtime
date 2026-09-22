@@ -53,13 +53,30 @@ jobs:
             /tmp/mcp-runtime-e2e.tgz \
             "${{ secrets.E2E_VM_USER }}@${{ secrets.E2E_VM_HOST }}:/tmp/mcp-runtime-e2e.tgz"
 
+      - name: Ensure E2E runtime configuration
+        env:
+          E2E_ACME_EMAIL: ${{ secrets.E2E_ACME_EMAIL }}
+          SSHPASS: ${{ secrets.E2E_VM_PASSWORD }}
+        run: |
+          test -n "${E2E_ACME_EMAIL}"
+          printf 'E2E_ACME_EMAIL=%s\n' "${E2E_ACME_EMAIL}" | \
+            sshpass -e ssh \
+              -o UserKnownHostsFile="$HOME/.ssh/mcp-runtime-e2e-known-hosts" -o StrictHostKeyChecking=yes \
+              "${{ secrets.E2E_VM_USER }}@${{ secrets.E2E_VM_HOST }}" \
+              'set -eu; backup_dir=/var/lib/mcp-runtime-e2e-backup; env_file="$backup_dir/e2e.env"; install -d -m 700 "$backup_dir"; touch "$env_file"; chmod 600 "$env_file"; IFS= read -r line; tmp="${env_file}.tmp"; awk -F= -v replacement="$line" '\''$1 != "E2E_ACME_EMAIL" { print } END { print replacement }'\'' "$env_file" > "$tmp"; mv "$tmp" "$env_file"'
+
       - name: Run production E2E
         env:
           SSHPASS: ${{ secrets.E2E_VM_PASSWORD }}
           RUN_MULTITENANCY: ${{ inputs.run-multitenancy }}
         run: |
+          # Setup has multi-minute silent stretches while it builds images, and
+          # an idle SSH session that drops there fails the job with exit 255
+          # while the remote run keeps going -- a false negative that also
+          # leaves the VM dirty. Keep the connection alive across those gaps.
           sshpass -e ssh \
             -o UserKnownHostsFile="$HOME/.ssh/mcp-runtime-e2e-known-hosts" -o StrictHostKeyChecking=yes \
+            -o ServerAliveInterval=30 -o ServerAliveCountMax=20 -o TCPKeepAlive=yes \
             "${{ secrets.E2E_VM_USER }}@${{ secrets.E2E_VM_HOST }}" \
             "set -eu; rm -rf /opt/mcp-runtime-e2e; mkdir -p /opt/mcp-runtime-e2e; tar -xzf /tmp/mcp-runtime-e2e.tgz -C /opt/mcp-runtime-e2e; E2E_RUN_MULTITENANCY='${RUN_MULTITENANCY}' bash /opt/mcp-runtime-e2e/test/e2e/production-vm.sh"
 
