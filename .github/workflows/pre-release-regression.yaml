@@ -205,8 +205,25 @@ jobs:
       - name: Install Gitleaks CLI
         run: go install github.com/zricethezav/gitleaks/v8@v8.29.1
 
-      - name: Scan Git history
-        run: "$(go env GOPATH)/bin/gitleaks git --config .gitleaks.toml --redact --verbose ."
+      - name: Fetch pull request base
+        if: github.event_name == 'pull_request'
+        run: git fetch --no-tags origin "${GITHUB_BASE_REF}"
+
+      - name: Scan changed commits
+        env:
+          GITLEAKS_EVENT_NAME: ${{ github.event_name }}
+          GITLEAKS_BASE_REF: ${{ github.base_ref }}
+          GITLEAKS_EVENT_BEFORE: ${{ github.event.before }}
+          GITLEAKS_SHA: ${{ github.sha }}
+        run: |
+          if [[ "$GITLEAKS_EVENT_NAME" == "pull_request" ]]; then
+            log_opts="--first-parent --diff-merges=first-parent origin/${GITLEAKS_BASE_REF}..${GITLEAKS_SHA}"
+          elif [[ "$GITLEAKS_EVENT_NAME" == "push" && "$GITLEAKS_EVENT_BEFORE" != "0000000000000000000000000000000000000000" ]]; then
+            log_opts="--first-parent --diff-merges=first-parent ${GITLEAKS_EVENT_BEFORE}..${GITLEAKS_SHA}"
+          else
+            log_opts="-1 ${GITLEAKS_SHA}"
+          fi
+          "$(go env GOPATH)/bin/gitleaks" git --log-opts="$log_opts" --config .gitleaks.toml --redact --verbose .
 
   trivy:
     name: Trivy Repository + Image Scan
