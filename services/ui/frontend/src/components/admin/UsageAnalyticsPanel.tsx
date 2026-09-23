@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 
 import { AsyncSection } from "./AsyncSection";
 import { StatusBadge, decisionTone } from "../../ui/Badge";
-import { Button } from "../../ui/Button";
+import { Button, ButtonLink } from "../../ui/Button";
 import { DataTable, buildColumns } from "../../ui/DataTable";
 import { SelectField } from "../../ui/Field";
 import { FilterBar } from "../../ui/FilterBar";
@@ -102,15 +102,27 @@ export function UsageAnalyticsPanel({ onSignIn }: UsageAnalyticsPanelProps) {
         breadcrumb={[{ label: "Administration" }, { label: "Usage analytics" }]}
         description="Gateway events aggregated across the platform by server, actor, tool, and decision."
         actions={
-          <Button
-            variant="secondary"
-            icon="refresh"
-            onClick={reload}
-            busy={query.isFetching && !query.isPending}
-            data-testid="analytics-refresh"
-          >
-            Refresh
-          </Button>
+          <>
+            <ButtonLink
+              variant="secondary"
+              href="/grafana/explore"
+              target="_blank"
+              rel="noreferrer"
+              trailingIcon="external"
+              data-testid="analytics-detailed-activity"
+            >
+              Detailed activity
+            </ButtonLink>
+            <Button
+              variant="secondary"
+              icon="refresh"
+              onClick={reload}
+              busy={query.isFetching && !query.isPending}
+              data-testid="analytics-refresh"
+            >
+              Refresh
+            </Button>
+          </>
         }
       />
 
