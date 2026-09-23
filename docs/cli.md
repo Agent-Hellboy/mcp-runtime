@@ -746,13 +746,13 @@ mcp-runtime setup \
   --mcp-auth-resource-url https://mcp.example.com/payments/mcp \
   --mcp-auth-connectors-file connectors.json \
   --mcp-auth-connector keycloak \
-  --mcp-auth-tls-secret mcp-auth-tls \
   --mcp-auth-signing-key-secret mcp-auth-signing-key
 ```
 
-Outside `--test-mode`, the issuer URL, at least one resource URL, the TLS
-Secret, and the signing-key Secret are required. Each resource URL must match
-that server's `auth.audience`. Full walkthrough:
+Outside `--test-mode`, the issuer URL, at least one resource URL, and the
+signing-key Secret are required. With managed TLS, setup provisions the issuer
+certificate automatically. Each resource URL must match that server's
+`auth.audience`. Full walkthrough:
 [MCP authorization](mcp-authorization.md).
 
 Key env vars for `--env-file` (see `config/deployments/mcpruntime-org.env.example`):

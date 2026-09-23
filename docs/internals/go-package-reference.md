@@ -4642,10 +4642,12 @@ _No package overview is documented._
 - [`func EnsureCertManagerInstalled(kubectl core.KubectlRunner, logger *zap.Logger) error`](#cli-cert-manager-func-ensurecertmanagerinstalled-kubectl-core-kubectlrunner-logger-zap-logger-error)
 - [`func PreflightACMEHostnamesPort80(dnsNames []string)`](#cli-cert-manager-func-preflightacmehostnamesport80-dnsnames-string)
 - [`func RemoveRegistryIngressShimAnnotationWithKubectl(kubectl core.KubectlRunner) error`](#cli-cert-manager-func-removeregistryingressshimannotationwithkubectl-kubectl-core-kubectlrunner-error)
+- [`func RenderCertificate(certName, secretName, namespace string, dnsNames, ipAddresses []string, issuerName string) string`](#cli-cert-manager-func-rendercertificate-certname-secretname-namespace-string-dnsnames-ipaddresses-string-issuername-string-string)
 - [`func RenderGeneratedCASecretManifest(now time.Time) (string, error)`](#cli-cert-manager-func-rendergeneratedcasecretmanifest-now-time-time-string-error)
 - [`func RenderLetsEncryptClusterIssuerManifest(name, email, serverURL string) string`](#cli-cert-manager-func-renderletsencryptclusterissuermanifest-name-email-serverurl-string-string)
 - [`func RenderRegistryCertificate(certName, secretName string, dnsNames, ipAddresses []string, issuerName string) string`](#cli-cert-manager-func-renderregistrycertificate-certname-secretname-string-dnsnames-ipaddresses-string-issuername-string-string)
 - [`func ValidateACMEHostnameForPublicCA() error`](#cli-cert-manager-func-validateacmehostnameforpublicca-error)
+- [`func ValidateACMEHostnamesForPublicCA(hosts ...string) error`](#cli-cert-manager-func-validateacmehostnamesforpublicca-hosts-string-error)
 - [`func ValidateIngressManifestForACME(ingressManifest string) error`](#cli-cert-manager-func-validateingressmanifestforacme-ingressmanifest-string-error)
 - [`func WaitForCertificateReadyWithKubectl(kubectl core.KubectlRunner, name, namespace string, timeout time.Duration) error`](#cli-cert-manager-func-waitforcertificatereadywithkubectl-kubectl-core-kubectlrunner-name-namespace-string-timeout-time-duration-error)
 - [`func WaitForTraefikDeploymentForACME(kubectl core.KubectlRunner) error`](#cli-cert-manager-func-waitfortraefikdeploymentforacme-kubectl-core-kubectlrunner-error)
@@ -4769,6 +4771,15 @@ func PreflightACMEHostnamesPort80(dnsNames []string)
 func RemoveRegistryIngressShimAnnotationWithKubectl(kubectl core.KubectlRunner) error
 ```
 
+<a id="cli-cert-manager-func-rendercertificate-certname-secretname-namespace-string-dnsnames-ipaddresses-string-issuername-string-string"></a>
+```text
+func RenderCertificate(certName, secretName, namespace string, dnsNames, ipAddresses []string, issuerName string) string
+    RenderCertificate renders a cert-manager Certificate in an arbitrary
+    namespace. It is used for namespace-local ingress certificates whose Secret
+    cannot be referenced from another namespace.
+
+```
+
 <a id="cli-cert-manager-func-rendergeneratedcasecretmanifest-now-time-time-string-error"></a>
 ```text
 func RenderGeneratedCASecretManifest(now time.Time) (string, error)
@@ -4787,6 +4798,15 @@ func RenderRegistryCertificate(certName, secretName string, dnsNames, ipAddresse
 <a id="cli-cert-manager-func-validateacmehostnameforpublicca-error"></a>
 ```text
 func ValidateACMEHostnameForPublicCA() error
+```
+
+<a id="cli-cert-manager-func-validateacmehostnamesforpublicca-hosts-string-error"></a>
+```text
+func ValidateACMEHostnamesForPublicCA(hosts ...string) error
+    ValidateACMEHostnamesForPublicCA validates additional hostnames that are
+    issued by namespace-local Certificates rather than the unified registry
+    Certificate.
+
 ```
 
 <a id="cli-cert-manager-func-validateingressmanifestforacme-ingressmanifest-string-error"></a>
@@ -6324,6 +6344,7 @@ const (
 	DefaultOrgCatalogNamespace    = "mcp-servers-org"
 	DefaultPublicCatalogNamespace = "mcp-servers-public"
 	DefaultTestMTLSClusterIssuer  = "mcp-runtime-ca"
+	DefaultMCPAuthTLSSecret       = "mcp-auth-server-tls"
 )
 ```
 

@@ -97,6 +97,19 @@ func ValidateACMEHostnameForPublicCA() error {
 	return validateACMEHostnameForPublicCA()
 }
 
+// ValidateACMEHostnamesForPublicCA validates additional hostnames that are
+// issued by namespace-local Certificates rather than the unified registry
+// Certificate.
+func ValidateACMEHostnamesForPublicCA(hosts ...string) error {
+	for _, host := range hosts {
+		host = strings.TrimSpace(host)
+		if isDevRegistryURL(host) {
+			return core.NewWithSentinel(core.ErrCertACMEPublicDNSNameInvalid, fmt.Sprintf("ACME public CA requires a public DNS name, not %q", host))
+		}
+	}
+	return nil
+}
+
 func isDevRegistryURL(raw string) bool {
 	trimmed := strings.TrimSpace(strings.TrimSuffix(raw, "/"))
 	if trimmed == "" {
@@ -324,7 +337,7 @@ func applyCertificate(kubectl core.KubectlRunner, certName, secretName string, d
 	if len(uniq) == 0 && len(uniqIPs) == 0 {
 		return core.NewWithSentinel(core.ErrCertCertificateSANsEmpty, fmt.Sprintf("%s TLS has no DNS names or IP addresses to request", certName))
 	}
-	manifest := renderRegistryCertificate(certName, secretName, uniq, uniqIPs, issuerName)
+	manifest := renderCertificate(certName, secretName, core.NamespaceRegistry, uniq, uniqIPs, issuerName)
 	return kube.ApplyManifestContent(kubectl.CommandArgs, manifest)
 }
 
@@ -357,7 +370,7 @@ func dedupeHostnames(hs []string) []string {
 	return out
 }
 
-func renderRegistryCertificate(certName, secretName string, dnsNames, ipAddresses []string, issuerName string) string {
+func renderCertificate(certName, secretName, namespace string, dnsNames, ipAddresses []string, issuerName string) string {
 	uniq := dedupeHostnames(dnsNames)
 	uniqIPs := dedupeHostnames(ipAddresses)
 	var b strings.Builder
@@ -368,7 +381,7 @@ func renderRegistryCertificate(certName, secretName string, dnsNames, ipAddresse
 	b.WriteString(certName)
 	b.WriteString("\n")
 	b.WriteString("  namespace: ")
-	b.WriteString(core.NamespaceRegistry)
+	b.WriteString(namespace)
 	b.WriteString("\n")
 	b.WriteString("spec:\n")
 	b.WriteString("  secretName: ")
@@ -399,5 +412,12 @@ func renderRegistryCertificate(certName, secretName string, dnsNames, ipAddresse
 }
 
 func RenderRegistryCertificate(certName, secretName string, dnsNames, ipAddresses []string, issuerName string) string {
-	return renderRegistryCertificate(certName, secretName, dnsNames, ipAddresses, issuerName)
+	return renderCertificate(certName, secretName, core.NamespaceRegistry, dnsNames, ipAddresses, issuerName)
+}
+
+// RenderCertificate renders a cert-manager Certificate in an arbitrary
+// namespace. It is used for namespace-local ingress certificates whose Secret
+// cannot be referenced from another namespace.
+func RenderCertificate(certName, secretName, namespace string, dnsNames, ipAddresses []string, issuerName string) string {
+	return renderCertificate(certName, secretName, namespace, dnsNames, ipAddresses, issuerName)
 }

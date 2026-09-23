@@ -1,6 +1,7 @@
 package certmanager
 
 import (
+	"strings"
 	"testing"
 
 	"mcp-runtime/internal/cli/core"
@@ -44,6 +45,21 @@ func TestACMETLSDNSNamesExcludesPlatformHost(t *testing.T) {
 	for _, n := range names {
 		if !want[n] {
 			t.Fatalf("unexpected hostname %q in registry SANs (platform host should be excluded)", n)
+		}
+	}
+}
+
+func TestRenderCertificateUsesRequestedNamespace(t *testing.T) {
+	manifest := RenderCertificate("mcp-auth-server-cert", "mcp-auth-server-tls", "mcp-sentinel", []string{"auth.example.com"}, nil, "letsencrypt-prod")
+	for _, want := range []string{
+		"name: mcp-auth-server-cert",
+		"namespace: mcp-sentinel",
+		"secretName: mcp-auth-server-tls",
+		`- "auth.example.com"`,
+		"name: letsencrypt-prod",
+	} {
+		if !strings.Contains(manifest, want) {
+			t.Fatalf("certificate manifest missing %q:\n%s", want, manifest)
 		}
 	}
 }

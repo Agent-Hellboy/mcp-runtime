@@ -287,8 +287,10 @@ provision one; `--test-mode` defaults to `mcp-runtime-ca`. See
 The bundled mcp-auth authorization server is optional and off by default. Check
 the provider with `./bin/mcp-runtime auth provider-check --issuer-url <issuer>`,
 then enable it with `--with-mcp-auth-server`; outside test mode it also needs
-`--mcp-auth-issuer-url`, `--mcp-auth-resource-url`, `--mcp-auth-tls-secret`, and
-`--mcp-auth-signing-key-secret`. See
+`--mcp-auth-issuer-url`, `--mcp-auth-resource-url`, and
+`--mcp-auth-signing-key-secret`. With managed TLS, setup provisions the auth
+issuer certificate automatically; `--mcp-auth-tls-secret` is only an optional
+override for externally managed certificates. See
 [MCP authorization](mcp-authorization.md).
 
 Every setup flag and its default is listed in the

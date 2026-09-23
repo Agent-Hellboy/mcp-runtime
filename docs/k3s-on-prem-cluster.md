@@ -385,8 +385,9 @@ Then run setup with static Secret mode:
 ```
 
 Do not combine `--provided-tls-secrets` with `--acme-email` or
-`--tls-cluster-issuer`. If you also deploy bundled mcp-auth, create its TLS
-Secret in `mcp-sentinel` and pass its name through `--mcp-auth-tls-secret`.
+`--tls-cluster-issuer`. If you also deploy bundled mcp-auth, add its
+operator-managed TLS Secret to the `mcp-sentinel` namespace and pass its name
+through the optional `--mcp-auth-tls-secret` override.
 
 ### Renewal
 

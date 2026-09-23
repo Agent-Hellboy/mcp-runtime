@@ -12,6 +12,8 @@ import (
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/util/yaml"
+
+	setupplan "mcp-runtime/internal/cli/setup/plan"
 )
 
 // mcpAuthManifestTemplate reads the shipped manifest. The path is derived from
@@ -348,5 +350,47 @@ func TestRenderMCPAuthServerManifestTestModeServesBothSDKFixtures(t *testing.T) 
 	want := `{name: MCP_AUTH_RESOURCES, value: "http://localhost:18080/mcp-auth-sdk-ping/mcp,http://localhost:18080/mcp-auth-sdk-echo/mcp"}`
 	if !strings.Contains(manifest, want) {
 		t.Fatalf("test mode must serve both SDK fixtures.\nwant: %s\ngot:\n%s", want, manifest)
+	}
+}
+
+func TestMCPAuthTLSHost(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		plan    setupplan.Plan
+		want    string
+		wantErr string
+	}{
+		{
+			name: "production issuer host",
+			plan: setupplan.Plan{DeployMCPAuthServer: true, MCPAuthIssuerURL: "https://auth.example.com/mcp-auth"},
+			want: "auth.example.com",
+		},
+		{
+			name:    "port rejected",
+			plan:    setupplan.Plan{DeployMCPAuthServer: true, MCPAuthIssuerURL: "https://auth.example.com:8443/mcp-auth"},
+			wantErr: "must not include a port",
+		},
+		{
+			name: "test mode skips public host",
+			plan: setupplan.Plan{DeployMCPAuthServer: true, TestMode: true},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := mcpAuthTLSHost(tc.plan)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("mcpAuthTLSHost() error = %v, want %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("mcpAuthTLSHost() error = %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("mcpAuthTLSHost() = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }

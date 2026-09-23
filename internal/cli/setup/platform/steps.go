@@ -68,7 +68,7 @@ type mcpAuthPrerequisiteStep struct{}
 
 func (s mcpAuthPrerequisiteStep) Name() string { return "mcp-auth-prerequisites" }
 func (s mcpAuthPrerequisiteStep) Run(_ *zap.Logger, _ SetupDeps, ctx *SetupContext) error {
-	return checkMCPAuthPrerequisites(ctx.Plan.MCPAuthTLSSecret, ctx.Plan.MCPAuthSigningKeySecret, ctx.Plan.TestMode)
+	return checkMCPAuthPrerequisites(ctx.Plan.MCPAuthSigningKeySecret, ctx.Plan.TestMode)
 }
 
 type tlsStep struct{}
