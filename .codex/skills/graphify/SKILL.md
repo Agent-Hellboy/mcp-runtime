@@ -56,6 +56,8 @@ Build and query knowledge graphs for code, documents, papers, images, or video.
   interpreter guard and [query-tools.md](references/query-tools.md).
 - For `--watch`, commit hooks, or Claude integration, read
   [automation.md](references/automation.md).
+- For upstream Graphify release checks or local skill maintenance, read
+  [upstream-maintenance.md](references/upstream-maintenance.md).
 
 If no path is given for a fresh graph, use the current directory. Clone a
 repository only when the user supplied a repository URL for graphing. Do not

@@ -158,3 +158,22 @@ In any agent prompt, include:
 > Use `graphify query "<your question>"` to look up any code structure before grepping files. The graph is at `graphify-out/graph.json`.
 
 The `PreToolUse` hook already injects this reminder whenever a Bash command contains `grep`, `find`, or similar — so agents running in this repo are automatically nudged toward the graph.
+
+### Third-party development tools
+
+For Graphify's bundled skill and CLI, check upstream before changing the local
+integration and record the reviewed release/date in
+`.codex/skills/graphify/references/upstream-maintenance.md`. Compare the latest
+Graphify release and PyPI package (`graphifyy`) with `graphify --version`; review
+the upstream Codex skill and referenced docs for behavior changes. Preserve
+MCP Runtime-specific safety rules and examples. Update the local skill and its
+evals when needed, then validate skill manifests and reference links. Do not
+upgrade the installed CLI as part of a documentation review; upgrade it only
+when explicitly requested.
+
+When changing or documenting a development tool used by this repo, update the
+tool's authoritative version/source and install or upgrade instructions in
+the relevant `AGENTS.md`, skill, or focused developer guide. Prefer the tool's
+official release source over remembered versions. Keep this index short: put
+long setup steps and troubleshooting in the owning skill/reference, and update
+that material when tool versions or workflows change.
