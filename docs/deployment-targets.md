@@ -15,6 +15,15 @@ choose the right Kubernetes target and install shape. It sits between
 create EKS, GKE, AKS, k3s, or kubeadm clusters for you, and it does not modify
 node container runtime trust unless a documented provider path says so.
 
+## Tested Public Reference
+
+The public example platform at [platform.mcpruntime.org](https://platform.mcpruntime.org)
+is deployed on the project's k3s cluster. Use the [k3s Deployment Runbook](k3s-deployment-runbook.md)
+for its production operations, including secure cluster access, certificate
+reuse, image rollout, and verification. This is the currently tested public
+deployment shape; the other distribution entries below describe supported
+installation shapes and prerequisites, not equivalent production validation.
+
 ## Common Deployment Model
 
 Every distribution needs the same high-level shape:
@@ -34,6 +43,54 @@ Keep the environment for a given install in a file and pass it with
 `--env-file` instead of exporting variables ad hoc, so reruns use the same
 configuration (`config/deployments/mcpruntime-org.env.example` is the template;
 variables already present in the environment are not overridden).
+
+### Get a kubeconfig for the target distribution
+
+Use the distribution or cloud provider's supported command to create/update a
+local kubeconfig for managed clusters (EKS, GKE, AKS), Docker Desktop, kind, or
+minikube. For self-managed clusters, use the administrator-provisioned
+kubeconfig. On a k3s server, an authorized operator can copy
+`/etc/rancher/k3s/k3s.yaml` over SSH; replace its loopback API address with the
+reachable control-plane address while retaining its CA data, then restrict the
+file to the current user (`chmod 600`). Do not disable TLS verification or put
+kubeconfig credentials in the repo.
+
+Select and verify the intended context before setup:
+
+```bash
+export KUBECONFIG="$HOME/.kube/<cluster>.yaml"
+kubectl config get-contexts
+kubectl config use-context <context-name>
+kubectl config current-context
+kubectl get nodes
+```
+
+Use `--context <context-name>` or `MCP_KUBE_CONTEXT` when running setup from a
+multi-context kubeconfig. For the public k3s scripts, set both `KUBECONFIG`
+and `MCP_SETUP_KUBECONFIG`; those scripts also accept `MCP_KUBE_CONTEXT`.
+
+### Cluster-specific configuration to decide
+
+Keep these values in a private env file for repeatable installs. The values
+depend on the distribution and infrastructure; the public k3s profile is only
+one example.
+
+| Setting | What to configure |
+|---|---|
+| kubeconfig and context | Credential file, context name, API endpoint reachability, and user RBAC permissions. |
+| bootstrap provider | Select a supported provider for prerequisite setup when needed; do not assume the k3s provider applies to managed clusters. |
+| node architecture | `MCP_IMAGE_PLATFORM` must match the nodes that schedule platform workloads. |
+| storage | Default `StorageClass`, persistence sizing, and supported access modes for the platform databases/registry. |
+| ingress and DNS | Existing controller vs repo-managed Traefik; public hostnames and DNS records for `platform`, `mcp`, and `registry`. |
+| TLS | Existing cert-manager `ClusterIssuer`, ACME issuer, enterprise CA, or externally managed TLS Secrets. Reuse existing certificates on routine rollouts. |
+| registry | Bundled HTTP/HTTPS or external registry; node-level pull trust/auth and push credentials. For managed clouds, prefer the provider registry and workload/node identity where supported. |
+| public API access | Kubernetes API endpoint used by nodes and operators; the runtime API NetworkPolicy port must match the cluster API port. |
+
+The `hack/deploy/mcpruntime-org/` scripts encode this repository's public k3s
+layout (Sentinel namespace, bundled registry, Traefik integration, and
+mcpruntime.org hostnames). For other distributions, use the generic CLI setup
+and the cluster's own image publication/GitOps process unless a separate
+distribution-specific rollout guide is provided.
 
 For production-like installs, prefer:
 
@@ -75,7 +132,7 @@ For an existing external registry instead:
 | kind | Contributor development, CI-like smoke tests, disposable clusters | Bundled HTTP registry with the documented kind mirror | Use [Contributor Local Kind](contributor/local-kind.md) and `setup --test-mode`. |
 | Docker Desktop Kubernetes | Laptop demos and local evaluation | Bundled HTTP registry or Docker Desktop image loading | Good for local UI/API exploration, not production. |
 | minikube | Laptop or VM evaluation | Insecure registry flag at cluster start, or `minikube image load` | Recreate minikube when changing insecure registry settings. |
-| k3s | Single-node lab, edge, small self-managed clusters | Bundled HTTP for labs; bundled HTTPS or external for production | See k3s examples below, [k3s Deployment Runbook](k3s-deployment-runbook.md) (operational reruns/clean), [k3s On-Prem Cluster](k3s-on-prem-cluster.md) (topology), and [Cluster Readiness - k3s](cluster-readiness.md#k3s). |
+| k3s | Single-node lab, edge, small self-managed clusters | Bundled HTTP for labs; bundled HTTPS or external for production | **Tested public reference:** [platform.mcpruntime.org](https://platform.mcpruntime.org). See [k3s Deployment Runbook](k3s-deployment-runbook.md) (production operations), [k3s On-Prem Cluster](k3s-on-prem-cluster.md) (topology), and [Cluster Readiness - k3s](cluster-readiness.md#k3s). |
 | kubeadm / vanilla Kubernetes | Self-managed production or staging | External registry, or bundled HTTPS with node CA trust | Configure containerd, DNS, ingress, storage, and TLS on every node. |
 | RKE2 | Self-managed production or staging | External registry, or bundled HTTPS with node CA trust | Treat it like a hardened self-managed cluster; use provider tooling for runtime config. |
 | EKS | AWS managed Kubernetes | ECR | Use AWS-managed node registry auth, a real ingress/load balancer, Route 53 or equivalent DNS, and cert-manager or enterprise TLS. |

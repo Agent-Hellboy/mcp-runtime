@@ -331,7 +331,7 @@ Quick reference:
 mcp-runtime server init my-server --from-server http://localhost:8088
 mcp-runtime server validate --metadata-dir .mcp
 mcp-runtime server build image my-server --tag v1
-mcp-runtime server push --image ... --scope tenant   # registry push is equivalent
+mcp-runtime server push --image ... --scope tenant
 mcp-runtime server deploy my-server --scope tenant --metadata-dir .mcp
 ```
 

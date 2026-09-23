@@ -254,6 +254,10 @@ resolves the target team namespace and defaults team ownership metadata. The
 namespace is the write boundary for the `MCPServer`, grants, sessions, and
 secrets. `server deploy` creates by default; if a server with the same name
 already exists, pass `--update` to redeploy it intentionally.
+For private registry images, the platform deployment path also creates or
+refreshes `mcp-runtime-registry-pull` in that namespace and attaches it to the
+workload service account. Raw `kubectl apply` does not run this provisioning;
+create the pull Secret in the manifest's namespace before applying raw YAML.
 
 Deploy from metadata:
 
@@ -271,9 +275,10 @@ Deploy from metadata:
 
 MCP Runtime supports two practical image flows. Keep these flows separate so tags stay consistent.
 
-`server push` is the preferred developer push command. `registry push` is
-equivalent — the same `--image`, `--name`, and `--scope` flags through the same
-platform API — and remains available for registry-centric runbooks.
+`server push` is the user-facing command for publishing MCP server images
+through the authenticated platform API. Registry commands are reserved for
+registry administration; use `admin registry push` only for direct Kubernetes
+operator debugging.
 
 ### Flow A — metadata-driven build with the CLI
 

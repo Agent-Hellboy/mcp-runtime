@@ -5,8 +5,11 @@ description: Operate or debug the MCP Runtime public k3s deployment and related 
 
 # k3s Public Ops
 
-Use this skill for the `mcpruntime.org` style public k3s deployment. Prefer the
-documented user-facing commands and scripts over private shortcuts.
+Use this skill for the `mcpruntime.org` style public k3s deployment. For
+distribution-neutral target selection and kubeconfig setup, start with
+[`docs/deployment-targets.md`](../../../docs/deployment-targets.md); this skill
+and its scripts cover the tested public k3s implementation. Prefer documented
+user-facing commands and scripts over private shortcuts.
 
 ## Source Of Truth
 
@@ -16,13 +19,19 @@ documented user-facing commands and scripts over private shortcuts.
 - Readiness/debug guide: `docs/cluster-readiness.md`
 - Scripts (canonical): `hack/deploy/mcpruntime-org/{setup,clean,restore,rollout,multitenancy-test}.sh`
 - Script index: `hack/README.md`
+- User path: `docs/quickstart.md` (published CLI install, hosted platform login,
+  server publish, grant, adapter, and analytics UI)
+- CLI release workflow: `.github/workflows/release.yaml`
 
 ## Current production VM
 
 - SSH host: `root@${MCP_PRODUCTION_SSH_HOST}` from `config/deployments/mcpruntime-org.env`
 - Preferred workstation key: `~/.ssh/id_ed25519`
-- Production kubeconfig: obtain it through the approved operator procedure;
-  do not assume the contributor path `/private/tmp/mcpruntime-k3s.yaml` exists.
+- Production kubeconfig: use the team-shared file when provisioned; otherwise
+  follow [Obtain and select cluster access](../../../docs/k3s-deployment-runbook.md#obtain-and-select-cluster-access)
+  to retrieve it securely from the k3s server and validate the API endpoint,
+  context, and TLS. Never assume a contributor temp path exists or commit
+  kubeconfig material.
 
 Use the VM password only for a one-time interactive SSH-key installation. Never
 store that password in this skill, `AGENTS.md`, repository env files, shell
@@ -38,12 +47,77 @@ run `cluster doctor` before any production mutation.
 
 ## Non-Negotiables
 
-- Rebuild `./bin/mcp-runtime` before setup or rollout validation. Stale CLI
-  binaries can stamp stale registry image refs.
+- Before every production deployment, ask which MCP Runtime branch or ref to
+  build and deploy. Show the current branch/ref and working-tree state as
+  context, but do not silently choose `main` or the currently checked-out ref.
+- Build `./bin/mcp-runtime` from the selected ref before setup, rollout, or
+  validation. Confirm the binary was built from that ref before using it;
+  stale CLI binaries can stamp stale registry image refs. Do not switch refs or
+  discard local changes without the user's direction.
+- For production image builds, use the workstation's selected Docker daemon
+  and set `MCP_IMAGE_PLATFORM` to the target node architecture (currently
+  `linux/amd64`). Keep `KUBECONFIG` on the shared production context. Use
+  `MCP_REGISTRY_PUSH_MODE=public` to push images to
+  `registry.<domain>/<image>:<unique-tag>`.
+- mcp-auth is a separate release track. Leave its Deployment unchanged unless
+  an update is requested. The default candidate source is the published Docker
+  Hub image `docker.io/princekrroshan01/mcp-auth-server:latest`; copy it into
+  the Runtime registry under a unique `MCP_AUTH_IMAGE_TAG`. Build from
+  `/Users/proshan/mcp-auth` only when intentionally testing source changes;
+  then require a selected `MCP_AUTH_BUILD_REF`, a clean checkout whose HEAD
+  matches that ref, and `MCP_AUTH_IMAGE_SOURCE=local`. Both paths preserve the
+  existing auth config, data PVC, signing key, and TLS Secret.
+- CIMD support in mcp-auth is enabled by default. Set
+  `MCP_AUTH_CLIENT_ID_METADATA_ENABLED=false` only when explicitly opting out.
+  After rollout, verify the public authorization metadata advertises support
+  and use a new or cleared Claude/Codex OAuth client entry so cached DCR
+  credentials do not mask CIMD behavior. See the TypeScript SDK resource example
+  in `examples/mcp-auth-sdk-typescript/`.
+- Ask whether this rollout should update mcp-auth. If yes, ask whether to
+  deploy published Docker Hub `latest` (recommended) or intentionally build a
+  selected local mcp-auth ref for source testing. For local-source testing,
+  inspect `/Users/proshan/mcp-auth`, check out the requested ref only with the
+  user's direction, and require a clean worktree. For a published-image
+  update, use `MCP_AUTH_IMAGE_SOURCE=published`; do not build the sibling repo.
+  If no update is requested, retain the currently deployed mcp-auth image.
+- Treat the selected Runtime ref and the mcp-auth build choice as required
+  inputs to each production rollout, even when a user has already authorized
+  deployment generally. Do not begin production mutation until both are clear.
+- Keep candidate deployment and release publication separate. A platform image
+  rollout does not publish new CLI binaries, and a GitHub CLI release does not
+  deploy platform images. Do not tag/publish the Runtime or mcp-auth release
+  until the candidate has passed the user path below and the user explicitly
+  asks to publish it.
+- Before running the deployment command, inspect its `--help`, the rollout
+  script, and the production env profile, then ask about deployment flags or
+  overrides that affect this rollout. Present only relevant choices together
+  with the profile's current values and recommended defaults; do not invent
+  values or silently override production settings. Wait for answers to any
+  unresolved flag choices before mutating production.
+- Preserve existing production certificates. Prefer the targeted rollout path
+  for application image updates; do not run setup in a way that requests or
+  reissues certificates as part of an ordinary deploy. Before any setup or TLS
+  operation, inspect existing Certificate/Secret readiness and the configured
+  ClusterIssuer, and retain the current issuer and TLS Secret references. Only
+  request certificate issuance when the user explicitly asks for a TLS change
+  or inspection shows issuance is necessary, and explain that consequence
+  before proceeding.
+- After rollout, verify the candidate through the documented customer journey:
+  use the built CLI against `https://platform.mcpruntime.org` to log in,
+  publish a uniquely named temporary `qa-audit-*` MCP server, grant an agent,
+  call a tool through the adapter, and confirm the event in **Analytics →
+  Tools** in the platform UI. Run browser checks for signed-out and signed-in
+  UI surfaces when credentials are available. Clean up every temporary resource
+  and report any skipped authenticated/browser flow as blocked; do not treat
+  `cluster doctor` alone as release acceptance.
+- The `test/e2e/production-remote.sh` and `production-vm.sh` suites reset and
+  provision disposable VMs. Never point them at the `mcpruntime.org`
+  production cluster; use targeted temporary user resources for production
+  acceptance instead.
 - `cluster doctor` uses `KUBECONFIG` env, not `--kubeconfig`:
 
 ```bash
-KUBECONFIG=/private/tmp/mcpruntime-k3s.yaml ./bin/mcp-runtime cluster doctor
+KUBECONFIG="$HOME/.kube/config" ./bin/mcp-runtime cluster doctor
 ```
 
 - For public bundled HTTPS, platform and tenant pull refs should use the
@@ -67,8 +141,8 @@ Run the actual script path:
 ```bash
 bash -n hack/deploy/mcpruntime-org/setup.sh
 bash hack/deploy/mcpruntime-org/setup.sh
-KUBECONFIG=/private/tmp/mcpruntime-k3s.yaml ./bin/mcp-runtime cluster doctor
-kubectl --kubeconfig /private/tmp/mcpruntime-k3s.yaml get pods -A
+KUBECONFIG="$HOME/.kube/config" ./bin/mcp-runtime cluster doctor
+kubectl --kubeconfig "$KUBECONFIG" get pods -A
 ```
 
 Healthy setup signs:
@@ -103,12 +177,29 @@ apply. Do not apply stale `resourceVersion`, `uid`, `managedFields`, or
 `hack/deploy/mcpruntime-org/rollout.sh` is a live script. It must:
 
 - rebuild `./bin/mcp-runtime`
-- build API/UI images for `MCP_IMAGE_PLATFORM`
-- push image blobs into the bundled registry
+- build API/UI images for `MCP_IMAGE_PLATFORM` using the workstation's
+  selected Docker daemon
+- push image blobs into the bundled registry (public mode uses the
+  `registry.<domain>` hostname and the existing platform registry credential)
+- optionally update mcp-auth only when requested: published Docker Hub image
+  by default, or local source when intentionally testing a confirmed clean ref
+  with `MCP_AUTH_IMAGE_SOURCE=local`
 - deploy API/UI refs as `registry.<domain>/<repo>:<tag>`
 - ensure `mcp-sentinel/mcp-runtime-registry-pull` exists and is attached to
   API/UI deployments
 - finish both rollout status checks successfully
+
+Run with a unique tag. For the public production cluster, set
+`MCP_IMAGE_PLATFORM=linux/amd64`, set `MCP_REGISTRY_PUSH_MODE=public`, and
+point `MCP_SETUP_KUBECONFIG` to the shared kubeconfig currently on the
+`prod-mcp-runtime` context. The production profile remains the source for the
+domain and other deployment settings.
+
+The user-facing release check is separate from the rollout command. Follow
+`docs/quickstart.md` with the candidate CLI, then verify the same server,
+connect configuration, and Analytics → Tools output in the hosted UI. The
+GitHub release workflow only publishes CLI binaries; do not publish a new CLI
+or mcp-auth release until these checks pass.
 
 Run with a unique tag:
 
@@ -120,11 +211,11 @@ MCP_ROLLOUT_TAG=verify-rollout-$(date +%m%d%H%M%S) \
 Then verify:
 
 ```bash
-kubectl --kubeconfig /private/tmp/mcpruntime-k3s.yaml \
+kubectl --kubeconfig "$KUBECONFIG" \
   get deploy mcp-platform-api mcp-runtime-api mcp-analytics-api mcp-sentinel-ui -n mcp-sentinel \
   -o jsonpath='{range .items[*]}{.metadata.name}{"|"}{range .spec.template.spec.imagePullSecrets[*]}{.name}{","}{end}{"|"}{range .spec.template.spec.containers[*]}{.image}{";"}{end}{"|"}{.status.readyReplicas}{"/"}{.status.replicas}{"\n"}{end}'
 
-KUBECONFIG=/private/tmp/mcpruntime-k3s.yaml ./bin/mcp-runtime cluster doctor
+KUBECONFIG="$KUBECONFIG" ./bin/mcp-runtime cluster doctor
 ```
 
 ## Registry Debug Shortcuts
@@ -132,7 +223,7 @@ KUBECONFIG=/private/tmp/mcpruntime-k3s.yaml ./bin/mcp-runtime cluster doctor
 Get admin key:
 
 ```bash
-ADMIN_KEY="$(kubectl --kubeconfig /private/tmp/mcpruntime-k3s.yaml \
+ADMIN_KEY="$(kubectl --kubeconfig "$KUBECONFIG" \
   get secret mcp-sentinel-secrets -n mcp-sentinel \
   -o jsonpath='{.data.UI_API_KEY}' | base64 -d)"
 ```
@@ -155,6 +246,12 @@ Expected:
 
 `hack/deploy/mcpruntime-org/multitenancy-test.sh` is intentionally platform-API-only. It unsets
 `KUBECONFIG`. Validate it with public endpoints:
+
+This production QA must exercise `server build image`, `server push`, and
+`server deploy` through the platform CLI. To additionally verify the
+namespace-local image pull Secret after each deploy, run with
+`VERIFY_DEPLOY_PULL_SECRET=1` and a production `KUBECONFIG`; the script keeps
+KUBECONFIG unset for CLI calls and uses the saved path only for read-only checks.
 
 ```bash
 PLATFORM_URL=https://platform.mcpruntime.org \

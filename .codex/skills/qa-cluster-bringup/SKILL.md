@@ -201,7 +201,7 @@ kubectl create secret generic workspace-assistant-mcp-analytics -n mcp-servers \
   --registry registry.registry.svc.cluster.local:5000 \
   --tag dev
 
-./bin/mcp-runtime registry push \
+./bin/mcp-runtime server push \
   --image registry.registry.svc.cluster.local:5000/workspace-assistant-mcp:dev
 
 rm -rf /tmp/workspace-assistant-mcp-manifests

@@ -198,7 +198,7 @@ Set with `--platform-mode` on `setup` or `MCP_SETUP_PLATFORM_MODE` in your env f
 
 ## Scopes
 
-When publishing a server image (`registry push`) or deploying a server
+When publishing a server image (`server push`) or deploying a server
 (`server deploy`), `--scope` controls which catalog namespace the server lands in:
 
 | Scope | Namespace | Who can use it |

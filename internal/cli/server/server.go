@@ -36,7 +36,7 @@ require --use-kube. For platform workflows, use mcp-runtime auth login
 delete, status, and policy.
 
 For building images from source, use 'server build'.
-For pushing images, use 'server push' (or the equivalent 'registry push').`,
+For pushing MCP server images, use 'server push'.`,
 	}
 
 	mgr.BindUseKubeFlag(cmd)
@@ -57,7 +57,7 @@ For pushing images, use 'server push' (or the equivalent 'registry push').`,
 	initCmd := &cobra.Command{
 		Use:   "init [name]",
 		Short: "Initialize .mcp metadata for a server",
-		Long:  "Initialize .mcp/servers.yaml metadata for a server. Use --tool flags to seed governed tool metadata, or --from-server to discover tools from a running MCP server automatically. Then build, push, and deploy with server build image, registry push, and server deploy.",
+		Long:  "Initialize .mcp/servers.yaml metadata for a server. Use --tool flags to seed governed tool metadata, or --from-server to discover tools from a running MCP server automatically. Then build, push, and deploy with server build image, server push, and server deploy.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if initFromServer != "" {
@@ -322,7 +322,7 @@ For pushing images, use 'server push' (or the equivalent 'registry push').`,
 	pushCmd := &cobra.Command{
 		Use:   "push",
 		Short: "Push a server image through the platform API",
-		Long:  "Save a local Docker image and publish it through the authenticated platform registry API. This is an ergonomic alias for `registry push` and supports tenant, org, and public scopes.",
+		Long:  "Save a local Docker image and publish it through the authenticated platform registry API. Supports tenant, org, and public scopes.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			executor := mgr.exec
 			if executor == nil {

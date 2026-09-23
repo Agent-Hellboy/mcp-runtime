@@ -85,7 +85,7 @@ IMAGE_REF="$(awk '
     print image ":" tag
   }
 ' examples/governed-agent/deploy/server.metadata.yaml)"
-./bin/mcp-runtime registry push --image "${IMAGE_REF}"
+./bin/mcp-runtime server push --image "${IMAGE_REF}"
 
 rm -rf /tmp/mcp-runtime-governed-agent-manifests
 ./bin/mcp-runtime pipeline generate \

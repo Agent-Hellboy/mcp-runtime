@@ -782,7 +782,7 @@ func validateDeployedServerImage(server platformapi.ServerListItem, expectedImag
 		return core.NewWithSentinel(
 			nil,
 			fmt.Sprintf(
-				"server %s deployed with image %q but runtime inventory reports %q; verify registry push and deploy image references match",
+				"server %s deployed with image %q but runtime inventory reports %q; verify server push and deploy image references match",
 				server.Name,
 				expectedImage,
 				gotImage,

@@ -24,6 +24,7 @@ mcpruntime_org_load_dotenv() {
 # strict=0 (setup/rollout): fall back to mcpruntime-org.env.example
 mcpruntime_org_load_env() {
   local strict="${1:-0}"
+  local caller_kubeconfig="${MCP_SETUP_KUBECONFIG:-${KUBECONFIG:-}}"
   mcpruntime_org_load_dotenv
 
   MCP_DEPLOY_ENV_FILE="${MCP_DEPLOY_ENV:-config/deployments/mcpruntime-org.env}"
@@ -46,13 +47,24 @@ mcpruntime_org_load_env() {
     exit 1
   fi
 
-  KUBECONFIG="${MCP_SETUP_KUBECONFIG:-${KUBECONFIG:-}}"
+  # The production profile supplies a default kubeconfig, while an explicit
+  # shell override must win (for example, a shared named-context kubeconfig).
+  if [[ -n "$caller_kubeconfig" ]]; then
+    KUBECONFIG="$caller_kubeconfig"
+    MCP_SETUP_KUBECONFIG="$caller_kubeconfig"
+  else
+    KUBECONFIG="${MCP_SETUP_KUBECONFIG:-${KUBECONFIG:-}}"
+  fi
   : "${KUBECONFIG:?set KUBECONFIG or MCP_SETUP_KUBECONFIG in $MCP_DEPLOY_ENV_FILE}"
   export KUBECONFIG MCP_DEPLOY_ENV_FILE
 }
 
 mcpruntime_org_kubectl() {
-  kubectl --kubeconfig "$KUBECONFIG" "$@"
+  local kube_args=(--kubeconfig "$KUBECONFIG")
+  if [[ -n "${MCP_KUBE_CONTEXT:-}" ]]; then
+    kube_args+=(--context "$MCP_KUBE_CONTEXT")
+  fi
+  kubectl "${kube_args[@]}" "$@"
 }
 
 mcpruntime_org_require_cluster() {

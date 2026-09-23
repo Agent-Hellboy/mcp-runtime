@@ -1,4 +1,4 @@
-Save a local Docker image and publish it through the authenticated platform registry API. This is an ergonomic alias for `registry push` and supports tenant, org, and public scopes.
+Save a local Docker image and publish it through the authenticated platform registry API. Supports tenant, org, and public scopes.
 
 Usage:
   mcp-runtime server push [flags]

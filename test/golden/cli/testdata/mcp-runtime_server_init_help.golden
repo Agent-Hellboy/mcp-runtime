@@ -1,4 +1,4 @@
-Initialize .mcp/servers.yaml metadata for a server. Use --tool flags to seed governed tool metadata, or --from-server to discover tools from a running MCP server automatically. Then build, push, and deploy with server build image, registry push, and server deploy.
+Initialize .mcp/servers.yaml metadata for a server. Use --tool flags to seed governed tool metadata, or --from-server to discover tools from a running MCP server automatically. Then build, push, and deploy with server build image, server push, and server deploy.
 
 Usage:
   mcp-runtime server init [name] [flags]

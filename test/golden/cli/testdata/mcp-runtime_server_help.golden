@@ -11,7 +11,7 @@ require --use-kube. For platform workflows, use mcp-runtime auth login
 delete, status, and policy.
 
 For building images from source, use 'server build'.
-For pushing images, use 'server push' (or the equivalent 'registry push').
+For pushing MCP server images, use 'server push'.
 
 Usage:
   mcp-runtime server [command]

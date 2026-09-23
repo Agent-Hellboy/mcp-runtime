@@ -73,7 +73,7 @@ kill $SERVER_PID
 
 mcp-runtime server validate --metadata-dir .mcp
 mcp-runtime server build image payments --tag v1
-mcp-runtime registry push --image registry.example.com/acme/payments:v1 --scope tenant
+mcp-runtime server push --image registry.example.com/acme/payments:v1 --scope tenant
 mcp-runtime server deploy payments --scope tenant --metadata-dir .mcp
 ```
 

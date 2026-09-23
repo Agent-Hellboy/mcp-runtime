@@ -84,6 +84,14 @@ Pre-commit: `pre-commit install`; full suite `pre-commit run --all-files` (sets 
 
 **CLI docs sync:** when editing `docs/cli.md`, `docs/getting-started.md`, or command examples, copy wording from `./bin/mcp-runtime <group> <subcommand> --help` — do not paraphrase from memory.
 
+**Kubernetes deployment QA:** when a test environment supports the platform API,
+exercise the user-facing CLI flow (`server build image` → `server push` →
+`server deploy`) as well as checking Kubernetes readiness. This verifies image
+publication, namespace setup, pull-secret provisioning, and deployment through
+the same path users run. Use direct `kubectl`/`server apply --use-kube` only
+when the test specifically targets the direct-manifest path or platform API is
+unavailable; record that limitation in the QA result.
+
 ## Conventions for code changes
 
 - **Scope:** change only what the task needs; match nearest patterns.

@@ -89,7 +89,7 @@ mcp-runtime auth logout
 | `status` | User | Platform health at a glance | [status](#status) |
 | `catalog` | User | Search tools across visible servers | [catalog](#catalog) |
 | `server` | User / Admin | Scaffold, validate, build, push, deploy, manage | [Publish a server](publish-mcp-server.md) |
-| `registry` | User / Operator | Push images; inspect the registry | [registry](#registry) |
+| `registry` | Operator | Inspect or configure a registry | [registry](#registry) |
 | `access` | User / Admin | Grants and sessions for gateway policy | [API reference](api.md) |
 | `adapter` | User | HTTP proxy, stdio shim, and mTLS enrollment for agents | [Agent adapters](agent-adapters.md) |
 | `team` | Admin | Create teams and add password users | [Multi-team](multi-team.md) |
@@ -98,10 +98,10 @@ mcp-runtime auth logout
 | `setup` | Operator | Install the full platform stack | [setup](#setup) |
 | `cluster` | Operator | Initialize clusters, run readiness and post-install checks, manage cert-manager | [Deployment targets](deployment-targets.md) |
 
-`server push` is the user-facing image publishing workflow. It accepts the
-same `--image`, `--name`, and `--scope` options as `registry push` and uses the
-authenticated platform API. `registry push` remains available for explicit
-registry workflows and existing runbooks.
+`server push` is the user-facing image publishing workflow. It publishes an
+image through the authenticated platform API. Registry administration stays
+under `registry`; use `admin registry push` only for direct Kubernetes operator
+debugging.
 
 MCP Runtime is alpha software as a whole: every command, flag, and output shape
 on this page may still change between releases.
@@ -277,9 +277,7 @@ mcp-runtime server push --image ... --scope org      # org-wide catalog
 mcp-runtime server push --image ... --scope public   # anonymous catalog
 ```
 
-`server push` is the preferred developer path. `registry push` is equivalent —
-same flags, same platform API — and stays available for registry-centric
-runbooks. Both require platform credentials.
+`server push` requires platform credentials and is the supported developer path.
 
 ### server deploy
 
@@ -367,7 +365,7 @@ mcp-runtime server logs   workspace-demo --namespace mcp-team-acme --follow --us
 
 ## registry
 
-**[User]** for `push` — **[Operator]** for `status`, `info`, `provision`
+**[Operator]**
 
 ```bash
 # Inspect
@@ -376,15 +374,12 @@ mcp-runtime registry info
 
 # Configure an external registry
 mcp-runtime registry provision --url registry.example.com
-
-# Push — always use the exact ref from server build image
-mcp-runtime registry push \
-  --image registry.example.com/acme/workspace-demo:v1 \
-  --scope tenant
 ```
 
-`registry push` and [`server push`](#server-push) are equivalent; `server push`
-is the preferred path in the developer flow.
+Publish MCP server images with [`server push`](#server-push). The registry
+group contains only distinct operator tasks: status, info, and external
+registry provisioning. `admin registry push` remains a separate hidden command
+for direct Kubernetes debugging and requires cluster-admin access.
 
 ---
 

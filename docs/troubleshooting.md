@@ -59,7 +59,7 @@ Common causes:
 
 ---
 
-### `registry push` returns 401
+### `server push` returns 401
 
 ```bash
 # Check the registry pull secret is valid
@@ -67,7 +67,7 @@ kubectl get secret mcp-runtime-registry-pull -n mcp-team-<slug>
 
 # Re-login and retry
 mcp-runtime auth login --api-url https://platform.example.com
-mcp-runtime registry push --image ...
+mcp-runtime server push --image ...
 ```
 
 ---

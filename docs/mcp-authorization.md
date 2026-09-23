@@ -213,6 +213,24 @@ The server uses SQLite on a PVC in production and memory storage only in
 `--test-mode`. The setup flag is opt-in; when it is absent, Runtime does not
 deploy this authorization server.
 
+The mcp-auth server image is released independently from the MCP Runtime CLI
+and platform images. For a public production rollout, use a unique image ref
+such as `registry.mcpruntime.org/mcp-auth-server:<tag>` and update it through
+the [k3s deployment runbook](k3s-deployment-runbook.md#separate-release-tracks-and-user-verification).
+An image-only update preserves the existing connector configuration, SQLite
+PVC, signing key, and TLS Secret; it does not require rerunning `setup` or
+issuing a certificate.
+
+Client ID Metadata Documents (CIMD) are disabled by default in mcp-auth. To
+test CIMD, deploy an image containing the feature and set
+`MCP_AUTH_CLIENT_ID_METADATA_ENABLED=true`; then confirm the authorization
+server metadata advertises `client_id_metadata_document_supported: true`.
+`MCP_AUTH_CLIENT_ID_METADATA_HOSTS` can restrict fetched metadata documents to
+a comma-separated host allowlist. When unset, mcp-auth still rejects non-HTTPS
+URLs and blocks private/reserved network destinations during DNS resolution.
+After enabling CIMD, clear a client's cached OAuth credentials before
+reconnecting so it does not reuse a previously registered DCR client ID.
+
 The same values can be supplied through the public deployment environment:
 
 ```bash

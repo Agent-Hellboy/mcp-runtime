@@ -146,7 +146,7 @@ Keep these flows distinct:
 - `server build image` builds and updates metadata but does not deploy.
 - `server generate` renders manifests from metadata for review/GitOps.
 - `server deploy --metadata-dir .mcp` deploys metadata-backed servers through the platform API.
-- `registry push` publishes images after platform credential validation.
+- `server push` publishes images after platform credential validation.
 
 Tests: `server_test.go`, `server_config_test.go`, and `build_test.go`.
 

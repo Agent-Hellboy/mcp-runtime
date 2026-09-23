@@ -84,7 +84,7 @@ flowchart LR
 | Initialize cluster | `cluster init`, `setup`, `bootstrap` |
 | Configure ingress + registry | `cluster config --ingress traefik`, `registry provision` |
 | Describe servers | `server init`, hand-written `MCPServer` YAML, or metadata in `.mcp/` |
-| Publish + deploy | `auth login`, `server build image`, `registry push`, `server deploy`, `server generate` for GitOps YAML |
+| Publish + deploy | `auth login`, `server build image`, `server push`, `server deploy`, `server generate` for GitOps YAML |
 | Grant access | `auth login`, `access grant init`, `access grant apply`; sessions via `adapter stdio|proxy --server … --agent …` or admin `access session init/apply` |
 | Observe | `status`, platform UI/API; admin: `sentinel status`, `sentinel port-forward ui` |
 

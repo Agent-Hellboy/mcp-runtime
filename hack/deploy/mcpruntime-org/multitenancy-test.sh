@@ -3,11 +3,13 @@ set -euo pipefail
 
 # End-to-end multi-tenant demo setup and verification (platform API only).
 #
-# This script intentionally does not use kubectl or KUBECONFIG. Admin credentials
+# The default flow does not use kubectl or KUBECONFIG. Admin credentials
 # (ADMIN_TOKEN_INPUT or admin email/password) are only used to create teams and
 # team users. Each team owner/member logs in with email/password — the same flow
 # a normal user follows after signing in through the UI (API keys from the
-# dashboard are optional; password login is enough for the CLI).
+# dashboard are optional; password login is enough for the CLI). Set
+# VERIFY_DEPLOY_PULL_SECRET=1 with KUBECONFIG to additionally verify the
+# namespace-local pull secret created by platform-backed server deploy.
 #
 # Default flow:
 #   1. admin: create/update Acme, Globex, and TechCorp teams + users
@@ -124,6 +126,7 @@ TECHCORP_SERVER="${TECHCORP_SERVER:-techcorp-tools-${RUN_ID}}"
 AGENT_ID="${AGENT_ID:-cursor}"
 
 # Force platform-API paths; never touch the local kubeconfig.
+VERIFY_PULL_SECRET_KUBECONFIG="${KUBECONFIG:-}"
 unset KUBECONFIG
 export MCP_RUNTIME_CONFIG_DIR
 
@@ -356,9 +359,9 @@ publish_server() {
   local image_ref
   image_ref="$(image_ref_from_metadata "$metadata_dir")"
 
-  echo "Pushing image ${image_ref} as ${profile} via tenant registry push (platform API)..."
+  echo "Pushing image ${image_ref} as ${profile} via server push (platform API)..."
   MCP_PLATFORM_API_URL="$PLATFORM_URL" MCP_REGISTRY_INGRESS_HOST="$REGISTRY_HOST" \
-    run_as "$profile" registry push --scope tenant --image "$image_ref"
+    run_as "$profile" server push --scope tenant --image "$image_ref"
 
   verify_metadata_governance "$metadata_dir" "$server"
 
@@ -367,6 +370,30 @@ publish_server() {
     deploy_args+=(--update)
   fi
   run_as "$profile" "${deploy_args[@]}"
+
+  if [[ "${VERIFY_DEPLOY_PULL_SECRET:-0}" == "1" ]]; then
+    if [[ -z "$VERIFY_PULL_SECRET_KUBECONFIG" ]]; then
+      echo "VERIFY_DEPLOY_PULL_SECRET=1 requires KUBECONFIG for the post-deploy assertion" >&2
+      exit 1
+    fi
+    verify_namespace_registry_pull_secret "$namespace"
+  fi
+}
+
+verify_namespace_registry_pull_secret() {
+  local namespace="$1"
+  local secret_type pull_refs
+  secret_type="$(kubectl --kubeconfig "$VERIFY_PULL_SECRET_KUBECONFIG" get secret mcp-runtime-registry-pull -n "$namespace" -o jsonpath='{.type}')"
+  if [[ "$secret_type" != "kubernetes.io/dockerconfigjson" ]]; then
+    echo "server deploy did not create a docker registry pull secret in ${namespace}" >&2
+    exit 1
+  fi
+  pull_refs="$(kubectl --kubeconfig "$VERIFY_PULL_SECRET_KUBECONFIG" get serviceaccount mcp-workload -n "$namespace" -o jsonpath='{.imagePullSecrets[*].name}')"
+  if [[ " $pull_refs " != *" mcp-runtime-registry-pull "* ]]; then
+    echo "mcp-runtime-registry-pull is not attached to mcp-workload in ${namespace}" >&2
+    exit 1
+  fi
+  echo "=== server deploy registry pull secret in ${namespace}: OK ==="
 }
 
 init_grant() {
@@ -569,6 +596,8 @@ verify_no_kubeconfig_ops() {
   KUBECONFIG="" MCP_RUNTIME_CONFIG_DIR="$tmp_dir" "$BIN" auth login --help >/dev/null
   KUBECONFIG="" MCP_RUNTIME_CONFIG_DIR="$tmp_dir" "$BIN" team --help >/dev/null
   KUBECONFIG="" MCP_RUNTIME_CONFIG_DIR="$tmp_dir" "$BIN" registry --help >/dev/null
+  KUBECONFIG="" MCP_RUNTIME_CONFIG_DIR="$tmp_dir" "$BIN" server push --help >/dev/null
+  KUBECONFIG="" MCP_RUNTIME_CONFIG_DIR="$tmp_dir" "$BIN" server deploy --help >/dev/null
   KUBECONFIG="" MCP_RUNTIME_CONFIG_DIR="$tmp_dir" "$BIN" adapter --help >/dev/null
 
   local login_ok=0
@@ -891,7 +920,7 @@ echo "=== techcorp adapter call: OK (11+22=33) ==="
 print_cursor_config
 echo
 echo "multi-tenant flow passed (platform API only, no kubectl/kubeconfig):"
-echo "  - tenant registry push via POST /api/runtime/registry/push (not admin direct push)"
+echo "  - tenant image publish via server push platform API (not admin direct push)"
 echo "  - ${GLOBEX_SLUG}/${AGENT_ID} called ${ACME_SLUG}/${ACME_SERVER} add(7,9)=16 via adapter"
 echo "  - ${TECHCORP_SLUG}/${AGENT_ID} called ${ACME_SLUG}/${ACME_SERVER} add(11,22)=33 via adapter"
 echo "  - admin credentials used only for team bootstrap; tenant flows used email/password login"
