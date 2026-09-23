@@ -16,8 +16,8 @@ exclude_docs: |
 theme:
   name: material
   custom_dir: overrides
-  logo: assets/favicon.svg
-  favicon: assets/favicon.svg
+  logo: assets/brand/mcp-runtime-logo-dark.png
+  favicon: assets/brand/mcp-runtime-icon.png
   font: false
   features:
     - navigation.sections

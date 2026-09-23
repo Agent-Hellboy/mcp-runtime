@@ -67,20 +67,12 @@
   flex: none;
 }
 
-.brand-mark {
+.brand-logo {
   display: block;
-  width: 27px;
-  height: 27px;
+  width: 158px;
+  height: auto;
+  max-height: 54px;
   object-fit: contain;
-  box-shadow: 0 6px 18px -10px color-mix(in srgb, var(--accent) 85%, transparent);
-}
-
-.brand-name {
-  font-family: var(--font-serif);
-  font-size: 17px;
-  letter-spacing: 0.01em;
-  color: var(--text);
-  white-space: nowrap;
 }
 
 .primary-nav {
@@ -841,10 +833,6 @@
 }
 
 @media (max-width: 560px) {
-  .brand-name {
-    display: none;
-  }
-
   .page-title {
     font-size: 24px;
   }
