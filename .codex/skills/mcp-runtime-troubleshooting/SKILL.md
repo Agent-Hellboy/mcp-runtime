@@ -77,7 +77,13 @@ Policy reload: the gateway sidecar polls its policy file; wait a few seconds aft
 
 ## Clean start (keep cluster, wipe workloads)
 
-**Destructive** to application namespaces. From repo root:
+This reset deletes namespaced workloads and cluster-scoped resources across the
+current context. Do not run it as routine troubleshooting. Verify the Kubernetes
+context and explain the scope first; run it only after the user explicitly
+approves this reset. Without approval, use symptom-specific remedies in
+[reference.md](reference.md) or the targeted reset in `qa-cluster-bringup`.
+
+From repo root, only after approval:
 
 ```bash
 to_delete="$(kubectl api-resources --verbs=delete --namespaced -o name | paste -sd, -)"

@@ -7,6 +7,10 @@ description: Run a deep platform-wide security audit of MCP Runtime — every co
 
 ## Overview
 
+For broad audits that assess proposed system or trust-boundary design choices,
+read [the shared design principles](../_shared/design-principles.md). Skip it
+when assessing only the deployed posture against the threat model.
+
 Use this skill when the goal is a deep, repository-wide security assessment of
 MCP Runtime, not a PR review. The output is a structured report with a threat
 model, a per-endpoint authn/authz matrix, tenant-isolation probes, protocol

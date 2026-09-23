@@ -7,6 +7,11 @@ description: Validate MCP Runtime against the upstream Model Context Protocol sp
 
 ## Overview
 
+When reviewing a proposed protocol/API shape or versioning decision, also use
+[the shared design principles](../_shared/design-principles.md) for contract
+stability and compatibility. Skip it for a conformance-only audit of existing
+behavior.
+
 This skill audits MCP Runtime — the proxy/gateway, example servers, agent
 adapters, and the CLI probe — against the **upstream Model Context Protocol
 specification** at <https://github.com/modelcontextprotocol/modelcontextprotocol>.

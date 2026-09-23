@@ -16,6 +16,10 @@ If the user asks for a deep, platform-wide audit, switch to
 dependency-only work, use `supply-chain-audit`. For RBAC, Pod Security
 Standards, NetworkPolicy, and manifest hygiene, use `k8s-hardening-audit`.
 
+When a requested review includes API, CRD, CLI, or system design choices, also
+read [the shared design principles](../_shared/design-principles.md). Load it
+only for design questions; ordinary change-scoped security reviews do not need it.
+
 ## Workflow
 
 1. Define the security boundary.

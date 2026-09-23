@@ -1,6 +1,6 @@
 # MCP Runtime Agent Skills
 
-Last checked: 2026-05-18.
+Last checked: 2026-09-23.
 
 This directory contains MCP Runtime's repo-local Agent Skills. The format is
 based on the public Agent Skills guidance:
@@ -34,13 +34,17 @@ is intentionally outside the core Agent Skills spec, which requires only
 
 ## Agent Skills Compliance Snapshot
 
-The current repo-local skills follow the core Agent Skills structure:
+The current repo-local skills follow the core Agent Skills structure. The
+generic `design-principles` skill has been consolidated into
+`_shared/design-principles.md`; focused security, Kubernetes, and protocol
+skills point to it only when their task includes design decisions.
 
-- 12 skills have a `SKILL.md`.
+- 18 repo-local skills have a `SKILL.md`.
 - Every skill `name` matches its directory name.
 - Every skill name uses lowercase letters, numbers, and hyphens only.
 - Every `description` is non-empty and below the 1024-character limit.
-- Every main `SKILL.md` is below the recommended 500-line ceiling.
+- Every main `SKILL.md` is below the recommended 500-line ceiling. Prefer a
+  short entrypoint that routes to references only for the requested workflow.
 - Every skill now has a minimal `evals/evals.json` suite with realistic prompts,
   expected outputs, and objective assertions.
 - Every skill also has `evals/trigger_queries.json` with should-trigger and
@@ -54,24 +58,10 @@ The current repo-local skills follow the core Agent Skills structure:
 - Shared report templates are referenced through relative paths such as
   `../_shared/FINDINGS-TEMPLATE.md`.
 
-Current line counts:
-
-```text
-237  k8s-hardening-audit/SKILL.md
-358  mcp-spec-compliance/SKILL.md
-279  qa-cluster-bringup/SKILL.md
-257  qa-e2e-operations/SKILL.md
-253  qa-e2e-perf/SKILL.md
-329  qa-e2e-security/SKILL.md
-283  qa-e2e-ui/SKILL.md
-138  release-readiness/SKILL.md
- 59  repo-guidance-sync/SKILL.md
-265  security-audit-platform/SKILL.md
-100  security-audit/SKILL.md
-200  supply-chain-audit/SKILL.md
-139  mcp-spec-compliance/references/live-conformance.md
-308  qa-e2e-ui/references/ui-coverage.md
-```
+Current entrypoint sizes are intentionally not duplicated here because they
+change with skill edits. Check them with `wc -l .codex/skills/*/SKILL.md`; keep
+the main file under 500 lines and move workflow-specific detail to focused
+references with a clear load condition.
 
 Current gap against the fuller Agent Skills evaluation guidance: the skills now
 have output and trigger prompt suites plus a local manifest validator, but there
@@ -82,14 +72,15 @@ that the skills instruct agents to run.
 
 ## Regression Timing
 
-These timings were measured on 2026-05-18 from the repo root on an existing
-`kind-mcp-runtime` contributor cluster.
+These are historical timings measured on 2026-05-18 from the repo root on an
+existing `kind-mcp-runtime` contributor cluster. Skill-eval rows covered the
+11 skills present at that time.
 
 | Check | Command or flow | Time observed | What it covers |
 |---|---|---:|---|
 | Skill frontmatter validation | `quick_validate.py` over all skill dirs | 0.59s | Required `SKILL.md` metadata and basic structure |
-| Skill eval JSON validation | `python -m json.tool` over `*/evals/*.json` | 0.72s | Output and trigger eval prompt suites parse as JSON for all 11 skills |
-| Skill eval schema validation | `.codex/skills/scripts/validate_skill_evals.py` | 0.08s | Eval IDs, prompts, assertions, trigger positives, and trigger negatives for all 11 skills |
+| Skill eval JSON validation | `python -m json.tool` over `*/evals/*.json` | 0.72s | Output and trigger eval prompt suites parsed as JSON for the 11 skills present at measurement time |
+| Skill eval schema validation | `.codex/skills/scripts/validate_skill_evals.py` | 0.08s | Eval IDs, prompts, assertions, trigger positives, and trigger negatives for the 11 skills present at measurement time |
 | OpenAI skill metadata smoke | shell check over `agents/openai.yaml` | 0.13s | Client metadata files exist with display name, short description, and default prompt |
 | UI service unit tests | `cd services/ui && go test ./... -race -count=1` | 6.99s | UI server handlers, config, auth/session behavior covered by Go tests |
 | CLI golden tests | `go test ./test/golden/... -count=1` | 4.64s | CLI help/output drift that can affect docs and UI-adjacent flows |

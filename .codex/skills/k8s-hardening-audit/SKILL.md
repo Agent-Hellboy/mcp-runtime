@@ -7,6 +7,10 @@ description: Audit MCP Runtime Kubernetes posture — RBAC, ServiceAccounts, Pod
 
 ## Overview
 
+For a design critique of proposed RBAC, Pod Security, or NetworkPolicy choices,
+read [the shared design principles](../_shared/design-principles.md). Skip it
+for a posture audit of existing manifests and clusters.
+
 Use this skill to assess MCP Runtime's cluster posture: RBAC graph, Pod
 Security Standards, NetworkPolicy enforcement, manifest hygiene, and CIS
 benchmark compliance. Findings use the shared template at
