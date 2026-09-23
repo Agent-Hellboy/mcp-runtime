@@ -16,7 +16,7 @@ build context, then build from your workstation with the production node
 architecture:
 
 ```bash
-MCP_AUTH_SOURCE=/Users/proshan/mcp-auth
+MCP_AUTH_SOURCE=/path/to/mcp-auth
 MCP_AUTH_REF=issue-13-cimd # choose the ref being tested
 MCP_AUTH_COMMIT="$(git -C "$MCP_AUTH_SOURCE" rev-parse "$MCP_AUTH_REF^{commit}")"
 MCP_AUTH_TAG="verify-ts-$(date -u +%Y%m%dT%H%M%S)-${MCP_AUTH_COMMIT:0:8}"
@@ -74,9 +74,18 @@ apply bypasses the platform's pull-secret provisioning, so create the secret
 in `mcp-servers` first:
 
 ```bash
+umask 077
+PULL_SECRET_DIR="$(mktemp -d)"
+trap 'rm -rf "$PULL_SECRET_DIR"; unset REGISTRY_API_KEY' EXIT
 REGISTRY_API_KEY="$(kubectl get secret mcp-sentinel-secrets -n mcp-sentinel -o jsonpath='{.data.UI_API_KEY}' | base64 -d)"
-kubectl create secret docker-registry mcp-runtime-registry-pull -n mcp-servers --docker-server=registry.mcpruntime.org --docker-username=platform-service --docker-password="$REGISTRY_API_KEY" --dry-run=client -o yaml | kubectl apply -f -
-unset REGISTRY_API_KEY
+REGISTRY_AUTH="$(printf 'platform-service:%s' "$REGISTRY_API_KEY" | base64 | tr -d '\n')"
+jq -n --arg password "$REGISTRY_API_KEY" --arg auth "$REGISTRY_AUTH" \
+  '{auths:{"registry.mcpruntime.org":{username:"platform-service",password:$password,auth:$auth}}}' \
+  > "$PULL_SECRET_DIR/config.json"
+kubectl create secret generic mcp-runtime-registry-pull -n mcp-servers \
+  --type=kubernetes.io/dockerconfigjson \
+  --from-file=.dockerconfigjson="$PULL_SECRET_DIR/config.json" \
+  --dry-run=client -o yaml | kubectl apply -f -
 ```
 
 ## Configure a Claude Code project
