@@ -66,8 +66,7 @@ export function AppShell({
       <header className="topbar">
         <div className="topbar-inner">
           <span className="brand">
-            <img className="brand-mark" src="/favicon.svg" alt="" />
-            <span className="brand-name">MCP Runtime</span>
+            <img className="brand-logo" src={theme === "dark" ? "/brand/mcp-runtime-logo-dark.png" : "/brand/mcp-runtime-logo.png"} alt="MCP Runtime" />
           </span>
 
           <nav className="primary-nav" aria-label="Primary">

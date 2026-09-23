@@ -103,8 +103,10 @@ body {
 
 .md-logo img,
 .md-logo svg {
-  width: 1.18rem;
-  height: 1.18rem;
+  width: 8rem;
+  height: auto;
+  max-height: 2.6rem;
+  object-fit: contain;
 }
 
 .md-search__form {
@@ -597,6 +599,19 @@ body {
 
 .docs-home {
   margin-top: 1rem;
+}
+
+.docs-brand-banner {
+  margin: 0 0 1rem;
+  overflow: hidden;
+  border: 1px solid var(--infra-line);
+  border-radius: 8px;
+}
+
+.docs-brand-banner img {
+  display: block;
+  width: 100%;
+  height: auto;
 }
 
 .docs-hero {
