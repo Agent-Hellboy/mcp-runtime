@@ -43,7 +43,7 @@ classify_path() {
   local path="$1"
 
   case "${path}" in
-    ""|README.md|docs/*|website/*|ai-assist/*)
+    ""|README.md|docs/*|website/*)
       return
       ;;
     test/e2e/*|.github/workflows/ci.yaml|.github/workflows/pre-release-regression.yaml|go.mod|go.sum|Makefile*|Dockerfile*)

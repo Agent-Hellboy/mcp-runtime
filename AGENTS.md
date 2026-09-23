@@ -93,12 +93,6 @@ Pre-commit: `pre-commit install`; full suite `pre-commit run --all-files` (sets 
 - **Docs:** avoid new top-level docs unless needed; use `docs/` and skills for runbooks.
 - **Secrets:** alpha repo — no real credentials in tree.
 - **Skills:** keep `.claude/skills` → `../.codex/skills`. After non-trivial changes, update affected `.codex/skills/*/SKILL.md` when workflows or gotchas shift — check for an existing `reference.md` or `references/` companion first (e.g. `mcp-runtime-troubleshooting/reference.md`, `qa-e2e-ui/references/`) and extend that for symptom-oriented or long-form content instead of growing `SKILL.md` past ~250-400 lines.
-- **AI session hygiene:** before ending a non-trivial session, propose `ai-assist/` updates; user reviews before commit (see below).
-
-## AI session hygiene
-
-Durable cross-session learnings go in `ai-assist/` (`gotchas.md`, `cross-cutting.md`, `tracking.md`) — not ephemeral TODOs or duplicate of this file. User must review before commit. Prefix: `doc:`. Remove entries promoted into `AGENTS.md` or `docs/`.
-
 ## Local dev (short)
 
 Prereqs: Docker, Kind, `kubectl`, `curl`, `jq`, Python 3, Go.
