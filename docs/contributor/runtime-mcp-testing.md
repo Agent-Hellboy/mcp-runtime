@@ -121,7 +121,7 @@ if not image or not tag:
 print(f"{image}:{tag}")
 PY
 )"
-./bin/mcp-runtime registry push \
+./bin/mcp-runtime server push \
   --image "$IMAGE_REF"
 
 ./bin/mcp-runtime server deploy workspace-assistant-mcp \

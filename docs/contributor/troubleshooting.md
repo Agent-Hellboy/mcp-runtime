@@ -123,7 +123,7 @@ The host usually cannot resolve Kubernetes service DNS. Use the CLI helper:
 ```bash
 ./bin/mcp-runtime auth login --api-url http://localhost:18080
 
-./bin/mcp-runtime registry push \
+./bin/mcp-runtime server push \
   --image example:dev \
   --name example
 ```

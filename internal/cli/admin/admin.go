@@ -35,7 +35,7 @@ func NewWithManager(mgr *registry.RegistryManager) *cobra.Command {
 	pushCmd := &cobra.Command{
 		Use:   "push",
 		Short: "Push an image using direct or in-cluster Kubernetes access",
-		Long:  "Push a local image using docker push or an in-cluster skopeo helper pod. Requires admin kubectl access. Normal users should use `mcp-runtime registry push` instead.",
+		Long:  "Push a local image using docker push or an in-cluster skopeo helper pod. Requires admin kubectl access. Normal users should use `mcp-runtime server push` instead.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return registry.RunAdminRegistryPush(cmd.Context(), mgr, image, "", name, scope, mode, helperNamespace)
 		},

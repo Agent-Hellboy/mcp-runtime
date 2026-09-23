@@ -190,13 +190,13 @@ if not image or not tag:
 print(f"{image}:{tag}")
 PY
 )"
-./bin/mcp-runtime registry push --image "$IMAGE_REF"
+./bin/mcp-runtime server push --image "$IMAGE_REF"
 ./bin/mcp-runtime server deploy workspace-assistant-mcp \
   --scope tenant \
   --metadata-file /tmp/workspace-assistant-mcp.yaml
 ```
 
-If `registry push` returns `504 Gateway Timeout`, treat that as a platform
+If `server push` returns `504 Gateway Timeout`, treat that as a platform
 registry-push failure and inspect runtime-api / Traefik logs; do not replace
 the server with an unrelated image just to get a pod.
 
@@ -238,8 +238,8 @@ LOCAL_IMAGE="$IMAGE_REPO:$TAG"
 REGISTRY=registry.registry.svc.cluster.local:5000
 
 docker build -t "$LOCAL_IMAGE" -f "$DOCKERFILE" "$BUILD_CONTEXT"
-./bin/mcp-runtime registry push --image "$LOCAL_IMAGE" --name "$IMAGE_REPO" \
-  --registry "$REGISTRY" --namespace registry
+./bin/mcp-runtime admin registry push --image "$LOCAL_IMAGE" --name "$IMAGE_REPO" \
+  --mode in-cluster --namespace registry
 kubectl -n mcp-sentinel set image "deployment/$DEPLOYMENT" \
   "$CONTAINER=$REGISTRY/$IMAGE_REPO:$TAG"
 kubectl -n mcp-sentinel rollout status "deployment/$DEPLOYMENT" --timeout=120s

@@ -44,7 +44,7 @@ sequenceDiagram
     participant Registry
     participant Runtime as MCP server workload
 
-    User->>CLI: setup, bootstrap, server deploy, registry push
+    User->>CLI: setup, bootstrap, server deploy, server push
     CLI->>Registry: build, tag, push, or mirror images
     CLI->>Platform: auth login, identity, registry credentials
     CLI->>API: platform-backed server/access/team requests
@@ -243,7 +243,7 @@ as a forward-auth service before the Docker registry receives the request.
 
 ```mermaid
 sequenceDiagram
-    participant Docker as docker or registry push
+    participant Docker as docker or server push
     participant Ingress as registry Ingress
     participant Authz as /api/v1/registry/authz
     participant API as platform-api

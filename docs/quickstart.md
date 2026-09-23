@@ -52,6 +52,13 @@ Verify:
 mcp-runtime --version
 ```
 
+To upgrade the CLI, download the matching binary again from the
+[latest GitHub release](https://github.com/Agent-Hellboy/mcp-runtime/releases/latest)
+and verify `mcp-runtime --version`. The CLI binary and the hosted platform are
+separate release tracks: the CLI changes only when a new release is published;
+the platform UI at `platform.mcpruntime.org` is updated by its operator and
+does not need a local install.
+
 ---
 
 ## 2. Log in
@@ -108,8 +115,7 @@ mcp-runtime server push \
 mcp-runtime server deploy workspace-demo --scope tenant --metadata-dir .mcp
 ```
 
-`server push` is the developer-facing push path. `registry push` takes the same
-`--image`, `--name`, and `--scope` options if you prefer the registry command.
+`server push` publishes the local image through the authenticated platform API.
 
 Confirm it is running:
 
@@ -162,6 +168,11 @@ Call the `echo` or `add` tool — the gateway enforces the grant on every call.
 Open [platform.mcpruntime.org](https://platform.mcpruntime.org), go to
 **Analytics → Tools** tab. You will see your tool calls broken down by
 user, team, agent, call count, and allow/deny.
+
+In **Server Catalog** or **My Activity**, confirm the deployed server is
+visible to your account. Open its details to review the endpoint and connect
+configuration. The platform UI uses the same deployment and policy state as
+the CLI; it does not require a separate server install.
 
 ---
 

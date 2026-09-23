@@ -5551,7 +5551,7 @@ func ResolvePlatformRegistryURL(logger *zap.Logger) string
 ```text
 func RunAdminRegistryPush(ctx context.Context, mgr *RegistryManager, image, registryURL, name, scope, mode, helperNamespace string) error
     RunAdminRegistryPush pushes an image using direct Kubernetes access for
-    operator debugging. Normal users should use registry push instead.
+    operator debugging. Normal users should use server push instead.
 
 ```
 

@@ -1,25 +1,70 @@
 # MCP Runtime — k3s Deployment Runbook
 
-Operational guide for deploying, re-deploying, and testing MCP Runtime on the
-four-node k3s cluster with public DNS and Let's Encrypt TLS. Complements the
-cluster-creation guide in [k3s-on-prem-cluster.md](k3s-on-prem-cluster.md).
+Operational guide for deploying, re-deploying, and testing MCP Runtime on a
+public k3s cluster with DNS and TLS. Complements the reference topology guide
+in [k3s-on-prem-cluster.md](k3s-on-prem-cluster.md).
 
 ## Reference cluster
 
-A four-node k3s cluster: one control-plane node and three workers (one of which
-has scheduling disabled). DNS wildcard `*.mcpruntime.org` points to the primary
-worker node. Node names and IPs are internal — check your KUBECONFIG or
-`kubectl get nodes` for the actual addresses.
+The public example at `platform.mcpruntime.org` runs on the project's k3s
+cluster. Cluster size, node names, and addresses can change; inspect the
+selected kubeconfig context with `kubectl get nodes`. The multi-node topology
+in [k3s-on-prem-cluster.md](k3s-on-prem-cluster.md) is a reference design, not
+a promise that the live example currently has that node count.
+
+## Obtain and select cluster access
+
+For a provider-managed cluster, use the provider's supported login/configure
+command to write a kubeconfig context; see the per-distribution overview in
+[Deployment Targets](deployment-targets.md#get-a-kubeconfig-for-the-target-distribution).
+For this self-managed k3s cluster, an authorized operator can copy the k3s
+server kubeconfig from the control-plane VM:
+
+```bash
+source config/deployments/mcpruntime-org.env
+install -d -m 700 "$HOME/.kube"
+export KUBECONFIG="$HOME/.kube/mcpruntime-prod.yaml"
+scp "root@${MCP_PRODUCTION_SSH_HOST}:/etc/rancher/k3s/k3s.yaml" "$KUBECONFIG"
+chmod 600 "$KUBECONFIG"
+
+# Use the control-plane API address reachable from this workstation. This
+# changes only the endpoint; keep certificate-authority-data and TLS checks.
+CLUSTER_NAME="$(kubectl --kubeconfig "$KUBECONFIG" config view --minify \
+  -o jsonpath='{.clusters[0].name}')"
+kubectl --kubeconfig "$KUBECONFIG" config set-cluster "$CLUSTER_NAME" \
+  --server="https://<reachable-control-plane-address>:6443"
+```
+
+If SSH targets a worker or the control-plane API is not reachable from the
+workstation, obtain the supported API address/network path and a kubeconfig
+from the cluster operator. Do not disable TLS verification. Keep this file
+outside the repository and private (`chmod 600`).
+
+Select and confirm the context before deploying. The shared team kubeconfig
+may already contain `prod-mcp-runtime`; use the copied file above only when
+that shared context is not available:
+
+```bash
+kubectl --kubeconfig "$KUBECONFIG" config get-contexts
+kubectl --kubeconfig "$KUBECONFIG" config use-context prod-mcp-runtime
+kubectl --kubeconfig "$KUBECONFIG" config current-context
+kubectl --kubeconfig "$KUBECONFIG" get nodes
+export MCP_SETUP_KUBECONFIG="$KUBECONFIG"
+export MCP_KUBE_CONTEXT="$(kubectl --kubeconfig "$KUBECONFIG" config current-context)"
+```
 
 ## Prerequisites
 
 ```bash
-# Verify KUBECONFIG
-export KUBECONFIG=/private/tmp/mcpruntime-k3s.yaml
+# Use the shared kubeconfig or the file copied in Obtain and select cluster access.
+export KUBECONFIG="$HOME/.kube/config"
+kubectl config current-context   # prod-mcp-runtime
 kubectl get nodes
+export MCP_SETUP_KUBECONFIG="$KUBECONFIG"
 
-# Build the binary first (from repo root, on your workstation)
-go build -o bin/mcp-runtime ./cmd/mcp-runtime
+# Build the current CLI from the selected Runtime ref.
+make build
+./bin/mcp-runtime --version
 ```
 
 All setup commands below assume the repo root as the working directory and the
@@ -47,7 +92,8 @@ default. Override the path with `MCP_DEPLOY_ENV=/path/to/other.env`. See
 
 | Variable | Required | Used by | Purpose |
 |----------|----------|---------|---------|
-| `KUBECONFIG` | yes | all hack scripts, manual `kubectl` | Path to the k3s kubeconfig. Must match the cluster you target. |
+| `KUBECONFIG` | yes | all hack scripts, manual `kubectl` | Path to the selected cluster kubeconfig. Must match the cluster you target. |
+| `MCP_KUBE_CONTEXT` | optional | CLI setup and public hack scripts | Context within the kubeconfig; use when the file has multiple clusters. |
 | `MCP_SETUP_KUBECONFIG` | yes (setup) | `hack/deploy/mcpruntime-org/setup.sh` | Same as `KUBECONFIG`; passed to `mcp-runtime setup --kubeconfig`. |
 | `MCP_PLATFORM_DOMAIN` | yes | setup | Apex domain only (no `https://`). Derives `registry.`, `mcp.`, and `platform.` hostnames. |
 | `MCP_PLATFORM_ADMIN_EMAIL` | yes (non-test setup) | setup | Seeds the platform admin account during bootstrap. |
@@ -56,11 +102,20 @@ default. Override the path with `MCP_DEPLOY_ENV=/path/to/other.env`. See
 
 | Variable | Required | Used by | Purpose |
 |----------|----------|---------|---------|
-| `MCP_IMAGE_PLATFORM` | strongly recommended | setup, rollout | Target OS/arch for images built on your workstation (for example `linux/amd64` when nodes are amd64). Omitting on an arm64 laptop builds images nodes cannot run. |
+| `MCP_IMAGE_PLATFORM` | strongly recommended | setup, rollout | Target OS/arch for platform images (for example `linux/amd64` when nodes are amd64). |
 | `MCP_REGISTRY_ENDPOINT` | yes (`bundled-https`) | setup, rollout (via configmap patch) | Hostname nodes use to **pull** platform and tenant images. With public TLS, set to `registry.<domain>` — **not** the registry Service ClusterIP. |
-| `MCP_REGISTRY_INGRESS_HOST` | optional | rollout, CLI build/push | Public registry hostname for `docker push` / `registry push`. Defaults from `MCP_PLATFORM_DOMAIN` when unset. |
+| `MCP_REGISTRY_INGRESS_HOST` | optional | rollout, CLI build/push | Public registry hostname for `docker push` / `server push`. Defaults from `MCP_PLATFORM_DOMAIN` when unset. |
 | `MCP_REGISTRY_HOST` | do not set | — | Public ingress hostname; derived from `MCP_PLATFORM_DOMAIN`. Do not use as the internal pull URL. |
 | `MCP_REGISTRY_INTERNAL` | optional | rollout | Override registry ClusterIP:port for **build/push** inside rollout script only. Pull path still uses `MCP_REGISTRY_ENDPOINT` in configmap. |
+| `MCP_REGISTRY_PUSH_MODE` | `internal` | rollout | `public` pushes directly to `registry.<domain>` using the workstation's selected Docker daemon. |
+| `MCP_UPDATE_MCP_AUTH` | `0` | rollout | Set to `1` only when updating the bundled authorization server. |
+| `MCP_AUTH_IMAGE_SOURCE` | `published` | rollout | `published` pulls Docker Hub `latest`; choose `local` only when intentionally testing a selected mcp-auth source ref. |
+| `MCP_AUTH_DOCKERHUB_IMAGE` | `docker.io/princekrroshan01/mcp-auth-server:latest` | rollout | Published image source, copied to the Runtime registry under a unique candidate tag. |
+| `MCP_AUTH_SOURCE` | sibling `mcp-auth` checkout | rollout | Source checkout, used only with `MCP_AUTH_IMAGE_SOURCE=local`. |
+| `MCP_AUTH_BUILD_REF` | required for local source | rollout | Selected branch, tag, or commit; rollout requires a clean checkout at this ref. |
+| `MCP_AUTH_IMAGE_TAG` | `<MCP_ROLLOUT_TAG>-auth` | rollout | Unique tag for the candidate mcp-auth image. |
+| `MCP_AUTH_CLIENT_ID_METADATA_ENABLED` | `true` (mcp-auth default) | rollout | Optional mcp-auth setting; set to `false` to disable CIMD. Verify authorization-server metadata advertises the feature after rollout. |
+| `MCP_AUTH_CLIENT_ID_METADATA_HOSTS` | unset | rollout | Optional comma-separated CIMD metadata host allowlist; an empty list allows public hosts and still applies mcp-auth's SSRF checks. |
 
 #### Setup behavior (read by `hack/deploy/mcpruntime-org/setup.sh`)
 
@@ -239,8 +294,13 @@ These are **not** in the deployment profile — export them when running the tes
 | `REGISTRY_HOST` | `registry.mcpruntime.org` | Registry hostname for tenant image build/push. |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` | test admin creds | Platform admin login when not using token. |
 | `ADMIN_TOKEN` | optional | Admin API token instead of password login. |
+| `VERIFY_DEPLOY_PULL_SECRET` | `0` | When `1`, retain the supplied kubeconfig for read-only checks that `server deploy` created the namespace-local image pull Secret and attached it to `mcp-workload`. |
 
-The test script clears `KUBECONFIG` internally — tenant flows are platform-API-only.
+The test script clears `KUBECONFIG` for CLI tenant flows, so `server build`,
+`server push`, and `server deploy` exercise the platform API without admin
+cluster access. To also assert the k3s namespace pull Secret after each deploy,
+set `VERIFY_DEPLOY_PULL_SECRET=1` and provide the production `KUBECONFIG`; the
+script uses it only for those read-only Secret and ServiceAccount checks.
 
 #### Do not set on this TLS production cluster
 
@@ -253,7 +313,7 @@ The test script clears `KUBECONFIG` internally — tenant flows are platform-API
 #### Minimal profile example
 
 ```bash
-export KUBECONFIG=/private/tmp/mcpruntime-k3s.yaml
+export KUBECONFIG="$HOME/.kube/config"
 export MCP_PLATFORM_DOMAIN=mcpruntime.org
 export MCP_IMAGE_PLATFORM=linux/amd64
 export MCP_PLATFORM_ADMIN_EMAIL=admin@example.com
@@ -350,7 +410,7 @@ export MCP_PLATFORM_ADMIN_EMAIL=admin@example.com
 
 MCP_SETUP_WAIT_TIMEOUT=900 MCP_CERT_TIMEOUT=15m \
 ./bin/mcp-runtime setup \
-  --kubeconfig /private/tmp/mcpruntime-k3s.yaml \
+  --kubeconfig "$KUBECONFIG" \
   --with-tls \
   --acme-email ops@example.com \
   --ingress none \
@@ -376,9 +436,105 @@ hack/deploy/mcpruntime-org/rollout.sh
 ```
 
 That rebuilds/pushes the three split API images (`mcp-platform-api`,
-`mcp-runtime-api`, `mcp-analytics-api`) and `mcp-sentinel-ui`, applies RBAC,
-patches `mcp-sentinel-config` (`PLATFORM_TEAM_TRAEFIK_WATCH=disabled`,
-`MCP_REGISTRY_ENDPOINT=registry.mcpruntime.org`), and waits for rollouts.
+`mcp-runtime-api`, `mcp-analytics-api`), `mcp-sentinel-ui`, and the doctor
+smoke image, patches the production registry/Traefik settings and pull secret,
+then waits for rollouts. It does not run setup or request certificates.
+
+Build and push from the workstation's selected Docker daemon. Target the k3s
+node architecture explicitly; the example cluster currently runs amd64 nodes.
+The rollout script uses `MCP_IMAGE_PLATFORM` for every build and pushes tagged
+images directly to the public bundled registry. Kubernetes commands use the
+shared `prod-mcp-runtime` kubeconfig context.
+
+```bash
+source config/deployments/mcpruntime-org.env
+export KUBECONFIG="$HOME/.kube/config"
+export MCP_SETUP_KUBECONFIG="$KUBECONFIG"
+docker info --format '{{.Name}} {{.OSType}}/{{.Architecture}}'
+RUNTIME_COMMIT="$(git rev-parse --short HEAD)"
+ROLLOUT_TAG="prod-$(date -u +%Y%m%dT%H%M%S)-${RUNTIME_COMMIT}"
+
+make build
+./bin/mcp-runtime cluster doctor
+MCP_IMAGE_PLATFORM=linux/amd64 \
+MCP_REGISTRY_PUSH_MODE=public \
+MCP_ROLLOUT_TAG="$ROLLOUT_TAG" \
+bash hack/deploy/mcpruntime-org/rollout.sh
+```
+
+The script uses a temporary Docker credential directory and removes it when it
+exits. It reads the registry credential from the existing Kubernetes Secret;
+the key is not printed or stored in the deployment profile. Record the previous
+image tags before rollout so they remain available for rollback.
+
+By default, keep the published mcp-auth release and do not update its
+Deployment. If the user requests the published Docker Hub image, opt in to
+copying `latest` into the Runtime registry under a unique tag:
+
+```bash
+MCP_UPDATE_MCP_AUTH=1 \
+MCP_AUTH_IMAGE_SOURCE=published \
+MCP_AUTH_IMAGE_TAG="prod-$(date -u +%Y%m%dT%H%M%S)-auth" \
+MCP_REGISTRY_PUSH_MODE=public \
+MCP_ROLLOUT_TAG="$ROLLOUT_TAG" \
+bash hack/deploy/mcpruntime-org/rollout.sh
+```
+
+Only when intentionally testing mcp-auth source changes, set the source
+checkout path and selected ref in the rollout environment. The workstation's
+Docker daemon receives the local build context and builds for the target
+platform. First confirm the selected ref is checked out and the worktree is
+clean:
+
+```bash
+MCP_AUTH_SOURCE=/path/to/mcp-auth
+MCP_AUTH_BUILD_REF=issue-13-cimd # replace with the selected branch, tag, or commit
+MCP_AUTH_COMMIT="$(git -C "$MCP_AUTH_SOURCE" rev-parse --short "$MCP_AUTH_BUILD_REF")"
+MCP_UPDATE_MCP_AUTH=1 \
+MCP_AUTH_IMAGE_SOURCE=local \
+MCP_IMAGE_PLATFORM=linux/amd64 \
+MCP_AUTH_CLIENT_ID_METADATA_ENABLED=true \
+MCP_AUTH_SOURCE="$MCP_AUTH_SOURCE" \
+MCP_AUTH_BUILD_REF="$MCP_AUTH_BUILD_REF" \
+MCP_AUTH_IMAGE_TAG="prod-$(date -u +%Y%m%dT%H%M%S)-auth-${MCP_AUTH_COMMIT}" \
+MCP_REGISTRY_PUSH_MODE=public \
+MCP_ROLLOUT_TAG="$ROLLOUT_TAG" \
+bash hack/deploy/mcpruntime-org/rollout.sh
+```
+
+Local mode builds, while published mode pulls Docker Hub `latest`; both copy
+the candidate to `registry.mcpruntime.org/mcp-auth-server:<tag>` and deploy
+that immutable candidate ref while
+preserving the existing mcp-auth configuration, SQLite PVC, signing key, and
+TLS Secret. Do not rerun `setup --with-tls` for an image-only release.
+
+### Separate release tracks and user verification
+
+The Runtime CLI release and the hosted platform images are separate artifacts.
+Tagging a Runtime release publishes platform-specific CLI binaries through
+`.github/workflows/release.yaml`; it does not update the hosted platform. The
+The production rollout updates platform APIs/UI (and mcp-auth only when explicitly
+selected); it does not publish a new CLI release. Wait to publish either
+project's release until its candidate passes the checks below.
+
+Verify the user path after rollout:
+
+1. Install the candidate CLI built from the selected Runtime ref and confirm
+   `mcp-runtime --version` reports that commit. After release publication,
+   verify the `releases/latest` binary download reports the release tag.
+2. Follow [Quickstart](quickstart.md) against
+   `https://platform.mcpruntime.org`: log in, build/push/deploy a temporary
+   `qa-audit-*` server, create a grant, call a tool through the adapter, and
+   confirm the request appears under **Analytics → Tools** in the platform UI.
+3. Check the signed-out platform page and signed-in role-gated UI with browser
+   evidence. Use only temporary `qa-audit-*` resources and clean them up.
+4. Verify `mcp-runtime status`, server listing, deployment readiness, and
+   `cluster doctor`; confirm the existing certificate resources remain Ready.
+
+Users access the same `https://platform.mcpruntime.org` URL after a platform
+rollout. They update the CLI separately from the GitHub Releases page. Until a
+new tag is published, `releases/latest` still downloads the previously
+published CLI.
 
 That sources `config/deployments/mcpruntime-org.env` (or the `.example` template)
 and runs setup with `--tls-cluster-issuer letsencrypt-prod` and
@@ -491,7 +647,7 @@ MCP_PLATFORM_API_URL=https://platform.mcpruntime.org MCP_PLATFORM_API_PROFILE=my
 IMAGE_REF="$(awk '$1=="image:"{i=$2} $1=="imageTag:"{t=$2} END{print i ":" t}' .mcp/servers.yaml)"
 
 MCP_PLATFORM_API_URL=https://platform.mcpruntime.org MCP_PLATFORM_API_PROFILE=myteam-user \
-  ../../bin/mcp-runtime registry push --scope tenant --image "$IMAGE_REF"
+  ../../bin/mcp-runtime server push --scope tenant --image "$IMAGE_REF"
 
 MCP_PLATFORM_API_URL=https://platform.mcpruntime.org MCP_PLATFORM_API_PROFILE=myteam-user \
   ../../bin/mcp-runtime server deploy workspace-assistant-mcp \
@@ -501,6 +657,10 @@ MCP_PLATFORM_API_URL=https://platform.mcpruntime.org MCP_PLATFORM_API_PROFILE=my
 
 Expected: push succeeds in under ~30s; deploy reports `status Ready`; the team
 namespace contains `mcp-runtime-registry-pull` and a running MCPServer pod.
+This platform CLI path also verifies that the API provisions a namespace-local
+registry pull Secret and attaches it for workload pulls. Keep this `server push`
+and `server deploy` smoke in k3s production QA; `kubectl apply` alone bypasses
+the platform's namespace and pull-secret provisioning path.
 The `.mcp` metadata must contain `tools[*].sideEffect`; `server deploy` copies
 that metadata into the platform request so governed `tools/call` requests can
 authorize side effects.
@@ -519,7 +679,7 @@ Default assumptions:
 - `PLATFORM_URL=https://platform.mcpruntime.org`
 - `MCP_URL=https://mcp.mcpruntime.org`
 - `REGISTRY_HOST=registry.mcpruntime.org` (image build tagging and push target resolution)
-- Team owners push images with `registry push --scope tenant` (platform API), not `admin registry push`
+- Team owners publish images with `server push --scope tenant` (platform API), not `admin registry push`
 - Builds and deploys `acme-tools`, `globex-tools`, and `techcorp-tools` example servers
 - Creates Acme, Globex, and TechCorp teams, applies cross-tenant grants
 - Verifies adapter success, dashboard events, and no-kubeconfig smoke checks

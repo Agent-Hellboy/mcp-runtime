@@ -1,12 +1,12 @@
 Commands for managing the container registry
 
 Usage:
+  mcp-runtime registry [flags]
   mcp-runtime registry [command]
 
 Available Commands:
   info        Show registry information
   provision   Configure an external registry
-  push        Push an image to the platform registry
   status      Check registry status
 
 Flags:

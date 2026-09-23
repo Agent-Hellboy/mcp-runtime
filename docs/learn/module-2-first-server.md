@@ -5,7 +5,7 @@ and observe live traffic in the analytics dashboard.
 
 **Prerequisites:**
 - Module 1 completed (you understand Grants, Sessions, and the gateway)
-- `mcp-runtime` CLI installed ([download v0.1.0](https://github.com/Agent-Hellboy/mcp-runtime/releases/tag/v0.1.0))
+- `mcp-runtime` CLI installed from the [latest GitHub release](https://github.com/Agent-Hellboy/mcp-runtime/releases/latest)
 - Account on the live platform (`platform.mcpruntime.org`) or a local cluster running
 
 ---
@@ -76,7 +76,7 @@ mcp-runtime server build image my-server --tag v1
 # Prints: registry.example.com/myteam/my-server:v1
 
 # Push — use the exact ref printed above
-mcp-runtime registry push \
+mcp-runtime server push \
   --image registry.example.com/myteam/my-server:v1 \
   --scope tenant
 

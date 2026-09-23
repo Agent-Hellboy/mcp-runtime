@@ -18,6 +18,10 @@ func NewWithManager(mgr *RegistryManager) *cobra.Command {
 		Use:   "registry",
 		Short: "Manage container registry",
 		Long:  "Commands for managing the container registry",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return cmd.Help()
+		},
 	}
 
 	var namespace string
@@ -59,21 +63,6 @@ func NewWithManager(mgr *RegistryManager) *cobra.Command {
 	provisionCmd.Flags().StringVar(&operatorImage, "operator-image", "", "Optional: build and push operator image to this external registry (e.g., <registry>/mcp-runtime-operator:latest)")
 	provisionCmd.Flags().BoolVar(&provisionDryRun, "dry-run", false, "Print what would be done without saving config, logging in, or pushing images")
 
-	var image string
-	var name string
-	var scope string
-	pushCmd := &cobra.Command{
-		Use:   "push",
-		Short: "Push an image to the platform registry",
-		Long:  "Save a local image and push it to the platform registry through the platform API. Requires `mcp-runtime auth login` or MCP_PLATFORM_API_TOKEN with a saved or explicit MCP_PLATFORM_API_URL.",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return RunRegistryPush(cmd.Context(), mgr, image, "", name, scope)
-		},
-	}
-	pushCmd.Flags().StringVar(&image, "image", "", "Local image to push (required)")
-	pushCmd.Flags().StringVar(&name, "name", "", "Override target repo/name (default: source name without registry)")
-	pushCmd.Flags().StringVar(&scope, "scope", "", "Publish scope: tenant, org, or public")
-
-	cmd.AddCommand(statusCmd, infoCmd, provisionCmd, pushCmd)
+	cmd.AddCommand(statusCmd, infoCmd, provisionCmd)
 	return cmd
 }

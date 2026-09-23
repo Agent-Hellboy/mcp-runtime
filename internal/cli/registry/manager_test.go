@@ -184,11 +184,11 @@ func TestRunRegistryPushRequiresPlatformCredentials(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected missing platform credentials error")
 	}
-	if !strings.Contains(err.Error(), "registry push requires platform credentials") {
+	if !strings.Contains(err.Error(), "server push requires platform credentials") {
 		t.Fatalf("error = %v", err)
 	}
 	if mock.HasCommand("docker") {
-		t.Fatal("registry push should fail before docker commands when platform credentials are missing")
+		t.Fatal("server push should fail before docker commands when platform credentials are missing")
 	}
 }
 

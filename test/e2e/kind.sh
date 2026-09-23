@@ -674,7 +674,7 @@ run_cli_help_sweep() {
     "registry status"
     "registry info"
     "registry provision"
-    "registry push"
+    "server push"
     "server"
     "server list"
     "server get"

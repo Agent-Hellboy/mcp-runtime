@@ -571,7 +571,7 @@ identity storage is enabled. `GET /api/v1/admin/operations` returns a filtered
 operations snapshot with `users`, `audit_logs`, `images`, and `deployments`.
 Filters: `user` (email, user ID, namespace, resource, or image match), `since`,
 `until` (RFC3339 or `YYYY-MM-DD`), and `limit` (1-200). Image activity includes
-CLI-reported `registry push` events and currently deployed image references
+CLI-reported `server push` events and currently deployed image references
 from platform-managed Kubernetes deployments; the bundled Docker registry does
 not emit a full raw push ledger.
 

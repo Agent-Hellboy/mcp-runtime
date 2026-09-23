@@ -156,7 +156,7 @@ func RunRegistryPush(ctx context.Context, mgr *RegistryManager, image, registryU
 }
 
 // RunAdminRegistryPush pushes an image using direct Kubernetes access for
-// operator debugging. Normal users should use registry push instead.
+// operator debugging. Normal users should use server push instead.
 func RunAdminRegistryPush(ctx context.Context, mgr *RegistryManager, image, registryURL, name, scope, mode, helperNamespace string) error {
 	if ctx == nil {
 		ctx = context.Background()
@@ -366,7 +366,7 @@ func requirePlatformPushCredentials(ctx context.Context) (*platformapi.PlatformC
 	}
 	client, err := platformapi.NewPlatformClient()
 	if err != nil {
-		return nil, fmt.Errorf("registry push requires platform credentials; run mcp-runtime auth login or set MCP_PLATFORM_API_TOKEN with a saved or explicit MCP_PLATFORM_API_URL: %w", err)
+		return nil, fmt.Errorf("server push requires platform credentials; run mcp-runtime auth login or set MCP_PLATFORM_API_TOKEN with a saved or explicit MCP_PLATFORM_API_URL: %w", err)
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()

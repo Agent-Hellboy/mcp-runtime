@@ -1,0 +1,22 @@
+Deploy a new MCPServer through the authenticated platform API identity. When .mcp metadata is present, deploy includes its image, tool side-effect metadata, prompts, resources, and tasks. If the server already exists, pass --update to redeploy it.
+
+Usage:
+  mcp-runtime server deploy [name] [flags]
+
+Flags:
+  -h, --help                   help for deploy
+      --image string           Container image repository (optional when .mcp metadata provides image)
+      --metadata-dir string    Directory containing .mcp metadata files (default ".mcp")
+      --metadata-file string   Path to .mcp metadata file
+      --namespace string       Target namespace (optional when --team is provided)
+      --port int32             Container port (default 8088)
+      --replicas int32         Replica count (default 1)
+      --scope string           Publish scope: tenant, org, or public
+      --service-port int32     Service port (default 80)
+      --tag string             Container image tag (default "latest")
+      --team string            Team slug to resolve target namespace
+      --update                 Update an existing server instead of failing when the name already exists
+
+Global Flags:
+      --debug      Enable debug mode with structured error logging
+      --use-kube   Use direct Kubernetes mode with kubectl; requires admin/operator cluster access (admin/dev/test only)
