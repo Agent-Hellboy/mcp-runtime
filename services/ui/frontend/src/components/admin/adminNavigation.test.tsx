@@ -104,6 +104,7 @@ describe("admin workspace navigation", () => {
       status: 200,
       json: async () => ({ authenticated: false }),
     } as unknown as Response);
+    await user.click(await screen.findByTestId("account-trigger"));
     await user.click(screen.getByTestId("logout-button"));
 
     await waitFor(() =>

@@ -1,7 +1,8 @@
 import { useEffect, useState, type ReactNode } from "react";
 
 import { visibleWorkspaceTabs, type WorkspaceId } from "./WorkspaceNavigation";
-import { Button, IconButton } from "../ui/Button";
+import { AccountMenu } from "./AccountMenu";
+import { IconButton } from "../ui/Button";
 import { Icon } from "../ui/Icon";
 import type { AuthStatus } from "../api/types";
 
@@ -16,13 +17,6 @@ type AppShellProps = {
   onSignOut: () => void;
   children: ReactNode;
 };
-
-function principalUsername(status: AuthStatus): string {
-  const email = status.principal?.email?.trim();
-  if (email) return email.split("@")[0];
-  const subject = status.principal?.subject?.trim();
-  return subject || "User";
-}
 
 export function AppShell({
   auth,
@@ -83,15 +77,14 @@ export function AppShell({
           </nav>
 
           <div className="topbar-actions">
-            {auth.authenticated ? (
-              <span className="account-chip" data-testid="account-state">
-                <span className="account-who" title={principalUsername(auth)}>{principalUsername(auth)}</span>
-              </span>
-            ) : (
-              <span className="account-chip" data-testid="account-state">
-                <span className="account-who">Signed out</span>
-              </span>
-            )}
+            <AccountMenu
+              auth={auth}
+              authBusy={authBusy}
+              workspace={workspace}
+              onSignIn={onSignIn}
+              onSignOut={onSignOut}
+              onOpenCatalog={() => onSelectWorkspace("servers")}
+            />
 
             <span className="topbar-divider" aria-hidden="true" />
 
@@ -119,23 +112,6 @@ export function AppShell({
               <Icon name={theme === "dark" ? "moon" : "sun"} />
               <span className="visually-hidden">{theme === "dark" ? "Dark" : "Light"}</span>
             </button>
-
-            {auth.authenticated ? (
-              <Button
-                variant="ghost"
-                size="sm"
-                icon="logout"
-                onClick={onSignOut}
-                disabled={authBusy}
-                data-testid="logout-button"
-              >
-                {authBusy ? "Signing out…" : "Sign out"}
-              </Button>
-            ) : (
-              <Button variant="primary" size="sm" icon="login" onClick={onSignIn} data-testid="signin-button">
-                Sign in
-              </Button>
-            )}
 
             <IconButton
               icon={menuOpen ? "close" : "menu"}

@@ -131,29 +131,52 @@
   min-width: 0;
 }
 
-.account-chip {
-  display: inline-flex;
-  flex-direction: column;
-  min-width: 0;
-  padding-right: var(--space-1);
-  line-height: 1.25;
+.account-menu { position: relative; min-width: 0; }
+.account-trigger {
+  display: inline-flex; align-items: center; gap: var(--space-2); max-width: 260px;
+  min-height: 38px; padding: 4px 10px 4px 5px; border: 1px solid var(--border);
+  border-radius: 999px; background: var(--surface-raised); color: var(--text); cursor: pointer;
 }
-
-.account-who {
-  font-size: var(--fs-meta);
-  font-weight: 600;
-  max-width: 22ch;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.account-trigger:hover, .account-trigger[aria-expanded="true"] { border-color: var(--accent-line); background: var(--surface-hover); }
+.account-avatar, .account-server-icon {
+  display: grid; place-items: center; flex: none; width: 28px; height: 28px;
+  border-radius: 50%; background: var(--accent-soft); color: var(--accent);
 }
-
-.account-role {
-  font-size: 11px;
-  color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+.account-trigger-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-meta); font-weight: 600; }
+.account-trigger-chevron { color: var(--text-secondary); flex: none; }
+.account-popover {
+  position: absolute; z-index: 50; top: calc(100% + 10px); right: 0; width: min(390px, calc(100vw - 24px));
+  max-height: min(76vh, 640px); overflow-y: auto; padding: var(--space-4);
+  border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface-raised);
+  box-shadow: var(--elevation-2);
 }
+.account-popover-heading { padding-bottom: var(--space-3); border-bottom: 1px solid var(--border); }
+.account-popover-eyebrow, .account-server-heading p { display: block; color: var(--text-secondary); font-size: var(--fs-meta); }
+.account-identity { display: block; overflow-wrap: anywhere; margin-top: 3px; font-size: var(--fs-body); }
+.account-badges { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-2); }
+.account-role-badge, .account-method { padding: 3px 8px; border-radius: 999px; background: var(--surface-hover); color: var(--text-secondary); font-size: 11px; }
+.account-role-badge.is-admin { background: var(--accent-soft); color: var(--accent); }
+.account-access-scope { margin-top: var(--space-2); color: var(--text-secondary); font-size: var(--fs-meta); }
+.account-server-section { padding-top: var(--space-3); }
+.account-server-heading { display: flex; justify-content: space-between; align-items: center; gap: var(--space-2); margin-bottom: var(--space-2); }
+.account-server-heading h2, .account-signed-out h2 { font-size: var(--fs-body); }
+.account-server-count { display: grid; place-items: center; min-width: 26px; height: 26px; border-radius: 999px; background: var(--surface-hover); font-size: var(--fs-meta); }
+.account-server-list { list-style: none; margin: 0 0 var(--space-3); padding: 0; }
+.account-server-item { display: flex; align-items: center; gap: var(--space-2); min-width: 0; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.account-server-icon { width: 25px; height: 25px; border-radius: var(--radius-sm); }
+.account-server-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; }
+.account-server-copy strong, .account-server-copy span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-server-copy strong { font-size: var(--fs-meta); }
+.account-server-copy span, .account-server-status, .account-server-state, .account-server-more { color: var(--text-secondary); font-size: 11px; }
+.account-server-status { flex: none; }
+.account-server-error { display: flex; justify-content: space-between; gap: var(--space-2); color: var(--danger); font-size: var(--fs-meta); }
+.account-server-error button { color: var(--link); background: none; border: 0; cursor: pointer; }
+.account-server-state { padding: var(--space-2) 0; }
+.account-server-more { margin: -5px 0 var(--space-2); }
+.account-popover-footer { margin-top: var(--space-3); padding-top: var(--space-2); border-top: 1px solid var(--border); }
+.account-signed-out { text-align: center; padding: var(--space-2) 0; }
+.account-avatar-large { width: 42px; height: 42px; margin: 0 auto var(--space-3); }
+.account-signed-out p { margin: var(--space-2) 0 var(--space-4); color: var(--text-secondary); font-size: var(--fs-meta); }
 
 .topbar-divider {
   width: 1px;
@@ -485,6 +508,17 @@
   background: linear-gradient(90deg, var(--accent), var(--link), transparent 80%);
 }
 
+.landing-hero { display: flex; align-items: end; justify-content: space-between; gap: var(--space-6); }
+.landing-intro { max-width: 680px; }
+.landing-eyebrow { display: inline-block; margin-bottom: var(--space-2); color: var(--accent); font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+.landing-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-4); margin-top: var(--space-4); }
+.landing-doc-link { color: var(--link); font-size: var(--fs-meta); font-weight: 600; text-decoration: none; }
+.landing-doc-link:hover { text-decoration: underline; }
+.landing-journey { display: grid; grid-template-columns: repeat(2, minmax(92px, 1fr)); gap: var(--space-2); min-width: 220px; margin: 0; padding: 0; list-style: none; }
+.landing-journey li { display: flex; flex-direction: column; gap: 5px; padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-md); background: color-mix(in srgb, var(--surface-raised) 80%, transparent); }
+.landing-journey li span { color: var(--accent); font-size: 10px; font-weight: 700; letter-spacing: .08em; }
+.landing-journey li strong { font-size: var(--fs-meta); }
+
 .landing-title {
   font-size: var(--fs-page);
   max-width: 24ch;
@@ -526,6 +560,14 @@
   margin-top: 4px;
   font-size: var(--fs-meta);
   color: var(--text-secondary);
+}
+
+@media (max-width: 680px) {
+  .landing { padding: var(--space-5) var(--space-4); }
+  .landing-hero { align-items: stretch; flex-direction: column; gap: var(--space-4); }
+  .landing-journey { min-width: 0; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .landing-journey li { padding: var(--space-2); }
+  .landing-journey li strong { font-size: 11px; }
 }
 
 /* One-time key ------------------------------------------------------------- */
@@ -728,8 +770,16 @@
     display: block;
   }
 
-  .account-chip {
-    display: none;
+  .account-trigger { max-width: min(210px, 42vw); }
+  .account-trigger-label { display: none; }
+  .account-trigger { padding: 4px; }
+  .account-popover {
+    position: fixed;
+    top: calc(var(--topbar-h) + 8px);
+    left: 12px;
+    right: 12px;
+    width: auto;
+    max-height: calc(100vh - var(--topbar-h) - 24px);
   }
 
   .main {

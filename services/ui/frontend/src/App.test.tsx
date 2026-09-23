@@ -13,6 +13,16 @@ function renderApp() {
   );
 }
 
+async function openAccountSignIn(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(await screen.findByTestId("account-trigger"));
+  await user.click(await screen.findByTestId("account-menu-signin"));
+}
+
+async function signOut(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(await screen.findByTestId("account-trigger"));
+  await user.click(await screen.findByTestId("logout-button"));
+}
+
 type Route = { status: number; body: unknown };
 
 function stubRoutes(routes: Record<string, Route | Route[]>) {
@@ -67,16 +77,22 @@ afterEach(() => {
 
 describe("App", () => {
   it("renders the signed-out shell with a sign-in action", async () => {
+    const user = userEvent.setup();
     stubRoutes({ "/auth/status": SIGNED_OUT });
 
     renderApp();
 
     expect(await screen.findByTestId("catalog-signed-out")).toBeInTheDocument();
-    expect(screen.getByTestId("account-state")).toHaveTextContent("Signed out");
-    expect(screen.getByTestId("signin-button")).toBeInTheDocument();
+    expect(screen.getByTestId("account-trigger")).toHaveTextContent("Account");
+    await user.click(screen.getByTestId("account-trigger"));
+    expect(screen.getByTestId("account-menu-signin")).toBeInTheDocument();
     expect(
-      screen.getByRole("heading", { name: "The control plane for your MCP servers" })
+      screen.getByRole("heading", { name: "See what’s running. Govern every tool call." })
     ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Read the platform docs/ })).toHaveAttribute(
+      "href",
+      "https://mcpruntime.org/docs/"
+    );
   });
 
   it("switches themes and persists the preference", async () => {
@@ -105,16 +121,15 @@ describe("App", () => {
     });
 
     renderApp();
-    await user.click(await screen.findByTestId("signin-button"));
+    await openAccountSignIn(user);
 
     await user.type(screen.getByTestId("login-email"), "admin@mcpruntime.org");
     await user.type(screen.getByTestId("login-password"), "admin@123");
     await user.click(screen.getByTestId("login-submit"));
 
-    await waitFor(() => {
-      expect(screen.getByTestId("account-state")).toHaveTextContent("Admin");
-      expect(screen.getByTestId("account-state")).not.toHaveTextContent("admin@mcpruntime.org");
-    });
+    await user.click(await screen.findByTestId("account-trigger"));
+    expect(await screen.findByText("Administrator")).toBeInTheDocument();
+    expect(screen.getAllByText("admin@mcpruntime.org")).toHaveLength(2);
     expect(screen.getByTestId("logout-button")).toBeInTheDocument();
 
     const loginCall = calls.find((call) => call.url === "/auth/login");
@@ -138,13 +153,14 @@ describe("App", () => {
     });
 
     renderApp();
-    await user.click(await screen.findByTestId("signin-button"));
+    await openAccountSignIn(user);
     // Account and API-key credentials are separate modes now.
     await user.click(screen.getByTestId("signin-mode-api-key"));
     await user.type(screen.getByTestId("login-api-key"), "ui-key");
     await user.click(screen.getByTestId("login-submit"));
 
-    await waitFor(() => expect(screen.getByTestId("logout-button")).toBeInTheDocument());
+    await user.click(await screen.findByTestId("account-trigger"));
+    await screen.findByTestId("logout-button");
     const loginCall = calls.find((call) => call.url === "/auth/login");
     expect(String(loginCall?.init.body)).toBe(JSON.stringify({ api_key: "ui-key" }));
     expect(document.body.innerHTML).not.toContain("ui-key");
@@ -162,13 +178,14 @@ describe("App", () => {
     });
 
     renderApp();
-    await user.click(await screen.findByTestId("signin-button"));
+    await openAccountSignIn(user);
     await waitFor(() => expect(initialize).toHaveBeenCalledTimes(1));
 
     const { callback } = initialize.mock.calls[0][0];
     callback({ credential: "google-id-token" });
 
-    await waitFor(() => expect(screen.getByTestId("logout-button")).toBeInTheDocument());
+    await user.click(await screen.findByTestId("account-trigger"));
+    await screen.findByTestId("logout-button");
     const loginCall = calls.find((call) => call.url === "/auth/login");
     expect(String(loginCall?.init.body)).toBe(JSON.stringify({ id_token: "google-id-token" }));
 
@@ -184,7 +201,7 @@ describe("App", () => {
     });
 
     renderApp();
-    await user.click(await screen.findByTestId("signin-button"));
+    await openAccountSignIn(user);
     await user.type(screen.getByTestId("login-email"), "nobody@example.com");
     await user.type(screen.getByTestId("login-password"), "wrong");
     await user.click(screen.getByTestId("login-submit"));
@@ -204,12 +221,11 @@ describe("App", () => {
     });
 
     renderApp();
-    await user.click(await screen.findByTestId("logout-button"));
+    await signOut(user);
 
     await waitFor(() =>
-      expect(screen.getByTestId("account-state")).toHaveTextContent("Signed out")
+      expect(screen.getByTestId("account-trigger")).toHaveTextContent("Account")
     );
-    expect(screen.getByTestId("signin-button")).toBeInTheDocument();
     expect(calls.some((call) => call.url === "/auth/logout" && call.init.method === "POST")).toBe(
       true
     );
@@ -236,7 +252,7 @@ describe("App", () => {
     });
 
     renderApp();
-    await user.click(await screen.findByTestId("signin-button"));
+    await openAccountSignIn(user);
     await user.type(screen.getByTestId("login-email"), "admin@mcpruntime.org");
     await user.type(screen.getByTestId("login-password"), "admin@123");
     await user.click(screen.getByTestId("login-submit"));

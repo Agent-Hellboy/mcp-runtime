@@ -23,19 +23,37 @@ const POINTS = [
   },
 ];
 
-// Signed out shows what the console is for and nothing about the catalog
-// itself: no server counts, no sample inventory, no implication that private
-// data is public.
 export function SignedOutServers({ onSignIn }: SignedOutServersProps) {
   return (
     <section className="landing" aria-labelledby="catalog-signed-out-title" data-testid="catalog-signed-out">
-      <h1 className="landing-title" id="catalog-signed-out-title">
-        The control plane for your MCP servers
-      </h1>
-      <p className="landing-lede">
-        MCP Sentinel shows the servers running on this cluster, the tools they expose, and the policy that
-        governs every call. Sign in to see the catalog for your namespaces.
-      </p>
+      <div className="landing-hero">
+        <div className="landing-intro">
+          <span className="landing-eyebrow">MCP Runtime platform</span>
+          <h1 className="landing-title" id="catalog-signed-out-title">
+            See what’s running. Govern every tool call.
+          </h1>
+          <p className="landing-lede">
+            Discover deployed MCP servers, inspect their tools, and understand how the gateway applies policy.
+            Sign in to view the namespaces your account can access.
+          </p>
+          <div className="landing-actions">
+            <Button variant="primary" icon="login" onClick={onSignIn} data-testid="landing-signin-button">
+              Sign in to your workspace
+            </Button>
+            <a className="landing-doc-link" href="https://mcpruntime.org/docs/" target="_blank" rel="noreferrer">
+              Read the platform docs <span aria-hidden="true">↗</span>
+            </a>
+          </div>
+        </div>
+        <ol className="landing-journey" aria-label="MCP Runtime workflow">
+          {["Deploy", "Discover", "Govern", "Observe"].map((step, index) => (
+            <li key={step}>
+              <span>{String(index + 1).padStart(2, "0")}</span>
+              <strong>{step}</strong>
+            </li>
+          ))}
+        </ol>
+      </div>
 
       <div className="landing-points">
         {POINTS.map((point) => (
@@ -49,9 +67,6 @@ export function SignedOutServers({ onSignIn }: SignedOutServersProps) {
         ))}
       </div>
 
-      <Button variant="primary" icon="login" onClick={onSignIn}>
-        Sign in
-      </Button>
     </section>
   );
 }
