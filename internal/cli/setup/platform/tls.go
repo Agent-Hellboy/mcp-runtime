@@ -154,6 +154,9 @@ func setupTLSProvidedSecretsWithKubectl(kubectl core.KubectlRunner, plan setuppl
 	if strings.TrimSpace(core.GetPlatformIngressHost()) != "" {
 		checks = append(checks, struct{ namespace, name, purpose string }{core.DefaultAnalyticsNamespace, ingressmanifest.PlatformTLSSecretName, "platform"})
 	}
+	if plan.DeployMCPAuthServer && !plan.TestMode {
+		checks = append(checks, struct{ namespace, name, purpose string }{core.DefaultAnalyticsNamespace, plan.MCPAuthTLSSecret, "mcp-auth"})
+	}
 	for _, check := range checks {
 		if err := checkTLSSecretWithKubectl(kubectl, check.namespace, check.name, check.purpose); err != nil {
 			return err
@@ -188,6 +191,15 @@ func setupTLSLetsEncryptClientGo(logger *zap.Logger, plan setupplan.Plan) error 
 		}
 		return wrappedErr
 	}
+	authHost, err := mcpAuthTLSHost(plan)
+	if err != nil {
+		return err
+	}
+	if authHost != "" {
+		if err := certmanager.ValidateACMEHostnamesForPublicCA(authHost); err != nil {
+			return err
+		}
+	}
 	if err := certmanager.ValidateIngressManifestForACME(plan.Ingress.Manifest); err != nil {
 		wrappedErr := core.WrapWithSentinel(core.ErrTLSSetupFailed, err, err.Error())
 		core.Error("Ingress configuration blocks Let's Encrypt")
@@ -217,7 +229,11 @@ func setupTLSLetsEncryptClientGo(logger *zap.Logger, plan setupplan.Plan) error 
 		return wrappedErr
 	}
 	core.Info("Checking TCP connectivity to your ACME hostnames on port 80 (best effort from this machine)")
-	certmanager.PreflightACMEHostnamesPort80(certmanager.ACMETLSDNSNames())
+	acmeHosts := certmanager.ACMETLSDNSNames()
+	if authHost != "" {
+		acmeHosts = append(acmeHosts, authHost)
+	}
+	certmanager.PreflightACMEHostnamesPort80(acmeHosts)
 
 	name := certmanager.ClusterIssuerNameForACME(plan.ACMEStaging)
 	manifest := certmanager.RenderLetsEncryptClusterIssuerManifest(name, plan.ACMEmail, acmeServerURLForClientGo(plan.ACMEStaging))
@@ -243,6 +259,9 @@ func setupTLSLetsEncryptClientGo(logger *zap.Logger, plan setupplan.Plan) error 
 		certTimeout = 5 * time.Minute
 	}
 	if err := waitForCertificateReadyClientGo(certmanager.RegistryCertificateName, core.NamespaceRegistry, certTimeout, logger, "certificate"); err != nil {
+		return err
+	}
+	if err := setupMCPAuthTLSClientGo(logger, plan, name); err != nil {
 		return err
 	}
 	core.Success("Certificate issued successfully")
@@ -296,6 +315,9 @@ func setupTLSWithExistingClusterIssuerClientGo(logger *zap.Logger, plan setuppla
 		certTimeout = 5 * time.Minute
 	}
 	if err := waitForCertificateReadyClientGo(certmanager.RegistryCertificateName, core.NamespaceRegistry, certTimeout, logger, "certificate"); err != nil {
+		return err
+	}
+	if err := setupMCPAuthTLSClientGo(logger, plan, issuerName); err != nil {
 		return err
 	}
 	core.Success("Certificate issued successfully")
@@ -366,6 +388,9 @@ func setupTLSPrivateCAClientGo(logger *zap.Logger, plan setupplan.Plan) error {
 	}
 	certTimeout := core.GetCertTimeout()
 	if err := waitForCertificateReadyClientGo(certmanager.RegistryCertificateName, core.NamespaceRegistry, certTimeout, logger, "certificate"); err != nil {
+		return err
+	}
+	if err := setupMCPAuthTLSClientGo(logger, plan, certmanager.CertClusterIssuerName); err != nil {
 		return err
 	}
 	core.Success("Certificate issued successfully")
@@ -544,6 +569,55 @@ func applyRegistryCertificateClientGo(certName, secretName string, dnsNames, ipA
 	}
 	manifest := certmanager.RenderRegistryCertificate(certName, secretName, dnsNames, ipAddresses, issuerName)
 	return applyManifestYAML(manifest, "", os.Stdout)
+}
+
+func applyCertificateClientGo(certName, secretName, namespace string, dnsNames, ipAddresses []string, issuerName string) error {
+	if len(dnsNames) == 0 && len(ipAddresses) == 0 {
+		return core.NewWithSentinel(core.ErrCertCertificateSANsEmpty, fmt.Sprintf("%s TLS has no DNS names or IP addresses to request", certName))
+	}
+	manifest := certmanager.RenderCertificate(certName, secretName, namespace, dnsNames, ipAddresses, issuerName)
+	return applyManifestYAML(manifest, "", os.Stdout)
+}
+
+func setupMCPAuthTLSClientGo(logger *zap.Logger, plan setupplan.Plan, issuerName string) error {
+	if !plan.DeployMCPAuthServer || plan.TestMode || plan.ProvidedTLSSecrets {
+		return nil
+	}
+	authHost, err := mcpAuthTLSHost(plan)
+	if err != nil {
+		return err
+	}
+	if err := ensureNamespaceWithLabels(core.DefaultAnalyticsNamespace, nil); err != nil {
+		return err
+	}
+	const certificateName = "mcp-auth-server-cert"
+	core.Info("Applying Certificate for bundled mcp-auth")
+	if err := applyCertificateClientGo(certificateName, plan.MCPAuthTLSSecret, core.DefaultAnalyticsNamespace, []string{authHost}, nil, issuerName); err != nil {
+		return wrapApplyCertificateError(err, logger, certificateName)
+	}
+	certTimeout := core.GetCertTimeout()
+	if certTimeout < 5*time.Minute {
+		certTimeout = 5 * time.Minute
+	}
+	if err := waitForCertificateReadyClientGo(certificateName, core.DefaultAnalyticsNamespace, certTimeout, logger, "mcp-auth certificate"); err != nil {
+		return err
+	}
+	core.Success("mcp-auth certificate issued successfully")
+	return nil
+}
+
+func mcpAuthTLSHost(plan setupplan.Plan) (string, error) {
+	if !plan.DeployMCPAuthServer || plan.TestMode {
+		return "", nil
+	}
+	parsed, err := url.Parse(strings.TrimSpace(plan.MCPAuthIssuerURL))
+	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" {
+		return "", fmt.Errorf("mcp-auth issuer URL %q must be an absolute HTTPS URL with a certificate hostname", plan.MCPAuthIssuerURL)
+	}
+	if parsed.Port() != "" {
+		return "", fmt.Errorf("mcp-auth issuer URL %q must not include a port because Kubernetes Ingress hosts do not accept ports", plan.MCPAuthIssuerURL)
+	}
+	return parsed.Hostname(), nil
 }
 
 func applyRegistryCertificateFromTemplateClientGo() error {

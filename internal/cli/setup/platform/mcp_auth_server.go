@@ -113,7 +113,7 @@ func deployMCPAuthServer(image, configuredIssuer string, configuredResources []s
 // checkMCPAuthPrerequisites runs before image builds and deployment. Production
 // auth uses durable signing material and a certificate-backed ingress; failing
 // here avoids a long setup followed by an opaque FailedMount or TLS failure.
-func checkMCPAuthPrerequisites(tlsSecret, signingKeySecret string, testMode bool) error {
+func checkMCPAuthPrerequisites(signingKeySecret string, testMode bool) error {
 	if testMode {
 		return nil
 	}
@@ -124,18 +124,6 @@ func checkMCPAuthPrerequisites(tlsSecret, signingKeySecret string, testMode bool
 		key    string
 		remedy string
 	}{
-		{
-			name:   "mcp-auth TLS",
-			secret: tlsSecret,
-			key:    "tls.crt",
-			remedy: "create the TLS Secret (or its cert-manager Certificate) in namespace mcp-sentinel before setup",
-		},
-		{
-			name:   "mcp-auth TLS",
-			secret: tlsSecret,
-			key:    "tls.key",
-			remedy: "create the TLS Secret (or its cert-manager Certificate) in namespace mcp-sentinel before setup",
-		},
 		{
 			name:   "mcp-auth signing key",
 			secret: signingKeySecret,

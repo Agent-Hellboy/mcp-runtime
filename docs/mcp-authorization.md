@@ -56,10 +56,10 @@ keycloak.example.com → <public ingress IP>
 auth.example.com     → <public ingress IP>
 ```
 
-Issue certificates for both names with the cluster's ACME issuer. The auth
-server setup expects a pre-created Secret such as `mcp-auth-server-tls` in the
-`mcp-sentinel` namespace. Keycloak's certificate can be named
-`keycloak-tls`.
+Issue certificates for both names with the cluster's ACME issuer. Setup creates
+the auth-server Certificate and its Secret in the `mcp-sentinel` namespace;
+`--mcp-auth-tls-secret` is only needed when certificates are externally managed.
+Keycloak's certificate can be named `keycloak-tls`.
 
 The platform hostname must also be present in the platform UI Ingress before
 opening it in a browser. A browser with HSTS will not offer a certificate
@@ -189,8 +189,8 @@ client bearer token before forwarding upstream.
 ## Deploy through setup
 
 Create the persistent signing-key Secret with the RSA key stored as
-`private-key.pem`, create the TLS Secret, export the client secret only in the
-setup environment, and run:
+`private-key.pem`, export the client secret only in the setup environment, and
+run:
 
 ```bash
 KEYCLOAK_CLIENT_SECRET='from-your-secret-manager' \
@@ -199,11 +199,14 @@ KEYCLOAK_CLIENT_SECRET='from-your-secret-manager' \
   --with-mcp-auth-server \
   --mcp-auth-issuer-url https://auth.example.com/mcp-auth \
   --mcp-auth-resource-url https://mcp.example.com/my-server/mcp \
-  --mcp-auth-tls-secret mcp-auth-server-tls \
   --mcp-auth-signing-key-secret mcp-auth-signing-key \
   --mcp-auth-connectors-file /secure/mcp-auth-connectors.json \
   --mcp-auth-connector keycloak
 ```
+
+The TLS certificate for the issuer host is provisioned by setup using the
+configured TLS ClusterIssuer. Pass `--mcp-auth-tls-secret` only when the
+certificate is externally managed (and use `--provided-tls-secrets`).
 
 The default image is `docker.io/princekrroshan01/mcp-auth-server:latest`.
 The server uses SQLite on a PVC in production and memory storage only in
@@ -216,6 +219,7 @@ The same values can be supplied through the public deployment environment:
 export MCP_SETUP_WITH_MCP_AUTH_SERVER=1
 export MCP_SETUP_MCP_AUTH_ISSUER_URL=https://auth.example.com/mcp-auth
 export MCP_SETUP_MCP_AUTH_RESOURCE_URL=https://mcp.example.com/my-server/mcp
+# Optional only for externally managed TLS (required with provided-tls-secrets).
 export MCP_SETUP_MCP_AUTH_TLS_SECRET=mcp-auth-server-tls
 export MCP_SETUP_MCP_AUTH_SIGNING_KEY_SECRET=mcp-auth-signing-key
 export MCP_SETUP_MCP_AUTH_CONNECTORS_FILE=/secure/mcp-auth-connectors.json

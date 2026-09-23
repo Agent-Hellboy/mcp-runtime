@@ -103,7 +103,7 @@ MCP clients use.
 | `MCP_SETUP_MCP_AUTH_RESOURCE_URL` | required when enabled | Canonical MCP resource URL; must exactly match the protected server's `spec.auth.audience`. |
 | `MCP_SETUP_MCP_AUTH_CONNECTORS_FILE` | required when enabled | Provider-neutral connector JSON; client secrets are referenced by environment variable, never stored in this file. |
 | `MCP_SETUP_MCP_AUTH_CONNECTOR` | required when enabled | Named connector selected by the mcp-auth server. |
-| `MCP_SETUP_MCP_AUTH_TLS_SECRET` | required when enabled | TLS Secret for the authorization-server hostname. |
+| `MCP_SETUP_MCP_AUTH_TLS_SECRET` | optional | Override the managed TLS Secret for the authorization-server hostname; required only with `--provided-tls-secrets`. |
 | `MCP_SETUP_MCP_AUTH_SIGNING_KEY_SECRET` | required when enabled | Persistent RSA signing-key Secret containing `private-key.pem`. |
 
 The issuer must be the exact public URL configured for the optional
@@ -191,7 +191,6 @@ Deploy the optional bundled server through normal setup:
   --with-mcp-auth-server \
   --mcp-auth-issuer-url https://auth.<domain>/mcp-auth \
   --mcp-auth-resource-url https://mcp.<domain>/<server-prefix>/mcp \
-  --mcp-auth-tls-secret mcp-auth-server-tls \
   --mcp-auth-signing-key-secret mcp-auth-signing-key \
   --mcp-auth-connectors-file /secure/mcp-auth-connectors.json \
   --mcp-auth-connector keycloak
@@ -199,8 +198,10 @@ Deploy the optional bundled server through normal setup:
 
 `--mcp-auth-resource-url` must exactly match the MCPServer's
 `spec.auth.audience`. Production setup requires HTTPS issuer/resource URLs, a
-TLS Secret covering the auth host, a selected connector, and a persistent RSA
-signing key stored in the Secret key `private-key.pem`. The connector's
+certificate covering the auth host (automatically provisioned by the configured
+TLS ClusterIssuer), a selected connector, and a persistent RSA signing key
+stored in the Secret key `private-key.pem`. Use `--mcp-auth-tls-secret` only
+for an externally managed certificate. The connector's
 `KEYCLOAK_CLIENT_SECRET` value is read from the environment and converted into
 a Kubernetes Secret; it must not be committed to Git.
 

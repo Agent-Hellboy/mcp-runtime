@@ -205,15 +205,15 @@ will use to push and pull container images.`,
 				return fmt.Errorf("--with-mcp-auth-server requires the bundled sentinel stack")
 			}
 			if withMCPAuthServer && !testMode {
+				if !tlsEnabled {
+					return fmt.Errorf("--with-mcp-auth-server requires --with-tls outside --test-mode so its HTTPS issuer has a managed or provided certificate")
+				}
 				parsed, err := url.Parse(strings.TrimSpace(mcpAuthIssuerURL))
 				if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
 					return fmt.Errorf("--mcp-auth-issuer-url must be an absolute HTTPS URL outside --test-mode")
 				}
 				if mcpAuthConnectorsFile == "" || mcpAuthConnector == "" {
 					return fmt.Errorf("production mcp-auth deployment requires --mcp-auth-connectors-file and --mcp-auth-connector")
-				}
-				if strings.TrimSpace(mcpAuthTLSSecret) == "" {
-					return fmt.Errorf("production mcp-auth deployment requires --mcp-auth-tls-secret")
 				}
 				if strings.TrimSpace(mcpAuthSigningKeySecret) == "" {
 					return fmt.Errorf("production mcp-auth deployment requires --mcp-auth-signing-key-secret; an ephemeral signing key would invalidate every issued token on restart")
@@ -333,12 +333,12 @@ will use to push and pull container images.`,
 	cmd.Flags().BoolVar(&parallelBuilds, "parallel-builds", false, "Build and publish setup images in parallel; keeps cluster, registry, TLS, and rollout sequencing unchanged")
 	cmd.Flags().BoolVar(&strictProd, "strict-prod", false, "Require production-style registry and TLS validation for non-test setup")
 	cmd.Flags().BoolVar(&withoutAnalytics, "without-sentinel", false, "Skip deploying the bundled mcp-sentinel stack")
-	cmd.Flags().BoolVar(&withMCPAuthServer, "with-mcp-auth-server", false, "Deploy the optional bundled mcp-auth authorization server; production requires HTTPS issuer, connector, and TLS Secret")
+	cmd.Flags().BoolVar(&withMCPAuthServer, "with-mcp-auth-server", false, "Deploy the optional bundled mcp-auth authorization server; production requires HTTPS issuer, connector, and TLS-enabled ingress")
 	cmd.Flags().StringVar(&mcpAuthServerImage, "mcp-auth-server-image", "docker.io/princekrroshan01/mcp-auth-server:latest", "Container image for the optional bundled mcp-auth authorization server")
 	cmd.Flags().StringVar(&mcpAuthIssuerURL, "mcp-auth-issuer-url", "", "Public HTTPS issuer URL for the bundled mcp-auth authorization server (required outside --test-mode)")
 	cmd.Flags().StringSliceVar(&mcpAuthResourceURLs, "mcp-auth-resource-url", nil, "Canonical resource URI the bundled mcp-auth server issues tokens for; repeat or comma-separate for several MCP servers, each matching that server's auth.audience (required outside --test-mode)")
 	cmd.Flags().StringVar(&mcpAuthSigningKeySecret, "mcp-auth-signing-key-secret", "", "Secret holding the mcp-auth RSA signing key as private-key.pem (required outside --test-mode)")
-	cmd.Flags().StringVar(&mcpAuthTLSSecret, "mcp-auth-tls-secret", "", "TLS Secret for the bundled mcp-auth ingress (required outside --test-mode)")
+	cmd.Flags().StringVar(&mcpAuthTLSSecret, "mcp-auth-tls-secret", "", "Override the managed TLS Secret for the bundled mcp-auth ingress (default: mcp-auth-server-tls)")
 	cmd.Flags().StringVar(&mcpAuthConnectorsFile, "mcp-auth-connectors-file", "", "Provider connector JSON file for the bundled mcp-auth authorization server")
 	cmd.Flags().StringVar(&mcpAuthConnector, "mcp-auth-connector", "", "Provider connector name to activate (requires --mcp-auth-connectors-file)")
 	cmd.Flags().BoolVar(&withoutAnalytics, "without-analytics", false, "Deprecated alias for --without-sentinel")

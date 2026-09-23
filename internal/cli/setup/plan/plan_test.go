@@ -45,3 +45,15 @@ func TestBuildMTLSIssuerResolution(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildDefaultsMCPAuthTLSSecret(t *testing.T) {
+	got := Build(Input{DeployMCPAuthServer: true})
+	if got.MCPAuthTLSSecret != DefaultMCPAuthTLSSecret {
+		t.Fatalf("MCPAuthTLSSecret = %q, want %q", got.MCPAuthTLSSecret, DefaultMCPAuthTLSSecret)
+	}
+
+	custom := Build(Input{DeployMCPAuthServer: true, MCPAuthTLSSecret: "corp-auth-tls"})
+	if custom.MCPAuthTLSSecret != "corp-auth-tls" {
+		t.Fatalf("custom MCPAuthTLSSecret = %q, want corp-auth-tls", custom.MCPAuthTLSSecret)
+	}
+}
