@@ -112,6 +112,15 @@ For local `setup --test-mode` clusters, setup seeds two email/password logins:
 | **Prometheus** | Not exposed | `prometheus:9090` | Internal metrics backend and Grafana datasource. Use a temporary `kubectl port-forward` only for backend debugging. |
 | **MCP gateway sidecar** | per-server route, for example `/workspace-assistant-mcp/mcp` | pod-local sidecar port | Enforces policy and forwards to the MCP server container. |
 
+### Admin Grafana access
+
+Administration → Usage analytics includes a **Detailed activity** button that
+opens Grafana Explore at `/grafana/explore`. Platform admins can use its
+provisioned Prometheus, Loki, and Tempo data sources to inspect metrics, logs,
+and traces in one place. Grafana remains protected by the platform admin
+forward-auth route. Platform health also links to Grafana; it does not expose a
+separate Prometheus UI link.
+
 ### Scoped user observability
 
 The Activity server list exposes Prometheus and Grafana actions only for an

@@ -82,8 +82,7 @@ export function PlatformHealthPanel({ onSignIn }: PlatformHealthPanelProps) {
       />
 
       <nav className="observability-links" aria-label="Observability tools" style={{ marginBottom: "var(--space-5)" }}>
-        {/* Plain links so the platform ingress forward-auth still applies.
-            The dashboard must not proxy either of these. */}
+        {/* Keep the link direct so the platform ingress forward-auth still applies. */}
         <ButtonLink
           variant="secondary"
           href="/grafana"
@@ -93,16 +92,6 @@ export function PlatformHealthPanel({ onSignIn }: PlatformHealthPanelProps) {
           data-testid="grafana-link"
         >
           Grafana
-        </ButtonLink>
-        <ButtonLink
-          variant="secondary"
-          href="/prometheus"
-          target="_blank"
-          rel="noreferrer"
-          trailingIcon="external"
-          data-testid="prometheus-link"
-        >
-          Prometheus
         </ButtonLink>
       </nav>
 

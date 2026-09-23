@@ -279,6 +279,19 @@ describe("AdminWorkspace sections", () => {
     });
   });
 
+  it("opens Grafana Explore from usage analytics for detailed activity", async () => {
+    const user = userEvent.setup();
+    stubAdminApi();
+
+    renderAdmin(ADMIN);
+    await screen.findByTestId("teams-table");
+    await user.click(screen.getByTestId("admin-section-analytics"));
+
+    const detailedActivity = await screen.findByTestId("analytics-detailed-activity");
+    expect(detailedActivity).toHaveAttribute("href", "/grafana/explore");
+    expect(detailedActivity).toHaveAttribute("target", "_blank");
+  });
+
   it("renders platform health and keeps Grafana a plain forward-auth link", async () => {
     const user = userEvent.setup();
     stubAdminApi();
@@ -296,6 +309,6 @@ describe("AdminWorkspace sections", () => {
 
     // Must stay a direct href so the platform ingress forward-auth still applies.
     expect(screen.getByTestId("grafana-link")).toHaveAttribute("href", "/grafana");
-    expect(screen.getByTestId("prometheus-link")).toHaveAttribute("href", "/prometheus");
+    expect(screen.queryByTestId("prometheus-link")).not.toBeInTheDocument();
   });
 });
