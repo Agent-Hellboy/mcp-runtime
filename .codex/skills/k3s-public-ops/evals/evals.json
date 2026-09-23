@@ -1,0 +1,23 @@
+{
+  "skill_name": "k3s-public-ops",
+  "evals": [
+    {
+      "id": "public-rollout",
+      "prompt": "Validate a rollout to the public mcpruntime.org k3s cluster using the repo deployment scripts.",
+      "expected_output": "Use k3s-public-ops guidance, rebuild the CLI, validate image refs/pull secrets, and run health checks.",
+      "assertions": [
+        "Selects canonical deploy scripts and k3s-specific checks.",
+        "Requires cluster doctor and rollout health evidence."
+      ]
+    },
+    {
+      "id": "local-kind",
+      "prompt": "My local Kind cluster has a dashboard 401 in test mode.",
+      "expected_output": "Route to local-dev or troubleshooting guidance, not public k3s operations.",
+      "assertions": [
+        "Does not suggest public deployment commands.",
+        "Routes to the appropriate local troubleshooting skill."
+      ]
+    }
+  ]
+}

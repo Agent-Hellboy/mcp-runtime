@@ -326,14 +326,12 @@ Read `references/ui-coverage.md`, "React console structure", before writing any
 browser script: the routes, the confirmation dialogs, the Operations tabs, and
 the Platform health grid all changed, and older selectors will silently fail.
 
-## Step 7b - Frontend development, test, and Playwright-without-MCP tooling
+## Step 7b - Frontend development and Playwright tooling
 
-Read `references/frontend-tooling.md` before doing `services/ui/frontend`
-component-test/build work, or when no Playwright MCP server is wired in and
-you need to drive Playwright directly from Node (covers the vitest/
-testing-library/vitest-axe toolchain, why the bundle filename is content-hashed,
-and the cached-browser-revision launch failure with its fix). Skip it for a
-narrow API-only or docs-only check.
+Read [references/frontend-tooling.md](references/frontend-tooling.md) before
+frontend component-test/build work, or when driving Playwright directly from
+Node because no Playwright MCP server is available. Skip it for narrow API-only
+or docs-only checks.
 
 ## Step 8 - Public-host defense
 

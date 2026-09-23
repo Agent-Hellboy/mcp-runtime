@@ -1,9 +1,4 @@
----
-name: design-principles
-description: API and system design principles for MCP Runtime — RESTful resource design, HTTP semantics, versioning, and the broader system principles (least privilege, secure/deny by default, fail-closed, stable contracts, separation of concerns, validate at boundaries, idempotency, observability, audit, minimized blast radius, good defaults). Use when designing or reviewing an API, CRD, CLI flag, operator/gateway/service behavior, auth/policy path, or any new contract; and as the review lens for "is this good design?".
----
-
-# Design Principles
+# MCP Runtime Design Principles
 
 Apply these when designing or reviewing **anything with a contract or a trust boundary** in MCP Runtime: REST/JSON-RPC APIs, CRD shapes (`api/v1alpha1`), CLI flags, operator reconciliation, the gateway pipeline, Sentinel services, and MCP tool surfaces. Prefer these over ad-hoc choices; when two are in tension, make the tradeoff explicit (see *Make tradeoffs explicit*).
 
