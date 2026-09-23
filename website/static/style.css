@@ -133,16 +133,9 @@ pre {
 .brand-mark {
   width: 38px;
   height: 38px;
-  display: grid;
-  place-items: center;
-  border: 1px solid var(--paper-warm);
-  background: var(--paper-warm);
-  color: var(--ink);
+  display: block;
+  object-fit: contain;
   box-shadow: 4px 4px 0 var(--blue);
-  font-family: var(--mono);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
 }
 
 .brand-title,

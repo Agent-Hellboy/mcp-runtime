@@ -17,9 +17,11 @@ type AppShellProps = {
   children: ReactNode;
 };
 
-function principalRole(status: AuthStatus): string {
-  const role = (status.principal?.role || "user").trim();
-  return role ? role.charAt(0).toUpperCase() + role.slice(1) : "User";
+function principalUsername(status: AuthStatus): string {
+  const email = status.principal?.email?.trim();
+  if (email) return email.split("@")[0];
+  const subject = status.principal?.subject?.trim();
+  return subject || "User";
 }
 
 export function AppShell({
@@ -70,10 +72,8 @@ export function AppShell({
       <header className="topbar">
         <div className="topbar-inner">
           <span className="brand">
-            <span className="brand-mark" aria-hidden="true">
-              S
-            </span>
-            <span className="brand-name">MCP Sentinel</span>
+            <img className="brand-mark" src="/favicon.svg" alt="" />
+            <span className="brand-name">MCP Runtime</span>
           </span>
 
           <nav className="primary-nav" aria-label="Primary">
@@ -85,7 +85,7 @@ export function AppShell({
           <div className="topbar-actions">
             {auth.authenticated ? (
               <span className="account-chip" data-testid="account-state">
-                <span className="account-role">{principalRole(auth)}</span>
+                <span className="account-who" title={principalUsername(auth)}>{principalUsername(auth)}</span>
               </span>
             ) : (
               <span className="account-chip" data-testid="account-state">

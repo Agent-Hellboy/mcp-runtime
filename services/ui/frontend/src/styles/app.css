@@ -68,17 +68,10 @@
 }
 
 .brand-mark {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  display: block;
   width: 27px;
   height: 27px;
-  border-radius: 8px;
-  background: linear-gradient(140deg, var(--accent), var(--link));
-  color: #04211c;
-  font-family: var(--font-serif);
-  font-size: 15px;
-  line-height: 1;
+  object-fit: contain;
   box-shadow: 0 6px 18px -10px color-mix(in srgb, var(--accent) 85%, transparent);
 }
 

@@ -1,5 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect width="64" height="64" rx="12" fill="#0f1f1b"/>
-  <path d="M15 18h34v8H15zM15 30h34v8H15zM15 42h34v4H15z" fill="#4ade80"/>
-  <path d="M21 22h22M21 34h14" stroke="#f7f5ef" stroke-width="4" stroke-linecap="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="MCP Runtime">
+  <rect width="64" height="64" fill="#f5efe3"/>
+  <path d="M10 10h44v44H10z" fill="#11110f"/>
+  <path d="M16 16h32v32H16z" fill="none" stroke="#005dff" stroke-width="3"/>
+  <text x="32" y="38" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-weight="700" font-size="14" fill="#fffaf0">MCP</text>
 </svg>
