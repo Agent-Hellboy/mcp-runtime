@@ -29,7 +29,7 @@ const (
 	DefaultOrgCatalogNamespace    = "mcp-servers-org"
 	DefaultPublicCatalogNamespace = "mcp-servers-public"
 	DefaultTestMTLSClusterIssuer  = "mcp-runtime-ca"
-	DefaultMCPAuthTLSSecret       = "mcp-auth-server-tls"
+	DefaultMCPAuthTLSSecret       = "mcp-auth-server-tls" // #nosec G101 -- Kubernetes Secret name, not a credential.
 )
 
 // Input captures the raw CLI inputs for setup.
