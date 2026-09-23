@@ -93,8 +93,9 @@ a:hover {
 
 .publication-mark {
   display: block;
-  width: 34px;
-  height: 34px;
+  width: 190px;
+  height: auto;
+  max-height: 56px;
   object-fit: contain;
 }
 

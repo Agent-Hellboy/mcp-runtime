@@ -14,6 +14,7 @@ can run the same model inside their own clusters for agents, IDEs, and direct
 human workflows.
 
 <div class="docs-home">
+<p class="docs-brand-banner"><img src="assets/brand/mcp-runtime-banner.png" alt="MCP Runtime — Deploy, govern, and broker MCP servers using a Kubernetes-native control plane" /></p>
 <section class="docs-hero">
   <div class="docs-hero-copy">
   <p class="docs-eyebrow">Vendor-neutral MCP infrastructure for platform teams</p>
