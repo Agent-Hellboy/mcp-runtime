@@ -51,7 +51,7 @@ func checkMCPAuthSecrets(kubectl core.KubectlRunner) DoctorCheck {
 	if strings.TrimSpace(tlsSecret) == "" && strings.TrimSpace(signingKeySecret) != "" {
 		// Older production manifests used the default name without exposing it
 		// through a custom Ingress query; retain a useful check for those installs.
-		tlsSecret = "mcp-auth-server-tls"
+		tlsSecret = "mcp-auth-server-tls" // #nosec G101 -- Kubernetes Secret name, not a credential.
 	}
 	if strings.TrimSpace(tlsSecret) != "" {
 		checks = append(checks,

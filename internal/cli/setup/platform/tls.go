@@ -596,6 +596,9 @@ func setupMCPAuthTLSClientGo(logger *zap.Logger, plan setupplan.Plan, issuerName
 		return wrapApplyCertificateError(err, logger, certificateName)
 	}
 	certTimeout := core.GetCertTimeout()
+	if certTimeout < 5*time.Minute {
+		certTimeout = 5 * time.Minute
+	}
 	if err := waitForCertificateReadyClientGo(certificateName, core.DefaultAnalyticsNamespace, certTimeout, logger, "mcp-auth certificate"); err != nil {
 		return err
 	}
