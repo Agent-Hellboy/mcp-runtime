@@ -36,6 +36,7 @@ Flags:
       --operator-probe-addr string           Operator health probe bind address (default: :8081 from manager.yaml)
       --parallel-builds                      Build and publish setup images in parallel; keeps cluster, registry, TLS, and rollout sequencing unchanged
       --platform-mode string                 Platform access model (tenant|org|public). public exposes the catalog without login and lets signed-in users publish to the public preview namespace. (default "tenant")
+      --provided-tls-secrets                 Use operator-created Kubernetes TLS Secrets instead of issuing certificates. Requires --with-tls; do not combine with --acme-email or --tls-cluster-issuer
       --registry-mode string                 Registry setup mode (auto|bundled-http|bundled-https|external). auto uses a provisioned registry config when present, otherwise the bundled registry (default "auto")
       --registry-storage string              Registry storage size (default: 20Gi) (default "20Gi")
       --registry-type string                 Registry type (docker; harbor coming soon) (default "docker")
