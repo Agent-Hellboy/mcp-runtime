@@ -1,5 +1,7 @@
 # MCP Runtime Platform
 
+<img align="right" width="64" src="https://raw.githubusercontent.com/Agent-Hellboy/mcp-runtime/main/website/static/favicon.svg" alt="MCP Runtime logo" />
+
 [![CI](https://github.com/Agent-Hellboy/mcp-runtime/actions/workflows/ci.yaml/badge.svg)](https://github.com/Agent-Hellboy/mcp-runtime/actions/workflows/ci.yaml)
 [![Kind E2E](https://img.shields.io/github/actions/workflow/status/Agent-Hellboy/mcp-runtime/ci.yaml?branch=main&label=Kind%20E2E&job=Kind%20E2E)](https://github.com/Agent-Hellboy/mcp-runtime/actions/workflows/ci.yaml?query=branch%3Amain+job%3AKind%20E2E)
 [![Production E2E](https://img.shields.io/github/actions/workflow/status/Agent-Hellboy/mcp-runtime/production-e2e.yaml?branch=main&label=Production%20E2E&event=workflow_dispatch)](https://github.com/Agent-Hellboy/mcp-runtime/actions/workflows/production-e2e.yaml)

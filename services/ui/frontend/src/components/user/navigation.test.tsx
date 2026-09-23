@@ -135,6 +135,7 @@ describe("workspace navigation", () => {
     await user.click(screen.getByTestId("workspace-tab-keys"));
     await screen.findByTestId("api-keys-empty");
 
+    await user.click(await screen.findByTestId("account-trigger"));
     await user.click(screen.getByTestId("logout-button"));
 
     // Keys is gone for a signed-out principal, so the shell must not keep it.

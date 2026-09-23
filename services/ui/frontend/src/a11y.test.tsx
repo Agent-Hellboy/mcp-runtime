@@ -96,7 +96,8 @@ describe("accessibility", () => {
     const user = userEvent.setup();
     stub(false);
     const { container } = renderApp();
-    await user.click(await screen.findByTestId("signin-button"));
+    await user.click(await screen.findByTestId("account-trigger"));
+    await user.click(await screen.findByTestId("account-menu-signin"));
 
     expect(await axe(container, AXE_OPTIONS)).toHaveNoViolations();
   });
