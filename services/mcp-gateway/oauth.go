@@ -15,7 +15,7 @@ import (
 	mcpauth "github.com/Agent-Hellboy/mcp-auth/auth-client/go/mcpauth"
 	"github.com/golang-jwt/jwt/v4"
 
-	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
+	"mcp-runtime/pkg/oauthresource"
 	policypkg "mcp-runtime/pkg/policy"
 	"mcp-runtime/pkg/serviceutil"
 )
@@ -431,7 +431,7 @@ func shouldChallengeOAuth(policy *policypkg.Document, decision policypkg.Decisio
 func oauthAuthenticateHeader(policy *policypkg.Document, reason, toolName string, decision policypkg.Decision) string {
 	values := []string{
 		`realm="mcp-runtime"`,
-		fmt.Sprintf(`resource_metadata="%s"`, mcpv1alpha1.ProtectedResourceMetadataURL(policy.Auth.Audience)),
+		fmt.Sprintf(`resource_metadata="%s"`, oauthresource.ProtectedResourceMetadataURL(policy.Auth.Audience)),
 	}
 	if reason == "invalid_token" {
 		values = append(values, `error="invalid_token"`)

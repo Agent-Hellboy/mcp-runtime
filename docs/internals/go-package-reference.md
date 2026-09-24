@@ -13,6 +13,7 @@ python3 docs/scripts/generate_go_package_reference.py
 
 - [API types](#api-types) `mcp-runtime/api/v1alpha1`
 - [Metadata helpers](#metadata-helpers) `mcp-runtime/pkg/metadata`
+- [OAuth resource URL helpers](#oauth-resource-url-helpers) `mcp-runtime/pkg/oauthresource`
 - [Publish scope helpers](#publish-scope-helpers) `mcp-runtime/pkg/publishscope`
 - [Agent adapters](#agent-adapters) `mcp-runtime/internal/agentadapter`
 - [Operator internals](#operator-internals) `mcp-runtime/internal/operator`
@@ -2043,6 +2044,45 @@ const (
 	TrustLevelMedium TrustLevel = "medium"
 	TrustLevelHigh   TrustLevel = "high"
 )
+```
+
+<a id="oauth-resource-url-helpers"></a>
+## OAuth resource URL helpers
+
+Package: `oauthresource`
+Import path: `mcp-runtime/pkg/oauthresource`
+
+Source command:
+
+```bash
+go doc -all ./pkg/oauthresource
+```
+
+<a id="oauth-resource-url-helpers-overview"></a>
+### Overview
+
+Package oauthresource contains dependency-light OAuth resource URL helpers
+shared by the API and runtime services.
+
+### Jump To
+
+- [Overview](#oauth-resource-url-helpers-overview)
+- [Index](#oauth-resource-url-helpers-index)
+- [Functions](#oauth-resource-url-helpers-functions)
+
+<a id="oauth-resource-url-helpers-index"></a>
+### Index
+
+- [`func ProtectedResourceMetadataURL(resource string) string`](#oauth-resource-url-helpers-func-protectedresourcemetadataurl-resource-string-string)
+
+<a id="oauth-resource-url-helpers-functions"></a>
+### Functions
+
+<a id="oauth-resource-url-helpers-func-protectedresourcemetadataurl-resource-string-string"></a>
+```text
+func ProtectedResourceMetadataURL(resource string) string
+    ProtectedResourceMetadataURL returns the RFC 9728 metadata document URL for
+    a resource URL by inserting the well-known path between its origin and path.
 ```
 
 <a id="publish-scope-helpers"></a>

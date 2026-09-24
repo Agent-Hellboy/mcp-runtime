@@ -14,6 +14,7 @@ OUT = ROOT / "docs" / "internals" / "go-package-reference.md"
 PACKAGES = [
     ("API types", ["go", "doc", "-all", "./api/v1alpha1"]),
     ("Metadata helpers", ["go", "doc", "-all", "./pkg/metadata"]),
+    ("OAuth resource URL helpers", ["go", "doc", "-all", "./pkg/oauthresource"]),
     ("Publish scope helpers", ["go", "doc", "-all", "./pkg/publishscope"]),
     ("Agent adapters", ["go", "doc", "-all", "./internal/agentadapter"]),
     ("Operator internals", ["go", "doc", "-all", "./internal/operator"]),
