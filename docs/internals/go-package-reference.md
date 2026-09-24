@@ -1072,7 +1072,7 @@ type PolicyDecision string
 
 const (
 	PolicyDecisionAllow PolicyDecision = mcpdefaults.PolicyDecisionAllow
-	PolicyDecisionDeny  PolicyDecision = mcpdefaults.PolicyDecision
+	PolicyDecisionDeny  PolicyDecision = mcpdefaults.PolicyDecisionDeny
 )
 ```
 
@@ -1082,7 +1082,7 @@ type PolicyMode string
     +kubebuilder:validation:Enum=allow-list;observe
 
 const (
-	PolicyModeAllowList PolicyMode = mcpdefaults.PolicyMode
+	PolicyModeAllowList PolicyMode = mcpdefaults.PolicyModeAllowList
 	PolicyModeObserve   PolicyMode = "observe"
 )
 ```
@@ -1687,7 +1687,7 @@ type PolicyDecision string
 
 const (
 	PolicyDecisionAllow PolicyDecision = mcpdefaults.PolicyDecisionAllow
-	PolicyDecisionDeny  PolicyDecision = mcpdefaults.PolicyDecision
+	PolicyDecisionDeny  PolicyDecision = mcpdefaults.PolicyDecisionDeny
 )
 ```
 
@@ -1697,7 +1697,7 @@ type PolicyMode string
     +kubebuilder:validation:Enum=allow-list;observe
 
 const (
-	PolicyModeAllowList PolicyMode = mcpdefaults.PolicyMode
+	PolicyModeAllowList PolicyMode = mcpdefaults.PolicyModeAllowList
 	PolicyModeObserve   PolicyMode = "observe"
 )
 ```

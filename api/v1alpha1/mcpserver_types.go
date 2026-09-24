@@ -20,7 +20,7 @@ const (
 type PolicyMode string
 
 const (
-	PolicyModeAllowList PolicyMode = mcpdefaults.PolicyMode
+	PolicyModeAllowList PolicyMode = mcpdefaults.PolicyModeAllowList
 	PolicyModeObserve   PolicyMode = "observe"
 )
 
@@ -29,7 +29,7 @@ type PolicyDecision string
 
 const (
 	PolicyDecisionAllow PolicyDecision = mcpdefaults.PolicyDecisionAllow
-	PolicyDecisionDeny  PolicyDecision = mcpdefaults.PolicyDecision
+	PolicyDecisionDeny  PolicyDecision = mcpdefaults.PolicyDecisionDeny
 )
 
 // +kubebuilder:validation:Enum=low;medium;high

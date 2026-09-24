@@ -57,7 +57,7 @@ type PolicyDecision string
 
 const (
 	DecisionAllow PolicyDecision = "allow"
-	DecisionDeny  PolicyDecision = mcpdefaults.PolicyDecision
+	DecisionDeny  PolicyDecision = mcpdefaults.PolicyDecisionDeny
 	DecisionAudit PolicyDecision = "audit"
 )
 

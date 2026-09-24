@@ -13,11 +13,18 @@ const (
 	AuthSessionIDHeader = "X-MCP-Agent-Session"
 	AuthTokenHeader     = "Authorization"
 
-	PolicyMode          = "allow-list"
-	PolicyDecision      = "deny"
+	// Enum values. Types that mirror these enums reference the value
+	// constants below, never the defaults, so changing a default can never
+	// change what "deny" or "allow-list" means.
+	PolicyModeAllowList = "allow-list"
+	PolicyDecisionDeny  = "deny"
 	PolicyDecisionAllow = "allow"
-	PolicyEnforceOn     = "call_tool"
-	PolicyVersion       = "v1"
+
+	// Defaults, expressed in terms of the enum values.
+	PolicyMode      = PolicyModeAllowList
+	PolicyDecision  = PolicyDecisionDeny
+	PolicyEnforceOn = "call_tool"
+	PolicyVersion   = "v1"
 
 	SessionStore    = "kubernetes"
 	SessionMaxLife  = "24h"
