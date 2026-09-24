@@ -727,7 +727,7 @@ func TestRuntimeObservabilityLinksAllowOwnedNamespace(t *testing.T) {
 	if len(payload.Prometheus.Queries) == 0 {
 		t.Fatalf("prometheus queries missing: %#v", payload.Prometheus)
 	}
-	if got := payload.Prometheus.Queries[0].URL; !strings.HasPrefix(got, "https://platform.example.test/api/runtime/observability/prometheus/query?") {
+	if got := payload.Prometheus.Queries[0].URL; !strings.HasPrefix(got, "https://platform.example.test/api/ui/v1/runtime/observability/prometheus/query?") {
 		t.Fatalf("prometheus URL = %q", got)
 	}
 	if !payload.Grafana.Available {
@@ -736,7 +736,7 @@ func TestRuntimeObservabilityLinksAllowOwnedNamespace(t *testing.T) {
 	if payload.Grafana.DirectAdminOnly {
 		t.Fatalf("default scoped grafana dashboard should not be admin-only: %#v", payload.Grafana)
 	}
-	if got := payload.Grafana.URL; !strings.HasPrefix(got, "https://platform.example.test/api/runtime/observability/grafana/dashboard?") {
+	if got := payload.Grafana.URL; !strings.HasPrefix(got, "https://platform.example.test/api/ui/v1/runtime/observability/grafana/dashboard?") {
 		t.Fatalf("grafana URL = %q", got)
 	}
 }

@@ -301,14 +301,18 @@ func observabilityPrometheusAPIPath(namespace, serverName, queryID string) strin
 	values.Set("namespace", namespace)
 	values.Set("server", serverName)
 	values.Set("query_id", queryID)
-	return "/api/runtime/observability/prometheus/query?" + values.Encode()
+	// Links are opened by a user in the browser, where platform credentials are
+	// held in the UI's HttpOnly session cookie. Route them through the UI session
+	// proxy so it can authenticate the request to runtime-api without exposing a
+	// bearer token or requiring a second login.
+	return "/api/ui/v1/runtime/observability/prometheus/query?" + values.Encode()
 }
 
 func observabilityGrafanaDashboardAPIPath(namespace, serverName string) string {
 	values := url.Values{}
 	values.Set("namespace", namespace)
 	values.Set("server", serverName)
-	return "/api/runtime/observability/grafana/dashboard?" + values.Encode()
+	return "/api/ui/v1/runtime/observability/grafana/dashboard?" + values.Encode()
 }
 
 func publicAPIURL(r *http.Request, apiPath string) string {
