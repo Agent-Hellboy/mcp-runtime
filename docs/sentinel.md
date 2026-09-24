@@ -133,6 +133,14 @@ The `query_id` is allowlisted (`up`, `request_rate`, `deny_rate`,
 `latency_p95`); arbitrary PromQL is never accepted. `PROMETHEUS_API_URL`
 defaults to `http://prometheus:9090/prometheus`.
 
+The link form depends on the caller. Requests that arrive through the UI
+session proxy (`x-mcp-source: ui`) get `/api/ui/v1/runtime/observability/...`
+links. That same-origin proxy forwards the signed-in platform session to
+runtime-api, so browser users do not need to copy an API key or bearer token.
+Direct API and CLI callers get `/api/v1/runtime/observability/...` links, which
+they call with their own API key or bearer token. Both paths apply the same
+runtime-api authorization and tenant checks.
+
 Without an external Grafana dashboard template, the API renders a scoped
 dashboard from the same allowlisted queries. Set `GRAFANA_SERVER_DASHBOARD_URL`
 to a template containing `{namespace}` and `{server}` only when that Grafana
