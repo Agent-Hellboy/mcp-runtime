@@ -99,8 +99,45 @@ func TestAuthorizeExpiredGrantIsIgnored(t *testing.T) {
 		RPCMethod: "tools/call",
 		ToolName:  "upper",
 	}, now)
+	if decision.Allowed || decision.Reason != "grant_expired" {
+		t.Fatalf("decision = %#v, want expired grant denied as grant_expired", decision)
+	}
+}
+
+func TestAuthorizeExpiredGrantNextToActiveGrantReportsToolNotGranted(t *testing.T) {
+	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+	policy := testPolicyWithGrant()
+	policy.Grants[0].ExpiresAt = now.Add(-time.Minute).Format(time.RFC3339)
+	// An active grant for the same subject that does not cover the tool.
+	policy.Grants = append(policy.Grants, Grant{
+		Name:               "grant-2",
+		HumanID:            "human-1",
+		AgentID:            "agent-1",
+		MaxTrust:           "high",
+		AllowedSideEffects: []string{"read"},
+		ToolRules:          []ToolAccess{{Name: "other", Decision: "allow"}},
+	})
+	decision := Authorize(policy, Request{
+		Identity:  Identity{HumanID: "human-1", AgentID: "agent-1"},
+		RPCMethod: "tools/call",
+		ToolName:  "upper",
+	}, now)
 	if decision.Allowed || decision.Reason != "tool_not_granted" {
-		t.Fatalf("decision = %#v, want expired grant denied as tool_not_granted", decision)
+		t.Fatalf("decision = %#v, want tool_not_granted when an active grant still matches", decision)
+	}
+}
+
+func TestAuthorizeGrantBeforeExpiryIsAllowed(t *testing.T) {
+	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+	policy := testPolicyWithGrant()
+	policy.Grants[0].ExpiresAt = now.Add(time.Second).Format(time.RFC3339)
+	decision := Authorize(policy, Request{
+		Identity:  Identity{HumanID: "human-1", AgentID: "agent-1"},
+		RPCMethod: "tools/call",
+		ToolName:  "upper",
+	}, now)
+	if !decision.Allowed {
+		t.Fatalf("decision = %#v, want allowed before expiry", decision)
 	}
 }
 

@@ -142,7 +142,12 @@ func Authorize(policy *Document, request Request, now time.Time) Decision {
 		return denied
 	}
 	if !grant.toolAllowed {
-		denied := decideByDefault(policy, "tool_not_granted")
+		reason := "tool_not_granted"
+		if grant.onlyExpired {
+			// Every matching grant that is not disabled has expired.
+			reason = "grant_expired"
+		}
+		denied := decideByDefault(policy, reason)
 		denied.MatchedSession = matchedSession
 		denied.MatchedSessionNamespace = matchedSessionNamespace
 		return denied
@@ -243,10 +248,13 @@ type grantSelection struct {
 	grantName         string
 	grantNamespace    string
 	deny              *Decision
+	// onlyExpired is true when every matching grant that is not disabled has
+	// passed its expires_at, so the denial reason can say so.
+	onlyExpired bool
 }
 
-func bestGrantFor(grants []Grant, toolName ToolName, requiredTrust, requiredSideEffect, policyVersion string, now time.Time) grantSelection {
-	selection := grantSelection{
+func bestGrantFor(grants []Grant, toolName ToolName, requiredTrust, requiredSideEffect, policyVersion string, now time.Time) (selection grantSelection) {
+	selection = grantSelection{
 		requiredTrustRank: TrustRank(requiredTrust),
 		requiredTrust:     requiredTrust,
 		policyVersion:     policyVersion,
@@ -258,6 +266,8 @@ func bestGrantFor(grants []Grant, toolName ToolName, requiredTrust, requiredSide
 		selection.grantNamespace = string(grant.Namespace)
 		selection.policyVersion = ChoosePolicyVersion(grant.PolicyVersion, policyVersion)
 	}
+	var expired, active int
+	defer func() { selection.onlyExpired = expired > 0 && active == 0 }()
 	sorted := append([]Grant(nil), grants...)
 	sort.Slice(sorted, func(i, j int) bool {
 		left := string(sorted[i].Namespace) + "\x00" + sorted[i].Name
@@ -265,9 +275,14 @@ func bestGrantFor(grants []Grant, toolName ToolName, requiredTrust, requiredSide
 		return left < right
 	})
 	for _, grant := range sorted {
-		if grant.Disabled || isExpiredAt(grant.ExpiresAt, now) {
+		if grant.Disabled {
 			continue
 		}
+		if isExpiredAt(grant.ExpiresAt, now) {
+			expired++
+			continue
+		}
+		active++
 		adminRank := TrustRank(grant.MaxTrust)
 		if len(grant.ToolRules) == 0 {
 			selection.toolAllowed = true

@@ -31,14 +31,15 @@ func ComputeRevision(doc *Document) (string, error) {
 	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 
-// Stamp sets the document-level metadata on doc: the current SchemaVersion, the
+// Stamp sets the document-level metadata on doc: the schema version it requires
+// (see RequiredSchemaVersion), the
 // supplied (informational) generatedAt timestamp, and a freshly computed
 // deterministic Revision. generatedAt may be empty; it never affects Revision.
 func Stamp(doc *Document, generatedAt string) error {
 	if doc == nil {
 		return errors.New("policy: cannot stamp nil document")
 	}
-	doc.SchemaVersion = SchemaVersion
+	doc.SchemaVersion = RequiredSchemaVersion(doc)
 	doc.GeneratedAt = generatedAt
 	revision, err := ComputeRevision(doc)
 	if err != nil {

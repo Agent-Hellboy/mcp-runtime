@@ -4820,7 +4820,8 @@ spec:
 EOF
   (cd "${WORKDIR}" && "${PROJECT_ROOT}/bin/mcp-runtime" access --use-kube grant apply --file access-grant-expired.yaml)
   wait_for_policy_text "\"expires_at\": \"${EXPIRED_GRANT_AT}\""
-  wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 403 "tool_not_granted"
+  wait_for_policy_text "\"schema_version\": \"v2\""
+  wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 403 "grant_expired"
 
   log_line policy "restoring non-expired access grant"
   (cd "${WORKDIR}" && "${PROJECT_ROOT}/bin/mcp-runtime" access --use-kube grant apply --file access-grant.yaml)

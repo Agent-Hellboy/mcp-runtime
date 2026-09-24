@@ -223,7 +223,7 @@ denial response. A denied call never reaches the MCP server.
 | 1 | Is there any human, agent, or team identity? | `missing_identity` (401) |
 | 2 | With `session.required: true`: is there a session ID, a matching session, not revoked, not expired? | `missing_session`, `session_not_found`, `session_revoked`, `session_expired` (401) |
 | 3 | Does any grant's subject match? Every populated subject field must match exactly. | `no_matching_grant` |
-| 4 | Does a tool rule deny this tool, or does no enabled grant allow it? Disabled grants are skipped; a grant with no `toolRules` allows every tool name. | `tool_denied` (403), `tool_not_granted` |
+| 4 | Does a tool rule deny this tool, or does no enabled grant allow it? Disabled and expired grants are skipped; a grant with no `toolRules` allows every tool name. | `tool_denied` (403), `tool_not_granted`, `grant_expired` (every matching grant that is not disabled has passed its `expiresAt`) |
 | 5 | Did the server declare this tool's side effect, and does the grant's `allowedSideEffects` include it? | `tool_side_effect_unknown`, `side_effect_not_allowed` (403) |
 | 6 | Does the grant carry a `maxTrust`? | `grant_without_trust` |
 | 7 | Is effective trust at least the required trust? | `trust_too_low` (403) |
@@ -239,7 +239,7 @@ requiredTrust  = max(tool.requiredTrust, matchingToolRule.requiredTrust)
 When no session is required or none matches, `consentedTrust` falls back to the
 grant's `maxTrust`.
 
-Reasons without a status code (`no_matching_grant`, `tool_not_granted`,
+Reasons without a status code (`no_matching_grant`, `tool_not_granted`, `grant_expired`,
 `grant_without_trust`) follow `policy.defaultDecision`: `403` under the shipped
 `deny` default, allowed only if a server explicitly sets `defaultDecision: allow`.
 
