@@ -5,7 +5,7 @@ and observe live traffic in the analytics dashboard.
 
 **Prerequisites:**
 - Module 1 completed (you understand Grants, Sessions, and the gateway)
-- `mcp-runtime` CLI installed from the [latest GitHub release](https://github.com/Agent-Hellboy/mcp-runtime/releases/latest)
+- `mcp-runtime` CLI installed from the [latest GitHub release](https://github.com/mcp-runtime/mcp-runtime/releases/latest)
 - Account on the live platform (`platform.mcpruntime.org`) or a local cluster running
 
 ---
@@ -28,7 +28,7 @@ mcp-runtime auth status    # confirm profile is active
 Clone the repo to use the workspace-assistant MCP server:
 
 ```bash
-git clone https://github.com/Agent-Hellboy/mcp-runtime
+git clone https://github.com/mcp-runtime/mcp-runtime
 cd mcp-runtime/examples/workspace-assistant-mcp
 ```
 

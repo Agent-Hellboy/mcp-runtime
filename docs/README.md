@@ -223,6 +223,6 @@ MCP Runtime is **alpha**. The architecture is stable enough to evaluate as gover
 
 ## Community
 
-- [GitHub Issues](https://github.com/Agent-Hellboy/mcp-runtime/issues) — bug reports and feature requests
-- [GitHub Discussions](https://github.com/Agent-Hellboy/mcp-runtime/discussions) — questions, ideas, and general discussion
-- [Releases](https://github.com/Agent-Hellboy/mcp-runtime/releases) — changelog and binary downloads
+- [GitHub Issues](https://github.com/mcp-runtime/mcp-runtime/issues) — bug reports and feature requests
+- [GitHub Discussions](https://github.com/mcp-runtime/mcp-runtime/discussions) — questions, ideas, and general discussion
+- [Releases](https://github.com/mcp-runtime/mcp-runtime/releases) — changelog and binary downloads

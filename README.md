@@ -4,14 +4,14 @@
   <img src="website/static/brand/mcp-runtime-banner.png" alt="MCP Runtime — Deploy, govern, and broker MCP servers using a Kubernetes-native control plane" />
 </p>
 
-[![CI](https://github.com/Agent-Hellboy/mcp-runtime/actions/workflows/ci.yaml/badge.svg)](https://github.com/Agent-Hellboy/mcp-runtime/actions/workflows/ci.yaml)
-[![Kind E2E](https://img.shields.io/github/actions/workflow/status/Agent-Hellboy/mcp-runtime/ci.yaml?branch=main&label=Kind%20E2E&job=Kind%20E2E)](https://github.com/Agent-Hellboy/mcp-runtime/actions/workflows/ci.yaml?query=branch%3Amain+job%3AKind%20E2E)
-[![Production E2E](https://img.shields.io/github/actions/workflow/status/Agent-Hellboy/mcp-runtime/production-e2e.yaml?branch=main&label=Production%20E2E&event=workflow_dispatch)](https://github.com/Agent-Hellboy/mcp-runtime/actions/workflows/production-e2e.yaml)
-[![Gosec Scan](https://img.shields.io/github/actions/workflow/status/Agent-Hellboy/mcp-runtime/security-gosec.yaml?branch=main&label=Gosec%20Scan)](https://github.com/Agent-Hellboy/mcp-runtime/actions/workflows/security-gosec.yaml)
-[![Gitleaks Scan](https://img.shields.io/github/actions/workflow/status/Agent-Hellboy/mcp-runtime/security-gitleaks.yaml?branch=main&label=Gitleaks%20Scan)](https://github.com/Agent-Hellboy/mcp-runtime/actions/workflows/security-gitleaks.yaml)
-[![Trivy FS Scan](https://img.shields.io/github/actions/workflow/status/Agent-Hellboy/mcp-runtime/security-trivy.yaml?branch=main&label=Trivy%20FS%20Scan&job=Trivy%20FS%20Scan)](https://github.com/Agent-Hellboy/mcp-runtime/actions/workflows/security-trivy.yaml?query=branch%3Amain+job%3ATrivy%20FS%20Scan)
-[![Trivy Image Scan](https://img.shields.io/github/actions/workflow/status/Agent-Hellboy/mcp-runtime/security-trivy.yaml?branch=main&label=Trivy%20Image%20Scan&job=Trivy%20operator%20Image)](https://github.com/Agent-Hellboy/mcp-runtime/actions/workflows/security-trivy.yaml?query=branch%3Amain+event%3Apush)
-[![Coverage](https://codecov.io/gh/Agent-Hellboy/mcp-runtime/branch/main/graph/badge.svg)](https://codecov.io/gh/Agent-Hellboy/mcp-runtime/branch/main)
+[![CI](https://github.com/mcp-runtime/mcp-runtime/actions/workflows/ci.yaml/badge.svg)](https://github.com/mcp-runtime/mcp-runtime/actions/workflows/ci.yaml)
+[![Kind E2E](https://img.shields.io/github/actions/workflow/status/mcp-runtime/mcp-runtime/ci.yaml?branch=main&label=Kind%20E2E&job=Kind%20E2E)](https://github.com/mcp-runtime/mcp-runtime/actions/workflows/ci.yaml?query=branch%3Amain+job%3AKind%20E2E)
+[![Production E2E](https://img.shields.io/github/actions/workflow/status/mcp-runtime/mcp-runtime/production-e2e.yaml?branch=main&label=Production%20E2E&event=workflow_dispatch)](https://github.com/mcp-runtime/mcp-runtime/actions/workflows/production-e2e.yaml)
+[![Gosec Scan](https://img.shields.io/github/actions/workflow/status/mcp-runtime/mcp-runtime/security-gosec.yaml?branch=main&label=Gosec%20Scan)](https://github.com/mcp-runtime/mcp-runtime/actions/workflows/security-gosec.yaml)
+[![Gitleaks Scan](https://img.shields.io/github/actions/workflow/status/mcp-runtime/mcp-runtime/security-gitleaks.yaml?branch=main&label=Gitleaks%20Scan)](https://github.com/mcp-runtime/mcp-runtime/actions/workflows/security-gitleaks.yaml)
+[![Trivy FS Scan](https://img.shields.io/github/actions/workflow/status/mcp-runtime/mcp-runtime/security-trivy.yaml?branch=main&label=Trivy%20FS%20Scan&job=Trivy%20FS%20Scan)](https://github.com/mcp-runtime/mcp-runtime/actions/workflows/security-trivy.yaml?query=branch%3Amain+job%3ATrivy%20FS%20Scan)
+[![Trivy Image Scan](https://img.shields.io/github/actions/workflow/status/mcp-runtime/mcp-runtime/security-trivy.yaml?branch=main&label=Trivy%20Image%20Scan&job=Trivy%20operator%20Image)](https://github.com/mcp-runtime/mcp-runtime/actions/workflows/security-trivy.yaml?query=branch%3Amain+event%3Apush)
+[![Coverage](https://codecov.io/gh/mcp-runtime/mcp-runtime/branch/main/graph/badge.svg)](https://codecov.io/gh/mcp-runtime/mcp-runtime/branch/main)
 
 MCP Runtime is a self-hosted Kubernetes control plane for internal [Model Context Protocol](https://modelcontextprotocol.io/) servers. It provides declarative MCP server deployment, registry workflows, operator reconciliation, request-path governance, access/session resources, audit, analytics, dashboards, and a platform control surface for browsing and operating MCP servers.
 
@@ -22,7 +22,7 @@ The public platform at `platform.mcpruntime.org` is a live preview of the deploy
 - [Docs](https://docs.mcpruntime.org/) and [`docs/`](docs/)
 - [API reference](https://docs.mcpruntime.org/api) and [`docs/api.md`](docs/api.md)
 - [Articles](https://articles.mcpruntime.org/) and [`articles/`](articles/)
-- Early adopters: MCP Runtime is looking for teams running or evaluating internal MCP platforms. Open a [GitHub issue](https://github.com/Agent-Hellboy/mcp-runtime/issues) with your use case, cluster shape, or integration feedback.
+- Early adopters: MCP Runtime is looking for teams running or evaluating internal MCP platforms. Open a [GitHub issue](https://github.com/mcp-runtime/mcp-runtime/issues) with your use case, cluster shape, or integration feedback.
 
 > [!CAUTION]
 > MCP Runtime is alpha software. APIs, commands, and behavior are still evolving. Use the docs, CRDs, and `api/v1alpha1` types as the source of truth before production use.
