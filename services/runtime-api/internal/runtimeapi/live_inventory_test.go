@@ -546,3 +546,25 @@ func requestRuntimeServers(t *testing.T, server *RuntimeServer) struct {
 	}
 	return payload
 }
+
+// The defaulting webhook is optional, so a stored server may leave the header
+// names unset; the probe must still identify itself with the platform defaults.
+func TestLiveInventoryProbeDefaultsIdentityHeaders(t *testing.T) {
+	var human, agent atomic.Value
+	fakeMCP := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		human.Store(r.Header.Get("X-MCP-Human-ID"))
+		agent.Store(r.Header.Get("X-MCP-Agent-ID"))
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer fakeMCP.Close()
+
+	prober := &mcpLiveInventoryProber{
+		client:           fakeMCP.Client(),
+		baseURLForServer: func(controlplane.ServerInfo) string { return fakeMCP.URL },
+		now:              time.Now,
+	}
+	_, _ = prober.probe(context.Background(), controlplane.ServerInfo{Name: "demo", Namespace: "mcp-servers"})
+	if human.Load() != "mcp-runtime-api" || agent.Load() != "mcp-runtime-live-inventory" {
+		t.Fatalf("identity headers = %v/%v, want the default X-MCP-* names", human.Load(), agent.Load())
+	}
+}

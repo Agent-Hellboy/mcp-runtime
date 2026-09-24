@@ -31,7 +31,7 @@ func DiscoverOIDCJWKSURL(ctx context.Context, issuer string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("create OIDC discovery request: %w", err)
 	}
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := &http.Client{Timeout: 5 * time.Second, CheckRedirect: refuseOIDCDowngrade}
 	response, err := client.Do(request)
 	if err != nil {
 		return "", transientOIDCError{fmt.Errorf("fetch OIDC discovery metadata: %w", err)}
@@ -65,6 +65,18 @@ func DiscoverOIDCJWKSURL(ctx context.Context, issuer string) (string, error) {
 		return "", fmt.Errorf("OIDC discovery jwks_uri %q must use https for an https issuer", metadata.JWKSURI)
 	}
 	return jwksURL.String(), nil
+}
+
+// refuseOIDCDowngrade stops a discovery redirect that leaves https, which
+// would let an on-path attacker substitute the metadata and its signing keys.
+func refuseOIDCDowngrade(req *http.Request, via []*http.Request) error {
+	if len(via) >= 5 {
+		return fmt.Errorf("OIDC discovery stopped after %d redirects", len(via))
+	}
+	if len(via) > 0 && via[0].URL.Scheme == "https" && req.URL.Scheme != "https" {
+		return fmt.Errorf("OIDC discovery refused redirect from https to %s", req.URL.Scheme)
+	}
+	return nil
 }
 
 // transientOIDCError marks discovery failures worth retrying: the provider

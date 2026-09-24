@@ -100,3 +100,14 @@ func TestDiscoverOIDCJWKSURLWithRetryDoesNotRetryConfigurationErrors(t *testing.
 		t.Fatalf("calls = %d, want 1: a mismatched issuer is not transient", calls)
 	}
 }
+
+func TestRefuseOIDCDowngradeBlocksHTTPSToHTTP(t *testing.T) {
+	httpsReq, _ := http.NewRequest(http.MethodGet, "https://idp.example/.well-known/openid-configuration", nil)
+	httpReq, _ := http.NewRequest(http.MethodGet, "http://idp.example/.well-known/openid-configuration", nil)
+	if err := refuseOIDCDowngrade(httpReq, []*http.Request{httpsReq}); err == nil {
+		t.Fatal("an https to http redirect must be refused")
+	}
+	if err := refuseOIDCDowngrade(httpsReq, []*http.Request{httpsReq}); err != nil {
+		t.Fatalf("an https to https redirect should be allowed: %v", err)
+	}
+}
