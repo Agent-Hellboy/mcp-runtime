@@ -1001,6 +1001,27 @@ func TestUpdateStatus(t *testing.T) {
 		assertEqual(t, "phase", updated.Status.Phase, "Ready")
 		assertEqual(t, "message", updated.Status.Message, "All resources reconciled")
 	})
+
+	t.Run("publishes the derived public URL", func(t *testing.T) {
+		stored := &mcpv1alpha1.MCPServer{
+			ObjectMeta: metav1.ObjectMeta{Name: "buddy", Namespace: "default"},
+			Spec:       mcpv1alpha1.MCPServerSpec{PublicPathPrefix: "buddy"},
+		}
+		client := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithStatusSubresource(&mcpv1alpha1.MCPServer{}).
+			Build()
+		if err := client.Create(context.Background(), stored); err != nil {
+			t.Fatalf("failed to create MCPServer: %v", err)
+		}
+		r := MCPServerReconciler{Client: client, Scheme: scheme, DefaultIngressHost: "mcp.example.com", DefaultIngressTLS: true}
+		r.updateStatus(context.Background(), r.defaultedMCPServerForReconcile(stored), "Ready", "ok", resourceReadiness{})
+		updated := &mcpv1alpha1.MCPServer{}
+		if err := client.Get(context.Background(), types.NamespacedName{Name: "buddy", Namespace: "default"}, updated); err != nil {
+			t.Fatalf("failed to fetch updated MCPServer: %v", err)
+		}
+		assertEqual(t, "status.url", updated.Status.URL, "https://mcp.example.com/buddy/mcp")
+	})
 }
 
 func TestDeterminePhase(t *testing.T) {

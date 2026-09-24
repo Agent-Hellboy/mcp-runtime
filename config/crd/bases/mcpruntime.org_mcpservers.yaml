@@ -30,6 +30,10 @@ spec:
     - jsonPath: .status.deploymentReady
       name: Ready
       type: boolean
+    - jsonPath: .status.url
+      name: URL
+      priority: 1
+      type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -543,6 +547,13 @@ spec:
               serviceReady:
                 description: ServiceReady indicates if the service is ready.
                 type: boolean
+              url:
+                description: |-
+                  URL is the public MCP endpoint the operator derived from the ingress
+                  host, TLS setting, and public path. The platform API, CLI, and UI show
+                  this value instead of rebuilding it, so every surface agrees with what
+                  the ingress and gateway actually serve. Empty when no host is known.
+                type: string
             type: object
         type: object
     served: true

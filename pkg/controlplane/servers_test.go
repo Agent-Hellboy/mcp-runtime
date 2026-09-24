@@ -238,6 +238,37 @@ func TestPublicMCPEndpointHonorsPlatformDomain(t *testing.T) {
 	}
 }
 
+func TestPublicMCPEndpointPrefersOperatorPublishedURL(t *testing.T) {
+	t.Setenv("MCP_MCP_INGRESS_HOST", "")
+	t.Setenv("MCP_PLATFORM_DOMAIN", "example.com")
+
+	got := PublicMCPEndpoint(mcpv1alpha1.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo-one", Namespace: "mcp-servers"},
+		Status:     mcpv1alpha1.MCPServerStatus{URL: "http://mcp.internal.example/demo-one/mcp"},
+	})
+	if got != "http://mcp.internal.example/demo-one/mcp" {
+		t.Fatalf("endpoint = %q, want the operator-published status.url", got)
+	}
+}
+
+// The ingress routes on publicPathPrefix when it is set, so the fallback must
+// resolve the path the same way instead of preferring spec.ingressPath.
+func TestPublicMCPEndpointFallbackFollowsIngressPathPrecedence(t *testing.T) {
+	t.Setenv("MCP_MCP_INGRESS_HOST", "")
+	t.Setenv("MCP_PLATFORM_DOMAIN", "example.com")
+
+	got := PublicMCPEndpoint(mcpv1alpha1.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo-one", Namespace: "mcp-servers"},
+		Spec: mcpv1alpha1.MCPServerSpec{
+			IngressPath:      "/demo-one/mcp",
+			PublicPathPrefix: "tools/demo",
+		},
+	})
+	if got != "https://mcp.example.com/tools/demo/mcp" {
+		t.Fatalf("endpoint = %q, want the publicPathPrefix route", got)
+	}
+}
+
 func TestMCPServerGVR(t *testing.T) {
 	want := schema.GroupVersionResource{Group: "mcpruntime.org", Version: "v1alpha1", Resource: "mcpservers"}
 	if MCPServerGVR != want {

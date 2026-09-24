@@ -1075,6 +1075,12 @@ type MCPServerStatus struct {
 
 	// CanaryReady indicates if the canary deployment, when configured, is ready.
 	CanaryReady bool `json:"canaryReady,omitempty"`
+
+	// URL is the public MCP endpoint the operator derived from the ingress
+	// host, TLS setting, and public path. The platform API, CLI, and UI show
+	// this value instead of rebuilding it, so every surface agrees with what
+	// the ingress and gateway actually serve. Empty when no host is known.
+	URL string `json:"url,omitempty"`
 }
     MCPServerStatus defines the observed state of MCPServer.
     +kubebuilder:object:generate=true
