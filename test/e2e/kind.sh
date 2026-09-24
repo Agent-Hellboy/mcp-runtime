@@ -10,7 +10,7 @@ set -euo pipefail
 #
 # Set E2E_SCENARIOS to a comma-separated subset for local debugging.
 # Supported values: all, smoke-auth, governance, trust, oauth, observability,
-# multitenancy, api-platform, ui-auth, adapter-proxy, cli-platform, mtls.
+# multitenancy, api-platform, ui-auth, adapter-proxy, cli-platform.
 # observability requires the full traffic suite: smoke-auth, governance, trust, oauth.
 #
 # Set E2E_DEEP_REQUEST_FLOWS=1 for pre-release runs that should exercise
@@ -369,11 +369,11 @@ validate_scenarios() {
   local scenario
   for scenario in "${E2E_SCENARIO_LIST[@]}"; do
     case "${scenario}" in
-      all|smoke-auth|governance|trust|oauth|observability|multitenancy|api-platform|ui-auth|adapter-proxy|cli-platform|mtls)
+      all|smoke-auth|governance|trust|oauth|observability|multitenancy|api-platform|ui-auth|adapter-proxy|cli-platform)
         ;;
       *)
         echo "unsupported E2E scenario: ${scenario}" >&2
-        echo "supported values: all, smoke-auth, governance, trust, oauth, observability, multitenancy, api-platform, ui-auth, adapter-proxy, cli-platform, mtls" >&2
+        echo "supported values: all, smoke-auth, governance, trust, oauth, observability, multitenancy, api-platform, ui-auth, adapter-proxy, cli-platform" >&2
         exit 1
         ;;
     esac
@@ -391,7 +391,7 @@ validate_scenarios() {
 
   if deep_request_flows_enabled; then
     local required
-    for required in smoke-auth governance trust oauth observability multitenancy api-platform ui-auth adapter-proxy cli-platform mtls; do
+    for required in smoke-auth governance trust oauth observability multitenancy api-platform ui-auth adapter-proxy cli-platform; do
       if ! scenario_selected "${required}"; then
         echo "E2E_DEEP_REQUEST_FLOWS=1 requires all E2E scenarios" >&2
         echo "set E2E_SCENARIOS=all or include every supported scenario" >&2
@@ -868,37 +868,6 @@ recover_traefik_tls_port_forward_if_needed() {
   wait_port "${TRAEFIK_TLS_PORT}" 30
 }
 
-# wait_for_mtls_traefik_stable polls Traefik pod logs until the mTLS server's
-# router and transport config have been applied error-free for a stable window.
-# Traefik retries loading missing secrets with exponential backoff, emitting
-# level=error lines for each failed attempt. This function waits until no such
-# errors appear in a 6s window, proving that TLSOption (RequireAndVerifyClientCert
-# + CA) and ServersTransport (TLS to gateway) are both fully loaded.
-#
-# This log-based approach is used instead of probing the websecure port because
-# in Kind clusters kubectl port-forward exits on any TCP error from the upstream
-# pod (broken pipe, connection reset), including the RST Traefik sends after a
-# TLS certificate_required alert. Probing via curl therefore creates an infinite
-# port-forward restart loop and never produces a usable readiness signal.
-wait_for_mtls_traefik_stable() {
-  local server_name="$1"
-  local traefik_ns="${TRAEFIK_NAMESPACE:-traefik}"
-  local deadline=$((SECONDS + 60))
-  echo "[mtls] waiting for Traefik to apply ${server_name} mTLS config without errors" >&2
-  while [[ $SECONDS -lt $deadline ]]; do
-    sleep 3
-    local recent
-    recent="$(kubectl logs -n "${traefik_ns}" deploy/traefik --since=6s 2>/dev/null \
-      | grep "level=error.*${server_name}" || true)"
-    if [[ -z "${recent}" ]]; then
-      echo "[mtls] Traefik mTLS config stable (no ${server_name} errors in last 6s)" >&2
-      return 0
-    fi
-  done
-  echo "[mtls] WARNING: Traefik mTLS config may not be fully stable, proceeding" >&2
-  return 0
-}
-
 ensure_traefik_port_forward() {
   if [[ -n "${TRAEFIK_PORT_FORWARD_PID:-}" ]] && ! port_is_listening "${TRAEFIK_PORT}"; then
     if kill -0 "${TRAEFIK_PORT_FORWARD_PID}" >/dev/null 2>&1; then
@@ -1016,9 +985,6 @@ ensure_gateway_port_forward() {
   fi
   wait_port "${SENTINEL_PORT}"
 }
-
-# shellcheck source=scenarios/mtls.sh
-source "${PROJECT_ROOT}/test/e2e/scenarios/mtls.sh"
 
 refresh_mcp_proxy_urls() {
   MCP_INGRESS_PATH="/${SERVER_NAME}/mcp"
@@ -6116,11 +6082,6 @@ fi
 
 fi
 
-fi
-
-if scenario_selected "mtls"; then
-  run_e2e_mtls_scenario
-  cleanup_mcp_server_and_wait "${MTLS_SERVER_NAME}" mcp-servers 120s
 fi
 
 echo "[cli] checking sentinel restart command"

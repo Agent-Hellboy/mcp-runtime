@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -54,6 +55,7 @@ type adapterSessionResponse struct {
 	PolicyVersion  string    `json:"policyVersion"`
 	ExpiresAt      time.Time `json:"expiresAt"`
 	Reused         bool      `json:"reused"`
+	TrustDomain    string    `json:"trustDomain,omitempty"`
 }
 
 // HandleAdapterSession issues (or reuses) an MCPAgentSession for an adapter
@@ -164,6 +166,7 @@ func (s *AccessService) HandleAdapterSession(w http.ResponseWriter, r *http.Requ
 			PolicyVersion:  existing.Spec.PolicyVersion,
 			ExpiresAt:      existing.Spec.ExpiresAt.Time,
 			Reused:         true,
+			TrustDomain:    strings.TrimSpace(os.Getenv("MCP_TRUST_DOMAIN")),
 		})
 		return
 	}
@@ -205,6 +208,7 @@ func (s *AccessService) HandleAdapterSession(w http.ResponseWriter, r *http.Requ
 		PolicyVersion:  applied.Spec.PolicyVersion,
 		ExpiresAt:      applied.Spec.ExpiresAt.Time,
 		Reused:         false,
+		TrustDomain:    strings.TrimSpace(os.Getenv("MCP_TRUST_DOMAIN")),
 	})
 }
 

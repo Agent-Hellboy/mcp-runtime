@@ -201,27 +201,20 @@ func TestMCPServerDefault(t *testing.T) {
 	}
 }
 
-func TestMCPServerDefaultsPublicPathPrefixForMTLS(t *testing.T) {
-	// In the Traefik-terminates model, mtls uses path-based routing like every
-	// other auth mode, so publicPathPrefix is defaulted rather than skipped.
+func TestMCPServerRejectsRemovedMTLSAuthMode(t *testing.T) {
 	server := &MCPServer{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-server"},
 		Spec: MCPServerSpec{
 			Image: "example.com/mcp-server",
-			Auth:  &AuthConfig{Mode: AuthModeMTLS, TrustDomain: "example.org"},
+			Auth:  &AuthConfig{Mode: AuthMode("mtls")},
 			Gateway: &GatewayConfig{
 				Enabled: true,
 			},
 		},
 	}
 
-	server.DefaultWithOptions(MCPServerDefaultOptions{DefaultIngressHost: "mcp.example.com"})
-
-	if server.Spec.PublicPathPrefix == "" {
-		t.Fatal("expected a publicPathPrefix default for mTLS (path-based routing)")
-	}
-	if err := server.validate(); err != nil {
-		t.Fatalf("defaulted mTLS server should validate: %v", err)
+	if err := server.validate(); err == nil || !strings.Contains(err.Error(), "auth.mode mtls was removed") {
+		t.Fatalf("validate error = %v, want removed auth.mode migration error", err)
 	}
 }
 

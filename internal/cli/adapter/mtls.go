@@ -206,9 +206,6 @@ func resolveAuth(
 		return agentadapter.Identity{}, nil, nil, noop, fmt.Errorf("--agent (or $%s) is required when --auth mtls", EnvAdapterAgent)
 	}
 	trustDomain := strings.TrimSpace(idFlags.trustDomain)
-	if trustDomain == "" {
-		return agentadapter.Identity{}, nil, nil, noop, fmt.Errorf("--trust-domain (or $%s) is required when --auth mtls", EnvMTLSTrustDomain)
-	}
 
 	// Bring-your-own certificate: explicit --tls-client-cert files win, so
 	// `enroll` output can be reused directly without re-enrolling. resolve()

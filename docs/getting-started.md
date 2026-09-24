@@ -276,10 +276,11 @@ config/ingress/overlays/http`, `--registry-mode auto`, `--registry-type docker`,
 dynamic`. `--parallel-builds` changes image build and publish only; cluster,
 registry, TLS, and rollout sequencing stay the same.
 
-To enable the mTLS auth path for gateway and adapter client certificates, add
+To enable optional adapter client certificates alongside OAuth, add
 `--mtls-cluster-issuer <cluster-issuer>` alongside `--with-tls`. Name an
 enterprise cert-manager issuer, or the bundled `mcp-runtime-ca` to have setup
-provision one; `--test-mode` defaults to `mcp-runtime-ca`. See
+provision one; `--test-mode` defaults to `mcp-runtime-ca`. Production must also
+set `MCP_TRUST_DOMAIN` (for example `mcpruntime.org`). See
 [Agent Adapters](agent-adapters.md#enterprise-mtls-and-spiffe).
 
 The bundled mcp-auth authorization server is optional and off by default. Check

@@ -69,8 +69,8 @@ func (r *MCPServerReconciler) checkServiceReady(ctx context.Context, mcpServer *
 }
 
 func (r *MCPServerReconciler) checkIngressReady(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer) (bool, error) {
-	if serverUsesMTLS(mcpServer) {
-		// The terminate-and-re-encrypt mTLS model serves traffic through a
+	if r.usesAdapterCertificates(mcpServer) {
+		// Optional adapter certificate verification serves traffic through a
 		// path-based Traefik IngressRoute (the legacy passthrough IngressRouteTCP
 		// is deleted during reconcile), so readiness must track the IngressRoute.
 		route := &unstructured.Unstructured{}

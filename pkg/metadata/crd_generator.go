@@ -107,7 +107,6 @@ func GenerateCRD(server *ServerMetadata, outputPath string) error {
 			TokenHeader:     server.Auth.TokenHeader,
 			IssuerURL:       server.Auth.IssuerURL,
 			Audience:        server.Auth.Audience,
-			TrustDomain:     server.Auth.TrustDomain,
 		}
 	}
 

@@ -22,37 +22,34 @@ func mtlsServer() *mcpv1alpha1.MCPServer {
 			Image:       "example.com/secure-server",
 			ServicePort: 80,
 			Gateway:     &mcpv1alpha1.GatewayConfig{Enabled: true, Port: 8091, Image: "example.com/gw:latest"},
-			Auth:        &mcpv1alpha1.AuthConfig{Mode: mcpv1alpha1.AuthModeMTLS, TrustDomain: "example.org"},
+			Auth:        &mcpv1alpha1.AuthConfig{Mode: mcpv1alpha1.AuthModeOAuth},
 		},
 	}
 }
 
 func TestTraefikProxySPIFFEID(t *testing.T) {
-	if got := traefikProxySPIFFEID(mtlsServer()); got != "spiffe://example.org/ns/traefik/sa/traefik" {
+	r := MCPServerReconciler{AdapterTrustDomain: "example.org"}
+	if got := r.traefikProxySPIFFEID(mtlsServer()); got != "spiffe://example.org/ns/traefik/sa/traefik" {
 		t.Fatalf("traefikProxySPIFFEID = %q", got)
 	}
-	noTrust := mtlsServer()
-	noTrust.Spec.Auth.TrustDomain = ""
-	if got := traefikProxySPIFFEID(noTrust); got != "" {
+	if got := (MCPServerReconciler{}).traefikProxySPIFFEID(mtlsServer()); got != "" {
 		t.Fatalf("traefikProxySPIFFEID without trust domain = %q, want empty", got)
 	}
 }
 
 func TestReconcileTraefikClientCertificateRequiresIssuerAndTrustDomain(t *testing.T) {
 	t.Run("missing issuer", func(t *testing.T) {
-		r := MCPServerReconciler{} // no MTLSClusterIssuer
+		r := MCPServerReconciler{AdapterTrustDomain: "example.org"} // no MTLSClusterIssuer
 		err := r.reconcileTraefikClientCertificate(context.Background(), mtlsServer())
-		if err == nil || !strings.Contains(err.Error(), "MCP_MTLS_CLUSTER_ISSUER") {
-			t.Fatalf("err = %v, want missing-issuer error", err)
+		if err != nil {
+			t.Fatalf("without configured platform PKI, expected no-op; got %v", err)
 		}
 	})
 	t.Run("missing trust domain", func(t *testing.T) {
 		r := MCPServerReconciler{MTLSClusterIssuer: "mcp-runtime-ca"}
-		server := mtlsServer()
-		server.Spec.Auth.TrustDomain = ""
-		err := r.reconcileTraefikClientCertificate(context.Background(), server)
-		if err == nil || !strings.Contains(err.Error(), "trustDomain") {
-			t.Fatalf("err = %v, want missing-trust-domain error", err)
+		err := r.reconcileTraefikClientCertificate(context.Background(), mtlsServer())
+		if err != nil {
+			t.Fatalf("without configured platform PKI, expected no-op; got %v", err)
 		}
 	})
 }

@@ -23,7 +23,7 @@ func (r *MCPServerReconciler) reconcileIngress(ctx context.Context, mcpServer *m
 			Namespace: mcpServer.Namespace,
 		},
 	}
-	if serverUsesMTLS(mcpServer) {
+	if r.usesAdapterCertificates(mcpServer) {
 		if err := r.Delete(ctx, ingress); err != nil && !apierrors.IsNotFound(err) {
 			return err
 		}

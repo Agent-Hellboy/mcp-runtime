@@ -74,9 +74,8 @@ func bindIdentityFlags(cmd *cobra.Command, f *identityFlags) {
 		"Adapter auth mode: header (forward issued governance headers) or mtls "+
 			"(auto-enroll a session-bound client certificate and let the gateway derive identity from it); "+
 			"default: $"+EnvAdapterAuthMode+" or header")
-	cmd.Flags().StringVar(&f.trustDomain, "trust-domain", envOrDefault(EnvMTLSTrustDomain, DefaultMTLSTrustDomain),
-		"SPIFFE trust domain for --auth mtls; must match spec.auth.trustDomain on the target MCPServer "+
-			"(default: $"+EnvMTLSTrustDomain+" or "+DefaultMTLSTrustDomain+")")
+	cmd.Flags().StringVar(&f.trustDomain, "trust-domain", os.Getenv(EnvMTLSTrustDomain),
+		"Optional platform SPIFFE trust domain override for adapter certificate enrollment; default: $"+EnvMTLSTrustDomain)
 	cmd.Flags().StringVar(&f.authHeader, "auth-header", os.Getenv(agentadapter.EnvAuthHeader),
 		"Static Authorization header value for runtime requests, e.g. \"Bearer <token>\" (default: $"+agentadapter.EnvAuthHeader+")")
 	cmd.Flags().StringVar(&f.tlsClientCert, "tls-client-cert", os.Getenv(agentadapter.EnvTLSClientCert),

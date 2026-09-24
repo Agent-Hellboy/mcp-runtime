@@ -62,8 +62,8 @@ flowchart LR
 
 | Enum | Values | Notes |
 |---|---|---|
-| **auth.mode** | `none`, `header`, `oauth`, `mtls` | `header` is the default identity-extraction path. `oauth` enables MCP protected-resource metadata and JWT validation at the gateway. `mtls` ignores client-supplied governance headers and derives identity from the ingress-verified SPIFFE header, matched against `auth.trustDomain`. |
-| **policy.mode** | `allow-list`, `observe` | `allow-list` enforces deny-by-default. `observe` skips identity, grant, session, side-effect, and trust enforcement. Calls are forwarded, and audit events still record the tool and risk level. |
+| **auth.mode** | `none`, `header`, `oauth` | `header` is the default identity-extraction path. `oauth` enables MCP protected-resource metadata and JWT validation at the gateway. Adapter certificates authenticate adapters on OAuth-configured routes; clients without a certificate use OAuth. |
+| **policy.mode** | `allow-list`, `observe` | `allow-list` enforces deny-by-default. `observe` skips identity, grant, session, side-effect, and trust enforcement — calls are forwarded, and audit events still record the tool and risk level. |
 | **trust** | `low`, `medium`, `high` | Used on tools, grants, sessions. Effective trust = min(grant `maxTrust`, session `consentedTrust`); required trust = max(tool `requiredTrust`, matching tool rule `requiredTrust`). |
 | **tool sideEffect** | `read`, `write`, `destructive` | Required on each listed tool. Grants must include the tool's side effect in `allowedSideEffects` before a tool call can pass. |
 | **tool riskLevel** | `low`, `medium`, `high` | Optional informational catalog/audit badge. If omitted, the platform computes a default from trust and side effect. It does not gate calls. |
@@ -75,7 +75,7 @@ flowchart LR
 - `gateway.port` must differ from `spec.port`.
 - Every listed `tools[]` entry must declare `sideEffect`. A tool called at runtime that the server never declared has no side effect to check, so the gateway fails closed with `403 tool_side_effect_unknown`.
 - Canary rollouts require positive `canaryReplicas` strictly less than total replicas.
-- `auth.mode: mtls` requires `gateway.enabled`, a non-empty `auth.trustDomain`, and the `traefik` ingress class.
+- Persisted `auth.mode: mtls` values are rejected; migrate the MCPServer to `auth.mode: oauth` with `gateway.enabled: true`, `issuerURL`, and `audience`.
 - `auth.mode: oauth` requires `auth.issuerURL` (with the gateway enabled) and an `auth.audience` that is an absolute URI without a fragment.
 
 ### Status
@@ -343,9 +343,11 @@ X-MCP-Team-ID:     7d0a0b8f-7c25-4761-a632-3cf0108e31d6
 X-MCP-Agent-Session: sess-8f1b9d
 ```
 
-In `auth.mode: mtls`, these headers are ignored. Traefik verifies the client
-certificate, injects the caller's verified SPIFFE identity, and the gateway
-resolves that identity to a rendered session binding inside `auth.trustDomain`.
+On OAuth routes, adapters may also present a session-bound client certificate.
+Traefik verifies it before forwarding; the gateway still requires OAuth and
+binds the token subject to the session encoded by the certificate. Clients
+without a certificate use OAuth normally. Configure platform-wide
+`MCP_MTLS_CLUSTER_ISSUER` and `MCP_TRUST_DOMAIN` to enable adapter enrollment.
 
 ## Dashboard API
 

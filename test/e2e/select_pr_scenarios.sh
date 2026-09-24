@@ -50,10 +50,6 @@ classify_path() {
       mark_all
       return
       ;;
-    internal/operator/mtls*|internal/cli/certmanager/*|traefik-plugins/spiffe-identity/*|config/cert-manager/*|pkg/identity/*|pkg/certauth/*|test/e2e/scenarios/mtls.sh)
-      add_scenario "mtls"
-      return
-      ;;
     traefik-plugins/pii-redactor/*)
       # PII redaction is asserted in the observability pass.
       add_observability
@@ -117,7 +113,6 @@ classify_path() {
       add_scenario "trust"
       add_scenario "oauth"
       add_scenario "adapter-proxy"
-      add_scenario "mtls"
       return
       ;;
     services/ingest/*|services/processor/*|pkg/clickhouse/*|pkg/events/*|pkg/sentinel/*|pkg/serviceutil/*)

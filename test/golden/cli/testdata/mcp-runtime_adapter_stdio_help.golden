@@ -36,7 +36,7 @@ Flags:
       --tls-client-cert string     Path to PEM client certificate for mTLS to the runtime (default: $MCP_RUNTIME_TLS_CLIENT_CERT)
       --tls-client-key string      Path to PEM client key for mTLS to the runtime (default: $MCP_RUNTIME_TLS_CLIENT_KEY)
       --tools-cache-ttl string     Cache tools/list responses for this duration, e.g. 30s. Empty disables the cache. (default: $MCP_RUNTIME_TOOLS_CACHE_TTL)
-      --trust-domain string        SPIFFE trust domain for --auth mtls; must match spec.auth.trustDomain on the target MCPServer (default: $MCP_MTLS_TRUST_DOMAIN or mcpruntime.org) (default "mcpruntime.org")
+      --trust-domain string        Optional platform SPIFFE trust domain override for adapter certificate enrollment; default: $MCP_TRUST_DOMAIN (default "")
 
 Global Flags:
       --debug   Enable debug mode with structured error logging

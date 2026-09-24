@@ -23,19 +23,23 @@ import (
 // authFilter always runs after policyFilter (stage 2) has set Exchange.Policy
 // and always completes before authzFilter (stage 4) reads Exchange.Identity.
 func (s *gatewayServer) authFilter(ex *Exchange) Result {
-	if ex.Policy != nil && ex.Policy.Auth != nil && strings.EqualFold(ex.Policy.Auth.Mode, "mtls") {
-		identity, reason := s.authenticateMTLS(ex.R, ex.Policy)
-		ex.Identity = identity
-		if reason == "" {
-			return Continue
+	// A presented adapter certificate is a complete adapter authentication
+	// method. Its session-bound identity proceeds to authorization; requests
+	// without a certificate use the ordinary OAuth flow below.
+	if policypkg.PolicyUsesOAuth(ex.Policy) && ex.Policy.Auth != nil && strings.TrimSpace(ex.Policy.Auth.TrustDomain) != "" &&
+		strings.TrimSpace(ex.R.Header.Get(s.verifiedSPIFFEHeaderName())) != "" {
+		verifiedIdentity, reason := s.authenticateAdapterCertificate(ex.R, ex.Policy)
+		if reason != "" {
+			ex.Decision = policypkg.Deny(
+				http.StatusUnauthorized,
+				reason,
+				policypkg.ChoosePolicyVersion(policypkg.PolicyVersion(ex.Policy), s.defaultPolicyVersion),
+			)
+			s.writeDeniedResponse(ex)
+			return Reject
 		}
-		ex.Decision = policypkg.Deny(
-			http.StatusUnauthorized,
-			reason,
-			policypkg.ChoosePolicyVersion(policypkg.PolicyVersion(ex.Policy), s.defaultPolicyVersion),
-		)
-		s.writeDeniedResponse(ex)
-		return Reject
+		ex.Identity = verifiedIdentity
+		return Continue
 	}
 
 	// Extract identity from governance headers; for OAuth this populates at
@@ -61,10 +65,13 @@ func (s *gatewayServer) authFilter(ex *Exchange) Result {
 		s.writeDeniedResponse(ex)
 		return Reject
 	}
+	ex.Identity = oauthResult.Identity
 	return Continue
 }
 
-// authenticateMTLS authorizes a request in auth.mode mtls.
+// authenticateAdapterCertificate validates the verified ingress assertion for
+// a session-bound adapter certificate. Requests with a verified adapter
+// certificate use its session identity; requests without one follow OAuth.
 //
 // TLS is terminated at the ingress (Traefik), which verifies the caller's
 // client certificate against the identity CA and injects the caller's SPIFFE
@@ -88,7 +95,7 @@ func (s *gatewayServer) authFilter(ex *Exchange) Result {
 //
 // Client-supplied governance headers (human/agent/team/session) are never
 // consulted in this mode; identity comes only from the verified SPIFFE header.
-func (s *gatewayServer) authenticateMTLS(r *http.Request, policy *policypkg.Document) (identityContext, string) {
+func (s *gatewayServer) authenticateAdapterCertificate(r *http.Request, policy *policypkg.Document) (identityContext, string) {
 	// (1) The connection must be an ingress-authenticated mTLS hop.
 	if r == nil || r.TLS == nil || len(r.TLS.VerifiedChains) == 0 || len(r.TLS.PeerCertificates) == 0 {
 		return identityContext{}, "missing_client_certificate"

@@ -31,16 +31,16 @@ func TestReconcileMTLSNetworkPolicy(t *testing.T) {
 			Spec: mcpv1alpha1.MCPServerSpec{
 				Image:   "example.com/secure-server",
 				Gateway: &mcpv1alpha1.GatewayConfig{Enabled: true, Port: 8091},
-				Auth:    &mcpv1alpha1.AuthConfig{Mode: mode, TrustDomain: "example.org"},
+				Auth:    &mcpv1alpha1.AuthConfig{Mode: mode},
 			},
 		}
 	}
 	key := types.NamespacedName{Name: "secure-server-mtls-gateway", Namespace: "mcp-servers"}
 
 	t.Run("created and locks the gateway port to traefik for mtls", func(t *testing.T) {
-		server := newServer(mcpv1alpha1.AuthModeMTLS)
+		server := newServer(mcpv1alpha1.AuthModeOAuth)
 		client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(server).Build()
-		r := MCPServerReconciler{Client: client, Scheme: scheme}
+		r := MCPServerReconciler{Client: client, Scheme: scheme, AdapterTrustDomain: "example.org", MTLSClusterIssuer: "mcp-runtime-ca"}
 
 		if err := r.reconcileMTLSNetworkPolicy(context.Background(), server); err != nil {
 			t.Fatalf("reconcile: %v", err)

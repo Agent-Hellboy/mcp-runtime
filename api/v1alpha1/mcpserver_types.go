@@ -4,14 +4,13 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// +kubebuilder:validation:Enum=none;header;oauth;mtls
+// +kubebuilder:validation:Enum=none;header;oauth
 type AuthMode string
 
 const (
 	AuthModeNone   AuthMode = "none"
 	AuthModeHeader AuthMode = "header"
 	AuthModeOAuth  AuthMode = "oauth"
-	AuthModeMTLS   AuthMode = "mtls"
 )
 
 // +kubebuilder:validation:Enum=allow-list;observe
@@ -217,9 +216,6 @@ type AuthConfig struct {
 	TokenHeader     string   `json:"tokenHeader,omitempty"`
 	IssuerURL       string   `json:"issuerURL,omitempty"`
 	Audience        string   `json:"audience,omitempty"`
-	// TrustDomain is the SPIFFE trust domain accepted from verified client
-	// certificate URI SANs when mode is mtls.
-	TrustDomain string `json:"trustDomain,omitempty"`
 }
 
 // PolicyConfig configures authorization behavior at the gateway.

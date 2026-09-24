@@ -30,9 +30,6 @@ type issuedCredential struct {
 // produces a fresh keypair, so rotating callers never reuse private keys.
 func issueAdapterCredential(ctx context.Context, client *platformapi.PlatformClient, flags platformSessionFlags, trustDomain string) (issuedCredential, error) {
 	trustDomain = strings.TrimSpace(trustDomain)
-	if trustDomain == "" {
-		return issuedCredential{}, fmt.Errorf("trust domain must not be empty")
-	}
 	session, err := client.CreateAdapterSession(ctx, platformapi.AdapterSessionRequest{
 		ServerName: strings.TrimSpace(flags.server),
 		Namespace:  strings.TrimSpace(flags.namespace),
@@ -40,6 +37,15 @@ func issueAdapterCredential(ctx context.Context, client *platformapi.PlatformCli
 	})
 	if err != nil {
 		return issuedCredential{}, fmt.Errorf("create adapter session: %w", err)
+	}
+	if trustDomain == "" {
+		trustDomain = strings.TrimSpace(session.TrustDomain)
+	}
+	if trustDomain == "" {
+		return issuedCredential{}, fmt.Errorf("platform SPIFFE trust domain is not configured; set MCP_TRUST_DOMAIN")
+	}
+	if session.TrustDomain != "" && trustDomain != strings.TrimSpace(session.TrustDomain) {
+		return issuedCredential{}, fmt.Errorf("configured trust domain %q does not match platform trust domain %q", trustDomain, session.TrustDomain)
 	}
 
 	keyPEM, csrPEM, _, err := certauth.BuildSessionCSR(trustDomain, session.Namespace, session.Name)

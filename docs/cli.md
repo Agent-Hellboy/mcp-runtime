@@ -535,8 +535,9 @@ mcp-runtime adapter stdio \
 With the adapter running, point any MCP client at `http://127.0.0.1:8099`.
 The adapter handles session creation and governance headers.
 
-For servers running with `auth.mode: mtls`, either enroll once and pass the
-files, or let the adapter enroll a session-bound certificate in memory with
+For OAuth-protected servers, an adapter may additionally present a
+session-bound certificate. OAuth authentication is still required. Enroll once
+and pass the files, or let the adapter enroll a certificate in memory with
 `--auth mtls`:
 
 ```bash
@@ -555,12 +556,12 @@ mcp-runtime adapter proxy \
   --server workspace-demo \
   --namespace mcp-servers \
   --agent cursor \
-  --trust-domain mcpruntime.org \
   --auto-refresh
 ```
 
-`--auth mtls` requires an `https` runtime URL, and `--trust-domain` must match
-`spec.auth.trustDomain` on the target MCPServer. See
+`--auth mtls` requires an `https` runtime URL. The platform returns its trust
+domain with the adapter session; `--trust-domain` or `MCP_TRUST_DOMAIN` is only
+an optional matching override. See
 [Agent adapters](agent-adapters.md#enterprise-mtls-and-spiffe).
 
 ## team

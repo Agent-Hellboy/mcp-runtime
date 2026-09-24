@@ -81,8 +81,16 @@ type MCPServerReconciler struct {
 	OAuthInternalIssuerURL string
 
 	// MTLSClusterIssuer is the pre-existing cert-manager ClusterIssuer used for
-	// gateway and adapter workload certificates.
+	// gateway and adapter workload certificates. It is platform-wide; it does
+	// not depend on an MCPServer auth mode.
 	MTLSClusterIssuer string
+
+	// AdapterTrustDomain is the platform-wide SPIFFE trust domain used for
+	// session-bound adapter certificates and the trusted Traefik identity.
+	AdapterTrustDomain              string
+	IngressControllerNamespace      string
+	IngressControllerServiceAccount string
+	IngressControllerPodLabels      map[string]string
 }
 
 // Use constants from constants.go
@@ -139,6 +147,11 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	logger.Info("Reconciling MCPServer", "name", mcpServer.Name, "namespace", mcpServer.Namespace)
 
 	mcpServer = r.defaultedMCPServerForReconcile(mcpServer)
+	if mcpServer.Spec.Auth != nil && string(mcpServer.Spec.Auth.Mode) == "mtls" {
+		if err := r.cleanupRemovedMTLSResources(ctx, mcpServer); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
 	if err := r.validateMCPServerSpec(ctx, mcpServer, logger); err != nil {
 		return ctrl.Result{}, err
 	}

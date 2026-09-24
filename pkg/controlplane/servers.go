@@ -268,34 +268,36 @@ func ServerInfoFromMCPServer(mcpServer mcpv1alpha1.MCPServer, deploymentStatus S
 		}
 	}
 	authMode := mcpv1alpha1.AuthModeHeader
-	trustDomain := ""
+	humanIDHeader, agentIDHeader := "", ""
 	if mcpServer.Spec.Auth != nil {
 		if mode := mcpServer.Spec.Auth.Mode; mode != "" {
 			authMode = mode
 		}
-		trustDomain = strings.TrimSpace(mcpServer.Spec.Auth.TrustDomain)
+		humanIDHeader = strings.TrimSpace(mcpServer.Spec.Auth.HumanIDHeader)
+		agentIDHeader = strings.TrimSpace(mcpServer.Spec.Auth.AgentIDHeader)
 	}
 	return ServerInfo{
-		Name:        mcpServer.Name,
-		Namespace:   mcpServer.Namespace,
-		UID:         string(mcpServer.UID),
-		TeamID:      strings.TrimSpace(mcpServer.Spec.TeamID),
-		Image:       strings.TrimSpace(mcpServer.Spec.Image),
-		ImageTag:    strings.TrimSpace(mcpServer.Spec.ImageTag),
-		Description: mcpServer.Spec.Description,
-		Ready:       deploymentStatus.Ready,
-		Status:      deploymentStatus.Status,
-		Labels:      mcpServer.Labels,
-		Age:         mcpServer.CreationTimestamp.Format("2006-01-02T15:04:05Z"),
-		Endpoint:    PublicMCPEndpoint(mcpServer),
-		AuthMode:    authMode,
-		TrustDomain: trustDomain,
-		ServicePort: mcpServer.Spec.ServicePort,
-		Generation:  mcpServer.Generation,
-		Tools:       mcpServer.Spec.Tools,
-		Prompts:     inventoryItemsOrEmpty(mcpServer.Spec.Prompts),
-		Resources:   inventoryItemsOrEmpty(mcpServer.Spec.MCPResources),
-		Tasks:       inventoryItemsOrEmpty(mcpServer.Spec.Tasks),
+		Name:          mcpServer.Name,
+		Namespace:     mcpServer.Namespace,
+		UID:           string(mcpServer.UID),
+		TeamID:        strings.TrimSpace(mcpServer.Spec.TeamID),
+		Image:         strings.TrimSpace(mcpServer.Spec.Image),
+		ImageTag:      strings.TrimSpace(mcpServer.Spec.ImageTag),
+		Description:   mcpServer.Spec.Description,
+		Ready:         deploymentStatus.Ready,
+		Status:        deploymentStatus.Status,
+		Labels:        mcpServer.Labels,
+		Age:           mcpServer.CreationTimestamp.Format("2006-01-02T15:04:05Z"),
+		Endpoint:      PublicMCPEndpoint(mcpServer),
+		AuthMode:      authMode,
+		HumanIDHeader: humanIDHeader,
+		AgentIDHeader: agentIDHeader,
+		ServicePort:   mcpServer.Spec.ServicePort,
+		Generation:    mcpServer.Generation,
+		Tools:         mcpServer.Spec.Tools,
+		Prompts:       inventoryItemsOrEmpty(mcpServer.Spec.Prompts),
+		Resources:     inventoryItemsOrEmpty(mcpServer.Spec.MCPResources),
+		Tasks:         inventoryItemsOrEmpty(mcpServer.Spec.Tasks),
 	}
 }
 

@@ -68,7 +68,7 @@ type Input struct {
 	ACMEStaging bool
 	// TLSClusterIssuer is a pre-existing cert-manager.io ClusterIssuer (e.g. org internal CA / Vault / ADCS). Mutually exclusive with ACMEmail.
 	TLSClusterIssuer string
-	// MTLSClusterIssuer enables the mTLS auth path by naming the workload issuer
+	// MTLSClusterIssuer enables optional adapter client-certificate validation
 	// for gateway server and adapter client certificates. Name an enterprise
 	// ClusterIssuer, or the bundled mcp-runtime-ca to have setup provision it.
 	// Test mode defaults this to mcp-runtime-ca automatically.

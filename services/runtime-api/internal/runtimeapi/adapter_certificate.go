@@ -108,10 +108,13 @@ func (s *AccessService) HandleAdapterCertificate(w http.ResponseWriter, r *http.
 		return
 	}
 	authMode, _, _ := unstructured.NestedString(server.Object, "spec", "auth", "mode")
-	trustDomain, _, _ := unstructured.NestedString(server.Object, "spec", "auth", "trustDomain")
-	trustDomain = strings.TrimSpace(trustDomain)
-	if authMode != "mtls" || trustDomain == "" {
-		writeAPIError(w, http.StatusBadRequest, "target MCPServer is not configured for mTLS")
+	trustDomain := strings.TrimSpace(os.Getenv("MCP_TRUST_DOMAIN"))
+	if authMode != "oauth" {
+		writeAPIError(w, http.StatusBadRequest, "adapter certificates require an OAuth MCPServer")
+		return
+	}
+	if trustDomain == "" {
+		writeAPIError(w, http.StatusServiceUnavailable, "platform SPIFFE trust domain is not configured")
 		return
 	}
 

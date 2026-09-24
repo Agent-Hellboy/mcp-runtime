@@ -123,10 +123,9 @@ const (
 	defaultAgentHeader   = "X-MCP-Agent-ID"
 	defaultTeamHeader    = "X-MCP-Team-ID"
 	defaultSessionHeader = "X-MCP-Agent-Session"
-	// defaultVerifiedSPIFFEHeader carries the caller's SPIFFE identity as
-	// extracted and injected by the TLS-terminating ingress (Traefik) in
-	// auth.mode mtls. It is trusted only on an ingress-authenticated mTLS hop;
-	// see authenticateMTLS.
+	// defaultVerifiedSPIFFEHeader carries an optional adapter's SPIFFE identity
+	// extracted and injected by the TLS-terminating ingress (Traefik). It is
+	// trusted only on an ingress-authenticated mTLS hop.
 	defaultVerifiedSPIFFEHeader = "X-MCP-Verified-SPIFFE-ID"
 	defaultPolicyMode           = "allow-list"
 	defaultPolicyDecision       = "deny"

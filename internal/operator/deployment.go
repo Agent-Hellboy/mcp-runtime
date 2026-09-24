@@ -230,7 +230,7 @@ func (r *MCPServerReconciler) buildDeploymentContainers(mcpServer *mcpv1alpha1.M
 				},
 			},
 		})
-		if serverUsesMTLS(mcpServer) {
+		if r.usesAdapterCertificates(mcpServer) {
 			volumes = append(volumes, corev1.Volume{
 				Name: gatewayTLSVolumeName,
 				VolumeSource: corev1.VolumeSource{
@@ -509,7 +509,7 @@ func (r *MCPServerReconciler) buildGatewayContainer(mcpServer *mcpv1alpha1.MCPSe
 			corev1.EnvVar{Name: "AUTH_MODE", Value: string(mcpServer.Spec.Auth.Mode)},
 		)
 	}
-	if serverUsesMTLS(mcpServer) {
+	if r.usesAdapterCertificates(mcpServer) {
 		envVars = append(envVars,
 			corev1.EnvVar{Name: "TLS_CERT_FILE", Value: gatewayTLSMountDir + "/tls.crt"},
 			corev1.EnvVar{Name: "TLS_KEY_FILE", Value: gatewayTLSMountDir + "/tls.key"},
@@ -517,9 +517,10 @@ func (r *MCPServerReconciler) buildGatewayContainer(mcpServer *mcpv1alpha1.MCPSe
 		)
 		// Pin the ingress identity so only the Traefik client certificate (not
 		// any other identity-CA-signed cert) is accepted over the re-encrypted hop.
-		if proxyID := traefikProxySPIFFEID(mcpServer); proxyID != "" {
+		if proxyID := r.traefikProxySPIFFEID(mcpServer); proxyID != "" {
 			envVars = append(envVars, corev1.EnvVar{Name: "TRUSTED_PROXY_SPIFFE_ID", Value: proxyID})
 		}
+		envVars = append(envVars, corev1.EnvVar{Name: "VERIFIED_SPIFFE_HEADER", Value: verifiedSPIFFEHeader})
 	}
 	if mcpServer.Spec.Gateway.StripPrefix != "" {
 		envVars = append(envVars, corev1.EnvVar{Name: "STRIP_PREFIX", Value: mcpServer.Spec.Gateway.StripPrefix})
@@ -606,7 +607,7 @@ func (r *MCPServerReconciler) buildGatewayContainer(mcpServer *mcpv1alpha1.MCPSe
 			PeriodSeconds:       5,
 		},
 	}
-	if serverUsesMTLS(mcpServer) {
+	if r.usesAdapterCertificates(mcpServer) {
 		container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{
 			Name:      gatewayTLSVolumeName,
 			MountPath: gatewayTLSMountDir,

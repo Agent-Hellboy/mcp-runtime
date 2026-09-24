@@ -304,6 +304,9 @@ func (r *MCPServer) validate() error {
 	if r.Spec.Gateway != nil && r.Spec.Gateway.Enabled && r.Spec.Gateway.Port == r.Spec.Port {
 		allErrs = append(allErrs, field.Invalid(specPath.Child("gateway", "port"), r.Spec.Gateway.Port, "gateway.port must differ from spec.port"))
 	}
+	if r.Spec.Auth != nil && r.Spec.Auth.Mode == AuthModeOAuth && !gatewayEnabled(r.Spec) {
+		allErrs = append(allErrs, field.Required(specPath.Child("gateway", "enabled"), "gateway.enabled is required when auth.mode is oauth"))
+	}
 	if gatewayEnabled(r.Spec) && r.Spec.Auth != nil && r.Spec.Auth.Mode == AuthModeOAuth && strings.TrimSpace(r.Spec.Auth.IssuerURL) == "" {
 		allErrs = append(allErrs, field.Required(specPath.Child("auth", "issuerURL"), "auth.issuerURL is required when auth.mode is oauth"))
 	}
@@ -317,20 +320,8 @@ func (r *MCPServer) validate() error {
 			allErrs = append(allErrs, field.Invalid(specPath.Child("auth", "audience"), r.Spec.Auth.Audience, "auth.audience must be an absolute URI without a fragment, matching the canonical MCP server URL clients connect to"))
 		}
 	}
-	if r.Spec.Auth != nil && r.Spec.Auth.Mode == AuthModeMTLS {
-		if !gatewayEnabled(r.Spec) {
-			allErrs = append(allErrs, field.Required(specPath.Child("gateway", "enabled"), "gateway.enabled is required when auth.mode is mtls"))
-		}
-		if strings.TrimSpace(r.Spec.Auth.TrustDomain) == "" {
-			allErrs = append(allErrs, field.Required(specPath.Child("auth", "trustDomain"), "auth.trustDomain is required when auth.mode is mtls"))
-		}
-		// Path-based routing is supported in mtls mode: Traefik terminates the
-		// client mTLS, injects the verified SPIFFE identity header, and routes by
-		// path to the gateway over a re-encrypted mTLS hop.
-		ingressClass := strings.TrimSpace(r.Spec.IngressClass)
-		if ingressClass != "" && ingressClass != "traefik" {
-			allErrs = append(allErrs, field.Invalid(specPath.Child("ingressClass"), r.Spec.IngressClass, "auth.mode mtls currently requires the traefik ingress class"))
-		}
+	if r.Spec.Auth != nil && string(r.Spec.Auth.Mode) == "mtls" {
+		allErrs = append(allErrs, field.Invalid(specPath.Child("auth", "mode"), r.Spec.Auth.Mode, "auth.mode mtls was removed; migrate this MCPServer to auth.mode oauth with gateway.enabled, issuerURL, and audience"))
 	}
 	if r.Spec.Gateway == nil || !r.Spec.Gateway.Enabled {
 		if r.Spec.Analytics != nil && !r.Spec.Analytics.Disabled &&

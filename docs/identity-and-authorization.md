@@ -88,20 +88,18 @@ The adapter obtains this identity from the platform and writes it to the
 configured governance headers on every request. It removes caller-supplied
 identity headers before applying the issued values.
 
-In the default header mode, the gateway reads these headers, so the adapter,
-ingress path, and gateway form a trust boundary. Make sure untrusted clients
-cannot bypass the adapter and inject governance headers directly.
-OAuth-configured servers additionally authenticate the bearer token at the
-gateway.
+In the default header mode, the gateway reads these headers. Therefore, the
+adapter, ingress path, and gateway form a trust boundary: untrusted clients
+should not be able to bypass the adapter and inject governance headers directly.
+On OAuth-configured servers, clients without an adapter certificate
+authenticate with a bearer token at the gateway.
 
-`auth.mode: mtls` removes the header trust assumption. Traefik verifies the
-client certificate, injects the caller's verified SPIFFE identity, and the
-gateway rejects any request that did not arrive over that verified mTLS hop.
-Client-supplied governance headers are never consulted; the SPIFFE identity is
-resolved to a rendered session inside `spec.auth.trustDomain`. The mode requires
-`gateway.enabled`, a `trustDomain`, and the Traefik ingress class. Adapters
-obtain their client certificate by posting a CSR to
-`POST /api/v1/runtime/adapter/certificates` for a session they own.
+Clients without an adapter certificate use OAuth. An adapter can instead
+authenticate with its session-bound client certificate; Traefik verifies it and
+the gateway resolves its session identity for grant/session authorization.
+Adapter enrollment requires the platform-wide `MCP_MTLS_CLUSTER_ISSUER`
+and `MCP_TRUST_DOMAIN` settings. Persisted `auth.mode: mtls` resources must be
+migrated to OAuth; that per-server mode was removed.
 
 ## Grant: administrator-approved authority
 

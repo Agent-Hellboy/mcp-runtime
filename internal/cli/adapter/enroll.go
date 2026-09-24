@@ -41,7 +41,7 @@ func newEnrollCmd(_ *core.Runtime) *cobra.Command {
 	bindPlatformSessionFlags(cmd, &flags)
 	_ = cmd.Flags().MarkHidden("auto-refresh")
 	cmd.Flags().StringVar(&outputDir, "output-dir", ".", "Directory for client.crt, client.key, and ca.crt")
-	cmd.Flags().StringVar(&trustDomain, "trust-domain", envOrDefault(EnvMTLSTrustDomain, DefaultMTLSTrustDomain), "SPIFFE trust domain configured on the platform")
+	cmd.Flags().StringVar(&trustDomain, "trust-domain", os.Getenv(EnvMTLSTrustDomain), "Optional platform SPIFFE trust domain override; defaults to the domain returned by the platform")
 	return cmd
 }
 

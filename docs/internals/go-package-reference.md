@@ -274,9 +274,6 @@ type AuthConfig struct {
 	TokenHeader     string   `json:"tokenHeader,omitempty"`
 	IssuerURL       string   `json:"issuerURL,omitempty"`
 	Audience        string   `json:"audience,omitempty"`
-	// TrustDomain is the SPIFFE trust domain accepted from verified client
-	// certificate URI SANs when mode is mtls.
-	TrustDomain string `json:"trustDomain,omitempty"`
 }
     AuthConfig configures how identities are extracted at the gateway.
     +kubebuilder:object:generate=true
@@ -302,13 +299,12 @@ func (in *AuthConfig) DeepCopyInto(out *AuthConfig)
 <a id="api-types-type-authmode-string"></a>
 ```text
 type AuthMode string
-    +kubebuilder:validation:Enum=none;header;oauth;mtls
+    +kubebuilder:validation:Enum=none;header;oauth
 
 const (
 	AuthModeNone   AuthMode = "none"
 	AuthModeHeader AuthMode = "header"
 	AuthModeOAuth  AuthMode = "oauth"
-	AuthModeMTLS   AuthMode = "mtls"
 )
 ```
 
@@ -1614,7 +1610,6 @@ type AuthConfig struct {
 	TokenHeader     string   `yaml:"tokenHeader,omitempty" json:"tokenHeader,omitempty"`
 	IssuerURL       string   `yaml:"issuerURL,omitempty" json:"issuerURL,omitempty"`
 	Audience        string   `yaml:"audience,omitempty" json:"audience,omitempty"`
-	TrustDomain     string   `yaml:"trustDomain,omitempty" json:"trustDomain,omitempty"`
 }
     AuthConfig configures how identities are extracted at the gateway.
 
@@ -1629,7 +1624,6 @@ const (
 	AuthModeNone   AuthMode = "none"
 	AuthModeHeader AuthMode = "header"
 	AuthModeOAuth  AuthMode = "oauth"
-	AuthModeMTLS   AuthMode = "mtls"
 )
 ```
 
@@ -2607,8 +2601,16 @@ type MCPServerReconciler struct {
 	OAuthInternalIssuerURL string
 
 	// MTLSClusterIssuer is the pre-existing cert-manager ClusterIssuer used for
-	// gateway and adapter workload certificates.
+	// gateway and adapter workload certificates. It is platform-wide; it does
+	// not depend on an MCPServer auth mode.
 	MTLSClusterIssuer string
+
+	// AdapterTrustDomain is the platform-wide SPIFFE trust domain used for
+	// session-bound adapter certificates and the trusted Traefik identity.
+	AdapterTrustDomain              string
+	IngressControllerNamespace      string
+	IngressControllerServiceAccount string
+	IngressControllerPodLabels      map[string]string
 }
     MCPServerReconciler reconciles a MCPServer object
 
@@ -5027,6 +5029,7 @@ type AdapterSession struct {
 	PolicyVersion  string    `json:"policyVersion"`
 	ExpiresAt      time.Time `json:"expiresAt"`
 	Reused         bool      `json:"reused"`
+	TrustDomain    string    `json:"trustDomain,omitempty"`
 }
     AdapterSession captures the identity the adapter must inject into runtime
     requests. ExpiresAt is absolute (server-side time); callers should refresh
@@ -6421,7 +6424,7 @@ type Input struct {
 	ACMEStaging bool
 	// TLSClusterIssuer is a pre-existing cert-manager.io ClusterIssuer (e.g. org internal CA / Vault / ADCS). Mutually exclusive with ACMEmail.
 	TLSClusterIssuer string
-	// MTLSClusterIssuer enables the mTLS auth path by naming the workload issuer
+	// MTLSClusterIssuer enables optional adapter client-certificate validation
 	// for gateway server and adapter client certificates. Name an enterprise
 	// ClusterIssuer, or the bundled mcp-runtime-ca to have setup provision it.
 	// Test mode defaults this to mcp-runtime-ca automatically.
