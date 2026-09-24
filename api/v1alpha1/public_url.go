@@ -1,14 +1,14 @@
 package v1alpha1
 
 import (
-	"net/url"
 	"path"
 	"strings"
+
+	"mcp-runtime/pkg/oauthresource"
 )
 
 const (
 	traefikRouterTLSAnnotation = "traefik.ingress.kubernetes.io/router.tls"
-	oauthProtectedResourcePath = "/.well-known/oauth-protected-resource"
 )
 
 // PublicURLOptions carries the operator-wide ingress settings that decide the
@@ -79,13 +79,7 @@ func (r *MCPServer) CanonicalResourceURL(options PublicURLOptions) string {
 // a resource URL: the well-known prefix inserted between origin and path, the
 // location a conforming client derives from the resource it connected to.
 func ProtectedResourceMetadataURL(resource string) string {
-	parsed, err := url.Parse(strings.TrimSpace(resource))
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return ""
-	}
-	resourcePath := strings.TrimRight(parsed.Path, "/")
-	metadata := url.URL{Scheme: parsed.Scheme, Host: parsed.Host, Path: oauthProtectedResourcePath + resourcePath}
-	return metadata.String()
+	return oauthresource.ProtectedResourceMetadataURL(resource)
 }
 
 func cleanURLPath(value string) string {

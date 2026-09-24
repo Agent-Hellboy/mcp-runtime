@@ -80,6 +80,10 @@ type MCPServerReconciler struct {
 	// OAuth metadata and JWKS discovery.
 	OAuthInternalIssuerURL string
 
+	// OAuthIssuerURL enables bundled authorization-server resource reconciliation
+	// and supplies the default public issuer for OAuth MCPServers.
+	OAuthIssuerURL string
+
 	// MTLSClusterIssuer is the pre-existing cert-manager ClusterIssuer used for
 	// gateway and adapter workload certificates.
 	MTLSClusterIssuer string
@@ -127,6 +131,9 @@ type resourceReadiness = operatorutil.ResourceReadiness
 // Reconcile is part of the main kubernetes reconciliation loop
 func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
+	if err := r.reconcileBundledOAuthResources(ctx); err != nil {
+		return ctrl.Result{}, err
+	}
 
 	mcpServer, found, err := r.fetchMCPServer(ctx, req)
 	if err != nil {
@@ -383,6 +390,7 @@ func (r *MCPServerReconciler) defaultedMCPServerForReconcile(mcpServer *mcpv1alp
 		DefaultIngressHost:        r.DefaultIngressHost,
 		DefaultIngressTLS:         r.DefaultIngressTLS,
 		DefaultAnalyticsIngestURL: r.DefaultAnalyticsIngestURL,
+		DefaultOAuthIssuerURL:     r.OAuthIssuerURL,
 	})
 	return defaulted
 }

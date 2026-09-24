@@ -70,6 +70,7 @@ func main() {
 		DefaultAnalyticsIngestURL:        analyticsIngestURLFromEnv(os.Getenv),
 		ClusterName:                      clusterNameFromEnv(os.Getenv),
 		OAuthInternalIssuerURL:           strings.TrimSpace(os.Getenv("OAUTH_INTERNAL_ISSUER_URL")),
+		OAuthIssuerURL:                   strings.TrimSpace(os.Getenv("MCP_AUTH_ISSUER_URL")),
 		MTLSClusterIssuer:                strings.TrimSpace(os.Getenv("MCP_MTLS_CLUSTER_ISSUER")),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "MCPServer")
@@ -81,6 +82,7 @@ func main() {
 			DefaultIngressHost:        metadata.ResolveMcpIngressHost(),
 			DefaultIngressTLS:         boolFromEnv(os.Getenv("MCP_DEFAULT_INGRESS_TLS")),
 			DefaultAnalyticsIngestURL: analyticsIngestURLFromEnv(os.Getenv),
+			DefaultOAuthIssuerURL:     strings.TrimSpace(os.Getenv("MCP_AUTH_ISSUER_URL")),
 		}
 		if err := (&mcpv1alpha1.MCPServer{}).SetupWebhookWithManagerWithOptions(mgr, mcpServerWebhookOptions); err != nil {
 			setupLog.Error(err, "unable to create webhook")

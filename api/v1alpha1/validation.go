@@ -86,6 +86,7 @@ type MCPServerDefaultOptions struct {
 	DefaultIngressHost        string
 	DefaultIngressTLS         bool
 	DefaultAnalyticsIngestURL string
+	DefaultOAuthIssuerURL     string
 }
 
 func (r *MCPServer) Default() {
@@ -141,6 +142,9 @@ func (r *MCPServer) DefaultWithOptions(options MCPServerDefaultOptions) {
 	if r.Spec.Auth != nil {
 		if r.Spec.Auth.Mode == "" {
 			r.Spec.Auth.Mode = defaultAuthMode
+		}
+		if r.Spec.Auth.Mode == AuthModeOAuth && strings.TrimSpace(r.Spec.Auth.IssuerURL) == "" {
+			r.Spec.Auth.IssuerURL = strings.TrimSpace(options.DefaultOAuthIssuerURL)
 		}
 		if strings.TrimSpace(r.Spec.Auth.HumanIDHeader) == "" {
 			r.Spec.Auth.HumanIDHeader = defaultAuthHumanIDHeader

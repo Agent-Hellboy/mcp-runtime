@@ -177,11 +177,14 @@ Set OAuth on the governed MCPServer and choose one canonical resource URI:
 spec:
   auth:
     mode: oauth
-    issuerURL: https://auth.example.com/mcp-auth
+    # Defaults from the bundled issuer configured on the operator.
     audience: https://mcp.example.com/my-server/mcp
 ```
 
-The audience must exactly equal the `--mcp-auth-resource-url` value. The
+The audience must equal the MCP server's canonical public URL. The operator
+keeps the bundled mcp-auth resource list aligned with OAuth MCPServer
+audiences. An optional `--mcp-auth-resource-url` is an initial bootstrap value
+and must exactly match the corresponding `spec.auth.audience`. The
 gateway rejects tokens with a different issuer or audience and strips the
 client bearer token before forwarding upstream.
 
@@ -219,8 +222,6 @@ KEYCLOAK_CLIENT_SECRET='from-your-secret-manager' \
 ./bin/mcp-runtime setup \
   --with-tls --tls-cluster-issuer letsencrypt-prod \
   --with-mcp-auth-server \
-  --mcp-auth-issuer-url https://auth.example.com/mcp-auth \
-  --mcp-auth-resource-url https://mcp.example.com/my-server/mcp \
   --mcp-auth-signing-key-secret mcp-auth-signing-key \
   --mcp-auth-connectors-file /secure/mcp-auth-connectors.json \
   --mcp-auth-connector keycloak
@@ -257,8 +258,8 @@ The same values can be supplied through the public deployment environment:
 
 ```bash
 export MCP_SETUP_WITH_MCP_AUTH_SERVER=1
-export MCP_SETUP_MCP_AUTH_ISSUER_URL=https://auth.example.com/mcp-auth
-export MCP_SETUP_MCP_AUTH_RESOURCE_URL=https://mcp.example.com/my-server/mcp
+# Issuer defaults to https://auth.<MCP_PLATFORM_DOMAIN>/mcp-auth.
+# Resource audiences are reconciled from OAuth MCPServer objects.
 # Optional only for externally managed TLS (required with provided-tls-secrets).
 export MCP_SETUP_MCP_AUTH_TLS_SECRET=mcp-auth-server-tls
 export MCP_SETUP_MCP_AUTH_SIGNING_KEY_SECRET=mcp-auth-signing-key
@@ -473,7 +474,7 @@ exchange boundaries.
 - discovery connection refused from the auth pod: do not point the pod at the
   node's public IP. Use a reachable, trusted HTTPS service endpoint or fix
   cluster egress/DNS.
-- `audience mismatch`: compare `spec.auth.audience` with
-  `--mcp-auth-resource-url` character-for-character.
+- `audience mismatch`: compare `spec.auth.audience` with the canonical MCP URL
+  and confirm the bundled auth server resource list reflects current OAuth MCPServers.
 - tokens fail after restart: use a persistent RSA signing-key Secret; do not
   rely on the test-mode ephemeral key.
