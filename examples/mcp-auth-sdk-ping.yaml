@@ -18,14 +18,6 @@ spec:
   gateway:
     enabled: false
   envVars:
-    - name: MCP_PATH
-      value: /mcp-auth-sdk-ping/mcp
-    - name: MCP_AUTH_ISSUER
-      value: http://localhost:18080/mcp-auth
-    - name: MCP_AUTH_RESOURCE
-      value: http://localhost:18080/mcp-auth-sdk-ping/mcp
-    - name: MCP_AUTH_RESOURCE_METADATA_URL
-      value: http://localhost:18080/.well-known/oauth-protected-resource/mcp-auth-sdk-ping/mcp
     # Kind only. On a real deployment the public HTTPS issuer is reachable from
     # inside the cluster, so omit this and let the SDK discover the JWKS over
     # TLS — the authorization server restricts ingress to the ingress

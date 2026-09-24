@@ -6,9 +6,6 @@ servers:
     publicPathPrefix: governed-agent-demo-mcp
     port: 8088
     namespace: mcp-servers
-    envVars:
-      - name: MCP_PATH
-        value: /governed-agent-demo-mcp/mcp
     tools:
       - name: aaa-ping
         description: Check that the governed workspace assistant is reachable.

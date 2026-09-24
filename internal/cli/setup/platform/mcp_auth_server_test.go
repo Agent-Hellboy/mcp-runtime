@@ -337,8 +337,8 @@ func TestRenderMCPAuthServerManifestCarriesEveryResource(t *testing.T) {
 	}
 }
 
-// Test mode resolves both shipped SDK fixtures, so both must be served.
-func TestRenderMCPAuthServerManifestTestModeServesBothSDKFixtures(t *testing.T) {
+// Test mode resolves all shipped SDK fixtures, so each must be served.
+func TestRenderMCPAuthServerManifestTestModeServesSDKFixtures(t *testing.T) {
 	manifest, err := renderMCPAuthServerManifest(mcpAuthManifestTemplate(t), mcpAuthServerOptions{
 		Image:     "registry.example.com/mcp-auth-server:1.0.0",
 		IssuerURL: "http://localhost:18080/mcp-auth",
@@ -347,9 +347,9 @@ func TestRenderMCPAuthServerManifestTestModeServesBothSDKFixtures(t *testing.T) 
 	if err != nil {
 		t.Fatalf("renderMCPAuthServerManifest() error = %v", err)
 	}
-	want := `{name: MCP_AUTH_RESOURCES, value: "http://localhost:18080/mcp-auth-sdk-ping/mcp,http://localhost:18080/mcp-auth-sdk-echo/mcp"}`
+	want := `{name: MCP_AUTH_RESOURCES, value: "http://localhost:18080/mcp-auth-sdk-ping/mcp,http://localhost:18080/mcp-auth-sdk-echo/mcp,http://localhost:18080/mcp-auth-sdk-ping-py/mcp"}`
 	if !strings.Contains(manifest, want) {
-		t.Fatalf("test mode must serve both SDK fixtures.\nwant: %s\ngot:\n%s", want, manifest)
+		t.Fatalf("test mode must serve every SDK fixture.\nwant: %s\ngot:\n%s", want, manifest)
 	}
 }
 

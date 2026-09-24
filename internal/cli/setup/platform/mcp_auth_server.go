@@ -280,6 +280,7 @@ func mcpAuthResourceURLs(configured []string, issuer string, testMode bool) ([]s
 		return []string{
 			base + "/mcp-auth-sdk-ping/mcp",
 			base + "/mcp-auth-sdk-echo/mcp",
+			base + "/mcp-auth-sdk-ping-py/mcp",
 		}, nil
 	}
 	seen := map[string]bool{}

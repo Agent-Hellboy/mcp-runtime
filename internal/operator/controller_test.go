@@ -1568,7 +1568,8 @@ func TestReconcileIngress(t *testing.T) {
 				IngressHost: "example.com",
 				IngressPath: "/oauth-server/mcp",
 				Auth: &mcpv1alpha1.AuthConfig{
-					Mode: mcpv1alpha1.AuthModeOAuth,
+					Mode:     mcpv1alpha1.AuthModeOAuth,
+					Audience: "https://example.com/custom/resource",
 				},
 			},
 		}
@@ -1586,7 +1587,7 @@ func TestReconcileIngress(t *testing.T) {
 			t.Fatalf("expected 2 ingress paths, got %d", len(got))
 		} else {
 			assertEqual(t, "primaryPath", got[0].Path, "/oauth-server/mcp")
-			assertEqual(t, "protectedResourcePath", got[1].Path, "/.well-known/oauth-protected-resource/oauth-server/mcp")
+			assertEqual(t, "protectedResourcePath", got[1].Path, "/.well-known/oauth-protected-resource/custom/resource")
 		}
 	})
 }
@@ -1964,26 +1965,28 @@ func TestBuildServerEnvVarsDerivesOAuthResource(t *testing.T) {
 		}
 	})
 
-	t.Run("explicit env vars are not overridden", func(t *testing.T) {
+	t.Run("operator owns derived env vars", func(t *testing.T) {
 		got := envMap(r.buildServerEnvVars(standalone(mcpv1alpha1.EnvVar{Name: "MCP_PATH", Value: "/mcp"})))
-		assertEqual(t, "MCP_PATH", got["MCP_PATH"], "/mcp")
+		assertEqual(t, "MCP_PATH", got["MCP_PATH"], "/buddy/mcp")
 		assertEqual(t, "MCP_AUTH_RESOURCE", got["MCP_AUTH_RESOURCE"], "https://mcp.example.com/buddy/mcp")
 	})
 
-	t.Run("gateway-fronted servers are left alone", func(t *testing.T) {
+	t.Run("gateway-fronted servers get only the operator-owned path", func(t *testing.T) {
 		server := standalone()
 		server.Spec.Gateway.Enabled = true
 		got := envMap(r.buildServerEnvVars(server))
+		assertEqual(t, "MCP_PATH", got["MCP_PATH"], "/buddy/mcp")
 		if _, ok := got["MCP_AUTH_RESOURCE"]; ok {
 			t.Fatalf("gateway-fronted server should not get MCP_AUTH_RESOURCE, got %v", got)
 		}
 	})
 
-	t.Run("non-oauth servers are left alone", func(t *testing.T) {
+	t.Run("non-oauth servers still get the operator-owned path", func(t *testing.T) {
 		server := standalone()
 		server.Spec.Auth.Mode = mcpv1alpha1.AuthModeHeader
-		if got := r.buildServerEnvVars(server); len(got) != 0 {
-			t.Fatalf("non-oauth server should get no derived env, got %v", got)
+		got := envMap(r.buildServerEnvVars(server))
+		if len(got) != 1 || got["MCP_PATH"] != "/buddy/mcp" {
+			t.Fatalf("non-oauth server env = %v, want only MCP_PATH=/buddy/mcp", got)
 		}
 	})
 }

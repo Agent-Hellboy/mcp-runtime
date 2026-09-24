@@ -17,6 +17,7 @@ import (
 
 	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
 	"mcp-runtime/internal/operator"
+	"mcp-runtime/pkg/metadata"
 )
 
 var (
@@ -57,7 +58,7 @@ func main() {
 	if err = (&operator.MCPServerReconciler{
 		Client:                           mgr.GetClient(),
 		Scheme:                           mgr.GetScheme(),
-		DefaultIngressHost:               os.Getenv("MCP_DEFAULT_INGRESS_HOST"),
+		DefaultIngressHost:               metadata.ResolveMcpIngressHost(),
 		DefaultIngressEntryPoints:        strings.TrimSpace(os.Getenv("MCP_DEFAULT_INGRESS_ENTRYPOINTS")),
 		DefaultIngressTLS:                boolFromEnv(os.Getenv("MCP_DEFAULT_INGRESS_TLS")),
 		DefaultIngressTLSSecret:          strings.TrimSpace(os.Getenv("MCP_DEFAULT_INGRESS_TLS_SECRET")),
@@ -77,7 +78,7 @@ func main() {
 
 	if webhooksEnabledFromEnv(os.Getenv) {
 		mcpServerWebhookOptions := mcpv1alpha1.MCPServerDefaultOptions{
-			DefaultIngressHost:        os.Getenv("MCP_DEFAULT_INGRESS_HOST"),
+			DefaultIngressHost:        metadata.ResolveMcpIngressHost(),
 			DefaultIngressTLS:         boolFromEnv(os.Getenv("MCP_DEFAULT_INGRESS_TLS")),
 			DefaultAnalyticsIngestURL: analyticsIngestURLFromEnv(os.Getenv),
 		}

@@ -2,6 +2,7 @@ package operator
 
 import (
 	"context"
+	"net/url"
 	"strings"
 
 	networkingv1 "k8s.io/api/networking/v1"
@@ -93,11 +94,15 @@ func ingressPathsForServer(mcpServer *mcpv1alpha1.MCPServer, pathType networking
 		},
 	}
 	if serverUsesOAuth(mcpServer) {
-		paths = append(paths, networkingv1.HTTPIngressPath{
-			Path:     oauthProtectedResourceIngressPath(effectiveIngressPath(mcpServer)),
-			PathType: &pathType,
-			Backend:  backend,
-		})
+		metadataURL := mcpv1alpha1.ProtectedResourceMetadataURL(mcpServer.Spec.Auth.Audience)
+		parsedMetadataURL, err := url.Parse(metadataURL)
+		if err == nil && parsedMetadataURL.Path != "" {
+			paths = append(paths, networkingv1.HTTPIngressPath{
+				Path:     parsedMetadataURL.Path,
+				PathType: &pathType,
+				Backend:  backend,
+			})
+		}
 	}
 	return paths
 }
@@ -119,14 +124,6 @@ func normalizeIngressPath(value string) string {
 		return "/" + trimmed
 	}
 	return trimmed
-}
-
-func oauthProtectedResourceIngressPath(ingressPath string) string {
-	normalized := normalizeIngressPath(ingressPath)
-	if normalized == "/" {
-		return "/.well-known/oauth-protected-resource"
-	}
-	return "/.well-known/oauth-protected-resource" + normalized
 }
 
 func (r *MCPServerReconciler) buildIngressAnnotations(mcpServer *mcpv1alpha1.MCPServer) map[string]string {

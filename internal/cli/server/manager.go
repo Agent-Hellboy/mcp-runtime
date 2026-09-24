@@ -839,7 +839,6 @@ func normalizeDeployImageForCompare(image string) string {
 }
 
 func buildDeployServerSpec(name, image, imageTag string, replicas, port, servicePort int32) mcpv1alpha1.MCPServerSpec {
-	ingressPath := "/" + name + "/mcp"
 	return mcpv1alpha1.MCPServerSpec{
 		Image:            image,
 		ImageTag:         imageTag,
@@ -847,11 +846,8 @@ func buildDeployServerSpec(name, image, imageTag string, replicas, port, service
 		Port:             port,
 		ServicePort:      servicePort,
 		PublicPathPrefix: name,
-		IngressPath:      ingressPath,
+		IngressPath:      "/" + name + "/mcp",
 		Gateway:          &mcpv1alpha1.GatewayConfig{Enabled: true},
-		EnvVars: []mcpv1alpha1.EnvVar{
-			{Name: "MCP_PATH", Value: ingressPath},
-		},
 	}
 }
 
