@@ -107,11 +107,7 @@ func effectiveIngressHost(mcpServer *mcpv1alpha1.MCPServer) string {
 }
 
 func effectiveIngressPath(mcpServer *mcpv1alpha1.MCPServer) string {
-	prefix := strings.Trim(strings.TrimSpace(mcpServer.Spec.PublicPathPrefix), "/")
-	if prefix == "" {
-		return mcpServer.Spec.IngressPath
-	}
-	return "/" + prefix + "/mcp"
+	return mcpServer.EffectivePublicPath()
 }
 
 func normalizeIngressPath(value string) string {

@@ -216,7 +216,11 @@ type AuthConfig struct {
 	SessionIDHeader string   `json:"sessionIDHeader,omitempty"`
 	TokenHeader     string   `json:"tokenHeader,omitempty"`
 	IssuerURL       string   `json:"issuerURL,omitempty"`
-	Audience        string   `json:"audience,omitempty"`
+	// Audience is the OAuth resource identifier tokens must be issued for and
+	// that protected-resource metadata advertises. When auth.mode is oauth and
+	// this is unset, it defaults to the public MCP URL built from the ingress
+	// host (or MCP_DEFAULT_INGRESS_HOST on the operator), TLS setting, and path.
+	Audience string `json:"audience,omitempty"`
 	// TrustDomain is the SPIFFE trust domain accepted from verified client
 	// certificate URI SANs when mode is mtls.
 	TrustDomain string `json:"trustDomain,omitempty"`

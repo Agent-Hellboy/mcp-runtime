@@ -78,6 +78,7 @@ func main() {
 	if webhooksEnabledFromEnv(os.Getenv) {
 		mcpServerWebhookOptions := mcpv1alpha1.MCPServerDefaultOptions{
 			DefaultIngressHost:        os.Getenv("MCP_DEFAULT_INGRESS_HOST"),
+			DefaultIngressTLS:         boolFromEnv(os.Getenv("MCP_DEFAULT_INGRESS_TLS")),
 			DefaultAnalyticsIngestURL: analyticsIngestURLFromEnv(os.Getenv),
 		}
 		if err := (&mcpv1alpha1.MCPServer{}).SetupWebhookWithManagerWithOptions(mgr, mcpServerWebhookOptions); err != nil {

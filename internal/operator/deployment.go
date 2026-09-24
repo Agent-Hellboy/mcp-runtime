@@ -192,7 +192,7 @@ func (r *MCPServerReconciler) buildDeploymentContainers(mcpServer *mcpv1alpha1.M
 				Protocol:      corev1.ProtocolTCP,
 			},
 		},
-		Env:             r.buildEnvVars(mcpServer.Spec.EnvVars, mcpServer.Spec.SecretEnvVars),
+		Env:             r.buildServerEnvVars(mcpServer),
 		SecurityContext: kubeworkload.RestrictedContainerSecurityContext(),
 		LivenessProbe: &corev1.Probe{
 			ProbeHandler: corev1.ProbeHandler{
@@ -429,38 +429,14 @@ func (r *MCPServerReconciler) resolveGatewayImage(mcpServer *mcpv1alpha1.MCPServ
 // canonical resource disagree with the https:// audience a token is issued for,
 // and every authenticated call fails closed with 401.
 func (r *MCPServerReconciler) gatewayExternalBaseURL(mcpServer *mcpv1alpha1.MCPServer) string {
-	host := effectiveIngressHost(mcpServer)
-	if host == "" {
-		// Path-based servers set publicPathPrefix, which suppresses the
-		// DefaultIngressHost defaulting in api/v1alpha1 (it only applies when
-		// both ingressHost and publicPathPrefix are unset). The ingress then
-		// matches any host, but the gateway still has to advertise a concrete
-		// public URL, so fall back to the operator-wide default here.
-		host = strings.TrimSpace(r.DefaultIngressHost)
-	}
-	if host == "" {
-		return ""
-	}
-	scheme := "http"
-	if r.ingressUsesTLS(mcpServer) {
-		scheme = "https"
-	}
-	return scheme + "://" + host
+	return mcpServer.PublicBaseURL(r.publicURLOptions())
 }
 
-// ingressUsesTLS reports whether this server's ingress terminates TLS, either
-// from the operator-wide default or an explicit per-server Traefik annotation.
-func (r *MCPServerReconciler) ingressUsesTLS(mcpServer *mcpv1alpha1.MCPServer) bool {
-	if r.DefaultIngressTLS {
-		return true
+func (r *MCPServerReconciler) publicURLOptions() mcpv1alpha1.PublicURLOptions {
+	return mcpv1alpha1.PublicURLOptions{
+		DefaultIngressHost: r.DefaultIngressHost,
+		DefaultIngressTLS:  r.DefaultIngressTLS,
 	}
-	for key, value := range mcpServer.Spec.IngressAnnotations {
-		if strings.EqualFold(strings.TrimSpace(key), "traefik.ingress.kubernetes.io/router.tls") &&
-			strings.EqualFold(strings.TrimSpace(value), "true") {
-			return true
-		}
-	}
-	return false
 }
 
 func (r *MCPServerReconciler) buildGatewayContainer(mcpServer *mcpv1alpha1.MCPServer) (corev1.Container, error) {
@@ -728,6 +704,39 @@ func (r *MCPServerReconciler) buildImagePullSecrets(mcpServer *mcpv1alpha1.MCPSe
 
 	return []corev1.LocalObjectReference{{Name: secretName}}
 }
+
+// buildServerEnvVars returns the MCP server container env: the spec's env,
+// then the OAuth resource settings a standalone resource server needs. With the
+// gateway disabled the server itself answers OAuth challenges and publishes
+// protected-resource metadata, so it must advertise exactly the audience the
+// authorization server mints tokens for. Those values are derived from the
+// public URL here rather than hand-copied into envVars, where a stale host
+// makes MCP clients reject the metadata before OAuth even starts. Names the
+// spec sets explicitly are left alone.
+func (r *MCPServerReconciler) buildServerEnvVars(mcpServer *mcpv1alpha1.MCPServer) []corev1.EnvVar {
+	result := r.buildEnvVars(mcpServer.Spec.EnvVars, mcpServer.Spec.SecretEnvVars)
+	if gatewayEnabled(mcpServer) || !serverUsesOAuth(mcpServer) {
+		return result
+	}
+	set := make(map[string]bool, len(result))
+	for _, env := range result {
+		set[env.Name] = true
+	}
+	resource := strings.TrimSpace(mcpServer.Spec.Auth.Audience)
+	for _, derived := range []corev1.EnvVar{
+		{Name: "MCP_AUTH_RESOURCE", Value: resource},
+		{Name: "MCP_AUTH_RESOURCE_METADATA_URL", Value: mcpv1alpha1.ProtectedResourceMetadataURL(resource)},
+		{Name: "MCP_AUTH_ISSUER", Value: strings.TrimSpace(mcpServer.Spec.Auth.IssuerURL)},
+		{Name: "MCP_PATH", Value: strings.TrimSpace(mcpServer.EffectivePublicPath())},
+	} {
+		if derived.Value == "" || set[derived.Name] {
+			continue
+		}
+		result = append(result, derived)
+	}
+	return result
+}
+
 func (r *MCPServerReconciler) buildEnvVars(envVars []mcpv1alpha1.EnvVar, secretEnvVars []mcpv1alpha1.SecretEnvVar) []corev1.EnvVar {
 	result := make([]corev1.EnvVar, 0, len(envVars)+len(secretEnvVars))
 	for _, ev := range envVars {

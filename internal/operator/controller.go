@@ -381,6 +381,7 @@ func (r *MCPServerReconciler) defaultedMCPServerForReconcile(mcpServer *mcpv1alp
 	defaulted := mcpServer.DeepCopy()
 	defaulted.DefaultWithOptions(mcpv1alpha1.MCPServerDefaultOptions{
 		DefaultIngressHost:        r.DefaultIngressHost,
+		DefaultIngressTLS:         r.DefaultIngressTLS,
 		DefaultAnalyticsIngestURL: r.DefaultAnalyticsIngestURL,
 	})
 	return defaulted

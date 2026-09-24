@@ -1902,3 +1902,67 @@ func TestGatewayExternalBaseURLPrefersExplicitIngressHost(t *testing.T) {
 		t.Fatalf("gatewayExternalBaseURL = %q, want https://explicit.example.com", got)
 	}
 }
+
+func TestBuildServerEnvVarsDerivesOAuthResource(t *testing.T) {
+	standalone := func(envVars ...mcpv1alpha1.EnvVar) *mcpv1alpha1.MCPServer {
+		return &mcpv1alpha1.MCPServer{
+			ObjectMeta: metav1.ObjectMeta{Name: "buddy"},
+			Spec: mcpv1alpha1.MCPServerSpec{
+				PublicPathPrefix: "buddy",
+				Gateway:          &mcpv1alpha1.GatewayConfig{Enabled: false},
+				Auth: &mcpv1alpha1.AuthConfig{
+					Mode:      mcpv1alpha1.AuthModeOAuth,
+					IssuerURL: "https://auth.example.com/mcp-auth",
+					Audience:  "https://mcp.example.com/buddy/mcp",
+				},
+				EnvVars: envVars,
+			},
+		}
+	}
+	envMap := func(envVars []corev1.EnvVar) map[string]string {
+		result := map[string]string{}
+		for _, env := range envVars {
+			if _, dup := result[env.Name]; dup {
+				t.Fatalf("env %s is set twice", env.Name)
+			}
+			result[env.Name] = env.Value
+		}
+		return result
+	}
+	r := MCPServerReconciler{}
+
+	t.Run("standalone oauth server gets the derived resource settings", func(t *testing.T) {
+		got := envMap(r.buildServerEnvVars(standalone()))
+		for name, want := range map[string]string{
+			"MCP_AUTH_RESOURCE":              "https://mcp.example.com/buddy/mcp",
+			"MCP_AUTH_RESOURCE_METADATA_URL": "https://mcp.example.com/.well-known/oauth-protected-resource/buddy/mcp",
+			"MCP_AUTH_ISSUER":                "https://auth.example.com/mcp-auth",
+			"MCP_PATH":                       "/buddy/mcp",
+		} {
+			assertEqual(t, name, got[name], want)
+		}
+	})
+
+	t.Run("explicit env vars are not overridden", func(t *testing.T) {
+		got := envMap(r.buildServerEnvVars(standalone(mcpv1alpha1.EnvVar{Name: "MCP_PATH", Value: "/mcp"})))
+		assertEqual(t, "MCP_PATH", got["MCP_PATH"], "/mcp")
+		assertEqual(t, "MCP_AUTH_RESOURCE", got["MCP_AUTH_RESOURCE"], "https://mcp.example.com/buddy/mcp")
+	})
+
+	t.Run("gateway-fronted servers are left alone", func(t *testing.T) {
+		server := standalone()
+		server.Spec.Gateway.Enabled = true
+		got := envMap(r.buildServerEnvVars(server))
+		if _, ok := got["MCP_AUTH_RESOURCE"]; ok {
+			t.Fatalf("gateway-fronted server should not get MCP_AUTH_RESOURCE, got %v", got)
+		}
+	})
+
+	t.Run("non-oauth servers are left alone", func(t *testing.T) {
+		server := standalone()
+		server.Spec.Auth.Mode = mcpv1alpha1.AuthModeHeader
+		if got := r.buildServerEnvVars(server); len(got) != 0 {
+			t.Fatalf("non-oauth server should get no derived env, got %v", got)
+		}
+	})
+}

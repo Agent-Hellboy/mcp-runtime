@@ -185,6 +185,25 @@ The audience must exactly equal the `--mcp-auth-resource-url` value. The
 gateway rejects tokens with a different issuer or audience and strips the
 client bearer token before forwarding upstream.
 
+You can omit `audience`. The operator then derives it from the server's public
+URL: `https://` when the operator runs with `MCP_DEFAULT_INGRESS_TLS=true` or
+the ingress has the `traefik.ingress.kubernetes.io/router.tls: "true"`
+annotation, then `spec.ingressHost` (or the operator's
+`MCP_DEFAULT_INGRESS_HOST`), then `/<publicPathPrefix>/mcp`. A path-based
+server named `my-server` on `mcp.example.com` gets
+`https://mcp.example.com/my-server/mcp`. If no host is known (for example in
+local test mode), set `audience` explicitly.
+
+For a standalone resource server (`gateway.enabled: false`), the operator also
+injects the values the server needs to publish matching metadata:
+`MCP_AUTH_RESOURCE` (the audience), `MCP_AUTH_RESOURCE_METADATA_URL`
+(`<origin>/.well-known/oauth-protected-resource<path>`), `MCP_AUTH_ISSUER`
+(`auth.issuerURL`), and `MCP_PATH` (the public MCP path). Any of these set in
+`spec.envVars` or `spec.secretEnvVars` takes precedence. Remove hand-set copies
+so the advertised resource stays in step with the ingress host. MCP clients
+reject metadata whose `resource` names a different origin than the URL they
+connected to.
+
 ## Deploy through setup
 
 Create the persistent signing-key Secret with the RSA key stored as

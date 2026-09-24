@@ -84,6 +84,7 @@ func gatewayEnabled(spec MCPServerSpec) bool {
 // webhook can use while defaulting MCPServer objects.
 type MCPServerDefaultOptions struct {
 	DefaultIngressHost        string
+	DefaultIngressTLS         bool
 	DefaultAnalyticsIngestURL string
 }
 
@@ -155,6 +156,16 @@ func (r *MCPServer) DefaultWithOptions(options MCPServerDefaultOptions) {
 		}
 		if strings.TrimSpace(r.Spec.Auth.TokenHeader) == "" {
 			r.Spec.Auth.TokenHeader = defaultAuthTokenHeader
+		}
+		// The audience is the resource identifier clients send back and the
+		// gateway or server advertises, so it has to equal the public URL the
+		// ingress serves. Derive it from that URL rather than asking for a
+		// hand-typed copy that drifts when the host or path changes.
+		if r.Spec.Auth.Mode == AuthModeOAuth && strings.TrimSpace(r.Spec.Auth.Audience) == "" {
+			r.Spec.Auth.Audience = r.CanonicalResourceURL(PublicURLOptions{
+				DefaultIngressHost: options.DefaultIngressHost,
+				DefaultIngressTLS:  options.DefaultIngressTLS,
+			})
 		}
 	}
 
@@ -312,7 +323,7 @@ func (r *MCPServer) validate() error {
 		// in protected resource metadata, so it must be a URI a conforming
 		// client can send back as the RFC 8707 resource parameter.
 		if audience := strings.TrimSpace(r.Spec.Auth.Audience); audience == "" {
-			allErrs = append(allErrs, field.Required(specPath.Child("auth", "audience"), "auth.audience is required when auth.mode is oauth"))
+			allErrs = append(allErrs, field.Required(specPath.Child("auth", "audience"), "auth.audience is required when auth.mode is oauth and cannot be derived; set spec.ingressHost or MCP_DEFAULT_INGRESS_HOST on the operator so it defaults to the public MCP URL, or set auth.audience"))
 		} else if parsed, err := url.Parse(audience); err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.Fragment != "" {
 			allErrs = append(allErrs, field.Invalid(specPath.Child("auth", "audience"), r.Spec.Auth.Audience, "auth.audience must be an absolute URI without a fragment, matching the canonical MCP server URL clients connect to"))
 		}
