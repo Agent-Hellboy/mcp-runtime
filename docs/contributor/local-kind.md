@@ -209,8 +209,9 @@ comma-separate) when you deploy your own server:
 ```
 
 Each value must equal the `spec.auth.audience` of the MCP server it fronts.
-Outside `--test-mode` there is no default: `--mcp-auth-resource-url` is
-required, every value must be HTTPS, and the deployment additionally needs
+Outside `--test-mode`, resource URLs can be supplied as an optional bootstrap
+list; the operator reconciles the list from current OAuth MCPServer audiences.
+Any supplied value must be HTTPS, and the deployment additionally needs
 `--mcp-auth-signing-key-secret` (a Secret holding the RSA signing key as
 `private-key.pem`). Test mode lets the server generate an ephemeral key, which
 it only permits for a loopback issuer; in production an ephemeral key would

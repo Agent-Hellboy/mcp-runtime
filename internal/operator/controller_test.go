@@ -1560,7 +1560,9 @@ func TestReconcileIngress(t *testing.T) {
 		assertEqual(t, "tls", ingress.Annotations["traefik.ingress.kubernetes.io/router.tls"], "true")
 	})
 
-	t.Run("adds oauth protected resource path for oauth servers", func(t *testing.T) {
+	// The route follows the server's own path, never a tenant-chosen
+	// audience path that could claim another server's metadata route.
+	t.Run("adds oauth protected resource path for the server's own route", func(t *testing.T) {
 		mcpServer := &mcpv1alpha1.MCPServer{
 			ObjectMeta: metav1.ObjectMeta{Name: "oauth-server", Namespace: "default"},
 			Spec: mcpv1alpha1.MCPServerSpec{
@@ -1587,7 +1589,7 @@ func TestReconcileIngress(t *testing.T) {
 			t.Fatalf("expected 2 ingress paths, got %d", len(got))
 		} else {
 			assertEqual(t, "primaryPath", got[0].Path, "/oauth-server/mcp")
-			assertEqual(t, "protectedResourcePath", got[1].Path, "/.well-known/oauth-protected-resource/custom/resource")
+			assertEqual(t, "protectedResourcePath", got[1].Path, "/.well-known/oauth-protected-resource/oauth-server/mcp")
 		}
 	})
 }

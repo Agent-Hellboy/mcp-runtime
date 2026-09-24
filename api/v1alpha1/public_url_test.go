@@ -71,10 +71,31 @@ func TestMCPServerDefaultDerivesOAuthAudience(t *testing.T) {
 			server := &MCPServer{ObjectMeta: metav1.ObjectMeta{Name: "buddy"}, Spec: testCase.spec}
 			server.Spec.Image = "example.com/buddy"
 			server.DefaultWithOptions(testCase.options)
+			server.ResolveDerivedAuth(testCase.options)
 			if got := server.Spec.Auth.Audience; got != testCase.want {
 				t.Fatalf("auth.audience = %q, want %q", got, testCase.want)
 			}
 		})
+	}
+}
+
+// Admission defaulting must not persist derived OAuth values, or a later host,
+// path, TLS, or platform-domain change would leave a stale copy in spec.
+func TestMCPServerDefaultDoesNotPersistDerivedAuth(t *testing.T) {
+	server := &MCPServer{
+		ObjectMeta: metav1.ObjectMeta{Name: "buddy"},
+		Spec:       MCPServerSpec{Image: "example.com/buddy", Auth: &AuthConfig{Mode: AuthModeOAuth}},
+	}
+	server.DefaultWithOptions(MCPServerDefaultOptions{
+		DefaultIngressHost:    "mcp.example.com",
+		DefaultIngressTLS:     true,
+		DefaultOAuthIssuerURL: "https://auth.example.com/mcp-auth",
+	})
+	if server.Spec.Auth.Audience != "" || server.Spec.Auth.IssuerURL != "" {
+		t.Fatalf("auth = %+v, want audience and issuer left for reconcile-time derivation", server.Spec.Auth)
+	}
+	if err := server.validate(); err != nil {
+		t.Fatalf("admission must accept an OAuth server whose audience is derived later: %v", err)
 	}
 }
 
@@ -87,8 +108,9 @@ func TestMCPServerValidateUnderivableOAuthAudience(t *testing.T) {
 		},
 	}
 	server.DefaultWithOptions(MCPServerDefaultOptions{})
+	server.ResolveDerivedAuth(MCPServerDefaultOptions{})
 
-	err := server.validate()
+	err := server.ValidateResolvedAuth()
 	if err == nil {
 		t.Fatal("expected validation error when the audience cannot be derived")
 	}

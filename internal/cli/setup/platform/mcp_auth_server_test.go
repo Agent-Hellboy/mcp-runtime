@@ -122,7 +122,6 @@ func TestRenderMCPAuthServerManifestProductionGuards(t *testing.T) {
 		{"no connector", func(o *mcpAuthServerOptions) { o.ConnectorsFile = "" }, "connector file"},
 		{"no tls secret", func(o *mcpAuthServerOptions) { o.TLSSecret = "" }, "TLS Secret"},
 		{"no signing key", func(o *mcpAuthServerOptions) { o.SigningKeySecret = "" }, "signing key Secret"},
-		{"no resource", func(o *mcpAuthServerOptions) { o.ResourceURLs = nil }, "resource URL"},
 		{"plaintext resource", func(o *mcpAuthServerOptions) { o.ResourceURLs = []string{"http://mcp.example.com/demo/mcp"} }, "must use https"},
 		{"relative resource", func(o *mcpAuthServerOptions) { o.ResourceURLs = []string{"/demo/mcp"} }, "absolute URL"},
 		{"duplicate resource", func(o *mcpAuthServerOptions) {
@@ -141,6 +140,10 @@ func TestRenderMCPAuthServerManifestProductionGuards(t *testing.T) {
 				t.Fatalf("error = %v, want it to mention %q", err, tc.wantErr)
 			}
 		})
+	}
+	base.ResourceURLs = nil
+	if _, err := renderMCPAuthServerManifest(mcpAuthManifestTemplate(t), base); err != nil {
+		t.Fatalf("renderMCPAuthServerManifest() with operator-managed resources failed: %v", err)
 	}
 }
 

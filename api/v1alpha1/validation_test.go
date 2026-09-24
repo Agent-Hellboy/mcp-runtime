@@ -333,7 +333,7 @@ func TestMCPServerValidateOAuthIssuer(t *testing.T) {
 		},
 	}
 
-	err := server.validate()
+	err := server.ValidateResolvedAuth()
 	if err == nil {
 		t.Fatal("expected validation error for missing OAuth issuer")
 	}
