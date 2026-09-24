@@ -94,6 +94,22 @@ MCP_PLATFORM_API_PROFILE=admin mcp-runtime team list
 # Or: mcp-runtime access session list will show teamID in output
 ```
 
+## Concept: a bounded incident handoff
+
+Imagine Acme owns a payments MCP server and Globex is helping investigate a
+production incident. Acme can delegate only the read tools needed to inspect
+the issue—such as `lookup_invoice` and `payment_status`—to Globex's
+`incident-helper` agent. The grant names Globex's team ID and that agent,
+allows only the `read` side effect, sets a low trust ceiling, and expires four
+hours later.
+
+The grant stays in Acme's namespace beside the payments server. Globex gets no
+Kubernetes access to Acme's namespace and no access to the server's other
+tools. Every call still passes through the gateway's identity, session, grant,
+tool, side-effect, and trust checks. A session refresh cannot extend the
+delegation past the grant deadline; when it expires, further calls are denied.
+Acme can disable the grant sooner if the investigation ends early.
+
 ## Step 4: Alice grants Globex access to payments
 
 ```bash
@@ -104,6 +120,7 @@ mcp-runtime access grant init payments-to-globex \
   --namespace mcp-team-acme \
   --team-id <globex-team-uuid> \
   --agent-id cursor \
+  --expires-in 4h \
   --tool echo \
   --tool add \
   --output grant-cross.yaml
@@ -116,7 +133,9 @@ mcp-runtime access grant list --namespace mcp-team-acme
 ```
 
 The grant lives in Acme's namespace, next to the server, and is scoped to
-Globex's team ID. Only Globex's agents can use it.
+Globex's team ID. Only Globex's agents can use it. Its four-hour expiry bounds
+the delegation itself, so a refreshed session cannot keep access alive beyond
+the investigation window.
 
 ## Step 5: Admin creates a session for Globex's agent
 

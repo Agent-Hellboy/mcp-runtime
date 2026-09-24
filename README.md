@@ -15,7 +15,7 @@
 
 MCP Runtime is a Kubernetes control plane for [Model Context Protocol](https://modelcontextprotocol.io/) servers. It deploys MCP servers into your cluster, enforces per-tool access policy on every call, and records each decision for audit.
 
-You describe a server with an `MCPServer` resource and the operator creates its Deployment, Service, Ingress, and policy. Access is granted with `MCPAccessGrant` and time-boxed with `MCPAgentSession`. A gateway sidecar in each server pod checks the caller's identity, session, trust level, and the tool's side effect before a call reaches your code.
+You describe a server with an `MCPServer` resource and the operator creates its Deployment, Service, Ingress, and policy. `MCPAccessGrant` defines who can access it and can expire a delegation; each `MCPAgentSession` also expires, and its lifetime cannot exceed the grant. A gateway sidecar in each server pod checks the caller's identity, grant, session, trust level, and the tool's side effect before a call reaches your code.
 
 A public preview runs at [platform.mcpruntime.org](https://platform.mcpruntime.org/). The same stack installs into your own cluster with `mcp-runtime setup`.
 
@@ -32,6 +32,7 @@ A public preview runs at [platform.mcpruntime.org](https://platform.mcpruntime.o
 - Every allow and deny decision is recorded with the identity, tool, reason, and policy version, and is queryable through the Sentinel API and dashboards.
 - `adapter proxy` (HTTP) and `adapter stdio` let IDEs, agent frameworks, and scripts connect with platform-issued identity and automatic session refresh.
 - Team namespaces, RBAC, and `teamID` subject matching let several teams publish and govern servers on one cluster, with private, org-wide, or public catalogs.
+- Cross-team access stays scoped: Acme can let Globex's incident-response agent call only the read-only tools on Acme's server, with a grant that expires after the investigation. Session refresh cannot extend access beyond the grant's expiry; see [the multi-team guide](docs/multi-team.md).
 - Setup, registry and image-pull wiring, ingress, rollout readiness, `cluster doctor`, `cluster diagnostics`, and status commands are included.
 - Documented install paths cover Kind, k3s, self-managed clusters, and managed Kubernetes with external registries.
 
