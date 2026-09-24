@@ -1,6 +1,6 @@
 # Publish an MCP Server
 
-This guide covers the user-facing path for getting an MCP server into MCP Runtime:
+Publishing an MCP server takes five steps:
 
 1. write an `MCPServer` manifest or `.mcp` metadata
 2. build the server image
@@ -8,7 +8,7 @@ This guide covers the user-facing path for getting an MCP server into MCP Runtim
 4. deploy the server into the platform
 5. verify that the server is reachable and governed
 
-Use this guide after [Getting started](getting-started.md) once the platform stack is already installed.
+Install the platform stack with [Getting started](getting-started.md) first.
 
 ## Choose an authoring format
 
@@ -19,7 +19,7 @@ You can describe a server in two ways:
 - `.mcp` metadata
   Best when you want a lighter authoring format and `server generate` / `server deploy` from `.mcp` metadata.
 
-The platform outcome is the same in both cases: the operator reconciles a server deployment, service, route, and optional governed request path.
+Either way, the operator reconciles a server deployment, service, route, and optional governed request path.
 
 ## Option A: write an `MCPServer` manifest
 
@@ -96,7 +96,7 @@ tool calls.
 Apply the manifest only from an admin/operator workstation. `server apply`
 requires `--use-kube`, kubectl, and kubeconfig/RBAC access to the target
 namespace. For normal platform workflows, use the platform-backed
-`server deploy` flow in Option B instead.
+`server deploy` flow in Option B.
 
 ```bash
 ./bin/mcp-runtime server apply --file payments.yaml --use-kube
@@ -119,7 +119,7 @@ Start with `server init` when you do not already have metadata:
   --tool-spec refund_invoice:high:destructive
 ```
 
-This creates `.mcp/servers.yaml` with sane defaults. Re-run with `--force` to
+This creates `.mcp/servers.yaml` with defaults. Re-run with `--force` to
 replace the same server entry, or edit the generated file when tools need
 different trust levels or side-effect values. `--tool` is shorthand for a
 read-only, low-trust tool. Use `--tool-spec name:low|medium|high:read|write|destructive`
@@ -273,14 +273,14 @@ Deploy from metadata:
 
 ## Build and push the server image
 
-MCP Runtime supports two practical image flows. Keep these flows separate so tags stay consistent.
+Use one image flow per server so tags stay consistent.
 
 `server push` is the user-facing command for publishing MCP server images
 through the authenticated platform API. Registry commands are reserved for
 registry administration; use `admin registry push` only for direct Kubernetes
 operator debugging.
 
-### Flow A — metadata-driven build with the CLI
+### Flow A: metadata-driven build with the CLI
 
 ```bash
 ./bin/mcp-runtime server build image payments --tag v1.0.0 --platform linux/amd64
@@ -312,7 +312,7 @@ Then deploy from metadata:
 ./bin/mcp-runtime server deploy payments --scope org --metadata-dir .mcp
 ```
 
-### Flow B — manual Docker build, push, and direct platform deploy
+### Flow B: manual Docker build, push, and direct platform deploy
 
 Use this when you manage image tags directly and want the platform API to write
 the `MCPServer` for you:
@@ -343,11 +343,11 @@ exactly one server, it uses that server's inventory even when the deployed
 runtime name is different; this keeps `spec.tools` side-effect metadata in sync
 with governance policy.
 
-### Flow C — manual Docker build, push, and manifest apply (admin/GitOps)
+### Flow C: manual Docker build, push, and manifest apply (admin/GitOps)
 
 Use this when you need full control of `MCPServer` fields and have
 admin/operator Kubernetes access. For the normal tenant platform path, use
-**Flow A/B** with `server deploy` instead of `server apply --use-kube`.
+**Flow A/B** with `server deploy`.
 
 ```bash
 docker build -t payments:v1.0.0 .
@@ -358,7 +358,7 @@ mcp-runtime auth login --api-url https://platform.example.com
 
 ## What happens after deploy
 
-After the server description reaches the platform, the operator does the following:
+After the server description reaches the platform, the operator:
 
 1. stores the `MCPServer` resource in Kubernetes
 2. resolves the final image reference
@@ -455,11 +455,11 @@ Check:
 - `./bin/mcp-runtime sentinel logs processor --follow`
 
 Request analytics only exist for traffic that flows through `mcp-gateway`.
-The adapter is not required for analytics; it only helps clients that cannot
-attach identity or session headers directly, or that want platform-issued
-sessions. Hand-written YAML must include `spec.gateway.enabled: true` for
-request analytics. If you apply raw YAML with `kubectl apply` or
-`server apply --use-kube` instead of `server deploy`, also create a
+The adapter is optional for analytics. It helps clients that cannot attach
+identity or session headers directly, or that want platform-issued sessions.
+Hand-written YAML must include `spec.gateway.enabled: true` for request
+analytics. If you apply raw YAML with `kubectl apply` or
+`server apply --use-kube`, also create a
 namespace-local ingest-key Secret and set `spec.analytics.apiKeySecretRef`;
 otherwise the gateway can reach ingest but events will be rejected with 401.
 Analytics is on by default for gateway traffic when the operator has
@@ -478,7 +478,4 @@ analytics:
 - [API](api.md)
 - [Sentinel](sentinel.md)
 
-
----
-
-**Next:** [Agent Adapters](agent-adapters.md) — connect your MCP client via the adapter proxy.
+**Next:** [Agent Adapters](agent-adapters.md): connect your MCP client through the adapter proxy.

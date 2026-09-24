@@ -1,8 +1,7 @@
 # Getting Started
 
-This guide installs MCP Runtime on your own Kubernetes cluster. If you want to
-try the platform in under 10 minutes without a cluster, see the
-[Quickstart](quickstart.md) instead.
+Install MCP Runtime on your own Kubernetes cluster. To try the platform without
+a cluster, use the [Quickstart](quickstart.md).
 
 ## Prerequisites
 
@@ -25,7 +24,7 @@ STRICT_DEPS_CHECK=1 make deps-check
 
 ## 1. Install the CLI
 
-**Option A — Download a release binary** (no Go required):
+**Option A: download a release binary** (no Go required):
 
 ```bash
 # macOS Apple Silicon
@@ -49,7 +48,7 @@ Windows users can download
 [`mcp-runtime-windows-amd64.exe`](https://github.com/mcp-runtime/mcp-runtime/releases/latest/download/mcp-runtime-windows-amd64.exe)
 and add it to `PATH`.
 
-**Option B — Build from source** (requires Go 1.26+):
+**Option B: build from source** (requires Go 1.26+):
 
 ```bash
 make deps
@@ -80,7 +79,7 @@ issuers, image pull credentials, or storage classes. Fix those prerequisites
 with your platform tooling before continuing.
 
 `bootstrap` validates kubectl connectivity, CoreDNS, the default
-`StorageClass`, Traefik `IngressClass`, and MetalLB namespace. Warnings only —
+`StorageClass`, Traefik `IngressClass`, and MetalLB namespace. It only warns;
 fix gaps with your platform tooling, or `bootstrap --apply --provider k3s` to
 install bundled CoreDNS / local-path on k3s. After setup, run `cluster diagnostics`
 to validate the installed MCP Runtime resources, registry pulls, ingress,
@@ -113,10 +112,9 @@ to validate what was installed.
 
 Local surfaces: platform `http://localhost:18080/`, MCP routes `http://localhost:18080/<server-name>/mcp`.
 
-
 ## 4. Production-style install
 
-Use this path when the cluster is not just a disposable contributor environment.
+Use this path for any cluster you intend to keep.
 That includes staging, internal shared clusters, externally reachable installs,
 or anything that needs stable registry, DNS, TLS, storage, and ingress
 ownership.
@@ -312,7 +310,7 @@ Then use `http://127.0.0.1:18080/<publicPathPrefix>/mcp` for local MCP traffic.
     Strict readiness (the default) waits for the Ingress to publish
     `status.loadBalancer.ingress[]`. Many dev and NodePort-style controllers route
     traffic without ever publishing it. `permissive` treats an Ingress with rules as
-    ready — keep `strict` for production clusters that rely on published
+    ready. Keep `strict` for production clusters that rely on published
     load-balancer status.
 
 ## 6. Confirm health
@@ -329,8 +327,8 @@ Then use `http://127.0.0.1:18080/<publicPathPrefix>/mcp` for local MCP traffic.
 The server deploy flow (init → validate → build → push → deploy → grant → adapter)
 is covered step-by-step in the learning modules:
 
-- [Module 2 — Your first governed server](learn/module-2-first-server.md) — end-to-end hands-on
-- [Module 3 — Multi-team setup](learn/module-3-multi-team.md) — two teams, cross-team grants
+- [Module 2: Your first governed server](learn/module-2-first-server.md): end-to-end hands-on
+- [Module 3: Multi-team setup](learn/module-3-multi-team.md): two teams, cross-team grants
 
 Quick reference:
 
@@ -341,7 +339,6 @@ mcp-runtime server build image my-server --tag v1
 mcp-runtime server push --image ... --scope tenant
 mcp-runtime server deploy my-server --scope tenant --metadata-dir .mcp
 ```
-
 
 ## 8. Observe live traffic and policy
 
@@ -376,14 +373,11 @@ flowchart LR
 
 ## Next steps
 
-- [Publish an MCP Server](publish-mcp-server.md) — write manifests or `.mcp` metadata, build, push, deploy, and verify.
-- [Multi-team isolation](multi-team.md) — team IDs, namespaces, RBAC, and ingress guidance.
-- [Architecture](architecture.md) — how the pieces fit together.
-- [CLI](cli.md) — full command reference.
-- [API](api.md) — every CRD field and HTTP endpoint.
-- [Sentinel](sentinel.md) — request-path governance, audit, observability.
+- [Publish an MCP Server](publish-mcp-server.md): write manifests or `.mcp` metadata, build, push, deploy, and verify.
+- [Multi-team isolation](multi-team.md): team IDs, namespaces, RBAC, and ingress guidance.
+- [Architecture](architecture.md): how the pieces fit together.
+- [CLI](cli.md): full command reference.
+- [API](api.md): every CRD field and HTTP endpoint.
+- [Sentinel](sentinel.md): request-path governance, audit, observability.
 
-
----
-
-**Next:** [Concepts](concepts.md) — understand Grants, Sessions, Trust levels, and Side effects before deploying servers.
+**Next:** [Concepts](concepts.md): understand Grants, Sessions, Trust levels, and Side effects before deploying servers.

@@ -35,11 +35,11 @@ unless the explicit legacy dev/test fallback is enabled.
 
 Expected codes:
 
-- **200/204** — allowed; handler returns successfully.
-- **401** — auth missing/invalid.
-- **403** — auth valid but role insufficient.
-- **404** — handler returns not-found for valid auth (path-item endpoints).
-- **405** — method not allowed (handler-side check).
+- **200/204**: allowed; handler returns successfully.
+- **401**: auth missing/invalid.
+- **403**: auth valid but role insufficient.
+- **404**: handler returns not-found for valid auth (path-item endpoints).
+- **405**: method not allowed (handler-side check).
 
 ## Public endpoints
 

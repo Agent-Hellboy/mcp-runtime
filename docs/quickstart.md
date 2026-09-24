@@ -1,12 +1,10 @@
 # Quickstart
 
-Deploy a governed MCP server and connect your first MCP client in under 10 minutes —
-no Kubernetes cluster required. This quickstart uses the live
-[platform.mcpruntime.org](https://platform.mcpruntime.org) instance.
+Deploy a governed MCP server and connect an MCP client to it, using the live
+[platform.mcpruntime.org](https://platform.mcpruntime.org) instance. You do not
+need a Kubernetes cluster. It takes about 10 minutes.
 
 To self-host MCP Runtime on your own cluster, see [Getting Started](getting-started.md).
-
----
 
 ## 1. Install the CLI
 
@@ -59,12 +57,10 @@ separate release tracks: the CLI changes only when a new release is published;
 the platform UI at `platform.mcpruntime.org` is updated by its operator and
 does not need a local install.
 
----
-
 ## 2. Log in
 
 Get credentials from the [live platform](https://platform.mcpruntime.org) or use
-an existing account. You will need a team and a user account — ask your platform
+an existing account. You need a team and a user account. Ask your platform
 admin, or [self-host MCP Runtime](getting-started.md) to create your own.
 
 ```bash
@@ -75,8 +71,6 @@ mcp-runtime auth login \
 
 mcp-runtime auth status    # confirm the profile is active
 ```
-
----
 
 ## 3. Deploy an example server
 
@@ -123,8 +117,6 @@ Confirm it is running:
 mcp-runtime server list
 ```
 
----
-
 ## 4. Grant access and connect
 
 Create a grant that allows an agent to call `echo` and `add`. Replace `myteam`
@@ -143,8 +135,8 @@ mcp-runtime server validate --metadata-dir .mcp --grant-file grant.yaml
 mcp-runtime access grant apply --file grant.yaml
 ```
 
-With that grant applied, start the adapter proxy — it issues and refreshes the
-agent session automatically. The platform issues a session only when an enabled
+With that grant applied, start the adapter proxy. It requests and refreshes the
+agent session for you. The platform issues a session only when an enabled
 grant matches the server, the signed-in user, and the agent, so the grant has to
 exist first:
 
@@ -159,9 +151,7 @@ mcp-runtime adapter proxy \
 ```
 
 Point **Claude Desktop**, **Cursor**, or any MCP client at `http://127.0.0.1:8099`.
-Call the `echo` or `add` tool — the gateway enforces the grant on every call.
-
----
+Call the `echo` or `add` tool. The gateway checks the grant on every call.
 
 ## 5. See it in the analytics
 
@@ -174,11 +164,9 @@ visible to your account. Open its details to review the endpoint and connect
 configuration. The platform UI uses the same deployment and policy state as
 the CLI; it does not require a separate server install.
 
----
-
 ## What's next
 
-- [Concepts](concepts.md) — understand Grants, Sessions, Trust levels, and Side effects
-- [Publish an MCP Server](publish-mcp-server.md) — full build, push, deploy guide
-- [Getting Started](getting-started.md) — self-host MCP Runtime on your own Kubernetes cluster
-- [CLI reference](cli.md) — every command with flags and examples
+- [Concepts](concepts.md): understand Grants, Sessions, Trust levels, and Side effects
+- [Publish an MCP Server](publish-mcp-server.md): full build, push, deploy guide
+- [Getting Started](getting-started.md): self-host MCP Runtime on your own Kubernetes cluster
+- [CLI reference](cli.md): every command with flags and examples

@@ -20,17 +20,16 @@ MCP client → optional mcp-auth-server → Keycloak/OIDC provider
   upstream OIDC client credentials.
 - The Runtime gateway is the protected-resource boundary. It validates the
   token and applies grants, agent sessions, trust, and per-tool policy before
-  forwarding the call. The authorization server is not the Runtime policy
-  decision point.
+  forwarding the call.
 
-This separation is necessary because the authorization server sees login and
-token requests, while Runtime governance must inspect the actual MCP JSON-RPC
-tool call and current grant/session state.
+The gateway is the policy decision point because governance must inspect the
+actual MCP JSON-RPC tool call and current grant/session state. The
+authorization server only sees login and token requests.
 
 ## Responsibility boundary
 
-Runtime ships and can deploy the optional `mcp-auth-server`, but it does not
-manage your identity provider. You are responsible for operating Keycloak,
+Runtime ships and can deploy the optional `mcp-auth-server`. You operate the
+identity provider. You are responsible for operating Keycloak,
 Okta, PingOne, Entra ID, Auth0, or another OIDC/OAuth provider, including its
 realm or tenant, users, client registration, client secret, redirect URI,
 claims, scopes, availability, backups, and certificate/DNS configuration.
@@ -123,15 +122,15 @@ checks with a dedicated non-admin test account.
 
 ## Write the connector file
 
-The connector file is provider configuration, not a credential store. The
+The connector file holds provider configuration. The
 `client_secret_env` value names the environment variable that setup reads and
 stores in the Kubernetes Secret `mcp-auth-connector-secrets`.
 
 Every referenced environment variable must be exported in the same shell that
-starts setup. Setup intentionally fails before applying the auth server if a
-referenced secret is unset; this prevents a partially configured connector from
-being deployed. Prefer a protected file or secret manager rather than putting
-the value in the connector JSON:
+starts setup. Setup fails before applying the auth server if a referenced
+secret is unset, so a partially configured connector is never deployed. Read
+the value from a protected file or secret manager, and keep it out of the
+connector JSON:
 
 ```bash
 export KEYCLOAK_CLIENT_SECRET="$(tr -d '\n' < /secure/keycloak-client-secret)"
@@ -285,9 +284,9 @@ real provider test.
 
 ## Other identity providers
 
-The connector is provider-neutral. Runtime does not compile an Okta, PingOne,
-Auth0, Microsoft Entra ID, Google, or other provider adapter into the gateway.
-The bundled auth server loads a named connector from the JSON file at startup:
+The connector is provider-neutral. The bundled auth server loads a named
+connector from the JSON file at startup; the gateway contains no Okta, PingOne,
+Auth0, Microsoft Entra ID, Google, or other provider-specific adapter:
 
 ```text
 MCP_AUTH_CONNECTORS_FILE → MCP_AUTH_CONNECTOR → IdentityProvider/TokenExchanger
@@ -338,8 +337,7 @@ Typical issuer patterns are:
 | Google | `https://accounts.google.com` | Configure the OAuth client redirect URI and request `openid profile email`. |
 | Generic OIDC | provider's `issuer` URL | The provider must expose discovery, authorization-code login, token, JWKS, and suitable identity claims. |
 
-These are configuration patterns, not a claim that every provider supports
-every optional feature. Verify discovery, callback behavior, token endpoint
+Support for optional features varies by provider. Verify discovery, callback behavior, token endpoint
 authentication, scopes, refresh behavior, and claims with the provider before
 using it in production. The mcp-auth project has provider-specific notes and a
 verified-provider matrix in its [authorization-server guide](https://github.com/Agent-Hellboy/mcp-auth/blob/main/docs/auth-server.md).
@@ -391,9 +389,7 @@ use `--no-backup` on production unless the loss is intentional.
 After setup, verify in order: provider discovery; mcp-auth discovery and JWKS;
 mcp-auth readiness; platform admin login; Runtime server catalog, sessions,
 and grants; governed MCP metadata; unauthenticated `401` challenge; valid token;
-allowed tool; denied tool; and grant/session revocation. The authorization
-server authenticates and mints tokens; Runtime remains the resource server and
-policy/governance decision point.
+allowed tool; denied tool; and grant/session revocation.
 
 If setup stops during image publication with a Kubernetes API TLS handshake
 timeout, first verify the k3s API and registry pod, then rerun the same setup
@@ -424,7 +420,7 @@ explicit token/JWKS rollover plan because existing tokens will become invalid.
 
 ## How the MCP SDK fits
 
-The SDK is used at the application boundary, not as Runtime governance:
+The SDK runs at the application boundary, outside Runtime governance:
 
 - MCP clients use the SDK's discovery, PKCE, token, and `WWW-Authenticate`
   helpers to obtain an MCP token from the authorization server.
@@ -436,9 +432,9 @@ The SDK is used at the application boundary, not as Runtime governance:
   Add SDK verification in the upstream server only when it is intentionally
   independently exposed or defense-in-depth is required.
 
-The SDK does not choose the identity provider. It consumes provider-neutral MCP
-authorization metadata and JWTs, so switching from Keycloak to Okta or PingOne
-changes the connector and IdP client configuration, not MCP tool code. Read the
+The SDK consumes provider-neutral MCP authorization metadata and JWTs. Switching
+from Keycloak to Okta or PingOne changes the connector and IdP client
+configuration; MCP tool code stays the same. Read the
 mcp-auth project's [auth-server architecture](https://github.com/Agent-Hellboy/mcp-auth/blob/main/docs/architecture.md)
 and [auth-client SDK guide](https://github.com/Agent-Hellboy/mcp-auth/blob/main/docs/auth-client.md)
 for the Python and Go APIs, verifier options, metadata discovery, and token

@@ -1,18 +1,14 @@
 # Concepts
 
-This page explains the core abstractions in MCP Runtime before you deploy anything.
-Most concepts have direct CLI counterparts — links are included throughout.
-
-For the complete answer to who may perform an action, under which identity, and
-where that decision is enforced, see
+MCP Runtime has three resources (`MCPServer`, `MCPAccessGrant`,
+`MCPAgentSession`) and two runtime components (the gateway and the adapter).
+For the full authorization model, see
 [Identity and authorization](identity-and-authorization.md).
-
----
 
 ## The whole thing, as a building
 
-One analogy runs through this page. Picture a secure office building that rents
-suites to software tools and lets outside visitors — agents — come in to use them.
+If it helps, think of the platform as an office building that rents suites to
+tools and admits visiting agents:
 
 | In the building | In MCP Runtime | What that means |
 |---|---|---|
@@ -28,8 +24,6 @@ suites to software tools and lets outside visitors — agents — come in to use
 | The escort who carries your badge and renews it | **Adapter** | Local proxy that mints and refreshes sessions and injects identity headers. |
 | Cameras and the logbook | **Sentinel** | Audit events, analytics, dashboards. |
 
----
-
 ## MCPServer
 
 An `MCPServer` is a Kubernetes CRD that describes a running MCP server: what image
@@ -37,7 +31,8 @@ to run, which port it listens on, how it routes traffic, and whether the governa
 gateway is enabled.
 
 When you run `mcp-runtime server deploy`, the operator reconciles an `MCPServer` into
-a Kubernetes `Deployment`, `Service`, and `Ingress` — you never write those yourself.
+a Kubernetes `Deployment`, `Service`, and `Ingress`. If you delete one of them, the
+operator recreates it.
 
 ```yaml
 # What the operator creates from one MCPServer
@@ -49,21 +44,13 @@ Ingress     → routes /<server-name>/mcp to the Service
 The `MCPServer` also carries policy settings: which tools are governed, what trust
 levels they require, and whether a gateway sidecar enforces policy on every call.
 
-!!! tip "Analogy"
-    An `MCPServer` is a lease, not a room. You never hand-write the Deployment,
-    Service, and Ingress, any more than a tenant pours their own concrete. You
-    describe what you want; the operator builds it and keeps it built — delete the
-    Deployment and it comes back, because the lease still says it should exist.
-
----
-
 ## MCPAccessGrant
 
 A grant is a policy document that says: **"Agent X, acting for Team Y, is allowed
 to call these tools on server Z, up to this trust level, with these side effects."**
 
 Grants are per-agent and per-server. An agent that has no grant for a server cannot
-call any tools — the gateway denies it by default.
+call any tools; the gateway denies by default.
 
 ```
 MCPAccessGrant
@@ -82,17 +69,15 @@ MCPAccessGrant
 ```
 
 Grants are created with `mcp-runtime access grant init` and applied with
-`mcp-runtime access grant apply`. See [CLI reference — access](cli.md#access).
-
----
+`mcp-runtime access grant apply`. See [CLI reference: access](cli.md#access).
 
 ## MCPAgentSession
 
 A session ties an agent identity to a grant for a fixed period of time. It carries:
 
-- **consentedTrust** — the trust ceiling the human user has explicitly consented to
-- **expiresAt** — when the session ends (agent must renew)
-- **revoked** — can be set to instantly block the agent
+- `consentedTrust`: the trust ceiling the user consented to
+- `expiresAt`: when the session ends (the agent must renew)
+- `revoked`: set to `true` to block the agent immediately
 
 The gateway checks the session on every tool call. If there is no valid session, or
 the session is revoked, the call is denied regardless of the grant.
@@ -112,17 +97,12 @@ In normal use, sessions are created automatically by the adapter when you run
 `adapter proxy --server ... --auto-refresh`. You only create them manually when you
 need explicit control over expiry, trust ceiling, or revocation.
 
-!!! tip "Analogy — why there are two resources"
-    A **grant** is the rule in the security handbook: "contractors from Acme may
-    enter the archive and read files." A **session** is the badge clipped to a
-    contractor's shirt this afternoon. The handbook alone gets you nothing — no
-    badge, no entry. The badge alone gets you nothing — the guard still checks the
-    handbook. Revoking a badge is instant; rewriting the handbook is a considered
-    act. That split is why grants and sessions are separate objects.
+!!! tip "Why there are two resources"
+    A grant is standing policy, like a rule in a security handbook. A session is
+    today's visitor badge. A call needs both. Revoking a badge is instant and
+    local; changing the handbook is a deliberate policy change.
 
----
-
-## Grant vs Session — which one do I need?
+## Grant or session: which one do I need?
 
 | Scenario | Grant needed? | Session needed? |
 |---|---|---|
@@ -132,8 +112,6 @@ need explicit control over expiry, trust ceiling, or revocation.
 | Time-limit an agent's access | — | Yes (`expiresAt`) |
 | Instantly revoke an agent mid-flight | — | Yes (`revoked: true`) |
 | Share one server between two teams | Yes (with `teamID`) | Yes (with `teamID`) |
-
----
 
 ## Trust levels
 
@@ -160,16 +138,14 @@ a grant can raise the price of a tool but never discount it.
 Setting `maxTrust: low` on a grant means even if the agent claims `high` trust in
 its session, the gateway caps it at `low`.
 
----
-
 ## Side effects
 
-Side effects classify what a tool actually does to data. The grant must explicitly
+Side effects classify what a tool does to data. The grant must explicitly
 allow the side-effect class before a call reaches the server.
 
 | Value | When to use |
 |---|---|
-| `read` | Fetches or queries only — no state change |
+| `read` | Fetches or queries only; no state change |
 | `write` | Creates, updates, or modifies records |
 | `destructive` | Deletes, wipes, or makes irreversible changes |
 
@@ -182,15 +158,12 @@ allow list. Trust and side effect are checked independently; both must pass.
     server never declared is denied too (`tool_side_effect_unknown`): with no
     declared side effect, there is nothing for a grant to authorize.
 
----
-
 ## The gateway
 
-The gateway — `mcp-gateway` — is a sidecar container that sits in front of every
-MCP server (when `gateway.enabled: true` on the MCPServer). Every request goes
-through it before reaching your server. It is not the cluster ingress: Traefik
-routes the public path to the pod, and `mcp-gateway` makes the authorization
-decision inside it.
+The gateway, `mcp-gateway`, is a sidecar container in each MCP server pod (when
+`gateway.enabled: true` on the MCPServer). Traefik routes the public path to the
+pod; `mcp-gateway` makes the authorization decision there before the request
+reaches your server.
 
 On each tool call the gateway:
 
@@ -202,15 +175,13 @@ On each tool call the gateway:
 4. Either forwards the call to your server or returns a denial with a reason code
 5. Emits an analytics event with the decision
 
-The gateway runs as a sidecar — your server code never changes to support it.
+Your server code needs no changes to support the gateway.
 
 !!! note "Two things are called \"gateway\""
     `mcp-gateway` is the per-server enforcement sidecar inside each MCP server pod.
     The Sentinel `gateway` Deployment is the Traefik ingress in front of the
-    platform APIs, ingest, and UI — it routes traffic but does not authorize tool
-    calls.
-
----
+    platform APIs, ingest, and UI. It routes traffic and makes no tool-call
+    decisions.
 
 ## Adapter
 
@@ -223,19 +194,11 @@ agent process). It:
   server, replacing any caller-supplied values
 - Refreshes the session automatically before it expires (`--auto-refresh`)
 
-Without the adapter, an agent would have to manage platform sessions and inject
-headers itself. The adapter makes this invisible.
-
-!!! tip "Analogy"
-    The adapter is the escort who signs you in, clips on your badge, and swaps it
-    for a fresh one before it expires. It never opens a door for you — the guard
-    (`mcp-gateway`) still does that.
+The adapter does not make authorization decisions; the gateway does.
 
 ```
 Your MCP client → adapter proxy (localhost:8099) → gateway → MCP server
 ```
-
----
 
 ## Platform mode
 
@@ -254,8 +217,6 @@ namespace they are authorized for.
 
 Set with `--platform-mode` on `setup` or `MCP_SETUP_PLATFORM_MODE` in your env file.
 
----
-
 ## Scopes
 
 When publishing a server image (`server push`) or deploying a server
@@ -267,14 +228,11 @@ When publishing a server image (`server push`) or deploying a server
 | `org` | `mcp-servers-org` | All signed-in users in the org |
 | `public` | `mcp-servers-public` | Anyone |
 
----
-
 ## What's in a `.mcp/servers.yaml`
 
 The `.mcp/servers.yaml` file is the metadata file that `server init` creates.
-It is the single source of truth for your server's tool policy. The gateway
-enforces exactly what is declared here — if a tool is not listed, calls to it
-are denied.
+It is the source of truth for your server's tool policy. The gateway enforces
+what is declared here, and calls to unlisted tools are denied.
 
 ```yaml
 servers:
@@ -308,7 +266,4 @@ it by hand. Then run `server validate` before deploying to catch mismatches.
     it to see what enforcement *would* deny on a new server, fix the tool
     inventory, then switch back to `allow-list`.
 
-
----
-
-**Next:** [Publish an MCP Server](publish-mcp-server.md) — build, push, and deploy your first governed server.
+**Next:** [Publish an MCP Server](publish-mcp-server.md): build, push, and deploy your first governed server.

@@ -1,9 +1,7 @@
 # Troubleshooting
 
-Common errors and how to fix them — covering deployment, gateway policy, registry,
-analytics, and connectivity issues.
-
----
+Common errors in deployment, gateway policy, registry, analytics, and
+connectivity, with fixes.
 
 ## Server deployment
 
@@ -31,15 +29,11 @@ mcp-runtime server validate --metadata-dir .mcp --grant-file grant.yaml
 mcp-runtime access grant apply --file grant.yaml
 ```
 
----
-
 ### `tool_not_granted`
 
 The agent tried to call a tool that is not in any `allow` rule in the active grant.
 
 **Fix:** Add the tool to the grant with `--tool <name>` and re-apply.
-
----
 
 ### Server stuck in `Pending` or `NotReady`
 
@@ -57,8 +51,6 @@ Common causes:
 | `Pending` (no node) | Cluster resource exhaustion | Scale nodes or reduce replicas |
 | `CrashLoopBackOff` | Server crashes on start | `mcp-runtime server logs <name> --use-kube` |
 
----
-
 ### `server push` returns 401
 
 ```bash
@@ -69,8 +61,6 @@ kubectl get secret mcp-runtime-registry-pull -n mcp-team-<slug>
 mcp-runtime auth login --api-url https://platform.example.com
 mcp-runtime server push --image ...
 ```
-
----
 
 ## Access control
 
@@ -98,8 +88,6 @@ mcp-runtime server push --image ...
      --namespace mcp-team-<slug>
    ```
 
----
-
 ### Session expired or `session_not_found`
 
 The adapter auto-refreshes sessions when started with `--auto-refresh`. If you are
@@ -116,8 +104,6 @@ MCP_PLATFORM_API_PROFILE=admin \
   mcp-runtime access session apply --file session.yaml
 ```
 
----
-
 ## Registry and images
 
 ### `x509: certificate signed by unknown authority`
@@ -127,8 +113,6 @@ The cluster node does not trust the registry's TLS certificate.
 For `bundled-https` mode, the registry uses the internal `mcp-runtime-ca`. Nodes
 must trust this CA. See [Cluster Readiness](cluster-readiness.md) for distribution-
 specific node trust configuration.
-
----
 
 ### `no basic auth credentials` on image pull
 
@@ -151,8 +135,6 @@ kubectl create secret docker-registry mcp-runtime-registry-pull \
   --dry-run=client -o yaml | kubectl apply -f -
 ```
 
----
-
 ## Analytics and observability
 
 ### Tool calls not showing in the Analytics dashboard
@@ -161,8 +143,8 @@ kubectl create secret docker-registry mcp-runtime-registry-pull \
    ```bash
    KUBECONFIG=~/.kube/config mcp-runtime sentinel logs ingest --since 5m
    ```
-   If you see `401` errors, the analytics API key in the gateway sidecar is stale —
-   re-run `setup` or restart the analytics deployments.
+   `401` errors mean the analytics API key in the gateway sidecar is stale.
+   Re-run `setup` or restart the analytics deployments.
 
 2. Check the processor is consuming from Kafka:
    ```bash
@@ -192,8 +174,6 @@ kubectl create secret docker-registry mcp-runtime-registry-pull \
    configured KRaft cluster ID. Back up any data you need, scale Kafka to zero,
    delete all three `kafka-data-kafka-{0,1,2}` PVCs, then rerun setup.
 
----
-
 ### Split Sentinel API returns 401
 
 The split API pods (`mcp-platform-api`, `mcp-runtime-api`, `mcp-analytics-api`) may have started with stale API keys from a previous
@@ -205,8 +185,6 @@ kubectl rollout restart deployment/mcp-platform-api deployment/mcp-runtime-api d
 kubectl rollout status deployment/mcp-platform-api -n mcp-sentinel --timeout=120s
 ```
 
----
-
 ## Platform and cluster health
 
 ### `cluster diagnostics` reports failures
@@ -215,13 +193,12 @@ kubectl rollout status deployment/mcp-platform-api -n mcp-sentinel --timeout=120
 KUBECONFIG=~/.kube/config mcp-runtime cluster diagnostics
 ```
 
-Diagnostics runs the full post-setup check suite and prints a remedy for each failure. Follow the printed
-instructions — most failures point to missing ingress, stale certificates, or
-image pull errors with specific `kubectl` commands to fix them.
+Diagnostics runs the post-setup check suite and prints a remedy for each
+failure. Follow the printed instructions. Most failures are missing ingress,
+stale certificates, or image pull errors, and the remedy includes the `kubectl`
+commands to fix them.
 
 Before setup, run `KUBECONFIG=~/.kube/config mcp-runtime cluster doctor`.
-
----
 
 ### Setup pre-flight check blocked by stale Certificate
 
@@ -236,8 +213,6 @@ kubectl delete certificaterequest -n registry --all
 # Re-run setup
 ```
 
----
-
 ### Namespace stuck in Terminating
 
 ```bash
@@ -245,8 +220,6 @@ kubectl patch ns <namespace> \
   -p '{"metadata":{"finalizers":null}}' \
   --type=merge
 ```
-
----
 
 ## Getting more help
 

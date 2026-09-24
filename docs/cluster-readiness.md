@@ -1,30 +1,25 @@
 # Cluster Readiness
 
-`./bin/mcp-runtime setup` installs the platform (registry, operator, ingress, sentinel) into an *already-running* Kubernetes cluster. It does **not** configure the node's container runtime or host DNS stack. Those are prerequisites that differ per distribution.
+`./bin/mcp-runtime setup` installs the platform (registry, operator, ingress, sentinel) into an *already-running* Kubernetes cluster. You must configure the node's container runtime and host DNS stack yourself; the steps differ per distribution.
 
-If you skip this, you'll typically see:
+Without that configuration, you typically see:
 
 - `./bin/mcp-runtime setup` fails at "Publish runtime images" with `dial tcp: lookup registry.local: no such host`.
 - The operator pod goes to `ImagePullBackOff` with `10.43.x.x:5000: connection refused` or `no such host`.
 - MCPServer pods get stuck in `ImagePullBackOff` pulling `registry.local/<server-name>`.
 
-This document lists what each distribution needs before you run `setup`. If you
-are still choosing where to deploy the platform, start with
-[Deployment Targets](deployment-targets.md), then return here for the exact
-registry, DNS, TLS, and node-runtime preparation.
-
----
+The sections below list what each distribution needs before you run `setup`.
+To choose where to deploy, see [Deployment Targets](deployment-targets.md).
 
 ## Dev vs production readiness
 
-Most examples in this page describe the **dev/local** path: the bundled Docker
+Most examples on this page use the **dev/local** path: the bundled Docker
 registry exposed by `NodePort`, HTTP registry access, `registry.local`, and
-node-level insecure-registry or mirror configuration. That path is appropriate
-for kind, minikube, Docker Desktop, single-node k3s, CI, and disposable test
-clusters where the goal is quick image push/pull validation.
+node-level insecure-registry or mirror configuration. Use it for kind,
+minikube, Docker Desktop, single-node k3s, CI, and disposable test clusters.
 
-Production clusters use the same readiness model, but should make different
-platform choices:
+Production clusters use the same readiness model with different platform
+choices:
 
 | Area | Dev / local default | Production expectation |
 |---|---|---|
@@ -36,19 +31,19 @@ platform choices:
 | Persistence | Default registry storage is acceptable for throwaway clusters | Storage class, backup/restore, quota, retention, and registry HA need explicit owner decisions |
 | Sentinel stack | Bundled stack is useful for development and demos | Size, retention, security, and observability integration should be reviewed before production use |
 
-Do **not** treat `insecure_skip_verify`, HTTP registries, wildcard insecure CIDR
-ranges, or manual `/etc/hosts` edits as production guidance. They are local
-workarounds for kubelet image pulls. In production, prefer a registry name that
-resolves through normal DNS and is trusted by every node without bypassing TLS
-verification.
+Do **not** use `insecure_skip_verify`, HTTP registries, wildcard insecure CIDR
+ranges, or manual `/etc/hosts` edits in production. They are local
+workarounds for kubelet image pulls. In production, use a registry name that
+resolves through normal DNS and that every node trusts with TLS verification
+enabled.
 
 `./bin/mcp-runtime cluster diagnostics` validates the installed registry. For the bundled
 registry it probes the in-cluster `registry/registry` Service and selects HTTP
 or HTTPS from the installed registry state: if `registry/registry-internal-tls`
 exists, doctor probes `https://registry.registry.svc.cluster.local:5000/v2/`;
-otherwise it probes the plain HTTP service. If you run with a provisioned
-external registry, interpret bundled-registry-specific failures against your
-registry architecture instead of copying the local workaround literally.
+otherwise it probes the plain HTTP service. With a provisioned external
+registry, interpret bundled-registry-specific failures against your own
+registry architecture; the local workarounds may not apply.
 
 Production readiness checklist:
 
@@ -70,13 +65,11 @@ Production readiness checklist:
 - Run `./bin/mcp-runtime setup --with-tls --strict-prod` for production-style
   validation, or document why a non-strict setup is intentional.
 
----
-
 ## Why these prerequisites exist
 
 The registry runs as a Kubernetes `Service` of type `NodePort` (default `5000:32000/TCP`) with an `Ingress` at `registry.local`.
 
-Three *different* actors fetch images, and they resolve hostnames differently:
+Three actors fetch images, and each resolves hostnames differently:
 
 | Actor | What it pulls | DNS source |
 |---|---|---|
@@ -84,19 +77,19 @@ Three *different* actors fetch images, and they resolve hostnames differently:
 | `kubelet` on the node | Pulls operator / MCPServer images for pod creation | **Host DNS** (not CoreDNS) + containerd registry mirrors |
 | Developer `docker push` / `docker pull` | Ad-hoc pushes or pulls from your laptop | Your local `/etc/hosts` / corporate DNS |
 
-The in-cluster push path is handled by the CLI (`PushInCluster` rewrites the destination to the service DNS). The developer path is your local concern. **The node/kubelet path is what the distribution-specific config below is for.**
+The CLI handles the in-cluster push path (`PushInCluster` rewrites the destination to the service DNS). You manage the developer path locally. **The distribution-specific config below configures the node/kubelet path.**
 
-`setup --test-mode` still uses this model. It relaxes production guardrails, but
-it builds and pushes the operator, gateway proxy, and Sentinel images with
+`setup --test-mode` uses the same model. It relaxes production guardrails, and
+it still builds and pushes the operator, gateway proxy, and Sentinel images with
 `latest` tags to the configured or bundled registry. Those pods still pull
 through kubelet/containerd, so an HTTP bundled registry requires node trust for
 the exact image host and port used in the rendered image references.
 
 When setup uses the bundled registry, platform-owned image refs for the
 operator, gateway proxy, and Sentinel services are rendered with the internal
-registry endpoint, ClusterIP, or service-DNS host rather than a public registry
-ingress hostname derived from `MCP_PLATFORM_DOMAIN`. The public registry host is
-still used for ingress routing and user-facing registry flows; set
+registry endpoint, ClusterIP, or service-DNS host. They do not use the public
+registry ingress hostname derived from `MCP_PLATFORM_DOMAIN`; that host serves
+ingress routing and user-facing registry flows; set
 `MCP_REGISTRY_ENDPOINT` or `MCP_REGISTRY_HOST` only when cluster nodes should
 pull platform images through a specific internal registry endpoint.
 
@@ -113,16 +106,16 @@ pull platform images through a specific internal registry endpoint.
 
 For bundled HTTPS without an explicit `MCP_REGISTRY_ENDPOINT`, setup renders
 platform image refs with `registry.registry.svc.cluster.local:5000` so the
-internal registry certificate can include a stable service DNS SAN. Kubernetes
-nodes do not automatically use cluster DNS or trust the MCP Runtime CA for image
-pulls; configure containerd/k3s/your node runtime to resolve or mirror that host
+internal registry certificate can include a stable service DNS SAN. For image
+pulls, Kubernetes nodes use host DNS and their own trust store, which do not
+include cluster DNS or the MCP Runtime CA. Configure containerd/k3s/your node runtime to resolve or mirror that host
 and trust the CA before relying on this mode in **lab** clusters.
 
 **Public TLS with `MCP_PLATFORM_DOMAIN` (production k3s shape):** when the
 registry is exposed at `registry.<domain>` with Let's Encrypt or an enterprise
 issuer, set `MCP_REGISTRY_ENDPOINT=registry.<domain>` before setup so kubelet
 pulls match the certificate SANs. Do **not** use the registry Service ClusterIP
-(for example `10.43.x.x:5000`) on this path — pulls fail with
+(for example `10.43.x.x:5000`) on this path; pulls fail with
 `x509: cannot validate certificate ... doesn't contain any IP SANs`. See
 [k3s Deployment Runbook - Environment variable reference](k3s-deployment-runbook.md#environment-variable-reference)
 and [Deployment Targets - bundled HTTPS](deployment-targets.md#option-a-bundled-https-registry-on-prem-reference).
@@ -147,8 +140,6 @@ the platform deployments do not pin pods to architecture-specific node pools.
 Set `MCP_IMAGE_PLATFORM=linux/amd64` or `MCP_IMAGE_PLATFORM=linux/arm64` when
 you need to override detection, such as building from an Apple Silicon laptop
 for an amd64 k3s VPS cluster.
-
----
 
 ## External registry path
 
@@ -235,9 +226,9 @@ installs. It is ignored in `--test-mode`; otherwise it requires:
   or `--registry-mode bundled-https` for a bundled registry served over HTTPS.
 - No implicit bundled HTTP registry path.
 
-Normal setup still allows local HTTP and internal registry flows so kind, k3s,
-Docker Desktop, and CI remain easy to use. Use `--strict-prod` when the cluster
-is intended to represent production or a production-like staging environment.
+Without `--strict-prod`, setup allows local HTTP and internal registry flows
+for kind, k3s, Docker Desktop, and CI. Use `--strict-prod` for production and
+production-like staging clusters.
 
 ## DNS and TLS readiness
 
@@ -266,17 +257,17 @@ MCP clients use. The `registry/registry-cert` Certificate writes the
 explicit ingress host environment
 variables.
 
-The registry Ingress intentionally does not carry a
-`cert-manager.io/cluster-issuer` annotation. Registry TLS uses the explicit
-`registry-cert` owner only; this avoids cert-manager ingress-shim creating a
-second `registry-tls` Certificate for the same Secret. If setup reports that
+The registry Ingress has no `cert-manager.io/cluster-issuer` annotation.
+Registry TLS is owned only by the explicit `registry-cert` Certificate, which
+keeps cert-manager ingress-shim from creating a second `registry-tls`
+Certificate for the same Secret. If setup reports that
 another Certificate already references `registry-tls`, remove the stale owner
 before applying TLS again.
 
 The platform UI hostname is separate. `platform.<domain>` is owned by the
 `mcp-sentinel-platform-ui` Ingress in the `mcp-sentinel` namespace, and
 cert-manager writes that certificate into the `mcp-sentinel-platform-tls`
-Secret in the same namespace. Do not expect `registry-cert` to contain
+Secret in the same namespace. `registry-cert` does not contain
 `platform.<domain>`.
 
 Inspect both TLS paths when debugging:
@@ -293,8 +284,8 @@ kubectl get secret mcp-sentinel-platform-tls -n mcp-sentinel \
   openssl x509 -noout -text | grep -A1 "Subject Alternative Name"
 ```
 
-If you use an external registry, the registry's own TLS and auth configuration
-are outside the bundled cert-manager flow.
+With an external registry, you manage the registry's TLS and auth configuration
+outside the bundled cert-manager flow.
 
 The bundled registry ingress expects the repo-managed Traefik dynamic
 middleware `registry-admin-auth@file`. If you bring your own ingress controller
@@ -321,8 +312,8 @@ Quick public endpoint checks after DNS and TLS are live:
   or `403`.
 - `curl -k -I https://platform.<domain>/` should return `200`.
 - `curl -k -i https://platform.<domain>/api/v1/health` should normally return
-  `401` without platform credentials; that still proves the platform host is
-  routing API traffic correctly.
+  `401` without platform credentials, which confirms the platform host routes
+  API traffic.
 - `curl -k -i -H "x-api-key: $ADMIN_API_KEY" https://platform.<domain>/grafana/api/v1/health`
   should reach the admin-gated observability route. Without admin credentials,
   the `sentinel-admin-auth@file` guard should return `401`. Prometheus is not
@@ -330,8 +321,8 @@ Quick public endpoint checks after DNS and TLS are live:
   datasource or a temporary `kubectl port-forward`.
 - `curl -k -i https://mcp.<domain>/<server-name>/mcp` may return an
   application-level `400` or `401` when called without the expected MCP
-  protocol headers or session context. That is often enough to confirm the
-  public route is live before you move on to MCP client debugging.
+  protocol headers or session context. That response confirms the public route
+  is live before you debug the MCP client.
 
 ## Public-mode admin bootstrap
 
@@ -358,23 +349,22 @@ can crash-loop on a clean database with an error similar to:
 failed to seed platform admin: PLATFORM_ADMIN_EMAIL and PLATFORM_ADMIN_PASSWORD must both be set
 ```
 
-Before assuming a database or auth bug, inspect the deployment and the managed
-secret:
+Inspect the deployment and the managed secret before you debug the database or
+auth path:
 
 ```bash
 kubectl get deploy mcp-platform-api mcp-runtime-api mcp-analytics-api -n mcp-sentinel -o yaml
 kubectl get secret mcp-sentinel-secrets -n mcp-sentinel -o yaml
 ```
 
-Bootstrap-only credentials should still be removed or rotated after the first
-successful platform bring-up, but both values must be present for the initial
-seed path to succeed.
+Both values must be present for the initial seed to succeed. Remove or rotate
+bootstrap-only credentials after the first successful bring-up.
 
 ## Clean platform reset
 
-Deleting pods is not a full platform reset. Sentinel state primarily lives in
-PVC-backed StatefulSets. If you want a truly fresh platform state, scale the
-StatefulSets down and delete the PVCs you intend to wipe.
+Sentinel state lives mainly in PVC-backed StatefulSets, so deleting pods does
+not reset the platform. For a fresh platform state, scale the StatefulSets down
+and delete the PVCs you intend to wipe.
 
 Typical destructive reset flow:
 
@@ -406,8 +396,8 @@ Important distinctions:
 - A PVC stuck in `Terminating` is often still referenced by stale pods from an
   old ReplicaSet. Remove the stale pods first, then recreate the workload.
 
-This reset is destructive. Treat it as an operator workflow, not a normal
-upgrade path.
+This reset is destructive. Use it as a deliberate operator workflow; do not
+use it as an upgrade path.
 
 ## Node pool consistency
 
@@ -420,15 +410,13 @@ For production, either standardize registry trust and auth across all eligible
 node pools, or use taints, tolerations, labels, and node selectors so MCP
 Runtime workloads only land on pools that have been prepared and audited.
 
----
-
 ## k3s
 
 k3s uses embedded containerd. The steps below cover **lab HTTP** registry
 mirrors (`registry.local`, NodePort). For **public TLS + bundled HTTPS**
 (`registry.<domain>` with Let's Encrypt), skip the insecure mirror path and
 follow [Deployment Targets - k3s production](deployment-targets.md#option-a-bundled-https-registry-on-prem-reference)
-and [k3s Deployment Runbook](k3s-deployment-runbook.md) instead — set
+and [k3s Deployment Runbook](k3s-deployment-runbook.md). Set
 `MCP_REGISTRY_ENDPOINT=registry.<domain>` and use `--ingress none` when k3s
 Traefik already runs in `kube-system`.
 
@@ -438,9 +426,8 @@ operator, gateway proxy, and Sentinel images, then deploys pods that pull those
 images. On k3s hosts where `~/.kube/config` is empty or minimal, pass
 `--kubeconfig /etc/rancher/k3s/k3s.yaml` to setup.
 
-The fastest path is to **preconfigure the steps below before running setup** so
-the host k3s pulls from is already trusted on first attempt. If you skip that
-preflight, expect setup to fail once: it prints the registry **Internal URL**
+**Complete the steps below before running setup** so k3s trusts the registry
+host on the first attempt. Otherwise setup fails once: it prints the registry **Internal URL**
 after the Service exists; copy that `host:port` into `registries.yaml`, restart
 k3s, then rerun setup. To avoid the rerun on dynamic ClusterIP environments,
 configure a stable external registry or set `MCP_REGISTRY_ENDPOINT` to a
@@ -461,7 +448,7 @@ configure a stable external registry or set `MCP_REGISTRY_ENDPOINT` to a
 
    If the registry's ClusterIP (e.g. `10.43.39.164:5000`) or service DNS
    (`registry.registry.svc.cluster.local:5000`) ever appears as an image ref,
-   add a mirror entry for it too — containerd does exact-host matching.
+   add a mirror entry for it too. Containerd does exact-host matching.
 
 2. **Host DNS.** Add to `/etc/hosts`:
 
@@ -471,7 +458,7 @@ configure a stable external registry or set `MCP_REGISTRY_ENDPOINT` to a
 
 3. **Reload.** `systemctl restart k3s`. k3s regenerates containerd's config from `registries.yaml` at startup.
 
-Multi-node k3s: apply the same `/etc/rancher/k3s/registries.yaml` and `/etc/hosts` to every node — `127.0.0.1:32000` reaches the local kube-proxy which forwards to the registry pod regardless of where the pod is scheduled.
+Multi-node k3s: apply the same `/etc/rancher/k3s/registries.yaml` and `/etc/hosts` to every node. `127.0.0.1:32000` reaches the local kube-proxy, which forwards to the registry pod on whichever node it runs.
 
 ## Node disk-pressure recovery
 
@@ -512,8 +499,8 @@ again.
 kind's nodes are containers, so the registry NodePort needs an `extraPortMappings` entry to be reachable, and containerd inside the node container needs the same mirror.
 For `setup --test-mode`, MCP Runtime emits image refs such as
 `registry.registry.svc.cluster.local:5000/mcp-platform-api:latest` (and sibling
-split API images) so Kind nodes use one stable service-DNS host instead of a
-mutable registry `ClusterIP:port`.
+split API images) so Kind nodes use one stable service-DNS host. A registry
+`ClusterIP:port` can change.
 
 1. **Cluster config.** Pass this to `kind create cluster --config`:
 
@@ -538,13 +525,13 @@ mutable registry `ClusterIP:port`.
    response to HTTPS client`, compare the pod image host with the mirror key.
    Containerd only applies the HTTP mirror when the strings match exactly.
 
-Alternative: `kind load docker-image <image>` sideloads without a registry at all — useful for throwaway tests, but bypasses the registry-push flow the CLI is built around.
+Alternative: `kind load docker-image <image>` sideloads images without a registry. Use it for throwaway tests; it bypasses the CLI's registry-push flow.
 
 ## minikube
 
 Two options.
 
-**Option A — insecure registry flag at start time:**
+**Option A: insecure registry flag at start time**
 
 ```bash
 minikube start --insecure-registry=registry.local --insecure-registry=10.43.39.164:5000
@@ -552,18 +539,18 @@ minikube addons enable ingress
 echo "$(minikube ip) registry.local" | sudo tee -a /etc/hosts
 ```
 
-The `--insecure-registry` flag is read-only on initial `start`. Re-creating the VM is required to change it.
+minikube reads the `--insecure-registry` flag only on the initial `start`. Re-create the VM to change it.
 
-**Option B — `minikube image load`:**
+**Option B: `minikube image load`**
 
-Skip the registry entirely and push images directly into the node's image store:
+Load images directly into the node's image store, with no registry:
 
 ```bash
 docker build -t registry.local/my-server:latest .
 minikube image load registry.local/my-server:latest
 ```
 
-Fine for quick iteration, but `./bin/mcp-runtime server push` won't help — images bypass the registry.
+Use this for quick iteration. `./bin/mcp-runtime server push` does not apply, because images bypass the registry.
 
 ## Docker Desktop (Kubernetes)
 
@@ -583,7 +570,7 @@ Fine for quick iteration, but `./bin/mcp-runtime server push` won't help — ima
    127.0.0.1 registry.local
    ```
 
-Reachability from the k8s nodes (which are VMs managed by Docker Desktop) is automatic because they share the host loopback for the NodePort via `127.0.0.1`.
+The k8s nodes (VMs managed by Docker Desktop) reach the NodePort through the shared host loopback at `127.0.0.1`.
 
 ## kubeadm / vanilla Kubernetes
 
@@ -598,7 +585,7 @@ For each node running kubelet:
      insecure_skip_verify = true
    ```
 
-   Pick `<registry-reachable-ip>` as whichever IP the node can reach the registry's NodePort on — typically the node's own IP or a load-balancer VIP.
+   Set `<registry-reachable-ip>` to an IP where the node can reach the registry's NodePort, typically the node's own IP or a load-balancer VIP.
 
 2. `/etc/hosts` on each node: map `registry.local` to the same IP.
 
@@ -652,14 +639,14 @@ getent hosts registry.local
 - The `traefik` `IngressClass`.
 - The `metallb-system` namespace, if you plan to use MetalLB for `LoadBalancer` services.
 
-Missing pieces are warnings, not errors — the command surfaces them so you can decide what to install with your standard platform tooling.
+Missing pieces are reported as warnings. Install what you need with your standard platform tooling.
 
 `bootstrap --apply --provider k3s` is the only automated apply path today: run it on the k3s server node and it applies the bundled CoreDNS and local-path manifests under `/var/lib/rancher/k3s/server/manifests`, then waits for both rollouts. Other providers (`rke2`, `kubeadm`, `generic`) print guidance instead.
 
 ## `cluster doctor` and `cluster diagnostics`
 
-`./bin/mcp-runtime cluster doctor` is the pre-setup readiness command. Run it
-before `setup` to validate whether the cluster can support MCP Runtime:
+`./bin/mcp-runtime cluster doctor` is the pre-setup readiness check. Run it
+before `setup`. It checks:
 
 - Kubernetes API connectivity, Ready nodes, kubelet-reported container runtimes, and node pressure conditions.
 - Node architecture, StorageClasses, Pending PVCs, and RuntimeClass references.
@@ -679,9 +666,8 @@ before `setup` to validate whether the cluster can support MCP Runtime:
 - Streams the current check before running it, including helper pod probes and waits, so a slow run shows what it is doing.
 - Prints the distribution-specific registry remediation hint only when registry or image-pull checks fail; Traefik and Sentinel failures use their own check-specific remedies.
 
-Cluster-specific values are discovered where Kubernetes exposes them. When a
-platform intentionally uses non-default values, configure the small set of
-remaining policy inputs instead of changing code:
+Diagnostics discover cluster-specific values where Kubernetes exposes them.
+For non-default values, set these overrides:
 
 ```bash
 export MCP_CLUSTER_DOMAIN=cluster.local          # custom Service DNS suffix
@@ -690,11 +676,11 @@ export MCP_DEFAULT_INGRESS_ENTRYPOINTS=web       # smoke route entrypoint(s)
 export MCP_DEFAULT_SERVICE_PORT=8088              # smoke service port, if non-default
 ```
 
-The doctor never assumes k3s' API port, a fixed CoreDNS label, or a particular
-registry NodePort. It reads node/runtime, DNS, ingress, registry, storage,
-architecture, and workload state from the active cluster. These environment
-values are only explicit overrides for information Kubernetes cannot reliably
-infer from an MCPServer smoke object.
+The doctor reads node/runtime, DNS, ingress, registry, storage, architecture,
+and workload state from the active cluster. It does not assume k3s' API port, a
+fixed CoreDNS label, or a particular registry NodePort. The environment values
+above override only information Kubernetes cannot reliably infer from an
+MCPServer smoke object.
 
 Run `bootstrap` and then `cluster doctor` before `setup` on a fresh cluster.
 Run `cluster diagnostics` after setup or after any platform change.
