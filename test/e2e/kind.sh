@@ -467,7 +467,6 @@ STAGE_LOG_DIR="${WORKDIR}/stage-logs"
 KIND_CONFIG="$(mktemp)"
 KUBECONFIG_FILE="$(mktemp)"
 KUBECONFIG_BACKUP_FILE="$(mktemp)"
-ORIG_CONTEXT="$(kubectl config current-context 2>/dev/null || true)"
 PIDS=()
 PARALLEL_PIDS=()
 PARALLEL_LABELS=()
@@ -498,7 +497,6 @@ cleanup() {
     kill "${pid}" >/dev/null 2>&1 || true
     wait "${pid}" 2>/dev/null || true
   done
-  kubectl config use-context "${ORIG_CONTEXT}" >/dev/null 2>&1 || true
   if [[ "${E2E_KEEP_CLUSTER}" == "1" ]]; then
     echo "[info] leaving cluster ${CLUSTER_NAME}, registry ${LOCAL_REGISTRY_NAME}, and workdir ${WORKDIR} because E2E_KEEP_CLUSTER=1" >&2
     echo "[info] kind config preserved at ${KIND_CONFIG}" >&2
@@ -3318,8 +3316,6 @@ refresh_kind_kubeconfig() {
   if kubectl config get-contexts "kind-${CLUSTER_NAME}" >/dev/null 2>&1; then
     kubectl config use-context "kind-${CLUSTER_NAME}" >/dev/null 2>&1 || true
   fi
-  mkdir -p "${HOME}/.kube"
-  cp "${KUBECONFIG_FILE}" "${HOME}/.kube/config"
 }
 
 refresh_kind_kubeconfig
@@ -4729,9 +4725,11 @@ if scenario_selected "governance"; then
   wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 200
 
   log_line policy "expiring access session via manifest update; gateway should reject calls with session_expired"
+  # Leave a wide margin from runner and node clocks so this tests expiration,
+  # not small clock skew between the CI host and the Kind node.
   EXPIRED_AT="$(python3 <<'PY'
 from datetime import datetime, timedelta, timezone
-print((datetime.now(timezone.utc) - timedelta(minutes=5)).replace(microsecond=0).isoformat().replace("+00:00", "Z"))
+print((datetime.now(timezone.utc) - timedelta(hours=1)).replace(microsecond=0).isoformat().replace("+00:00", "Z"))
 PY
 )"
   cat >"${WORKDIR}/access-session-expired.yaml" <<EOF

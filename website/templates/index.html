@@ -46,6 +46,30 @@
     </aside>
   </section>
 
+  <section class="container pillars" aria-labelledby="what-it-is-title">
+    <div class="section-heading span-two">
+      <span class="section-label">What it is</span>
+      <h2 id="what-it-is-title">A control plane for the MCP servers your company runs.</h2>
+      <p>
+        MCP Runtime is a self-hosted Kubernetes control plane for internal MCP servers.
+        It helps a company deploy and route those servers, authorize tool calls, expire
+        or revoke access, and audit requests inside its own cluster, alongside the data
+        and services those servers already use.
+      </p>
+      <p>
+        Connecting an agent is the easy part: point the client at a URL. The hard part
+        is deciding who can call a tool such as <code>delete_invoice</code>, recording
+        what a person consented to, revoking access when needed, and reviewing past
+        requests. MCP Runtime models servers, grants, and sessions as Kubernetes state
+        and enforces policy on the live gateway request path.
+      </p>
+      <p>
+        A directory gives an agent an address. MCP Runtime runs the service behind it,
+        checks requests at the door, manages access, and keeps the logbook.
+      </p>
+    </div>
+  </section>
+
   <section class="container blueprint" aria-labelledby="blueprint-title">
     <div class="section-heading">
       <span class="section-label">01 / Definition</span>

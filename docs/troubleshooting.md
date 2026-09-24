@@ -252,5 +252,5 @@ kubectl patch ns <namespace> \
 
 - Run `mcp-runtime <command> --help` for flag reference
 - Run `mcp-runtime cluster diagnostics` for the full post-setup cluster diagnostic
-- Check [GitHub Issues](https://github.com/Agent-Hellboy/mcp-runtime/issues)
+- Check [GitHub Issues](https://github.com/mcp-runtime/mcp-runtime/issues)
 - [Contributor Troubleshooting](contributor/troubleshooting.md) for development-environment specific issues
