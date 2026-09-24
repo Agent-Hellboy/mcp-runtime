@@ -22,7 +22,7 @@ def _canonical_site_base() -> str:
 DOCS_URL = (os.environ.get("MCP_DOCS_URL") or "https://docs.mcpruntime.org/").rstrip("/") + "/"
 PLATFORM_URL = (os.environ.get("MCP_PLATFORM_URL") or "https://platform.mcpruntime.org/").rstrip("/") + "/"
 ARTICLES_URL = (os.environ.get("MCP_ARTICLES_URL") or "https://articles.mcpruntime.org/").rstrip("/") + "/"
-GITHUB_URL = "https://github.com/Agent-Hellboy/mcp-runtime"
+GITHUB_URL = "https://github.com/mcp-runtime/mcp-runtime"
 
 
 @app.context_processor

@@ -2,7 +2,7 @@ FROM python:3.12-slim
 
 ARG GIT_SHA=unknown
 
-LABEL org.opencontainers.image.source="https://github.com/Agent-Hellboy/mcp-runtime" \
+LABEL org.opencontainers.image.source="https://github.com/mcp-runtime/mcp-runtime" \
       org.opencontainers.image.title="mcp-runtime-website" \
       org.opencontainers.image.description="Marketing site for mcp-runtime (Flask + Gunicorn)" \
       org.opencontainers.image.licenses="MIT" \
