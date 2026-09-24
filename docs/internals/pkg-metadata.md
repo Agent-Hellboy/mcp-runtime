@@ -58,6 +58,14 @@ Default image host resolution is environment-aware. `ResolveRegistryHost`,
 `ResolvePlatformIngressHost` use `MCP_REGISTRY_*`, `MCP_PLATFORM_DOMAIN`, and
 related env vars to keep generated manifests pullable and routable.
 
+Registry host selection is shared across CLI metadata and runtime API behavior:
+`MCP_REGISTRY_INGRESS_HOST`, `MCP_REGISTRY_HOST`, `MCP_REGISTRY_ENDPOINT`,
+`registry.<MCP_PLATFORM_DOMAIN>`, then the local default. The endpoint resolver
+still gives an explicitly configured `MCP_REGISTRY_ENDPOINT` priority for
+in-cluster transfers. Manifest generation rewrites unqualified and known
+platform-registry image refs to the kubelet pull host; external registry refs
+such as `ghcr.io/owner/image` remain unchanged.
+
 ## Manifest Generation
 
 `GenerateCRD` converts one `ServerMetadata` into an `MCPServer` YAML manifest.

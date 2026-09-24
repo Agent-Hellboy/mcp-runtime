@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
 
@@ -236,15 +237,62 @@ func convertResourceRequirements(resources *ResourceRequirements) *mcpv1alpha1.R
 }
 
 func imageRefForClusterPull(image string) string {
+	image = strings.TrimSpace(image)
 	pullHost := ResolveRegistryPullHost()
-	pushHost := ResolveRegistryHost()
-	if pullHost == "" || pullHost == pushHost {
+	if pullHost == "" {
+		return image
+	}
+	if pullHost == normalizeRegistryHost(ResolveRegistryHost()) {
+		return image
+	}
+	registry, hasRegistry := imageRegistryHost(image)
+	if hasRegistry && !isPlatformRegistryHost(registry) {
 		return image
 	}
 	if rewritten, ok := RewriteImageRegistryHost(image, pullHost); ok {
 		return rewritten
 	}
 	return image
+}
+
+func imageRegistryHost(image string) (string, bool) {
+	first, _, found := strings.Cut(image, "/")
+	if !found || !(strings.Contains(first, ".") || strings.Contains(first, ":") || first == "localhost") {
+		return "", false
+	}
+	return normalizeRegistryHost(first), true
+}
+
+func isPlatformRegistryHost(host string) bool {
+	host = normalizeRegistryHost(host)
+	if host == "" {
+		return false
+	}
+	for _, candidate := range []string{
+		os.Getenv(envMCPRegistryIngressHost),
+		os.Getenv(envMCPRegistryHost),
+		os.Getenv(envMCPRegistryEndpoint),
+		ResolveRegistryHost(),
+	} {
+		if normalized := normalizeRegistryHost(candidate); normalized != "" && normalized == host {
+			return true
+		}
+	}
+	if domain := platformDomainFromEnv(); domain != "" {
+		return host == "registry."+domain
+	}
+	return false
+}
+
+func normalizeRegistryHost(host string) string {
+	host = strings.TrimSpace(host)
+	if scheme := strings.Index(host, "://"); scheme >= 0 {
+		host = host[scheme+3:]
+	}
+	if before, _, found := strings.Cut(host, "/"); found {
+		host = before
+	}
+	return strings.TrimSuffix(strings.TrimSpace(host), "/")
 }
 
 // GenerateCRDsFromRegistry renders CRD YAML files for every server in a registry into outputDir.
