@@ -16,6 +16,12 @@ permissions:
   pull-requests: read
 
 jobs:
+  release-build:
+    name: Cross-platform release builds
+    uses: ./.github/workflows/release-build.yaml
+    permissions:
+      contents: read
+
   changed-paths:
     name: Detect Docs/Website/Articles Changes
     runs-on: ubuntu-24.04

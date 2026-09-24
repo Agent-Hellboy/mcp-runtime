@@ -13,7 +13,7 @@ To self-host MCP Runtime on your own cluster, see [Getting Started](getting-star
 === "macOS (Apple Silicon)"
 
     ```bash
-    curl -Lo mcp-runtime https://github.com/Agent-Hellboy/mcp-runtime/releases/latest/download/mcp-runtime-darwin-arm64
+    curl -Lo mcp-runtime https://github.com/mcp-runtime/mcp-runtime/releases/latest/download/mcp-runtime-darwin-arm64
     chmod +x mcp-runtime
     sudo mv mcp-runtime /usr/local/bin/
     ```
@@ -21,7 +21,7 @@ To self-host MCP Runtime on your own cluster, see [Getting Started](getting-star
 === "macOS (Intel)"
 
     ```bash
-    curl -Lo mcp-runtime https://github.com/Agent-Hellboy/mcp-runtime/releases/latest/download/mcp-runtime-darwin-amd64
+    curl -Lo mcp-runtime https://github.com/mcp-runtime/mcp-runtime/releases/latest/download/mcp-runtime-darwin-amd64
     chmod +x mcp-runtime
     sudo mv mcp-runtime /usr/local/bin/
     ```
@@ -29,7 +29,7 @@ To self-host MCP Runtime on your own cluster, see [Getting Started](getting-star
 === "Linux (amd64)"
 
     ```bash
-    curl -Lo mcp-runtime https://github.com/Agent-Hellboy/mcp-runtime/releases/latest/download/mcp-runtime-linux-amd64
+    curl -Lo mcp-runtime https://github.com/mcp-runtime/mcp-runtime/releases/latest/download/mcp-runtime-linux-amd64
     chmod +x mcp-runtime
     sudo mv mcp-runtime /usr/local/bin/
     ```
@@ -37,14 +37,14 @@ To self-host MCP Runtime on your own cluster, see [Getting Started](getting-star
 === "Linux (arm64)"
 
     ```bash
-    curl -Lo mcp-runtime https://github.com/Agent-Hellboy/mcp-runtime/releases/latest/download/mcp-runtime-linux-arm64
+    curl -Lo mcp-runtime https://github.com/mcp-runtime/mcp-runtime/releases/latest/download/mcp-runtime-linux-arm64
     chmod +x mcp-runtime
     sudo mv mcp-runtime /usr/local/bin/
     ```
 
 === "Windows"
 
-    Download [mcp-runtime-windows-amd64.exe](https://github.com/Agent-Hellboy/mcp-runtime/releases/latest/download/mcp-runtime-windows-amd64.exe) and add it to your `PATH`.
+    Download [mcp-runtime-windows-amd64.exe](https://github.com/mcp-runtime/mcp-runtime/releases/latest/download/mcp-runtime-windows-amd64.exe) and add it to your `PATH`.
 
 Verify:
 
@@ -53,7 +53,7 @@ mcp-runtime --version
 ```
 
 To upgrade the CLI, download the matching binary again from the
-[latest GitHub release](https://github.com/Agent-Hellboy/mcp-runtime/releases/latest)
+[latest GitHub release](https://github.com/mcp-runtime/mcp-runtime/releases/latest)
 and verify `mcp-runtime --version`. The CLI binary and the hosted platform are
 separate release tracks: the CLI changes only when a new release is published;
 the platform UI at `platform.mcpruntime.org` is updated by its operator and
@@ -83,7 +83,7 @@ mcp-runtime auth status    # confirm the profile is active
 Clone the repo to get the example server source:
 
 ```bash
-git clone https://github.com/Agent-Hellboy/mcp-runtime
+git clone https://github.com/mcp-runtime/mcp-runtime
 cd mcp-runtime/examples/workspace-assistant-mcp
 ```
 
