@@ -34,6 +34,20 @@ human workflows.
 
 OAuth setup and identity-provider configuration: [MCP authorization](mcp-authorization.md).
 
+## What MCP Runtime is
+
+MCP Runtime is a self-hosted Kubernetes control plane for internal MCP servers. It
+does not act as a public directory for finding servers. It helps a company run the
+servers it already operates: deploy workloads, route MCP traffic, authorize tool
+calls, expire or revoke access, and audit requests inside the company's cluster.
+
+Connecting an agent to a server is straightforward: configure the client with an
+endpoint. Operating that connection raises the harder questions: who may call a
+specific tool, what a person consented to, how quickly access can be revoked, and
+what the agent did. MCP Runtime makes servers, grants, and consented sessions
+inspectable Kubernetes state, then evaluates access policy on the live gateway
+request path. Audit events record the decisions for later review.
+
 ## Deploy a governed MCP server in 5 commands
 
 ```bash
