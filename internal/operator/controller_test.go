@@ -1990,3 +1990,43 @@ func TestBuildServerEnvVarsDerivesOAuthResource(t *testing.T) {
 		}
 	})
 }
+
+// A gateway with stripPrefix forwards the shortened path, so MCP_PATH must be
+// where the server actually receives requests, not the public path.
+func TestUpstreamMCPPathFollowsGatewayStripPrefix(t *testing.T) {
+	server := func(prefix, strip string, gateway bool) *mcpv1alpha1.MCPServer {
+		return &mcpv1alpha1.MCPServer{
+			ObjectMeta: metav1.ObjectMeta{Name: "buddy"},
+			Spec: mcpv1alpha1.MCPServerSpec{
+				PublicPathPrefix: prefix,
+				Gateway:          &mcpv1alpha1.GatewayConfig{Enabled: gateway, StripPrefix: strip},
+			},
+		}
+	}
+	for _, testCase := range []struct {
+		name   string
+		server *mcpv1alpha1.MCPServer
+		want   string
+	}{
+		{"no strip prefix", server("buddy", "", true), "/buddy/mcp"},
+		{"strip prefix removes the public segment", server("buddy", "/buddy", true), "/mcp"},
+		{"trailing slash on strip prefix", server("buddy", "/buddy/", true), "/mcp"},
+		{"strip prefix equal to the whole path", server("buddy", "/buddy/mcp", true), "/"},
+		{"non-matching strip prefix is ignored", server("buddy", "/other", true), "/buddy/mcp"},
+		{"partial segment is not stripped", server("buddy", "/bud", true), "/buddy/mcp"},
+		{"strip prefix without the gateway does nothing", server("buddy", "/buddy", false), "/buddy/mcp"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := upstreamMCPPath(testCase.server); got != testCase.want {
+				t.Fatalf("upstreamMCPPath = %q, want %q", got, testCase.want)
+			}
+			env := map[string]string{}
+			for _, e := range (&MCPServerReconciler{}).buildServerEnvVars(testCase.server) {
+				env[e.Name] = e.Value
+			}
+			if env["MCP_PATH"] != testCase.want {
+				t.Fatalf("MCP_PATH = %q, want %q", env["MCP_PATH"], testCase.want)
+			}
+		})
+	}
+}

@@ -332,9 +332,9 @@ scope prefix, for example `<registry>/public/payments` in public mode or
 `server deploy --scope public` resolves the platform public catalog namespace;
 `--scope org` resolves the org catalog namespace; `--scope tenant` uses the
 authenticated user's team namespace unless `--team` or `--namespace` selects one
-explicitly. `server deploy` uses the default public route `/<name>/mcp` and
-passes that same value as `MCP_PATH` so the bundled Go, Python, and Rust
-examples listen on the route the ingress exposes. The platform API and CLI
+explicitly. `server deploy` uses the default public route `/<name>/mcp`, and
+the operator sets `MCP_PATH` to the path the server receives so the bundled Go,
+Python, and Rust examples listen on the route the ingress exposes. The platform API and CLI
 deploy flow also default `spec.gateway.enabled: true`, so published servers use
 the governed gateway path unless you explicitly provide `spec.gateway`. When
 you run `server deploy` from a directory with `.mcp/*.yaml`, the CLI copies the
