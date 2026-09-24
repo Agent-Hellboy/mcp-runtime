@@ -1,5 +1,7 @@
 package core
 
+import "mcp-runtime/pkg/mcpdefaults"
+
 // This file defines constants used across the CLI, including:
 //   - Kubernetes namespace names
 //   - Deployment and resource names
@@ -13,7 +15,7 @@ const (
 	NamespaceRegistry = "registry"
 
 	// NamespaceMCPServers is the default namespace for MCP server deployments.
-	NamespaceMCPServers = "mcp-servers"
+	NamespaceMCPServers = mcpdefaults.MCPServersNamespace
 
 	// DefaultAnalyticsNamespace is the namespace for the bundled mcp-sentinel stack.
 	DefaultAnalyticsNamespace = "mcp-sentinel"

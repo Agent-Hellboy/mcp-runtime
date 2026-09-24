@@ -12,6 +12,7 @@ import (
 	k8syaml "k8s.io/apimachinery/pkg/util/yaml"
 
 	kubeapply "mcp-runtime/internal/cli/kube"
+	"mcp-runtime/pkg/mcpdefaults"
 )
 
 var emailShapeRegexp = regexp.MustCompile(`^[^@\s]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$`)
@@ -101,7 +102,7 @@ func humanIDWarnings(docIndex int, meta accessManifestMeta) []string {
 func namespaceOrDefault(namespace string) string {
 	namespace = strings.TrimSpace(namespace)
 	if namespace == "" {
-		return "mcp-servers"
+		return mcpdefaults.MCPServersNamespace
 	}
 	return namespace
 }

@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"mcp-runtime/pkg/mcpdefaults"
 	"mcp-runtime/pkg/publishscope"
 )
 
@@ -90,12 +92,12 @@ func setDefaults(server *ServerMetadata) error {
 		server.ImageTag = "latest"
 	}
 	if server.Route == "" {
-		server.Route = fmt.Sprintf("/%s/mcp", server.Name)
+		server.Route = mcpdefaults.DefaultIngressPath(server.Name)
 	} else if server.Route[0] != '/' {
 		server.Route = "/" + server.Route
 	}
 	if server.Port == 0 {
-		server.Port = 8088
+		server.Port = mcpdefaults.MCPServerPort
 	}
 	if server.Replicas == nil {
 		replicas := int32(1)
@@ -105,7 +107,7 @@ func setDefaults(server *ServerMetadata) error {
 		if namespace, ok := publishscope.CatalogNamespace(scope); ok {
 			server.Namespace = namespace
 		} else {
-			server.Namespace = "mcp-servers"
+			server.Namespace = mcpdefaults.MCPServersNamespace
 		}
 	}
 	if server.Auth != nil {
@@ -113,19 +115,19 @@ func setDefaults(server *ServerMetadata) error {
 			server.Auth.Mode = AuthModeHeader
 		}
 		if server.Auth.HumanIDHeader == "" {
-			server.Auth.HumanIDHeader = "X-MCP-Human-ID"
+			server.Auth.HumanIDHeader = mcpdefaults.AuthHumanIDHeader
 		}
 		if server.Auth.AgentIDHeader == "" {
-			server.Auth.AgentIDHeader = "X-MCP-Agent-ID"
+			server.Auth.AgentIDHeader = mcpdefaults.AuthAgentIDHeader
 		}
 		if server.Auth.TeamIDHeader == "" {
-			server.Auth.TeamIDHeader = "X-MCP-Team-ID"
+			server.Auth.TeamIDHeader = mcpdefaults.AuthTeamIDHeader
 		}
 		if server.Auth.SessionIDHeader == "" {
-			server.Auth.SessionIDHeader = "X-MCP-Agent-Session"
+			server.Auth.SessionIDHeader = mcpdefaults.AuthSessionIDHeader
 		}
 		if server.Auth.TokenHeader == "" {
-			server.Auth.TokenHeader = "Authorization"
+			server.Auth.TokenHeader = mcpdefaults.AuthTokenHeader
 		}
 	}
 	if server.Policy != nil {
@@ -136,27 +138,27 @@ func setDefaults(server *ServerMetadata) error {
 			server.Policy.DefaultDecision = PolicyDecisionDeny
 		}
 		if server.Policy.EnforceOn == "" {
-			server.Policy.EnforceOn = "call_tool"
+			server.Policy.EnforceOn = mcpdefaults.PolicyEnforceOn
 		}
 		if server.Policy.PolicyVersion == "" {
-			server.Policy.PolicyVersion = "v1"
+			server.Policy.PolicyVersion = mcpdefaults.PolicyVersion
 		}
 	}
 	if server.Session != nil {
 		if server.Session.Store == "" {
-			server.Session.Store = "kubernetes"
+			server.Session.Store = mcpdefaults.SessionStore
 		}
 		if server.Session.HeaderName == "" {
-			server.Session.HeaderName = "X-MCP-Agent-Session"
+			server.Session.HeaderName = mcpdefaults.AuthSessionIDHeader
 		}
 		if server.Session.MaxLifetime == "" {
-			server.Session.MaxLifetime = "24h"
+			server.Session.MaxLifetime = mcpdefaults.SessionMaxLife
 		}
 		if server.Session.IdleTimeout == "" {
-			server.Session.IdleTimeout = "1h"
+			server.Session.IdleTimeout = mcpdefaults.SessionIdleTime
 		}
 		if server.Session.UpstreamTokenHeader == "" {
-			server.Session.UpstreamTokenHeader = "Authorization"
+			server.Session.UpstreamTokenHeader = mcpdefaults.SessionUpstream
 		}
 	}
 	for i := range server.Tools {
@@ -166,7 +168,7 @@ func setDefaults(server *ServerMetadata) error {
 	}
 	if server.Gateway != nil && server.Gateway.Enabled {
 		if server.Gateway.Port == 0 {
-			server.Gateway.Port = 8091
+			server.Gateway.Port = mcpdefaults.MCPGatewayPort
 		}
 		if server.Gateway.UpstreamURL == "" {
 			server.Gateway.UpstreamURL = fmt.Sprintf("http://127.0.0.1:%d", server.Port)

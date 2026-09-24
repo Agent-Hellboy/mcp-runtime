@@ -1,5 +1,7 @@
 package metadata
 
+import "mcp-runtime/pkg/mcpdefaults"
+
 // +kubebuilder:validation:Enum=none;header;oauth
 type AuthMode string
 
@@ -14,7 +16,7 @@ const (
 type PolicyMode string
 
 const (
-	PolicyModeAllowList PolicyMode = "allow-list"
+	PolicyModeAllowList PolicyMode = mcpdefaults.PolicyMode
 	PolicyModeObserve   PolicyMode = "observe"
 )
 
@@ -22,8 +24,8 @@ const (
 type PolicyDecision string
 
 const (
-	PolicyDecisionAllow PolicyDecision = "allow"
-	PolicyDecisionDeny  PolicyDecision = "deny"
+	PolicyDecisionAllow PolicyDecision = mcpdefaults.PolicyDecisionAllow
+	PolicyDecisionDeny  PolicyDecision = mcpdefaults.PolicyDecision
 )
 
 // +kubebuilder:validation:Enum=low;medium;high

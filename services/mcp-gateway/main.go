@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -20,11 +21,12 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	_ "go.uber.org/automaxprocs" // align GOMAXPROCS with container CPU quota
 
+	"mcp-runtime/pkg/mcpdefaults"
 	"mcp-runtime/pkg/serviceutil"
 )
 
 func main() {
-	port := serviceutil.EnvOr("PORT", "8091")
+	port := serviceutil.EnvOr("PORT", strconv.Itoa(mcpdefaults.MCPGatewayPort))
 	metricsPort := serviceutil.EnvOr("METRICS_PORT", "9103")
 	upstream := serviceutil.EnvOr("UPSTREAM_URL", "http://127.0.0.1:8090")
 	analyticsURL := strings.TrimSpace(os.Getenv("ANALYTICS_INGEST_URL"))

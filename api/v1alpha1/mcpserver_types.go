@@ -2,6 +2,8 @@ package v1alpha1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"mcp-runtime/pkg/mcpdefaults"
 )
 
 // +kubebuilder:validation:Enum=none;header;oauth;mtls
@@ -18,7 +20,7 @@ const (
 type PolicyMode string
 
 const (
-	PolicyModeAllowList PolicyMode = "allow-list"
+	PolicyModeAllowList PolicyMode = mcpdefaults.PolicyMode
 	PolicyModeObserve   PolicyMode = "observe"
 )
 
@@ -26,8 +28,8 @@ const (
 type PolicyDecision string
 
 const (
-	PolicyDecisionAllow PolicyDecision = "allow"
-	PolicyDecisionDeny  PolicyDecision = "deny"
+	PolicyDecisionAllow PolicyDecision = mcpdefaults.PolicyDecisionAllow
+	PolicyDecisionDeny  PolicyDecision = mcpdefaults.PolicyDecision
 )
 
 // +kubebuilder:validation:Enum=low;medium;high

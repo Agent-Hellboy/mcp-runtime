@@ -27,6 +27,7 @@ import (
 
 	"mcp-runtime/pkg/apihttp"
 	"mcp-runtime/pkg/kubeworkload"
+	"mcp-runtime/pkg/mcpdefaults"
 	"mcp-runtime/pkg/publishscope"
 	"mcp-runtime/pkg/sentinel"
 	"mcp-runtime/pkg/serviceutil"
@@ -39,7 +40,7 @@ const (
 	platformTeamSlugLabel          = "mcpruntime.org/team-slug"
 	platformScopeLabel             = "mcpruntime.org/scope"
 	createdByLabel                 = "created-by"
-	defaultDeployPort              = int32(8088)
+	defaultDeployPort              = int32(mcpdefaults.MCPServerPort)
 	restrictedRunAsUser            = kubeworkload.RestrictedRunAsUser
 	traefikWatchRoleName           = "traefik-watch"
 	platformNamespaceOwnerRoleName = "platform-namespace-owner"

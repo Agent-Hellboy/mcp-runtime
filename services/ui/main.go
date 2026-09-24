@@ -25,6 +25,7 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	_ "go.uber.org/automaxprocs" // align GOMAXPROCS with container CPU quota
 
+	"mcp-runtime/pkg/mcpdefaults"
 	"mcp-runtime/pkg/serviceutil"
 )
 
@@ -175,7 +176,7 @@ func newMux(apiBase, apiUpstream, apiKey, apiKeys, adminAPIKeys string) (*http.S
 	if defaultNamespace == "" {
 		defaultNamespace = defaultCatalogNamespaceForMode(platformMode)
 	}
-	defaultPolicyVersion := serviceutil.EnvOr("UI_DEFAULT_POLICY_VERSION", "v1")
+	defaultPolicyVersion := serviceutil.EnvOr("UI_DEFAULT_POLICY_VERSION", mcpdefaults.PolicyVersion)
 	baseJSON, err := json.Marshal(apiBase)
 	if err != nil {
 		return nil, err
