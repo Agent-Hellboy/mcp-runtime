@@ -29,7 +29,7 @@ Primary project documentation and repositories:
 | Docker MCP Gateway | Isolated local execution, secrets, OAuth flows, dynamic discovery, multiple catalogs, call tracing | <https://github.com/docker/mcp-gateway> |
 | IBM ContextForge | MCP/REST/gRPC federation, protocol-version selection, plugins, guardrails, unified discovery | <https://github.com/IBM/mcp-context-forge> |
 | ToolHive | Curated registries, one-click installation, local-to-cluster workflow, optimizer, OIDC token exchange, portal experience | <https://github.com/stacklok/toolhive> |
-| MCP specification 2025-11-25 | Capability negotiation, roots, sampling, elicitation, progress, cancellation, consent requirements | <https://modelcontextprotocol.io/specification/2025-11-25> |
+| MCP specification 2025-11-25 (superseded by [2026-07-28](https://modelcontextprotocol.io/specification/2026-07-28/changelog), which removes the `initialize` handshake and deprecates roots and sampling) | Capability negotiation, roots, sampling, elicitation, progress, cancellation, consent requirements | <https://modelcontextprotocol.io/specification/2025-11-25> |
 
 ## What MCP Runtime already has
 
