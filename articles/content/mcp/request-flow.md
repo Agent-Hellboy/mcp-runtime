@@ -6,7 +6,7 @@ published: "2026-06-04"
 reading_time: "7 min"
 ---
 
-The lifecycle flow shown here is being removed in a near-future release, but it is still important because it explains the current client and server flow in the `2025-11-25` specification. When a new MCP server is added in Cursor, the first interesting thing is not a tool call. Cursor starts by probing the server shape, negotiating the MCP session, and discovering what the server exposes. The screenshots below capture both sides of that sequence for a simple local server built with [PyMCP Kit](https://github.com/Agent-Hellboy/py-mcp), the framework I am using while implementing the MCP spec and tracing real MCP request flows. The terminal screenshots show what the server receives over Streamable HTTP. The Cursor screenshots show what those protocol messages turn into inside the client.
+This article traces the client and server flow in the `2025-11-25` MCP specification, which starts with an `initialize` handshake. The current revision, `2026-07-28`, removes that handshake; see the note at the end. When you add a new MCP server in Cursor, the first thing that happens is discovery, before any tool call. Cursor starts by probing the server shape, negotiating the MCP session, and discovering what the server exposes. The screenshots below capture both sides of that sequence for a simple local server built with [PyMCP Kit](https://github.com/Agent-Hellboy/py-mcp), the framework I am using while implementing the MCP spec and tracing real MCP request flows. The terminal screenshots show what the server receives over Streamable HTTP. The Cursor screenshots show what those protocol messages turn into inside the client.
 
 PyMCP Kit is my capability-first MCP server toolkit for FastAPI. It supports Streamable HTTP and stdio, tool/prompt/resource registries, roots, resource subscriptions, task-aware execution, optional auth hooks, and capability advertising. If you want to inspect or build against the same framework used for this trace, check out [github.com/Agent-Hellboy/py-mcp](https://github.com/Agent-Hellboy/py-mcp).
 
@@ -28,7 +28,7 @@ In the observed `initialize` request, Cursor identifies itself as:
 It also advertises client capabilities, including `elicitation`, `roots`, and an extension capability for MCP UI/App-style content: `io.modelcontextprotocol/ui` and `text/html;profile=mcp-app`
 
 
-That is the important signal in this trace: Cursor is not just asking for tools. It is announcing capability-level support for richer MCP UI/App content negotiation.
+Here Cursor also announces capability-level support for richer MCP UI/App content negotiation.
 
 After the server responds to `initialize`, Cursor sends: `notifications/initialized`
 
@@ -46,7 +46,7 @@ The server responds with a resource named `welcome_memo`, several tools, and a p
 
 This is the client-side result of discovery. Cursor now shows the server as `json-schema`, and the inventory from `tools/list`, `prompts/list`, and `resources/list` is visible in the MCP settings UI: `addNumbersTool`, `multiplyNumbersTool`, `greetTool`, `calculateAreaTool`, `promptEchoTool`, `releaseNotesPrompt`, and `welcome_memo`.
 
-That matters because this is where the abstract JSON-RPC discovery calls become actual client affordances. The server did not just respond with data; it gave Cursor enough structured metadata to expose callable tools, a prompt, and a resource to the user.
+This is where the JSON-RPC discovery calls turn into things the user can click. The server's responses give Cursor enough structured metadata to expose callable tools, a prompt, and a resource.
 
 [![Cursor later calls a tool and receives a normal JSON-RPC result.](/static/articles/mcp/request-flow/03-tool-call-followup.png)](/static/articles/mcp/request-flow/03-tool-call-followup.png)
 
@@ -86,10 +86,8 @@ So the full flow is visible in both places: the server logs prove the Streamable
 
 So the complete observed startup and early operation flow is: `OAuth metadata probe`, `initialize`, `notifications/initialized`, `resources/list`, `tools/list`, `resources/list`, `prompts/list`, `resources/subscribe`, `ping`, and `tools/call`.
 
-The final `client connection complete` log means Cursor stopped sending startup discovery requests after the initial MCP session setup. This sequence is not a convention — it is what the `2025-11-25` spec requires clients to do, and what spec implementers like [PyMCP Kit](https://github.com/Agent-Hellboy/py-mcp) must respond to correctly. An MCP server implementation has to handle the OAuth metadata probes (returning `404` is valid for unauthenticated servers), respond to `initialize` and `notifications/initialized` in order, and serve `resources/list`, `tools/list`, and `prompts/list` before any tool call arrives. Clients follow this flow because the spec mandates it, so the implementation must support it end to end.
+The final `client connection complete` log means Cursor stopped sending startup discovery requests after the initial MCP session setup. The `2025-11-25` spec requires clients to follow this sequence, and servers such as [PyMCP Kit](https://github.com/Agent-Hellboy/py-mcp) must handle it correctly. An MCP server implementation has to handle the OAuth metadata probes (returning `404` is valid for unauthenticated servers), respond to `initialize` and `notifications/initialized` in order, and serve `resources/list`, `tools/list`, and `prompts/list` before any tool call arrives. Clients follow this flow because the spec mandates it, so the implementation must support it end to end.
 
-The lifecycle flow is getting removed in a near-future release, but this article is still important because it explains the current client and server flow in the 2025-11-25 specification. [SEP-2575: Make MCP Stateless](https://modelcontextprotocol.io/seps/2575-stateless-mcp) is final, and it removes the stateful initialization handshake in the next protocol direction: `initialize / notifications/initialized`.
+The current protocol revision, [`2026-07-28`](https://modelcontextprotocol.io/specification/2026-07-28/changelog), removed this lifecycle. [SEP-2575: Make MCP Stateless](https://modelcontextprotocol.io/seps/2575-stateless-mcp) replaced the `initialize` / `notifications/initialized` handshake: every request now carries its protocol version and client capabilities in `_meta`, and servers must implement `server/discover` to advertise their supported versions and capabilities. The same revision replaced `resources/subscribe` with `subscriptions/listen` and removed `ping`.
 
-Under that SEP, protocol version moves to per-request metadata, capability discovery moves to `server/discover`, `resources/subscribe` is replaced by the `subscriptions/listen` model, and `ping` is removed because normal RPC calls and transport-level keepalive mechanisms already prove liveness.
-
-So treat this trace as a compatibility snapshot of the current 2025-11-25 lifecycle: it documents how Cursor starts an MCP session over Streamable HTTP today, while also showing the exact machinery that the stateless MCP direction is deprecating and removing in the future release line.
+Treat this trace as a record of the `2025-11-25` lifecycle. Clients and servers that implement `2025-11-25` or earlier still use this handshake, and the current specification describes how the two generations [interoperate](https://modelcontextprotocol.io/specification/2026-07-28/basic/versioning#backward-compatibility-with-initialization-based-versions).
