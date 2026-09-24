@@ -14,7 +14,17 @@ func ProtectedResourceMetadataURL(resource string) string {
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 		return ""
 	}
-	resourcePath := strings.TrimRight(parsed.Path, "/")
-	metadata := url.URL{Scheme: parsed.Scheme, Host: parsed.Host, Path: "/.well-known/oauth-protected-resource" + resourcePath}
+	metadata := url.URL{Scheme: parsed.Scheme, Host: parsed.Host, Path: ProtectedResourceMetadataPath(parsed.Path)}
 	return metadata.String()
+}
+
+// ProtectedResourceMetadataPath returns the metadata document path for a
+// resource path, trimming a trailing slash the same way the URL form does so
+// ingress routes and advertised URLs always agree.
+func ProtectedResourceMetadataPath(resourcePath string) string {
+	resourcePath = strings.TrimRight(strings.TrimSpace(resourcePath), "/")
+	if resourcePath != "" && !strings.HasPrefix(resourcePath, "/") {
+		resourcePath = "/" + resourcePath
+	}
+	return "/.well-known/oauth-protected-resource" + resourcePath
 }

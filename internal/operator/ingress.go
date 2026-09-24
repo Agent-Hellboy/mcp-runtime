@@ -2,7 +2,6 @@ package operator
 
 import (
 	"context"
-	"net/url"
 	"strings"
 
 	networkingv1 "k8s.io/api/networking/v1"
@@ -13,6 +12,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
+	"mcp-runtime/pkg/oauthresource"
 )
 
 func (r *MCPServerReconciler) reconcileIngress(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer) error {
@@ -94,15 +94,15 @@ func ingressPathsForServer(mcpServer *mcpv1alpha1.MCPServer, pathType networking
 		},
 	}
 	if serverUsesOAuth(mcpServer) {
-		metadataURL := mcpv1alpha1.ProtectedResourceMetadataURL(mcpServer.Spec.Auth.Audience)
-		parsedMetadataURL, err := url.Parse(metadataURL)
-		if err == nil && parsedMetadataURL.Path != "" {
-			paths = append(paths, networkingv1.HTTPIngressPath{
-				Path:     parsedMetadataURL.Path,
-				PathType: &pathType,
-				Backend:  backend,
-			})
-		}
+		// Route the metadata document for this server's own public path.
+		// auth.audience is tenant input, so deriving the route from it would
+		// let one server claim another server's metadata path on a shared,
+		// host-less ingress and point its clients at a different issuer.
+		paths = append(paths, networkingv1.HTTPIngressPath{
+			Path:     oauthresource.ProtectedResourceMetadataPath(effectiveIngressPath(mcpServer)),
+			PathType: &pathType,
+			Backend:  backend,
+		})
 	}
 	return paths
 }

@@ -198,6 +198,18 @@ server named `my-server` on `mcp.example.com` gets
 `https://mcp.example.com/my-server/mcp`. If no host is known (for example in
 local test mode), set `audience` explicitly.
 
+Derived `audience` and `issuerURL` values are computed on every reconcile and
+are not written back to `spec`. Changing the host, path, TLS setting, or
+platform domain therefore changes them too; `status.url` shows the current
+public URL.
+
+Each public route has one owner. When two MCPServers resolve to the same path
+on the same host (or one of them is path-based and matches every host), the
+older one keeps the route. The later one reports an `Error` phase naming the
+owner, gets no Ingress, and its audience is not added to the bundled
+authorization server. Otherwise the two servers would accept each other's
+tokens.
+
 The operator owns `MCP_PATH` for every server and derives it from the public
 ingress route. When the gateway sets `gateway.stripPrefix`, it is the route
 with that prefix removed, because that is the path the gateway forwards to the

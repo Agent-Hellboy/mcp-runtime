@@ -137,3 +137,17 @@ func TestReconcileBundledOAuthResourcesNoopWithoutBundledIssuer(t *testing.T) {
 		t.Fatalf("MCP_AUTH_RESOURCES = %q, want untouched without a bundled issuer", got)
 	}
 }
+
+func TestReconcileBundledOAuthResourcesRejectsHTTPAudienceForHTTPSIssuer(t *testing.T) {
+	scheme := bundledOAuthScheme(t)
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(bundledAuthDeployment(), oauthMCPServer("buddy", "")).Build()
+	// TLS not detected: the derived audience is http:// while the issuer is https.
+	r := MCPServerReconciler{Client: c, Scheme: scheme, OAuthIssuerURL: testBundledIssuer, DefaultIngressHost: "mcp.example.com"}
+
+	if err := r.reconcileBundledOAuthResources(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if got := bundledAuthEnv(t, c)["MCP_AUTH_RESOURCES"]; got != "" {
+		t.Fatalf("MCP_AUTH_RESOURCES = %q, want no http resource on an https issuer", got)
+	}
+}

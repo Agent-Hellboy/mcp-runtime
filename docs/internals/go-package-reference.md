@@ -132,11 +132,13 @@ Package v1alpha1 contains API Schema definitions for the MCP server resource.
 - [`func (r *MCPServer) EffectivePublicPath() string`](#api-types-func-r-mcpserver-effectivepublicpath-string)
 - [`func (r *MCPServer) PublicBaseURL(options PublicURLOptions) string`](#api-types-func-r-mcpserver-publicbaseurl-options-publicurloptions-string)
 - [`func (r *MCPServer) PublicIngressUsesTLS(defaultTLS bool) bool`](#api-types-func-r-mcpserver-publicingressusestls-defaulttls-bool-bool)
+- [`func (r *MCPServer) ResolveDerivedAuth(options MCPServerDefaultOptions)`](#api-types-func-r-mcpserver-resolvederivedauth-options-mcpserverdefaultoptions)
 - [`func (r *MCPServer) SetupWebhookWithManager(mgr ctrl.Manager) error`](#api-types-func-r-mcpserver-setupwebhookwithmanager-mgr-ctrl-manager-error)
 - [`func (r *MCPServer) SetupWebhookWithManagerWithOptions(mgr ctrl.Manager, options MCPServerDefaultOptions) error`](#api-types-func-r-mcpserver-setupwebhookwithmanagerwithoptions-mgr-ctrl-manager-options-mcpserverdefaultoptions-error)
 - [`func (r *MCPServer) String() string`](#api-types-func-r-mcpserver-string-string)
 - [`func (r *MCPServer) ValidateCreate() (admission.Warnings, error)`](#api-types-func-r-mcpserver-validatecreate-admission-warnings-error)
 - [`func (r *MCPServer) ValidateDelete() (admission.Warnings, error)`](#api-types-func-r-mcpserver-validatedelete-admission-warnings-error)
+- [`func (r *MCPServer) ValidateResolvedAuth() error`](#api-types-func-r-mcpserver-validateresolvedauth-error)
 - [`func (r *MCPServer) ValidateUpdate(_ runtime.Object) (admission.Warnings, error)`](#api-types-func-r-mcpserver-validateupdate-runtime-object-admission-warnings-error)
 - [`type MCPServerDefaultOptions struct`](#api-types-type-mcpserverdefaultoptions-struct)
 - [`func (in *MCPServerDefaultOptions) DeepCopy() *MCPServerDefaultOptions`](#api-types-func-in-mcpserverdefaultoptions-deepcopy-mcpserverdefaultoptions)
@@ -803,8 +805,6 @@ func (r *MCPServer) Default()
 <a id="api-types-func-r-mcpserver-defaultwithoptions-options-mcpserverdefaultoptions"></a>
 ```text
 func (r *MCPServer) DefaultWithOptions(options MCPServerDefaultOptions)
-    DefaultWithOptions applies MCPServer defaults, including operator-configured
-    fallbacks when the webhook is registered by the operator manager.
 
 ```
 
@@ -835,6 +835,21 @@ func (r *MCPServer) PublicIngressUsesTLS(defaultTLS bool) bool
 
 ```
 
+<a id="api-types-func-r-mcpserver-resolvederivedauth-options-mcpserverdefaultoptions"></a>
+```text
+func (r *MCPServer) ResolveDerivedAuth(options MCPServerDefaultOptions)
+    DefaultWithOptions applies MCPServer defaults, including operator-configured
+    fallbacks when the webhook is registered by the operator manager.
+    ResolveDerivedAuth fills an OAuth server's unset audience and issuer from
+    platform state: the audience from the public URL the ingress serves,
+    the issuer from the bundled authorization server. It is applied to the
+    operator's in-memory copy on every reconcile and is never persisted by
+    the admission webhook, so a later change to the host, path, TLS setting,
+    or platform domain re-derives the values instead of leaving a stale copy in
+    spec. Explicit values are kept.
+
+```
+
 <a id="api-types-func-r-mcpserver-setupwebhookwithmanager-mgr-ctrl-manager-error"></a>
 ```text
 func (r *MCPServer) SetupWebhookWithManager(mgr ctrl.Manager) error
@@ -862,6 +877,15 @@ func (r *MCPServer) ValidateCreate() (admission.Warnings, error)
 <a id="api-types-func-r-mcpserver-validatedelete-admission-warnings-error"></a>
 ```text
 func (r *MCPServer) ValidateDelete() (admission.Warnings, error)
+
+```
+
+<a id="api-types-func-r-mcpserver-validateresolvedauth-error"></a>
+```text
+func (r *MCPServer) ValidateResolvedAuth() error
+    ValidateResolvedAuth reports OAuth settings that are still missing after
+    ResolveDerivedAuth. Admission cannot check this, because the values are
+    derived later from operator state; the operator reports it on reconcile.
 
 ```
 
@@ -2074,10 +2098,20 @@ shared by the API and runtime services.
 <a id="oauth-resource-url-helpers-index"></a>
 ### Index
 
+- [`func ProtectedResourceMetadataPath(resourcePath string) string`](#oauth-resource-url-helpers-func-protectedresourcemetadatapath-resourcepath-string-string)
 - [`func ProtectedResourceMetadataURL(resource string) string`](#oauth-resource-url-helpers-func-protectedresourcemetadataurl-resource-string-string)
 
 <a id="oauth-resource-url-helpers-functions"></a>
 ### Functions
+
+<a id="oauth-resource-url-helpers-func-protectedresourcemetadatapath-resourcepath-string-string"></a>
+```text
+func ProtectedResourceMetadataPath(resourcePath string) string
+    ProtectedResourceMetadataPath returns the metadata document path for a
+    resource path, trimming a trailing slash the same way the URL form does so
+    ingress routes and advertised URLs always agree.
+
+```
 
 <a id="oauth-resource-url-helpers-func-protectedresourcemetadataurl-resource-string-string"></a>
 ```text

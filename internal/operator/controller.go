@@ -131,9 +131,6 @@ type resourceReadiness = operatorutil.ResourceReadiness
 // Reconcile is part of the main kubernetes reconciliation loop
 func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
-	if err := r.reconcileBundledOAuthResources(ctx); err != nil {
-		return ctrl.Result{}, err
-	}
 
 	mcpServer, found, err := r.fetchMCPServer(ctx, req)
 	if err != nil {
@@ -150,6 +147,12 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 
+	if err := r.checkPublicRouteOwnership(ctx, mcpServer); err != nil {
+		r.updateStatus(ctx, mcpServer, "Error", err.Error(), resourceReadiness{})
+		logOperatorError(logger, err, "MCPServer public route conflict")
+		// The owner's deletion does not enqueue this server, so check again.
+		return ctrl.Result{RequeueAfter: time.Minute}, nil
+	}
 	if err := r.validateIngressConfig(ctx, mcpServer, logger); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -191,6 +194,11 @@ func (r *MCPServerReconciler) fetchMCPServer(ctx context.Context, req ctrl.Reque
 
 func (r *MCPServerReconciler) validateMCPServerSpec(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer, logger logr.Logger) error {
 	if _, err := mcpServer.ValidateCreate(); err != nil {
+		r.updateStatus(ctx, mcpServer, "Error", err.Error(), resourceReadiness{})
+		logOperatorError(logger, err, "Invalid MCPServer specification")
+		return err
+	}
+	if err := mcpServer.ValidateResolvedAuth(); err != nil {
 		r.updateStatus(ctx, mcpServer, "Error", err.Error(), resourceReadiness{})
 		logOperatorError(logger, err, "Invalid MCPServer specification")
 		return err
@@ -386,16 +394,21 @@ func determinePhase(readiness resourceReadiness, mcpServer *mcpv1alpha1.MCPServe
 
 func (r *MCPServerReconciler) defaultedMCPServerForReconcile(mcpServer *mcpv1alpha1.MCPServer) *mcpv1alpha1.MCPServer {
 	defaulted := mcpServer.DeepCopy()
-	defaulted.DefaultWithOptions(mcpv1alpha1.MCPServerDefaultOptions{
+	options := mcpv1alpha1.MCPServerDefaultOptions{
 		DefaultIngressHost:        r.DefaultIngressHost,
 		DefaultIngressTLS:         r.DefaultIngressTLS,
 		DefaultAnalyticsIngestURL: r.DefaultAnalyticsIngestURL,
 		DefaultOAuthIssuerURL:     r.OAuthIssuerURL,
-	})
+	}
+	defaulted.DefaultWithOptions(options)
+	defaulted.ResolveDerivedAuth(options)
 	return defaulted
 }
 
 func (r *MCPServerReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	if err := r.setupBundledOAuthResourcesController(mgr); err != nil {
+		return err
+	}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&mcpv1alpha1.MCPServer{}).
 		Owns(&appsv1.Deployment{}).
