@@ -112,7 +112,6 @@ component-level paths, and E2E scenario mapping.
 
 ## Related reading
 
-- [Comparison](comparison.md): MCP directories and other MCP gateways
 - [Getting Started](getting-started.md): install and first server
 - [Publish an MCP Server](publish-mcp-server.md): metadata, build, push, deploy
 - [Agent Adapters](agent-adapters.md): stdio and HTTP proxy shims

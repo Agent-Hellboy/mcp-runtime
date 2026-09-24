@@ -79,8 +79,8 @@ ingest and processing, dashboard/API services, and observability components.
 
 ## Comparison
 
-For how MCP Runtime relates to MCP directories and to other MCP gateways and
-platforms, see [Comparison](comparison.md).
+For how MCP Runtime relates to MCP directories and to other MCP gateways, see
+the [README](https://github.com/mcp-runtime/mcp-runtime#comparison).
 
 ## Governance, audit, and compliance
 

@@ -59,7 +59,6 @@ nav:
       - Core Concepts: concepts.md
       - Identity and Authorization: identity-and-authorization.md
   - Architecture: architecture.md
-  - Comparison: comparison.md
   - Getting Started: getting-started.md
   - Developer Guide:
       - Publish an MCP Server: publish-mcp-server.md
