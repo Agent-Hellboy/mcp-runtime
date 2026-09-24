@@ -4,6 +4,13 @@ Before you deploy anything, this module explains the five key abstractions in
 MCP Runtime and how they connect. Every term used in the CLI and docs traces back
 to one of these.
 
+!!! tip "Hold one picture in your head"
+    Think of MCP Runtime as a secure office building: the `MCPServer` is a lease,
+    the operator is facilities, the gateway is the guard at each suite's door, a
+    grant is the rule in the security handbook, and a session is today's visitor
+    badge. The full mapping is in
+    [Concepts — the whole thing, as a building](../concepts.md#the-whole-thing-as-a-building).
+
 ---
 
 ## What problem is MCP Runtime solving?
