@@ -697,47 +697,67 @@ func TestRuntimeServersObservabilityLinksOnlyForObservableServers(t *testing.T) 
 }
 
 func TestRuntimeObservabilityLinksAllowOwnedNamespace(t *testing.T) {
-	server := newRuntimeServerWithMCPServers(t, ownedTestMCPServer("demo", "user-1", "user-1"))
-	request := httptest.NewRequest(http.MethodGet, "/api/runtime/observability/links?namespace=user-1&server=demo", nil)
-	request.Header.Set("X-Forwarded-Host", "platform.example.test")
-	request.Header.Set("X-Forwarded-Proto", "https")
-	request = request.WithContext(withPrincipal(request.Context(), principal{
-		Role:      roleUser,
-		Subject:   "user-1",
-		Namespace: "user-1",
-		AllowedNamespaces: []string{
-			"user-1",
-			sharedCatalogNamespace,
-		},
-	}))
-	recorder := httptest.NewRecorder()
+	tests := []struct {
+		name       string
+		source     string
+		wantPrefix string
+	}{
+		// The UI session proxy marks its requests; browser links go back
+		// through it so the session cookie authenticates them.
+		{name: "ui session proxy", source: "ui", wantPrefix: "https://platform.example.test/api/ui/v1/runtime/observability/"},
+		// Direct callers get runtime-api paths they can call with their own
+		// API key or bearer token.
+		{name: "direct api", source: "", wantPrefix: "https://platform.example.test/api/v1/runtime/observability/"},
+		{name: "cli", source: "cli", wantPrefix: "https://platform.example.test/api/v1/runtime/observability/"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := newRuntimeServerWithMCPServers(t, ownedTestMCPServer("demo", "user-1", "user-1"))
+			request := httptest.NewRequest(http.MethodGet, "/api/v1/runtime/observability/links?namespace=user-1&server=demo", nil)
+			request.Header.Set("X-Forwarded-Host", "platform.example.test")
+			request.Header.Set("X-Forwarded-Proto", "https")
+			if tt.source != "" {
+				request.Header.Set("x-mcp-source", tt.source)
+			}
+			request = request.WithContext(withPrincipal(request.Context(), principal{
+				Role:      roleUser,
+				Subject:   "user-1",
+				Namespace: "user-1",
+				AllowedNamespaces: []string{
+					"user-1",
+					sharedCatalogNamespace,
+				},
+			}))
+			recorder := httptest.NewRecorder()
 
-	server.HandleRuntimeObservabilityLinks(recorder, request)
+			server.HandleRuntimeObservabilityLinks(recorder, request)
 
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
-	}
-	var payload observabilityLinksResponse
-	if err := json.NewDecoder(recorder.Body).Decode(&payload); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if payload.Namespace != "user-1" || payload.Server != "demo" {
-		t.Fatalf("target = %s/%s, want user-1/demo", payload.Namespace, payload.Server)
-	}
-	if len(payload.Prometheus.Queries) == 0 {
-		t.Fatalf("prometheus queries missing: %#v", payload.Prometheus)
-	}
-	if got := payload.Prometheus.Queries[0].URL; !strings.HasPrefix(got, "https://platform.example.test/api/ui/v1/runtime/observability/prometheus/query?") {
-		t.Fatalf("prometheus URL = %q", got)
-	}
-	if !payload.Grafana.Available {
-		t.Fatalf("grafana should be available through the default scoped dashboard: %#v", payload.Grafana)
-	}
-	if payload.Grafana.DirectAdminOnly {
-		t.Fatalf("default scoped grafana dashboard should not be admin-only: %#v", payload.Grafana)
-	}
-	if got := payload.Grafana.URL; !strings.HasPrefix(got, "https://platform.example.test/api/ui/v1/runtime/observability/grafana/dashboard?") {
-		t.Fatalf("grafana URL = %q", got)
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+			}
+			var payload observabilityLinksResponse
+			if err := json.NewDecoder(recorder.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if payload.Namespace != "user-1" || payload.Server != "demo" {
+				t.Fatalf("target = %s/%s, want user-1/demo", payload.Namespace, payload.Server)
+			}
+			if len(payload.Prometheus.Queries) == 0 {
+				t.Fatalf("prometheus queries missing: %#v", payload.Prometheus)
+			}
+			if got := payload.Prometheus.Queries[0].URL; !strings.HasPrefix(got, tt.wantPrefix+"prometheus/query?") {
+				t.Fatalf("prometheus URL = %q, want prefix %q", got, tt.wantPrefix+"prometheus/query?")
+			}
+			if !payload.Grafana.Available {
+				t.Fatalf("grafana should be available through the default scoped dashboard: %#v", payload.Grafana)
+			}
+			if payload.Grafana.DirectAdminOnly {
+				t.Fatalf("default scoped grafana dashboard should not be admin-only: %#v", payload.Grafana)
+			}
+			if got := payload.Grafana.URL; !strings.HasPrefix(got, tt.wantPrefix+"grafana/dashboard?") {
+				t.Fatalf("grafana URL = %q, want prefix %q", got, tt.wantPrefix+"grafana/dashboard?")
+			}
+		})
 	}
 }
 

@@ -17,6 +17,7 @@ import (
 	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
 	"mcp-runtime/pkg/controlplane"
 	"mcp-runtime/pkg/k8sclient"
+	"mcp-runtime/pkg/platformauth"
 )
 
 const (
@@ -275,7 +276,7 @@ func observabilityLinksForServerInfo(info controlplane.ServerInfo, p principal, 
 	queries := scopedPrometheusQueries(info.Namespace, info.Name)
 	queryLinks := make([]observabilityPrometheusQueryLink, 0, len(queries))
 	for _, query := range queries {
-		apiPath := observabilityPrometheusAPIPath(info.Namespace, info.Name, query.ID)
+		apiPath := observabilityPrometheusAPIPath(r, info.Namespace, info.Name, query.ID)
 		queryLinks = append(queryLinks, observabilityPrometheusQueryLink{
 			ID:          query.ID,
 			Name:        query.Name,
@@ -296,23 +297,32 @@ func observabilityLinksForServerInfo(info controlplane.ServerInfo, p principal, 
 	}
 }
 
-func observabilityPrometheusAPIPath(namespace, serverName, queryID string) string {
+func observabilityPrometheusAPIPath(r *http.Request, namespace, serverName, queryID string) string {
 	values := url.Values{}
 	values.Set("namespace", namespace)
 	values.Set("server", serverName)
 	values.Set("query_id", queryID)
-	// Links are opened by a user in the browser, where platform credentials are
-	// held in the UI's HttpOnly session cookie. Route them through the UI session
-	// proxy so it can authenticate the request to runtime-api without exposing a
-	// bearer token or requiring a second login.
-	return "/api/ui/v1/runtime/observability/prometheus/query?" + values.Encode()
+	return observabilityRuntimeAPIPrefix(r) + "/observability/prometheus/query?" + values.Encode()
 }
 
-func observabilityGrafanaDashboardAPIPath(namespace, serverName string) string {
+func observabilityGrafanaDashboardAPIPath(r *http.Request, namespace, serverName string) string {
 	values := url.Values{}
 	values.Set("namespace", namespace)
 	values.Set("server", serverName)
-	return "/api/ui/v1/runtime/observability/grafana/dashboard?" + values.Encode()
+	return observabilityRuntimeAPIPrefix(r) + "/observability/grafana/dashboard?" + values.Encode()
+}
+
+// observabilityRuntimeAPIPrefix returns the path prefix for observability
+// links. Requests forwarded by the UI session proxy (x-mcp-source: ui) come
+// from a browser, whose platform credentials live in the UI's HttpOnly session
+// cookie, so their links go back through that proxy. Direct API callers get
+// runtime-api paths they can call with their own API key or bearer token.
+// The header only selects the link form; both paths enforce the same auth.
+func observabilityRuntimeAPIPrefix(r *http.Request) string {
+	if platformauth.RequestSource(r) == "ui" {
+		return "/api/ui/v1/runtime"
+	}
+	return "/api/v1/runtime"
 }
 
 func publicAPIURL(r *http.Request, apiPath string) string {
@@ -331,7 +341,7 @@ func grafanaLinkForServer(info controlplane.ServerInfo, p principal, r *http.Req
 	if template == "" {
 		return observabilityGrafanaLink{
 			Available:       true,
-			URL:             publicAPIURL(r, observabilityGrafanaDashboardAPIPath(info.Namespace, info.Name)),
+			URL:             publicAPIURL(r, observabilityGrafanaDashboardAPIPath(r, info.Namespace, info.Name)),
 			DirectAdminOnly: false,
 		}
 	}
