@@ -2,6 +2,8 @@ package operator
 
 import (
 	"context"
+	"net/url"
+	"path"
 	"reflect"
 	"sort"
 	"strings"
@@ -20,6 +22,11 @@ const (
 	bundledOAuthDeployment = "mcp-auth-server"
 )
 
+// The list is delivered as Deployment env, so each change to the set of
+// audiences rolls the mcp-auth-server pod; adding or removing an OAuth server
+// therefore interrupts logins in flight. Moving the list to a watched
+// ConfigMap needs mcp-auth support for reloading it.
+//
 // reconcileBundledOAuthResources keeps the optional bundled authorization
 // server's accepted resource list aligned with the audiences advertised by
 // OAuth MCPServers. It runs for every MCPServer event, including a deleted
@@ -44,7 +51,7 @@ func (r *MCPServerReconciler) reconcileBundledOAuthResources(ctx context.Context
 			continue
 		}
 		audience := strings.TrimSpace(server.Spec.Auth.Audience)
-		if audience == "" {
+		if audience == "" || !r.audienceServedByPlatform(server, audience) {
 			continue
 		}
 		if _, ok := seen[audience]; ok {
@@ -99,4 +106,35 @@ func (r *MCPServerReconciler) reconcileBundledOAuthResources(ctx context.Context
 		return nil
 	}
 	return r.Patch(ctx, deployment, client.MergeFrom(before))
+}
+
+// audienceServedByPlatform reports whether an MCPServer's audience names the
+// route that server is actually served on. MCPServer objects are tenant
+// input, and the bundled authorization server mints tokens for every listed
+// resource, so an audience is only published when its path is the server's
+// own public path and its host is one the platform serves it on: the
+// server's ingress host, the operator default MCP host, or, when neither is
+// known (local test mode), the issuer's host. A server cannot enlist another
+// host, an external URL, or a different route.
+func (r *MCPServerReconciler) audienceServedByPlatform(server *mcpv1alpha1.MCPServer, audience string) bool {
+	parsed, err := url.Parse(audience)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "https" && parsed.Scheme != "http") {
+		return false
+	}
+	publicPath := strings.TrimSpace(server.EffectivePublicPath())
+	if publicPath == "" || path.Clean("/"+strings.TrimLeft(parsed.Path, "/")) != path.Clean("/"+strings.TrimLeft(publicPath, "/")) {
+		return false
+	}
+	hosts := []string{strings.TrimSpace(server.Spec.IngressHost), strings.TrimSpace(r.DefaultIngressHost)}
+	if hosts[0] == "" && hosts[1] == "" {
+		if issuer, err := url.Parse(strings.TrimSpace(r.OAuthIssuerURL)); err == nil {
+			hosts = append(hosts, issuer.Host)
+		}
+	}
+	for _, host := range hosts {
+		if host != "" && strings.EqualFold(host, parsed.Host) {
+			return true
+		}
+	}
+	return false
 }
