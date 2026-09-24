@@ -1624,10 +1624,9 @@ func NormalizePlatformDomain(raw string) string
 <a id="metadata-helpers-func-resolvemcpingresshost-string"></a>
 ```text
 func ResolveMcpIngressHost() string
-    ResolveMcpIngressHost is the public hostname for the MCP / gateway
-    (operator default): MCP_MCP_INGRESS_HOST, else mcp.<MCP_PLATFORM_DOMAIN>
-    when the platform domain is set, else empty (operator falls back to spec or
-    publicPathPrefix).
+    ResolveMcpIngressHost is the public hostname for the MCP / gateway.
+    All consumers use the same precedence: MCP_MCP_INGRESS_HOST,
+    MCP_DEFAULT_INGRESS_HOST, then mcp.<MCP_PLATFORM_DOMAIN>.
 
 ```
 
