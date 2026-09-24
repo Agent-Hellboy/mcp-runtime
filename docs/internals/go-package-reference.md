@@ -1550,18 +1550,23 @@ func ResolvePlatformIngressHost() string
 <a id="metadata-helpers-func-resolveregistryendpoint-string"></a>
 ```text
 func ResolveRegistryEndpoint() string
-    ResolveRegistryEndpoint returns the registry hostname/endpoint for pulls
-    and in-cluster skopeo (MCP_REGISTRY_ENDPOINT, then MCP_REGISTRY_HOST,
-    then registry.<MCP_PLATFORM_DOMAIN> when the platform domain is set).
+    ResolveRegistryEndpoint returns the registry endpoint used by pulls
+    and in-cluster skopeo: MCP_REGISTRY_ENDPOINT, then MCP_REGISTRY_HOST,
+    then registry.<MCP_PLATFORM_DOMAIN>, then the local default. It
+    deliberately skips MCP_REGISTRY_INGRESS_HOST, the public auth-protected
+    host, so an install that only names its ingress still gets the "set
+    MCP_REGISTRY_ENDPOINT" guidance instead of pulling through the public edge.
 
 ```
 
 <a id="metadata-helpers-func-resolveregistryhost-string"></a>
 ```text
 func ResolveRegistryHost() string
-    ResolveRegistryHost resolves the host used for default image names.
-    Precedence: MCP_REGISTRY_INGRESS_HOST, legacy MCP_REGISTRY_HOST, then
-    registry.<MCP_PLATFORM_DOMAIN>, else fallback default.
+    ResolveRegistryHost resolves the public host used for default image names,
+    ingress, and registry credentials. Precedence is MCP_REGISTRY_INGRESS_HOST,
+    MCP_REGISTRY_HOST, registry.<MCP_PLATFORM_DOMAIN>, then the local
+    development default. MCP_REGISTRY_ENDPOINT is reserved for internal pulls
+    and transfers, so it must not become a public host fallback.
 
 ```
 
