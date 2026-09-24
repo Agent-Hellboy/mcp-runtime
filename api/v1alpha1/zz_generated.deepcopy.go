@@ -192,6 +192,10 @@ func (in *MCPAccessGrantSpec) DeepCopyInto(out *MCPAccessGrantSpec) {
 		*out = make([]ToolSideEffect, len(*in))
 		copy(*out, *in)
 	}
+	if in.ExpiresAt != nil {
+		in, out := &in.ExpiresAt, &out.ExpiresAt
+		*out = (*in).DeepCopy()
+	}
 	if in.ToolRules != nil {
 		in, out := &in.ToolRules, &out.ToolRules
 		*out = make([]ToolRule, len(*in))

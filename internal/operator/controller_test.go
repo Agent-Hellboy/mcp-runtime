@@ -1241,6 +1241,7 @@ func TestRenderGatewayPolicyIncludesCrossNamespaceReferences(t *testing.T) {
 			ToolRules: []mcpv1alpha1.ToolRule{
 				{Name: "refund_invoice", Decision: mcpv1alpha1.PolicyDecisionAllow},
 			},
+			ExpiresAt: &metav1.Time{Time: time.Date(2027, time.January, 1, 0, 0, 0, 0, time.UTC)},
 		},
 	}
 	defaultedGrant := &mcpv1alpha1.MCPAccessGrant{
@@ -1318,6 +1319,9 @@ func TestRenderGatewayPolicyIncludesCrossNamespaceReferences(t *testing.T) {
 	renderedGrant, ok := grantsByName["grant-a"]
 	if !ok {
 		t.Fatalf("expected cross-namespace grant to be rendered, got %+v", doc.Grants)
+	}
+	if got := renderedGrant.ExpiresAt; got != "2027-01-01T00:00:00Z" {
+		t.Fatalf("rendered grant expiry = %q", got)
 	}
 	if renderedGrant.TeamID != "team-payments" {
 		t.Fatalf("expected grant teamID to be rendered, got %+v", renderedGrant)

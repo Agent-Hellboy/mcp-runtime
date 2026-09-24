@@ -47,6 +47,9 @@ func validateGrantRequest(req *accessGrantRequest) error {
 	if req.MaxTrust != "" && !runtimeaccess.ValidTrust(req.MaxTrust) {
 		return errors.New("maxTrust must be low, medium, or high")
 	}
+	if req.ExpiresAt != nil && !req.ExpiresAt.After(time.Now()) {
+		return errors.New("expiresAt must be in the future")
+	}
 	if len(req.AllowedSideEffects) == 0 {
 		return errors.New("at least one allowed side effect is required")
 	}
@@ -200,6 +203,7 @@ func (s *AccessService) handleRuntimeGrantApply(w http.ResponseWriter, r *http.R
 			AllowedSideEffects: req.AllowedSideEffects,
 			PolicyVersion:      runtimeaccess.DefaultPolicyVersion(req.PolicyVersion),
 			Disabled:           disabled,
+			ExpiresAt:          req.ExpiresAt,
 			ToolRules:          req.ToolRules,
 		},
 	}

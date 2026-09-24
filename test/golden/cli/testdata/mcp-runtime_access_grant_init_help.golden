@@ -5,6 +5,8 @@ Usage:
 
 Flags:
       --agent-id string           Agent subject ID
+      --expires-at string         Optional RFC3339 expiry timestamp
+      --expires-in string         Optional relative expiry duration, for example 1h or 30m
       --force                     Replace output file if it already exists
   -h, --help                      help for init
       --human-id string           Human subject ID

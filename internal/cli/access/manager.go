@@ -174,6 +174,13 @@ func buildAccessManifest(opts accessManifestInitOptions) ([]byte, error) {
 		}
 		spec["maxTrust"] = trust
 		spec["allowedSideEffects"] = sideEffects
+		expiresAt, err := normalizeSessionExpiry(opts.ExpiresAt, opts.ExpiresIn)
+		if err != nil {
+			return nil, err
+		}
+		if expiresAt != "" {
+			spec["expiresAt"] = expiresAt
+		}
 		if version := strings.TrimSpace(opts.PolicyVersion); version != "" {
 			spec["policyVersion"] = version
 		}
@@ -232,6 +239,9 @@ func normalizeSessionExpiry(expiresAt, expiresIn string) (string, error) {
 		parsed, err := time.Parse(time.RFC3339, expiresAt)
 		if err != nil {
 			return "", core.WrapWithSentinel(nil, err, fmt.Sprintf("--expires-at must be RFC3339: %v", err))
+		}
+		if !parsed.After(time.Now()) {
+			return "", core.NewWithSentinel(nil, "--expires-at must be in the future")
 		}
 		return parsed.UTC().Format(time.RFC3339), nil
 	}

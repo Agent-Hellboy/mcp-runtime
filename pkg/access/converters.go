@@ -107,6 +107,7 @@ type GrantSummary struct {
 	Subject            SubjectRef       `json:"subject"`
 	MaxTrust           TrustLevel       `json:"maxTrust"`
 	AllowedSideEffects []ToolSideEffect `json:"allowedSideEffects,omitempty"`
+	ExpiresAt          *metav1.Time     `json:"expiresAt,omitempty"`
 	Disabled           bool             `json:"disabled"`
 	Age                string           `json:"age"`
 }
@@ -120,6 +121,7 @@ func ToGrantSummary(grant MCPAccessGrant) GrantSummary {
 		Subject:            grant.Spec.Subject,
 		MaxTrust:           grant.Spec.MaxTrust,
 		AllowedSideEffects: append([]ToolSideEffect(nil), grant.Spec.AllowedSideEffects...),
+		ExpiresAt:          grant.Spec.ExpiresAt,
 		Disabled:           grant.Spec.Disabled,
 		Age:                grant.CreationTimestamp.Format("2006-01-02T15:04:05Z"),
 	}

@@ -123,6 +123,95 @@ func TestAdapterSessionIssuesNewSessionFromMatchingGrant(t *testing.T) {
 	}
 }
 
+func TestAdapterSessionLifetimeCannotOutliveGrant(t *testing.T) {
+	grantExpiry := time.Now().UTC().Add(30 * time.Minute)
+	grant := mcpv1alpha1.MCPAccessGrant{
+		ObjectMeta: metav1.ObjectMeta{Name: "debug-window", Namespace: "mcp-team-acme"},
+		Spec: mcpv1alpha1.MCPAccessGrantSpec{
+			ServerRef: mcpv1alpha1.ServerReference{Name: "demo", Namespace: "mcp-team-acme"},
+			Subject:   mcpv1alpha1.SubjectRef{AgentID: "ops-agent", TeamID: "team-acme"},
+			MaxTrust:  mcpv1alpha1.TrustLevel("low"),
+			ExpiresAt: &metav1.Time{Time: grantExpiry},
+		},
+	}
+	fx := newAdapterTestFixture(t, grant)
+	req := adapterRequest(t, adapterSessionRequest{ServerName: "demo", Namespace: "mcp-team-acme", AgentID: "ops-agent", RequestedTTL: "2h"})
+	req = req.WithContext(withPrincipal(req.Context(), fx.principal))
+	w := httptest.NewRecorder()
+	fx.server.Access().HandleAdapterSession(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	got := decodeAdapterResponse(t, w)
+	if got.ExpiresAt.After(grantExpiry) {
+		t.Fatalf("session expiry %s extends beyond grant expiry %s", got.ExpiresAt, grantExpiry)
+	}
+	if got.ExpiresAt.Before(grantExpiry.Add(-time.Second)) {
+		t.Fatalf("session expiry %s should be capped at grant expiry %s", got.ExpiresAt, grantExpiry)
+	}
+}
+
+func TestAdapterSessionRefreshCapsExistingSessionWhenGrantExpiryIsShortened(t *testing.T) {
+	grantExpiry := time.Now().UTC().Add(30 * time.Minute)
+	grant := mcpv1alpha1.MCPAccessGrant{
+		ObjectMeta: metav1.ObjectMeta{Name: "debug-window", Namespace: "mcp-team-acme"},
+		Spec: mcpv1alpha1.MCPAccessGrantSpec{
+			ServerRef: mcpv1alpha1.ServerReference{Name: "demo", Namespace: "mcp-team-acme"},
+			Subject:   mcpv1alpha1.SubjectRef{AgentID: "ops-agent", TeamID: "team-acme"},
+			MaxTrust:  mcpv1alpha1.TrustLevel("low"),
+			ExpiresAt: &metav1.Time{Time: grantExpiry},
+		},
+	}
+	fx := newAdapterTestFixture(t, grant)
+	sessionName := adapterSessionName("user-123", "ops-agent", "team-acme", "demo")
+	_, err := fx.server.accessMgr.ApplySession(t.Context(), &sentinelaccess.MCPAgentSession{
+		ObjectMeta: metav1.ObjectMeta{Name: sessionName, Namespace: "mcp-team-acme"},
+		Spec: sentinelaccess.MCPAgentSessionSpec{
+			ServerRef:      sentinelaccess.ServerReference{Name: "demo", Namespace: "mcp-team-acme"},
+			Subject:        sentinelaccess.SubjectRef{HumanID: "user-123", AgentID: "ops-agent", TeamID: "team-acme"},
+			ConsentedTrust: sentinelaccess.TrustLow,
+			PolicyVersion:  "v1",
+			ExpiresAt:      &metav1.Time{Time: time.Now().UTC().Add(time.Hour)},
+		},
+	})
+	if err != nil {
+		t.Fatalf("seed longer-lived adapter session: %v", err)
+	}
+	req := adapterRequest(t, adapterSessionRequest{ServerName: "demo", Namespace: "mcp-team-acme", AgentID: "ops-agent", RequestedTTL: "2h"})
+	req = req.WithContext(withPrincipal(req.Context(), fx.principal))
+	w := httptest.NewRecorder()
+	fx.server.Access().HandleAdapterSession(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	got := decodeAdapterResponse(t, w)
+	if got.Reused {
+		t.Fatal("reused = true for a session that outlived the shortened grant")
+	}
+	if got.ExpiresAt.After(grantExpiry) {
+		t.Fatalf("session expiry %s extends beyond grant expiry %s", got.ExpiresAt, grantExpiry)
+	}
+}
+
+func TestAdapterSessionCannotRefreshExpiredGrant(t *testing.T) {
+	grant := mcpv1alpha1.MCPAccessGrant{
+		ObjectMeta: metav1.ObjectMeta{Name: "expired-debug", Namespace: "mcp-team-acme"},
+		Spec: mcpv1alpha1.MCPAccessGrantSpec{
+			ServerRef: mcpv1alpha1.ServerReference{Name: "demo", Namespace: "mcp-team-acme"},
+			Subject:   mcpv1alpha1.SubjectRef{AgentID: "ops-agent", TeamID: "team-acme"},
+			ExpiresAt: &metav1.Time{Time: time.Now().Add(-time.Second)},
+		},
+	}
+	fx := newAdapterTestFixture(t, grant)
+	req := adapterRequest(t, adapterSessionRequest{ServerName: "demo", Namespace: "mcp-team-acme", AgentID: "ops-agent"})
+	req = req.WithContext(withPrincipal(req.Context(), fx.principal))
+	w := httptest.NewRecorder()
+	fx.server.Access().HandleAdapterSession(w, req)
+	if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "no enabled MCPAccessGrant") {
+		t.Fatalf("status/body = %d/%s, want expired grant to block session refresh", w.Code, w.Body.String())
+	}
+}
+
 func TestAdapterSessionIssuesCrossTeamSessionFromGrantedTeam(t *testing.T) {
 	grant := mcpv1alpha1.MCPAccessGrant{
 		ObjectMeta: metav1.ObjectMeta{Name: "globex-to-acme", Namespace: "mcp-team-acme"},

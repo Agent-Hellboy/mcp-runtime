@@ -90,6 +90,20 @@ func TestAuthorizeDefaultDecision(t *testing.T) {
 	}
 }
 
+func TestAuthorizeExpiredGrantIsIgnored(t *testing.T) {
+	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+	policy := testPolicyWithGrant()
+	policy.Grants[0].ExpiresAt = now.Format(time.RFC3339)
+	decision := Authorize(policy, Request{
+		Identity:  Identity{HumanID: "human-1", AgentID: "agent-1"},
+		RPCMethod: "tools/call",
+		ToolName:  "upper",
+	}, now)
+	if decision.Allowed || decision.Reason != "tool_not_granted" {
+		t.Fatalf("decision = %#v, want expired grant denied as tool_not_granted", decision)
+	}
+}
+
 func TestAuthorizeOptionalSessionDoesNotApplyWithoutSessionHeader(t *testing.T) {
 	t.Parallel()
 

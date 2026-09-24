@@ -134,7 +134,7 @@ func Authorize(policy *Document, request Request, now time.Time) Decision {
 		return denied
 	}
 
-	grant := bestGrantFor(matchingGrants, request.ToolName, requiredTrust, requiredSideEffect, policyVersionOrDefault(policy, ""))
+	grant := bestGrantFor(matchingGrants, request.ToolName, requiredTrust, requiredSideEffect, policyVersionOrDefault(policy, ""), now)
 	if grant.deny != nil {
 		denied := *grant.deny
 		denied.MatchedSession = matchedSession
@@ -245,7 +245,7 @@ type grantSelection struct {
 	deny              *Decision
 }
 
-func bestGrantFor(grants []Grant, toolName ToolName, requiredTrust, requiredSideEffect, policyVersion string) grantSelection {
+func bestGrantFor(grants []Grant, toolName ToolName, requiredTrust, requiredSideEffect, policyVersion string, now time.Time) grantSelection {
 	selection := grantSelection{
 		requiredTrustRank: TrustRank(requiredTrust),
 		requiredTrust:     requiredTrust,
@@ -265,7 +265,7 @@ func bestGrantFor(grants []Grant, toolName ToolName, requiredTrust, requiredSide
 		return left < right
 	})
 	for _, grant := range sorted {
-		if grant.Disabled {
+		if grant.Disabled || isExpiredAt(grant.ExpiresAt, now) {
 			continue
 		}
 		adminRank := TrustRank(grant.MaxTrust)
@@ -435,7 +435,7 @@ func isExpiredAt(value string, now time.Time) bool {
 	if err != nil {
 		return true
 	}
-	return now.After(expiresAt)
+	return !now.Before(expiresAt)
 }
 
 func minInt(a, b int) int {

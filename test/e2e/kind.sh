@@ -4790,6 +4790,41 @@ EOF
   log_line policy "re-enabling access grant via CLI"
   ./bin/mcp-runtime access --use-kube grant enable "${SERVER_NAME}-grant" --namespace mcp-servers
   wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 200
+
+  log_line policy "expiring access grant via manifest update; gateway should deny its tools"
+  EXPIRED_GRANT_AT="$(python3 <<'PY'
+from datetime import datetime, timedelta, timezone
+print((datetime.now(timezone.utc) - timedelta(hours=1)).replace(microsecond=0).isoformat().replace("+00:00", "Z"))
+PY
+)"
+  cat >"${WORKDIR}/access-grant-expired.yaml" <<EOF
+apiVersion: mcpruntime.org/v1alpha1
+kind: MCPAccessGrant
+metadata:
+  name: ${SERVER_NAME}-grant
+  namespace: mcp-servers
+spec:
+  serverRef:
+    name: ${SERVER_NAME}
+  subject:
+    humanID: ${HUMAN_ID}
+    agentID: ${AGENT_ID}
+  maxTrust: low
+  allowedSideEffects: [read]
+  policyVersion: v1
+  expiresAt: ${EXPIRED_GRANT_AT}
+  toolRules:
+    - name: aaa-ping
+      decision: allow
+      requiredTrust: low
+EOF
+  (cd "${WORKDIR}" && "${PROJECT_ROOT}/bin/mcp-runtime" access --use-kube grant apply --file access-grant-expired.yaml)
+  wait_for_policy_text "\"expires_at\": \"${EXPIRED_GRANT_AT}\""
+  wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 403 "tool_not_granted"
+
+  log_line policy "restoring non-expired access grant"
+  (cd "${WORKDIR}" && "${PROJECT_ROOT}/bin/mcp-runtime" access --use-kube grant apply --file access-grant.yaml)
+  wait_for_mcp_tool_result "${MCP_SESSION_URL}" "aaa-ping" '{}' 200
 fi
 
 if scenario_selected "governance" || scenario_selected "adapter-proxy"; then

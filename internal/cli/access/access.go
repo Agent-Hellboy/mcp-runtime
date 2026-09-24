@@ -78,6 +78,8 @@ func newGrantInitCmd(mgr *AccessManager) *cobra.Command {
 	cmd.Flags().StringArrayVar(&opts.SideEffects, "side-effect", []string{"read"}, "Allowed side effect class: read, write, or destructive; repeat for multiple")
 	cmd.Flags().StringArrayVar(&opts.Tools, "tool", nil, "Tool name to allow; repeat for multiple tools")
 	cmd.Flags().StringArrayVar(&opts.ToolRules, "tool-rule", nil, "Tool rule as name:allow|deny:low|medium|high; repeat for mixed trust or deny rules")
+	cmd.Flags().StringVar(&opts.ExpiresAt, "expires-at", "", "Optional RFC3339 expiry timestamp")
+	cmd.Flags().StringVar(&opts.ExpiresIn, "expires-in", "", "Optional relative expiry duration, for example 1h or 30m")
 	cmd.Flags().StringVar(&opts.Output, "output", "grant.yaml", "Output manifest path")
 	return cmd
 }

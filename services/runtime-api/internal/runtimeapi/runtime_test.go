@@ -95,6 +95,19 @@ func TestValidateGrantRequestRequiresAllowedSideEffect(t *testing.T) {
 	}
 }
 
+func TestValidateGrantRequestRejectsExpiredAtCreation(t *testing.T) {
+	req := &accessGrantRequest{
+		Name: "grant-a",
+		ServerRef: sentinelaccess.ServerReference{Name: "demo"},
+		Subject: sentinelaccess.SubjectRef{TeamID: "team-acme"},
+		AllowedSideEffects: []sentinelaccess.ToolSideEffect{"read"},
+		ExpiresAt: &metav1.Time{Time: time.Now().Add(-time.Second)},
+	}
+	if err := validateGrantRequest(req); err == nil || !strings.Contains(err.Error(), "expiresAt must be in the future") {
+		t.Fatalf("validateGrantRequest error = %v, want expired grant rejection", err)
+	}
+}
+
 func TestValidateGrantRequestRejectsInvalidAllowedSideEffect(t *testing.T) {
 	req := &accessGrantRequest{
 		Name:               "grant-a",

@@ -464,6 +464,7 @@ mcp-runtime access grant init workspace-to-globex \
   --namespace mcp-team-acme \
   --team-id <globex-team-uuid> \
   --agent-id cursor \
+  --expires-in 4h \
   --tool echo \
   --tool add \
   --output grant-cross.yaml
@@ -483,6 +484,11 @@ MCP_PLATFORM_API_PROFILE=admin \
 ```
 
 See [Multi-team isolation](multi-team.md).
+
+The grant expiry is the maximum lifetime of the delegation. Any session issued
+from it expires no later than that time, and `--auto-refresh` cannot renew a
+session after the grant expires. Use `--expires-at <RFC3339 timestamp>` when a
+fixed deadline is more appropriate than a duration.
 
 ## adapter
 

@@ -118,6 +118,7 @@ type Grant struct {
 	AllowedSideEffects []string     `json:"allowed_side_effects,omitempty"`
 	PolicyVersion      string       `json:"policy_version,omitempty"`
 	Disabled           bool         `json:"disabled,omitempty"`
+	ExpiresAt          string       `json:"expires_at,omitempty"`
 	ToolRules          []ToolAccess `json:"tool_rules,omitempty"`
 }
 
