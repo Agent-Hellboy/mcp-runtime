@@ -75,6 +75,10 @@
   object-fit: contain;
 }
 
+.brand-logo-dark {
+  filter: brightness(0) invert(1);
+}
+
 .primary-nav {
   min-width: 0;
 }
