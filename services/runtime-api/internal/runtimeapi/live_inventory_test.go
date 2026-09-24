@@ -29,7 +29,7 @@ func TestMCPLiveInventoryProberFetchesLists(t *testing.T) {
 		if r.Header.Get(mcpProtocolHeader) == liveInventoryProtocolVersion {
 			sawProtocol.Store(true)
 		}
-		if r.Header.Get("X-MCP-Agent-ID") == "mcp-runtime-live-inventory" {
+		if r.Header.Get("X-Custom-Agent") == "mcp-runtime-live-inventory" && r.Header.Get("X-Custom-Human") == "mcp-runtime-api" {
 			sawIdentity.Store(true)
 		}
 		var req struct {
@@ -114,7 +114,10 @@ func TestMCPLiveInventoryProberFetchesLists(t *testing.T) {
 			return time.Date(2026, 5, 20, 1, 2, 3, 0, time.UTC)
 		},
 	}
-	got, err := prober.probe(context.Background(), controlplane.ServerInfo{Name: "demo", Namespace: "mcp-servers"})
+	got, err := prober.probe(context.Background(), controlplane.ServerInfo{
+		Name: "demo", Namespace: "mcp-servers",
+		HumanIDHeader: "X-Custom-Human", AgentIDHeader: "X-Custom-Agent",
+	})
 	if err != nil {
 		t.Fatalf("probe: %v", err)
 	}

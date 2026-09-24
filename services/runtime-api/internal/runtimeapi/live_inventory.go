@@ -256,7 +256,10 @@ type mcpLiveInventoryProber struct {
 }
 
 func (p *mcpLiveInventoryProber) probe(ctx context.Context, server controlplane.ServerInfo) (*liveInventory, error) {
-	useHeaders := !serverUsesMTLSAuth(server)
+	humanIDHeader, agentIDHeader := "", ""
+	if !serverUsesMTLSAuth(server) {
+		humanIDHeader, agentIDHeader = server.HumanIDHeader, server.AgentIDHeader
+	}
 	endpoint, err := p.endpoint(server)
 	if err != nil {
 		return nil, err
@@ -278,7 +281,7 @@ func (p *mcpLiveInventoryProber) probe(ctx context.Context, server controlplane.
 
 	session := ""
 	protocol := liveInventoryProtocolVersion
-	initResult, initSession, err := p.call(ctx, client, endpoint, protocol, session, useHeaders, 1, "initialize", map[string]any{
+	initResult, initSession, err := p.call(ctx, client, endpoint, protocol, session, humanIDHeader, agentIDHeader, 1, "initialize", map[string]any{
 		"protocolVersion": liveInventoryProtocolVersion,
 		"capabilities":    map[string]any{},
 		"clientInfo": map[string]string{
@@ -295,7 +298,7 @@ func (p *mcpLiveInventoryProber) probe(ctx context.Context, server controlplane.
 	capabilities := capabilitiesFromInitializeResult(initResult)
 	session = initSession
 
-	if _, nextSession, err := p.notify(ctx, client, endpoint, protocol, session, useHeaders, "notifications/initialized", map[string]any{}); err == nil && nextSession != "" {
+	if _, nextSession, err := p.notify(ctx, client, endpoint, protocol, session, humanIDHeader, agentIDHeader, "notifications/initialized", map[string]any{}); err == nil && nextSession != "" {
 		session = nextSession
 	}
 
@@ -304,7 +307,7 @@ func (p *mcpLiveInventoryProber) probe(ctx context.Context, server controlplane.
 	var resourcesRaw json.RawMessage
 	var nextSession string
 	if capabilities.tools {
-		toolsRaw, nextSession, err = p.call(ctx, client, endpoint, protocol, session, useHeaders, 2, "tools/list", nil)
+		toolsRaw, nextSession, err = p.call(ctx, client, endpoint, protocol, session, humanIDHeader, agentIDHeader, 2, "tools/list", nil)
 		if err != nil {
 			return nil, fmt.Errorf("tools/list: %w", err)
 		}
@@ -313,13 +316,13 @@ func (p *mcpLiveInventoryProber) probe(ctx context.Context, server controlplane.
 		}
 	}
 	if capabilities.prompts {
-		promptsRaw, nextSession, err = p.call(ctx, client, endpoint, protocol, session, useHeaders, 3, "prompts/list", nil)
+		promptsRaw, nextSession, err = p.call(ctx, client, endpoint, protocol, session, humanIDHeader, agentIDHeader, 3, "prompts/list", nil)
 		if err == nil && nextSession != "" {
 			session = nextSession
 		}
 	}
 	if capabilities.resources {
-		resourcesRaw, _, err = p.call(ctx, client, endpoint, protocol, session, useHeaders, 4, "resources/list", nil)
+		resourcesRaw, _, err = p.call(ctx, client, endpoint, protocol, session, humanIDHeader, agentIDHeader, 4, "resources/list", nil)
 		if err != nil {
 			resourcesRaw = nil
 		}
@@ -406,16 +409,16 @@ func (p *mcpLiveInventoryProber) currentTime() time.Time {
 	return time.Now()
 }
 
-func (p *mcpLiveInventoryProber) notify(ctx context.Context, client *http.Client, endpoint, protocol, session string, useHeaderIdentity bool, method string, params any) (json.RawMessage, string, error) {
-	return p.rpc(ctx, client, endpoint, protocol, session, useHeaderIdentity, nil, method, params)
+func (p *mcpLiveInventoryProber) notify(ctx context.Context, client *http.Client, endpoint, protocol, session, humanIDHeader, agentIDHeader string, method string, params any) (json.RawMessage, string, error) {
+	return p.rpc(ctx, client, endpoint, protocol, session, humanIDHeader, agentIDHeader, nil, method, params)
 }
 
-func (p *mcpLiveInventoryProber) call(ctx context.Context, client *http.Client, endpoint, protocol, session string, useHeaderIdentity bool, id int, method string, params any) (json.RawMessage, string, error) {
+func (p *mcpLiveInventoryProber) call(ctx context.Context, client *http.Client, endpoint, protocol, session, humanIDHeader, agentIDHeader string, id int, method string, params any) (json.RawMessage, string, error) {
 	rawID, _ := json.Marshal(id)
-	return p.rpc(ctx, client, endpoint, protocol, session, useHeaderIdentity, rawID, method, params)
+	return p.rpc(ctx, client, endpoint, protocol, session, humanIDHeader, agentIDHeader, rawID, method, params)
 }
 
-func (p *mcpLiveInventoryProber) rpc(ctx context.Context, client *http.Client, endpoint, protocol, session string, useHeaderIdentity bool, id json.RawMessage, method string, params any) (json.RawMessage, string, error) {
+func (p *mcpLiveInventoryProber) rpc(ctx context.Context, client *http.Client, endpoint, protocol, session, humanIDHeader, agentIDHeader string, id json.RawMessage, method string, params any) (json.RawMessage, string, error) {
 	payload := map[string]any{
 		"jsonrpc": "2.0",
 		"method":  method,
@@ -437,9 +440,11 @@ func (p *mcpLiveInventoryProber) rpc(ctx context.Context, client *http.Client, e
 	req.Header.Set("content-type", "application/json")
 	req.Header.Set("accept", "application/json, text/event-stream")
 	req.Header.Set(mcpProtocolHeader, protocol)
-	if useHeaderIdentity {
-		req.Header.Set("X-MCP-Human-ID", "mcp-runtime-api")
-		req.Header.Set("X-MCP-Agent-ID", "mcp-runtime-live-inventory")
+	if humanIDHeader != "" {
+		req.Header.Set(humanIDHeader, "mcp-runtime-api")
+	}
+	if agentIDHeader != "" {
+		req.Header.Set(agentIDHeader, "mcp-runtime-live-inventory")
 	}
 	if session != "" {
 		req.Header.Set(mcpSessionHeader, session)

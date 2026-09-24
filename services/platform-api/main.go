@@ -71,11 +71,17 @@ func main() {
 	oidcIssuer := strings.TrimSpace(os.Getenv("OIDC_ISSUER"))
 	oidcAudience := strings.TrimSpace(os.Getenv("OIDC_AUDIENCE"))
 	jwksURL := strings.TrimSpace(os.Getenv("OIDC_JWKS_URL"))
-	if (oidcIssuer != "" || oidcAudience != "") && jwksURL == "" {
-		log.Fatal("OIDC_JWKS_URL is required when OIDC_ISSUER or OIDC_AUDIENCE is configured")
-	}
-	if jwksURL != "" && (oidcIssuer == "" || oidcAudience == "") {
-		log.Fatal("OIDC_ISSUER and OIDC_AUDIENCE are required when OIDC_JWKS_URL is configured")
+	if oidcIssuer != "" || oidcAudience != "" || jwksURL != "" {
+		if oidcIssuer == "" || oidcAudience == "" {
+			log.Fatal("OIDC_ISSUER and OIDC_AUDIENCE are both required when OIDC authentication is configured")
+		}
+		if jwksURL == "" {
+			var err error
+			jwksURL, err = serviceutil.DiscoverOIDCJWKSURL(context.Background(), oidcIssuer)
+			if err != nil {
+				log.Fatalf("OIDC_JWKS_URL is not configured and issuer discovery failed: %v", err)
+			}
+		}
 	}
 	var jwks *keyfunc.JWKS
 	if jwksURL != "" {

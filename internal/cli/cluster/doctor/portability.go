@@ -159,10 +159,10 @@ func checkSentinelOIDCConfiguration(kubectl core.KubectlRunner) DoctorCheck {
 	if strings.EqualFold(strings.TrimSpace(config.Data["MCP_RUNTIME_TEST_MODE"]), "1") || strings.EqualFold(strings.TrimSpace(config.Data["MCP_RUNTIME_TEST_MODE"]), "true") {
 		return DoctorCheck{Name: "sentinel OIDC configuration", OK: true, Detail: "MCP Runtime test mode is enabled; production OIDC configuration is not required"}
 	}
-	google, issuer, audience, jwks := strings.TrimSpace(config.Data["GOOGLE_CLIENT_ID"]), strings.TrimSpace(config.Data["OIDC_ISSUER"]), strings.TrimSpace(config.Data["OIDC_AUDIENCE"]), strings.TrimSpace(config.Data["OIDC_JWKS_URL"])
+	google, issuer, audience := strings.TrimSpace(config.Data["GOOGLE_CLIENT_ID"]), strings.TrimSpace(config.Data["OIDC_ISSUER"]), strings.TrimSpace(config.Data["OIDC_AUDIENCE"])
 	if mode == "public" || mode == "tenant" {
-		if google == "" && (issuer == "" || audience == "" || jwks == "") {
-			return DoctorCheck{Name: "sentinel OIDC configuration", OK: false, Detail: fmt.Sprintf("platform mode %q has incomplete Google/OIDC configuration", mode), Remedy: "configure GOOGLE_CLIENT_ID or all of OIDC_ISSUER, OIDC_AUDIENCE, and OIDC_JWKS_URL"}
+		if google == "" && (issuer == "" || audience == "") {
+			return DoctorCheck{Name: "sentinel OIDC configuration", OK: false, Detail: fmt.Sprintf("platform mode %q has incomplete Google/OIDC configuration", mode), Remedy: "configure GOOGLE_CLIENT_ID or both OIDC_ISSUER and OIDC_AUDIENCE; set OIDC_JWKS_URL only when issuer discovery is unavailable"}
 		}
 	}
 	return DoctorCheck{Name: "sentinel OIDC configuration", OK: true, Detail: fmt.Sprintf("platform mode %q has a complete configured login contract", mode)}
