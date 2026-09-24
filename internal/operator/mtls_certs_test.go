@@ -32,7 +32,8 @@ func TestTraefikProxySPIFFEID(t *testing.T) {
 	if got := r.traefikProxySPIFFEID(mtlsServer()); got != "spiffe://example.org/ns/traefik/sa/traefik" {
 		t.Fatalf("traefikProxySPIFFEID = %q", got)
 	}
-	if got := (MCPServerReconciler{}).traefikProxySPIFFEID(mtlsServer()); got != "" {
+	emptyReconciler := MCPServerReconciler{}
+	if got := emptyReconciler.traefikProxySPIFFEID(mtlsServer()); got != "" {
 		t.Fatalf("traefikProxySPIFFEID without trust domain = %q, want empty", got)
 	}
 }
