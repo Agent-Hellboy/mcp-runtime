@@ -2,7 +2,6 @@ package operator
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
