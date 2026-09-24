@@ -18,7 +18,7 @@ permissions:
 jobs:
   release-build:
     name: Cross-platform release builds
-    uses: ./.github/workflows/release.yaml
+    uses: ./.github/workflows/release-build.yaml
     permissions:
       contents: read
 

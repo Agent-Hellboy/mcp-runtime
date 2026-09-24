@@ -1,0 +1,94 @@
+name: Release Build
+
+on:
+  workflow_call: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-release-build
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  BINARY_NAME: mcp-runtime
+
+jobs:
+  build:
+    name: Build ${{ matrix.os }}-${{ matrix.arch }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+          - os: linux
+            arch: arm64
+          - os: darwin
+            arch: amd64
+          - os: darwin
+            arch: arm64
+          - os: windows
+            arch: amd64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set release metadata
+        shell: bash
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            version="${GITHUB_REF_NAME}"
+          else
+            version="dev"
+          fi
+          {
+            echo "VERSION=${version}"
+            echo "COMMIT=${GITHUB_SHA}"
+            echo "BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } >> "${GITHUB_ENV}"
+
+      - name: Build binary
+        shell: bash
+        env:
+          CGO_ENABLED: 0
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+
+          if [ "${GOOS}" = "windows" ]; then
+            output="dist/${BINARY_NAME}-${GOOS}-${GOARCH}.exe"
+          else
+            output="dist/${BINARY_NAME}-${GOOS}-${GOARCH}"
+          fi
+
+          go build \
+            -trimpath \
+            -buildvcs=false \
+            -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${BUILD_DATE}" \
+            -o "${output}" \
+            ./cmd/mcp-runtime
+
+      - name: Smoke test Linux amd64 binary
+        if: matrix.os == 'linux' && matrix.arch == 'amd64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./dist/${BINARY_NAME}-linux-amd64 --version | grep -F "${VERSION}"
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mcp-runtime-${{ matrix.os }}-${{ matrix.arch }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 2
