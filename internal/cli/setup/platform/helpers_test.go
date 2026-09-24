@@ -3,6 +3,7 @@ package platform
 import (
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -3260,7 +3261,7 @@ func TestPatchTraefikDeploymentForFileMiddlewareSupportTreatsMountPathAsIdempote
 			cmd := &core.MockCommand{Args: spec.Args}
 			switch {
 			case commandHasArgs(spec, "get", "deployment", "traefik", "-n", "traefik", "-o", "json"):
-				cmd.OutputData = []byte(`{"spec":{"template":{"spec":{"containers":[{"name":"traefik","args":["--providers.file.filename=/etc/traefik/dynamic/dynamic.yml","--providers.file.watch=true","--experimental.localplugins.pii-redactor.modulename=github.com/Agent-Hellboy/mcp-runtime/traefik-plugins/pii-redactor"],"volumeMounts":[{"name":"traefik-dynamic","mountPath":"/etc/traefik/dynamic"},{"name":"traefik-plugin-source","mountPath":"/plugins-local/src/github.com/Agent-Hellboy/mcp-runtime/traefik-plugins/pii-redactor"},{"name":"traefik-plugin-storage","mountPath":"/plugins-storage"}]}],"volumes":[{"name":"traefik-dynamic"},{"name":"traefik-plugin-source"},{"name":"traefik-plugin-storage"}]}}}}`)
+				cmd.OutputData = []byte(`{"spec":{"template":{"spec":{"containers":[{"name":"traefik","args":["--providers.file.filename=/etc/traefik/dynamic/dynamic.yml","--providers.file.watch=true","--experimental.localplugins.pii-redactor.modulename=github.com/Agent-Hellboy/mcp-runtime/traefik-plugins/pii-redactor","--experimental.localPlugins.spiffe-identity.moduleName=github.com/Agent-Hellboy/mcp-runtime/traefik-plugins/spiffe-identity"],"volumeMounts":[{"name":"traefik-dynamic","mountPath":"/etc/traefik/dynamic"},{"name":"traefik-plugin-source","mountPath":"/plugins-local/src/github.com/Agent-Hellboy/mcp-runtime/traefik-plugins/pii-redactor"},{"name":"spiffe-identity-plugin","mountPath":"/plugins-local/src/github.com/Agent-Hellboy/mcp-runtime/traefik-plugins/spiffe-identity"},{"name":"traefik-plugin-storage","mountPath":"/plugins-storage"}]}],"volumes":[{"name":"traefik-dynamic"},{"name":"traefik-plugin-source"},{"name":"spiffe-identity-plugin"},{"name":"traefik-plugin-storage"}]}}}}`)
 			case commandHasArgs(spec, "patch", "deployment", "traefik", "-n", "traefik", "--type=json"):
 				t.Fatalf("did not expect duplicate patch when middleware mount paths already exist: %v", spec.Args)
 			}
@@ -3733,5 +3734,34 @@ func TestKafkaStatefulSetNeedsKRaftRecreateDetectsLegacyLayout(t *testing.T) {
 	}
 	if kafkaStatefulSetNeedsKRaftRecreate(current) {
 		t.Fatal("did not expect current KRaft layout to require recreate")
+	}
+}
+
+// An external Traefik (k3s kube-system) patched by an older setup has only the
+// pii-redactor plugin; rerunning setup must add spiffe-identity, or the OAuth
+// IngressRoutes that reference it are dropped by Traefik.
+func TestTraefikMiddlewarePatchAddsSpiffeIdentityToExistingInstall(t *testing.T) {
+	var spec traefikDeploymentSpec
+	raw := `{"spec":{"template":{"spec":{"containers":[{"name":"traefik","args":["--providers.file.filename=/etc/traefik/dynamic/dynamic.yml","--providers.file.watch=true","--experimental.localplugins.pii-redactor.modulename=github.com/Agent-Hellboy/mcp-runtime/traefik-plugins/pii-redactor"],"volumeMounts":[{"name":"traefik-dynamic","mountPath":"/etc/traefik/dynamic"},{"name":"traefik-plugin-source","mountPath":"/plugins-local/src/github.com/Agent-Hellboy/mcp-runtime/traefik-plugins/pii-redactor"},{"name":"traefik-plugins","mountPath":"/plugins-storage"}]}],"volumes":[{"name":"traefik-dynamic"},{"name":"traefik-plugin-source"},{"name":"traefik-plugins"}]}}}}`
+	if err := json.Unmarshal([]byte(raw), &spec); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	patch, err := traefikMiddlewarePatch(spec, "kube-system")
+	if err != nil {
+		t.Fatalf("traefikMiddlewarePatch: %v", err)
+	}
+	var ops []jsonPatchOperation
+	if err := json.Unmarshal(patch, &ops); err != nil {
+		t.Fatalf("unmarshal patch: %v", err)
+	}
+	if len(ops) != 3 {
+		t.Fatalf("ops = %+v, want only the spiffe-identity arg, mount, and volume", ops)
+	}
+	if arg, _ := ops[0].Value.(string); !strings.Contains(arg, "localplugins.spiffe-identity.modulename=") {
+		t.Fatalf("first op = %+v, want the spiffe-identity plugin arg", ops[0])
+	}
+	volume, _ := ops[2].Value.(map[string]any)
+	if configMap, _ := volume["configMap"].(map[string]any); configMap["name"] != "traefik-plugin-spiffe-identity" {
+		t.Fatalf("volume op = %+v, want the spiffe-identity plugin ConfigMap", ops[2])
 	}
 }

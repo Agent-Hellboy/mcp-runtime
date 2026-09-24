@@ -28,8 +28,10 @@ func ensureRepoManagedTraefikMiddlewareResources(kubectl core.KubectlRunner, log
 		if err := applyTraefikSupportManifest(kubectl, "config/ingress/overlays/http/dynamic-config.yaml", namespace); err != nil {
 			return err
 		}
-		if err := applyTraefikSupportManifest(kubectl, "config/ingress/overlays/http/plugin-source.yaml", namespace); err != nil {
-			return err
+		for _, plugin := range localTraefikPlugins {
+			if err := applyTraefikSupportManifest(kubectl, plugin.manifest, namespace); err != nil {
+				return err
+			}
 		}
 		if err := patchTraefikDeploymentForFileMiddlewareSupport(kubectl, namespace); err != nil {
 			return err
@@ -50,8 +52,10 @@ func ensureRepoManagedTraefikMiddlewareResourcesClientGo(logger *zap.Logger) err
 		if err := applyTraefikSupportManifestClientGo("config/ingress/overlays/http/dynamic-config.yaml", namespace); err != nil {
 			return err
 		}
-		if err := applyTraefikSupportManifestClientGo("config/ingress/overlays/http/plugin-source.yaml", namespace); err != nil {
-			return err
+		for _, plugin := range localTraefikPlugins {
+			if err := applyTraefikSupportManifestClientGo(plugin.manifest, namespace); err != nil {
+				return err
+			}
 		}
 		if err := patchTraefikDeploymentForFileMiddlewareSupportClientGo(namespace); err != nil {
 			return err
@@ -150,100 +154,9 @@ func patchTraefikDeploymentForFileMiddlewareSupport(kubectl core.KubectlRunner, 
 	if err != nil {
 		return err
 	}
-	if len(spec.Spec.Template.Spec.Containers) == 0 {
-		return core.NewWithSentinel(core.ErrInstallIngressControllerFailed, fmt.Sprintf("traefik deployment in namespace %s has no containers", namespace))
-	}
-	containerIndex := -1
-	for i, candidate := range spec.Spec.Template.Spec.Containers {
-		if candidate.Name == "traefik" {
-			containerIndex = i
-			break
-		}
-	}
-	if containerIndex == -1 {
-		return core.NewWithSentinel(core.ErrInstallIngressControllerFailed, fmt.Sprintf("traefik deployment in namespace %s has no container named traefik", namespace))
-	}
-	container := spec.Spec.Template.Spec.Containers[containerIndex]
-
-	var ops []jsonPatchOperation
-	if !containsString(container.Args, "--providers.file.filename=/etc/traefik/dynamic/dynamic.yml") {
-		ops = append(ops, jsonPatchOperation{
-			Op:    "add",
-			Path:  fmt.Sprintf("/spec/template/spec/containers/%d/args/-", containerIndex),
-			Value: "--providers.file.filename=/etc/traefik/dynamic/dynamic.yml",
-		})
-	}
-	if !containsString(container.Args, "--providers.file.watch=true") {
-		ops = append(ops, jsonPatchOperation{
-			Op:    "add",
-			Path:  fmt.Sprintf("/spec/template/spec/containers/%d/args/-", containerIndex),
-			Value: "--providers.file.watch=true",
-		})
-	}
-	if !containsString(container.Args, "--experimental.localplugins.pii-redactor.modulename=github.com/Agent-Hellboy/mcp-runtime/traefik-plugins/pii-redactor") {
-		ops = append(ops, jsonPatchOperation{
-			Op:    "add",
-			Path:  fmt.Sprintf("/spec/template/spec/containers/%d/args/-", containerIndex),
-			Value: "--experimental.localplugins.pii-redactor.modulename=github.com/Agent-Hellboy/mcp-runtime/traefik-plugins/pii-redactor",
-		})
-	}
-	addDynamicMount := !hasVolumeMountPath(container.VolumeMounts, "/etc/traefik/dynamic")
-	if addDynamicMount {
-		ops = append(ops, jsonPatchOperation{
-			Op:    "add",
-			Path:  fmt.Sprintf("/spec/template/spec/containers/%d/volumeMounts/-", containerIndex),
-			Value: map[string]any{"name": "traefik-dynamic", "mountPath": "/etc/traefik/dynamic", "readOnly": true},
-		})
-	}
-	addPluginSourceMount := !hasVolumeMountPath(container.VolumeMounts, "/plugins-local/src/github.com/Agent-Hellboy/mcp-runtime/traefik-plugins/pii-redactor")
-	if addPluginSourceMount {
-		ops = append(ops, jsonPatchOperation{
-			Op:    "add",
-			Path:  fmt.Sprintf("/spec/template/spec/containers/%d/volumeMounts/-", containerIndex),
-			Value: map[string]any{"name": "traefik-plugin-source", "mountPath": "/plugins-local/src/github.com/Agent-Hellboy/mcp-runtime/traefik-plugins/pii-redactor", "readOnly": true},
-		})
-	}
-	addPluginStorageMount := !hasVolumeMountPath(container.VolumeMounts, "/plugins-storage")
-	if addPluginStorageMount {
-		ops = append(ops, jsonPatchOperation{
-			Op:    "add",
-			Path:  fmt.Sprintf("/spec/template/spec/containers/%d/volumeMounts/-", containerIndex),
-			Value: map[string]any{"name": "traefik-plugins", "mountPath": "/plugins-storage"},
-		})
-	}
-	if addDynamicMount && !hasVolume(spec.Spec.Template.Spec.Volumes, "traefik-dynamic") {
-		ops = append(ops, jsonPatchOperation{
-			Op:   "add",
-			Path: "/spec/template/spec/volumes/-",
-			Value: map[string]any{
-				"name": "traefik-dynamic",
-				"configMap": map[string]any{
-					"name":  "traefik-dynamic",
-					"items": []map[string]any{{"key": "dynamic.yml", "path": "dynamic.yml"}},
-				},
-			},
-		})
-	}
-	if addPluginSourceMount && !hasVolume(spec.Spec.Template.Spec.Volumes, "traefik-plugin-source") {
-		ops = append(ops, jsonPatchOperation{
-			Op:    "add",
-			Path:  "/spec/template/spec/volumes/-",
-			Value: map[string]any{"name": "traefik-plugin-source", "configMap": map[string]any{"name": "traefik-plugin-pii-redactor"}},
-		})
-	}
-	if addPluginStorageMount && !hasVolume(spec.Spec.Template.Spec.Volumes, "traefik-plugins") {
-		ops = append(ops, jsonPatchOperation{
-			Op:    "add",
-			Path:  "/spec/template/spec/volumes/-",
-			Value: map[string]any{"name": "traefik-plugins", "emptyDir": map[string]any{}},
-		})
-	}
-	if len(ops) == 0 {
-		return nil
-	}
-	patchBytes, err := json.Marshal(ops)
-	if err != nil {
-		return core.WrapWithSentinel(core.ErrSetupMarshalTraefikDeploymentPatchFailed, err, fmt.Sprintf("marshal traefik deployment patch: %v", err))
+	patchBytes, err := traefikMiddlewarePatch(spec, namespace)
+	if err != nil || len(patchBytes) == 0 {
+		return err
 	}
 	if err := kubectl.RunWithOutput([]string{
 		"patch", "deployment", "traefik", "-n", namespace, "--type=json", "-p", string(patchBytes),
@@ -303,16 +216,21 @@ func traefikMiddlewarePatch(spec traefikDeploymentSpec, namespace string) ([]byt
 	if !containsString(container.Args, "--providers.file.watch=true") {
 		ops = append(ops, jsonPatchOperation{Op: "add", Path: fmt.Sprintf("/spec/template/spec/containers/%d/args/-", containerIndex), Value: "--providers.file.watch=true"})
 	}
-	if !containsString(container.Args, "--experimental.localplugins.pii-redactor.modulename=github.com/Agent-Hellboy/mcp-runtime/traefik-plugins/pii-redactor") {
-		ops = append(ops, jsonPatchOperation{Op: "add", Path: fmt.Sprintf("/spec/template/spec/containers/%d/args/-", containerIndex), Value: "--experimental.localplugins.pii-redactor.modulename=github.com/Agent-Hellboy/mcp-runtime/traefik-plugins/pii-redactor"})
+	for _, plugin := range localTraefikPlugins {
+		if !containsPluginArg(container.Args, plugin.name) {
+			ops = append(ops, jsonPatchOperation{Op: "add", Path: fmt.Sprintf("/spec/template/spec/containers/%d/args/-", containerIndex), Value: plugin.arg()})
+		}
 	}
 	addDynamicMount := !hasVolumeMountPath(container.VolumeMounts, "/etc/traefik/dynamic")
 	if addDynamicMount {
 		ops = append(ops, jsonPatchOperation{Op: "add", Path: fmt.Sprintf("/spec/template/spec/containers/%d/volumeMounts/-", containerIndex), Value: map[string]any{"name": "traefik-dynamic", "mountPath": "/etc/traefik/dynamic", "readOnly": true}})
 	}
-	addPluginSourceMount := !hasVolumeMountPath(container.VolumeMounts, "/plugins-local/src/github.com/Agent-Hellboy/mcp-runtime/traefik-plugins/pii-redactor")
-	if addPluginSourceMount {
-		ops = append(ops, jsonPatchOperation{Op: "add", Path: fmt.Sprintf("/spec/template/spec/containers/%d/volumeMounts/-", containerIndex), Value: map[string]any{"name": "traefik-plugin-source", "mountPath": "/plugins-local/src/github.com/Agent-Hellboy/mcp-runtime/traefik-plugins/pii-redactor", "readOnly": true}})
+	addPluginSourceMounts := make([]bool, len(localTraefikPlugins))
+	for i, plugin := range localTraefikPlugins {
+		addPluginSourceMounts[i] = !hasVolumeMountPath(container.VolumeMounts, plugin.mountPath())
+		if addPluginSourceMounts[i] {
+			ops = append(ops, jsonPatchOperation{Op: "add", Path: fmt.Sprintf("/spec/template/spec/containers/%d/volumeMounts/-", containerIndex), Value: map[string]any{"name": plugin.volume, "mountPath": plugin.mountPath(), "readOnly": true}})
+		}
 	}
 	addPluginStorageMount := !hasVolumeMountPath(container.VolumeMounts, "/plugins-storage")
 	if addPluginStorageMount {
@@ -321,8 +239,10 @@ func traefikMiddlewarePatch(spec traefikDeploymentSpec, namespace string) ([]byt
 	if addDynamicMount && !hasVolume(spec.Spec.Template.Spec.Volumes, "traefik-dynamic") {
 		ops = append(ops, jsonPatchOperation{Op: "add", Path: "/spec/template/spec/volumes/-", Value: map[string]any{"name": "traefik-dynamic", "configMap": map[string]any{"name": "traefik-dynamic", "items": []map[string]any{{"key": "dynamic.yml", "path": "dynamic.yml"}}}}})
 	}
-	if addPluginSourceMount && !hasVolume(spec.Spec.Template.Spec.Volumes, "traefik-plugin-source") {
-		ops = append(ops, jsonPatchOperation{Op: "add", Path: "/spec/template/spec/volumes/-", Value: map[string]any{"name": "traefik-plugin-source", "configMap": map[string]any{"name": "traefik-plugin-pii-redactor"}}})
+	for i, plugin := range localTraefikPlugins {
+		if addPluginSourceMounts[i] && !hasVolume(spec.Spec.Template.Spec.Volumes, plugin.volume) {
+			ops = append(ops, jsonPatchOperation{Op: "add", Path: "/spec/template/spec/volumes/-", Value: map[string]any{"name": plugin.volume, "configMap": map[string]any{"name": plugin.configMap}}})
+		}
 	}
 	if addPluginStorageMount && !hasVolume(spec.Spec.Template.Spec.Volumes, "traefik-plugins") {
 		ops = append(ops, jsonPatchOperation{Op: "add", Path: "/spec/template/spec/volumes/-", Value: map[string]any{"name": "traefik-plugins", "emptyDir": map[string]any{}}})
@@ -371,6 +291,47 @@ func readTraefikDeploymentSpecClientGo(namespace string) (traefikDeploymentSpec,
 		return spec, core.WrapWithSentinel(core.ErrSetupDecodeTraefikDeploymentFailed, err, fmt.Sprintf("decode traefik deployment %s/traefik: %v", namespace, err))
 	}
 	return spec, nil
+}
+
+// localTraefikPlugin is a Yaegi local plugin the platform's Traefik routes
+// depend on. Setup installs each one into every active Traefik, including an
+// external k3s Traefik, because a Middleware that references an unloaded
+// plugin makes Traefik drop the whole route.
+type localTraefikPlugin struct {
+	name      string
+	manifest  string
+	configMap string
+	volume    string
+}
+
+const localTraefikPluginModulePrefix = "github.com/Agent-Hellboy/mcp-runtime/traefik-plugins/"
+
+// localTraefikPlugins keeps the pii-redactor volume name existing installs
+// already use, so re-running setup does not add a second source volume.
+var localTraefikPlugins = []localTraefikPlugin{
+	{name: "pii-redactor", manifest: "config/ingress/overlays/http/plugin-source.yaml", configMap: "traefik-plugin-pii-redactor", volume: "traefik-plugin-source"},
+	{name: "spiffe-identity", manifest: "config/ingress/base/spiffe-identity-plugin.yaml", configMap: "traefik-plugin-spiffe-identity", volume: "spiffe-identity-plugin"},
+}
+
+func (p localTraefikPlugin) arg() string {
+	return "--experimental.localplugins." + p.name + ".modulename=" + localTraefikPluginModulePrefix + p.name
+}
+
+func (p localTraefikPlugin) mountPath() string {
+	return "/plugins-local/src/" + localTraefikPluginModulePrefix + p.name
+}
+
+// containsPluginArg matches the plugin flag case-insensitively: the repo
+// Traefik manifest spells it --experimental.localPlugins while setup has
+// always written --experimental.localplugins, and Traefik accepts both.
+func containsPluginArg(args []string, name string) bool {
+	prefix := strings.ToLower("--experimental.localplugins." + name + ".modulename=")
+	for _, arg := range args {
+		if strings.HasPrefix(strings.ToLower(arg), prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func containsString(values []string, target string) bool {

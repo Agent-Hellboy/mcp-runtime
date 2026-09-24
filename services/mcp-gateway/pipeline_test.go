@@ -219,7 +219,7 @@ func TestAuthFilterMTLSUsesVerifiedHeaderAndIgnoresGovernanceHeaders(t *testing.
 	})
 	ex.R.TLS = verifiedProxyTLS()
 	ex.Policy = &policypkg.Document{
-		Auth: &policypkg.Auth{Mode: "mtls", TrustDomain: "example.org"},
+		Auth: &policypkg.Auth{Mode: "oauth", TrustDomain: "example.org"},
 		Sessions: []policypkg.Binding{{
 			Name:      "session-1",
 			Namespace: "team-a",
@@ -249,12 +249,12 @@ func TestAuthFilterMTLSRejectsForgedHeaderWithoutMTLS(t *testing.T) {
 	})
 	// No ex.R.TLS — plaintext / ingress-bypassing connection.
 	ex.Policy = &policypkg.Document{
-		Auth:     &policypkg.Auth{Mode: "mtls", TrustDomain: "example.org"},
+		Auth:     &policypkg.Auth{Mode: "oauth", TrustDomain: "example.org"},
 		Sessions: []policypkg.Binding{{Name: "session-1", Namespace: "team-a", HumanID: "human-1"}},
 	}
 
 	if got := s.authFilter(ex); got != Reject {
-		t.Fatalf("authFilter mtls = %v, want Reject", got)
+		t.Fatalf("authFilter = %v, want Reject", got)
 	}
 	if ex.Decision.Reason != "missing_client_certificate" {
 		t.Fatalf("reason = %q, want missing_client_certificate", ex.Decision.Reason)
@@ -264,18 +264,20 @@ func TestAuthFilterMTLSRejectsForgedHeaderWithoutMTLS(t *testing.T) {
 	}
 }
 
-func TestAuthFilterMTLSRejectsMissingVerifiedHeader(t *testing.T) {
+// Without a verified adapter certificate the request is an ordinary OAuth
+// request: the ingress hop alone must not authenticate it.
+func TestAuthFilterWithoutVerifiedHeaderFallsBackToOAuth(t *testing.T) {
 	t.Parallel()
 	s := minimalServer()
 	ex := newTestExchange(http.MethodPost, "/mcp", `{}`, nil)
 	ex.R.TLS = verifiedProxyTLS()
-	ex.Policy = &policypkg.Document{Auth: &policypkg.Auth{Mode: "mtls", TrustDomain: "example.org"}}
+	ex.Policy = &policypkg.Document{Auth: &policypkg.Auth{Mode: "oauth", TrustDomain: "example.org"}}
 
 	if got := s.authFilter(ex); got != Reject {
-		t.Fatalf("authFilter mtls = %v, want Reject", got)
+		t.Fatalf("authFilter = %v, want Reject", got)
 	}
-	if ex.Decision.Reason != "missing_verified_identity" {
-		t.Fatalf("reason = %q, want missing_verified_identity", ex.Decision.Reason)
+	if ex.Decision.Reason != "oauth_issuer_missing" {
+		t.Fatalf("reason = %q, want the OAuth path to reject it (oauth_issuer_missing)", ex.Decision.Reason)
 	}
 }
 
@@ -287,12 +289,12 @@ func TestAuthFilterMTLSRejectsWrongTrustDomain(t *testing.T) {
 	})
 	ex.R.TLS = verifiedProxyTLS()
 	ex.Policy = &policypkg.Document{
-		Auth:     &policypkg.Auth{Mode: "mtls", TrustDomain: "example.org"},
+		Auth:     &policypkg.Auth{Mode: "oauth", TrustDomain: "example.org"},
 		Sessions: []policypkg.Binding{{Name: "session-1", Namespace: "team-a"}},
 	}
 
 	if got := s.authFilter(ex); got != Reject {
-		t.Fatalf("authFilter mtls = %v, want Reject", got)
+		t.Fatalf("authFilter = %v, want Reject", got)
 	}
 	if ex.Decision.Reason != "invalid_spiffe_identity" {
 		t.Fatalf("reason = %q, want invalid_spiffe_identity", ex.Decision.Reason)
@@ -321,7 +323,7 @@ func TestAuthFilterMTLSTrustedProxyPinning(t *testing.T) {
 			})
 			ex.R.TLS = verifiedProxyTLS(tc.peerURIs...)
 			ex.Policy = &policypkg.Document{
-				Auth:     &policypkg.Auth{Mode: "mtls", TrustDomain: "example.org"},
+				Auth:     &policypkg.Auth{Mode: "oauth", TrustDomain: "example.org"},
 				Sessions: []policypkg.Binding{{Name: "session-1", Namespace: "team-a", HumanID: "human-1"}},
 			}
 
@@ -342,21 +344,23 @@ func TestAuthFilterMTLSTrustedProxyPinning(t *testing.T) {
 	}
 }
 
-func TestAuthFilterMTLSRejectsMissingCertificate(t *testing.T) {
+// Spoofed governance headers without a certificate or bearer token must not
+// authenticate: the request takes the OAuth path and is rejected there.
+func TestAuthFilterSpoofedHeadersWithoutCertificateUseOAuth(t *testing.T) {
 	t.Parallel()
 	s := minimalServer()
 	ex := newTestExchange(http.MethodPost, "/mcp", `{}`, map[string]string{
 		defaultHumanHeader: "spoofed-human",
 	})
 	ex.Policy = &policypkg.Document{
-		Auth: &policypkg.Auth{Mode: "mtls", TrustDomain: "example.org"},
+		Auth: &policypkg.Auth{Mode: "oauth", TrustDomain: "example.org"},
 	}
 
 	if got := s.authFilter(ex); got != Reject {
-		t.Fatalf("authFilter mtls = %v, want Reject", got)
+		t.Fatalf("authFilter = %v, want Reject", got)
 	}
-	if ex.Decision.Reason != "missing_client_certificate" {
-		t.Fatalf("reason = %q, want missing_client_certificate", ex.Decision.Reason)
+	if ex.Decision.Reason != "oauth_issuer_missing" {
+		t.Fatalf("reason = %q, want the OAuth path to reject it (oauth_issuer_missing)", ex.Decision.Reason)
 	}
 }
 
@@ -394,12 +398,12 @@ func TestAuthFilterMTLSRejectsRevokedOrExpiredSession(t *testing.T) {
 			})
 			ex.R.TLS = verifiedProxyTLS()
 			ex.Policy = &policypkg.Document{
-				Auth:     &policypkg.Auth{Mode: "mtls", TrustDomain: "example.org"},
+				Auth:     &policypkg.Auth{Mode: "oauth", TrustDomain: "example.org"},
 				Sessions: []policypkg.Binding{tc.binding},
 			}
 
 			if got := s.authFilter(ex); got != Reject {
-				t.Fatalf("authFilter mtls = %v, want Reject", got)
+				t.Fatalf("authFilter = %v, want Reject", got)
 			}
 			if ex.Decision.Reason != tc.reason {
 				t.Fatalf("reason = %q, want %q", ex.Decision.Reason, tc.reason)

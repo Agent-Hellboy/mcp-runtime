@@ -9,6 +9,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
@@ -38,15 +39,22 @@ func TestTraefikProxySPIFFEID(t *testing.T) {
 }
 
 func TestReconcileTraefikClientCertificateRequiresIssuerAndTrustDomain(t *testing.T) {
+	// Without platform PKI the reconcile only cleans up stale resources, so it
+	// needs a client that reports them as already gone.
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("scheme: %v", err)
+	}
+	newClient := func() client.Client { return fake.NewClientBuilder().WithScheme(scheme).Build() }
 	t.Run("missing issuer", func(t *testing.T) {
-		r := MCPServerReconciler{AdapterTrustDomain: "example.org"} // no MTLSClusterIssuer
+		r := MCPServerReconciler{Client: newClient(), AdapterTrustDomain: "example.org"} // no MTLSClusterIssuer
 		err := r.reconcileTraefikClientCertificate(context.Background(), mtlsServer())
 		if err != nil {
 			t.Fatalf("without configured platform PKI, expected no-op; got %v", err)
 		}
 	})
 	t.Run("missing trust domain", func(t *testing.T) {
-		r := MCPServerReconciler{MTLSClusterIssuer: "mcp-runtime-ca"}
+		r := MCPServerReconciler{Client: newClient(), MTLSClusterIssuer: "mcp-runtime-ca"}
 		err := r.reconcileTraefikClientCertificate(context.Background(), mtlsServer())
 		if err != nil {
 			t.Fatalf("without configured platform PKI, expected no-op; got %v", err)
@@ -73,7 +81,7 @@ func TestReconcileMTLSTrustBundle(t *testing.T) {
 	t.Run("materializes bundle from gateway ca.crt", func(t *testing.T) {
 		server := mtlsServer()
 		client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(server, gatewaySecret()).Build()
-		r := MCPServerReconciler{Client: client, Scheme: scheme}
+		r := MCPServerReconciler{Client: client, Scheme: scheme, AdapterTrustDomain: "example.org", MTLSClusterIssuer: "mcp-runtime-ca"}
 		if err := r.reconcileMTLSTrustBundle(context.Background(), server); err != nil {
 			t.Fatalf("reconcile: %v", err)
 		}
@@ -89,7 +97,7 @@ func TestReconcileMTLSTrustBundle(t *testing.T) {
 	t.Run("skips when gateway certificate not yet issued", func(t *testing.T) {
 		server := mtlsServer()
 		client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(server).Build()
-		r := MCPServerReconciler{Client: client, Scheme: scheme}
+		r := MCPServerReconciler{Client: client, Scheme: scheme, AdapterTrustDomain: "example.org", MTLSClusterIssuer: "mcp-runtime-ca"}
 		if err := r.reconcileMTLSTrustBundle(context.Background(), server); err != nil {
 			t.Fatalf("reconcile should not error when gateway secret absent: %v", err)
 		}
@@ -104,7 +112,7 @@ func TestReconcileMTLSTrustBundle(t *testing.T) {
 		server.Spec.Auth.Mode = mcpv1alpha1.AuthModeHeader
 		existing := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "secure-server-mtls-ca", Namespace: "mcp-servers"}}
 		client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(server, existing).Build()
-		r := MCPServerReconciler{Client: client, Scheme: scheme}
+		r := MCPServerReconciler{Client: client, Scheme: scheme, AdapterTrustDomain: "example.org", MTLSClusterIssuer: "mcp-runtime-ca"}
 		if err := r.reconcileMTLSTrustBundle(context.Background(), server); err != nil {
 			t.Fatalf("reconcile: %v", err)
 		}
@@ -116,7 +124,7 @@ func TestReconcileMTLSTrustBundle(t *testing.T) {
 }
 
 func TestGatewaySidecarPinsTrustedProxyForMTLS(t *testing.T) {
-	r := MCPServerReconciler{}
+	r := MCPServerReconciler{AdapterTrustDomain: "example.org", MTLSClusterIssuer: "mcp-runtime-ca"}
 	container, err := r.buildGatewayContainer(mtlsServer())
 	if err != nil {
 		t.Fatalf("buildGatewayContainer: %v", err)

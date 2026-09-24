@@ -58,7 +58,7 @@ func TestReconcileMTLSIngressGeneratesTraefikResources(t *testing.T) {
 	// A leftover passthrough route from the old model must be removed.
 	legacy := crFixture(ingressRouteTCPGVK, server.Name, server.Namespace)
 	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(server, legacy).Build()
-	r := MCPServerReconciler{Client: client, Scheme: scheme}
+	r := MCPServerReconciler{Client: client, Scheme: scheme, AdapterTrustDomain: "example.org", MTLSClusterIssuer: "mcp-runtime-ca"}
 
 	if err := r.reconcileMTLSIngress(context.Background(), server); err != nil {
 		t.Fatalf("reconcileMTLSIngress: %v", err)
@@ -71,8 +71,8 @@ func TestReconcileMTLSIngressGeneratesTraefikResources(t *testing.T) {
 	}
 
 	tlsOpt := getCR(t, client, tlsOptionGVK, mtlsTLSOptionName(server), server.Namespace)
-	if authType, _, _ := unstructured.NestedString(tlsOpt.Object, "spec", "clientAuth", "clientAuthType"); authType != "RequireAndVerifyClientCert" {
-		t.Fatalf("clientAuthType = %q", authType)
+	if authType, _, _ := unstructured.NestedString(tlsOpt.Object, "spec", "clientAuth", "clientAuthType"); authType != "VerifyClientCertIfGiven" {
+		t.Fatalf("clientAuthType = %q, want VerifyClientCertIfGiven so OAuth clients without a certificate still connect", authType)
 	}
 	if secrets, _, _ := unstructured.NestedStringSlice(tlsOpt.Object, "spec", "clientAuth", "secretNames"); len(secrets) != 1 || secrets[0] != mtlsTrustBundleSecretName(server) {
 		t.Fatalf("clientAuth secretNames = %v, want trust bundle", secrets)
@@ -99,8 +99,12 @@ func TestReconcileMTLSIngressGeneratesTraefikResources(t *testing.T) {
 
 	ir := getCR(t, client, ingressRouteGVK, server.Name, server.Namespace)
 	routes, _, _ := unstructured.NestedSlice(ir.Object, "spec", "routes")
-	if len(routes) != 1 {
-		t.Fatalf("routes = %d, want 1", len(routes))
+	// OAuth servers route the MCP path and its protected-resource metadata.
+	if len(routes) != 2 {
+		t.Fatalf("routes = %d, want 2 (MCP path + OAuth metadata)", len(routes))
+	}
+	if metadataMatch, _ := routes[1].(map[string]any)["match"].(string); !strings.Contains(metadataMatch, "Path(`/.well-known/oauth-protected-resource/secure-server/mcp`)") {
+		t.Fatalf("metadata route match = %q, want the protected-resource metadata path", metadataMatch)
 	}
 	route0 := routes[0].(map[string]any)
 	match, _ := route0["match"].(string)
@@ -135,7 +139,7 @@ func TestReconcileMTLSIngressNeverSetsPerRouteSecretName(t *testing.T) {
 	server.Spec.PublicPathPrefix = "secure-demo"
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(server).Build()
-	r := MCPServerReconciler{Client: c, Scheme: scheme, DefaultIngressTLSSecret: "platform-host-tls", DefaultIngressTLSSecretNamespace: "mcp-servers"}
+	r := MCPServerReconciler{Client: c, Scheme: scheme, DefaultIngressTLSSecret: "platform-host-tls", DefaultIngressTLSSecretNamespace: "mcp-servers", AdapterTrustDomain: "example.org", MTLSClusterIssuer: "mcp-runtime-ca"}
 	if err := r.reconcileMTLSIngress(context.Background(), server); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
@@ -155,7 +159,7 @@ func TestReconcileDefaultTLSStore(t *testing.T) {
 
 	t.Run("creates a single default store in the configured namespace", func(t *testing.T) {
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(server).Build()
-		r := MCPServerReconciler{Client: c, Scheme: scheme, DefaultIngressTLSSecret: "platform-host-tls", DefaultIngressTLSSecretNamespace: "mcp-servers"}
+		r := MCPServerReconciler{Client: c, Scheme: scheme, DefaultIngressTLSSecret: "platform-host-tls", DefaultIngressTLSSecretNamespace: "mcp-servers", AdapterTrustDomain: "example.org", MTLSClusterIssuer: "mcp-runtime-ca"}
 		if err := r.reconcileDefaultTLSStore(context.Background()); err != nil {
 			t.Fatalf("reconcile: %v", err)
 		}
@@ -167,7 +171,7 @@ func TestReconcileDefaultTLSStore(t *testing.T) {
 
 	t.Run("no-op when host secret/namespace unset", func(t *testing.T) {
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(server).Build()
-		r := MCPServerReconciler{Client: c, Scheme: scheme} // no DefaultIngressTLSSecret*
+		r := MCPServerReconciler{Client: c, Scheme: scheme, AdapterTrustDomain: "example.org", MTLSClusterIssuer: "mcp-runtime-ca"} // no DefaultIngressTLSSecret*
 		if err := r.reconcileDefaultTLSStore(context.Background()); err != nil {
 			t.Fatalf("reconcile: %v", err)
 		}
@@ -198,7 +202,7 @@ func TestDeleteMTLSIngressRemovesAllResources(t *testing.T) {
 		objs = append(objs, crFixture(target.gvk, target.name, server.Namespace))
 	}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...).Build()
-	r := MCPServerReconciler{Client: c, Scheme: scheme}
+	r := MCPServerReconciler{Client: c, Scheme: scheme, AdapterTrustDomain: "example.org", MTLSClusterIssuer: "mcp-runtime-ca"}
 
 	if err := r.deleteMTLSIngress(context.Background(), server); err != nil {
 		t.Fatalf("deleteMTLSIngress: %v", err)
