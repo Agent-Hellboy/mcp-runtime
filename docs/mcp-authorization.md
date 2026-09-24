@@ -196,7 +196,10 @@ server named `my-server` on `mcp.example.com` gets
 local test mode), set `audience` explicitly.
 
 The operator owns `MCP_PATH` for every server and derives it from the public
-ingress route. Do not add it to `spec.envVars` or `.mcp/servers.yaml`.
+ingress route. When the gateway sets `gateway.stripPrefix`, it is the route
+with that prefix removed, because that is the path the gateway forwards to the
+server. Do not add it to `spec.envVars` or `.mcp/servers.yaml`; the operator
+replaces any value set there.
 
 For a standalone resource server (`gateway.enabled: false`), the operator also
 injects the values the server needs to publish matching metadata:

@@ -715,10 +715,11 @@ func (r *MCPServerReconciler) buildImagePullSecrets(mcpServer *mcpv1alpha1.MCPSe
 // path and OAuth values replace matching spec entries so they cannot drift.
 func (r *MCPServerReconciler) buildServerEnvVars(mcpServer *mcpv1alpha1.MCPServer) []corev1.EnvVar {
 	result := r.buildEnvVars(mcpServer.Spec.EnvVars, mcpServer.Spec.SecretEnvVars)
-	// MCP_PATH follows the public ingress path and belongs to reconciliation,
-	// so CLI and API clients cannot persist a stale copy in spec.envVars.
-	if publicPath := strings.TrimSpace(mcpServer.EffectivePublicPath()); publicPath != "" {
-		result = setEnvVarValue(result, "MCP_PATH", publicPath)
+	// MCP_PATH is the path the server receives requests on and belongs to
+	// reconciliation, so CLI and API clients cannot persist a stale copy in
+	// spec.envVars.
+	if upstreamPath := upstreamMCPPath(mcpServer); upstreamPath != "" {
+		result = setEnvVarValue(result, "MCP_PATH", upstreamPath)
 	}
 	if gatewayEnabled(mcpServer) || !serverUsesOAuth(mcpServer) {
 		return result
@@ -728,7 +729,6 @@ func (r *MCPServerReconciler) buildServerEnvVars(mcpServer *mcpv1alpha1.MCPServe
 		{Name: "MCP_AUTH_RESOURCE", Value: resource},
 		{Name: "MCP_AUTH_RESOURCE_METADATA_URL", Value: mcpv1alpha1.ProtectedResourceMetadataURL(resource)},
 		{Name: "MCP_AUTH_ISSUER", Value: strings.TrimSpace(mcpServer.Spec.Auth.IssuerURL)},
-		{Name: "MCP_PATH", Value: strings.TrimSpace(mcpServer.EffectivePublicPath())},
 	} {
 		if derived.Value == "" {
 			continue
@@ -736,6 +736,25 @@ func (r *MCPServerReconciler) buildServerEnvVars(mcpServer *mcpv1alpha1.MCPServe
 		result = setEnvVarValue(result, derived.Name, derived.Value)
 	}
 	return result
+}
+
+// upstreamMCPPath is the path the MCP server container receives: the public
+// path, minus the gateway's stripPrefix when the gateway strips one before
+// forwarding. It mirrors the gateway's trimRequestPathPrefix so the server
+// listens exactly where the gateway sends requests.
+func upstreamMCPPath(mcpServer *mcpv1alpha1.MCPServer) string {
+	publicPath := strings.TrimSpace(mcpServer.EffectivePublicPath())
+	if publicPath == "" || !gatewayEnabled(mcpServer) {
+		return publicPath
+	}
+	prefix := strings.TrimRight(strings.TrimSpace(mcpServer.Spec.Gateway.StripPrefix), "/")
+	if prefix == "" || (publicPath != prefix && !strings.HasPrefix(publicPath, prefix+"/")) {
+		return publicPath
+	}
+	if trimmed := strings.TrimPrefix(publicPath, prefix); trimmed != "" {
+		return trimmed
+	}
+	return "/"
 }
 
 func setEnvVarValue(envVars []corev1.EnvVar, name, value string) []corev1.EnvVar {
