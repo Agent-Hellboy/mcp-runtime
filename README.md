@@ -15,7 +15,13 @@
 
 MCP Runtime is a Kubernetes control plane for [Model Context Protocol](https://modelcontextprotocol.io/) servers. It deploys MCP servers into your cluster, enforces per-tool access policy on every call, and records each decision for audit.
 
-You describe a server with an `MCPServer` resource and the operator creates its Deployment, Service, Ingress, and policy. Access is granted with `MCPAccessGrant` and time-boxed with `MCPAgentSession`. A gateway sidecar in each server pod checks the caller's identity, session, trust level, and the tool's side effect before a call reaches your code.
+The workflow has three steps:
+
+1. **Describe your server** in `.mcp/servers.yaml`: each tool's name, the trust level it requires, and its side effect. `mcp-runtime server init` creates the file, and `--from-server` fills in tools from a running instance. Then `server build`, `server push`, and `server deploy` publish it.
+2. **Grant access.** An access grant (`mcp-runtime access grant init`) lets a person, agent, or team call specific tools on that server, up to a maximum trust level and only with the side effects you allow.
+3. **Open a session.** An agent session (`mcp-runtime access session init`) time-boxes that access for one agent, and you can revoke it at any time.
+
+On every call, a gateway in front of the server checks the caller's identity, session, trust level, and the tool's side effect before the call reaches your code, and records the decision for audit. Under the hood these are the `MCPServer`, `MCPAccessGrant`, and `MCPAgentSession` resources, and the operator creates the Deployment, Service, Ingress, and policy for you.
 
 A public preview runs at [platform.mcpruntime.org](https://platform.mcpruntime.org/). The same stack installs into your own cluster with `mcp-runtime setup`.
 
