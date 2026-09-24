@@ -13,6 +13,7 @@ python3 docs/scripts/generate_go_package_reference.py
 
 - [API types](#api-types) `mcp-runtime/api/v1alpha1`
 - [Metadata helpers](#metadata-helpers) `mcp-runtime/pkg/metadata`
+- [OAuth resource URL helpers](#oauth-resource-url-helpers) `mcp-runtime/pkg/oauthresource`
 - [Publish scope helpers](#publish-scope-helpers) `mcp-runtime/pkg/publishscope`
 - [Agent adapters](#agent-adapters) `mcp-runtime/internal/agentadapter`
 - [Operator internals](#operator-internals) `mcp-runtime/internal/operator`
@@ -131,11 +132,13 @@ Package v1alpha1 contains API Schema definitions for the MCP server resource.
 - [`func (r *MCPServer) EffectivePublicPath() string`](#api-types-func-r-mcpserver-effectivepublicpath-string)
 - [`func (r *MCPServer) PublicBaseURL(options PublicURLOptions) string`](#api-types-func-r-mcpserver-publicbaseurl-options-publicurloptions-string)
 - [`func (r *MCPServer) PublicIngressUsesTLS(defaultTLS bool) bool`](#api-types-func-r-mcpserver-publicingressusestls-defaulttls-bool-bool)
+- [`func (r *MCPServer) ResolveDerivedAuth(options MCPServerDefaultOptions)`](#api-types-func-r-mcpserver-resolvederivedauth-options-mcpserverdefaultoptions)
 - [`func (r *MCPServer) SetupWebhookWithManager(mgr ctrl.Manager) error`](#api-types-func-r-mcpserver-setupwebhookwithmanager-mgr-ctrl-manager-error)
 - [`func (r *MCPServer) SetupWebhookWithManagerWithOptions(mgr ctrl.Manager, options MCPServerDefaultOptions) error`](#api-types-func-r-mcpserver-setupwebhookwithmanagerwithoptions-mgr-ctrl-manager-options-mcpserverdefaultoptions-error)
 - [`func (r *MCPServer) String() string`](#api-types-func-r-mcpserver-string-string)
 - [`func (r *MCPServer) ValidateCreate() (admission.Warnings, error)`](#api-types-func-r-mcpserver-validatecreate-admission-warnings-error)
 - [`func (r *MCPServer) ValidateDelete() (admission.Warnings, error)`](#api-types-func-r-mcpserver-validatedelete-admission-warnings-error)
+- [`func (r *MCPServer) ValidateResolvedAuth() error`](#api-types-func-r-mcpserver-validateresolvedauth-error)
 - [`func (r *MCPServer) ValidateUpdate(_ runtime.Object) (admission.Warnings, error)`](#api-types-func-r-mcpserver-validateupdate-runtime-object-admission-warnings-error)
 - [`type MCPServerDefaultOptions struct`](#api-types-type-mcpserverdefaultoptions-struct)
 - [`func (in *MCPServerDefaultOptions) DeepCopy() *MCPServerDefaultOptions`](#api-types-func-in-mcpserverdefaultoptions-deepcopy-mcpserverdefaultoptions)
@@ -802,8 +805,6 @@ func (r *MCPServer) Default()
 <a id="api-types-func-r-mcpserver-defaultwithoptions-options-mcpserverdefaultoptions"></a>
 ```text
 func (r *MCPServer) DefaultWithOptions(options MCPServerDefaultOptions)
-    DefaultWithOptions applies MCPServer defaults, including operator-configured
-    fallbacks when the webhook is registered by the operator manager.
 
 ```
 
@@ -831,6 +832,21 @@ func (r *MCPServer) PublicBaseURL(options PublicURLOptions) string
 func (r *MCPServer) PublicIngressUsesTLS(defaultTLS bool) bool
     PublicIngressUsesTLS reports whether the server's ingress terminates TLS,
     either from the operator-wide default or an explicit Traefik annotation.
+
+```
+
+<a id="api-types-func-r-mcpserver-resolvederivedauth-options-mcpserverdefaultoptions"></a>
+```text
+func (r *MCPServer) ResolveDerivedAuth(options MCPServerDefaultOptions)
+    DefaultWithOptions applies MCPServer defaults, including operator-configured
+    fallbacks when the webhook is registered by the operator manager.
+    ResolveDerivedAuth fills an OAuth server's unset audience and issuer from
+    platform state: the audience from the public URL the ingress serves,
+    the issuer from the bundled authorization server. It is applied to the
+    operator's in-memory copy on every reconcile and is never persisted by
+    the admission webhook, so a later change to the host, path, TLS setting,
+    or platform domain re-derives the values instead of leaving a stale copy in
+    spec. Explicit values are kept.
 
 ```
 
@@ -864,6 +880,15 @@ func (r *MCPServer) ValidateDelete() (admission.Warnings, error)
 
 ```
 
+<a id="api-types-func-r-mcpserver-validateresolvedauth-error"></a>
+```text
+func (r *MCPServer) ValidateResolvedAuth() error
+    ValidateResolvedAuth reports OAuth settings that are still missing after
+    ResolveDerivedAuth. Admission cannot check this, because the values are
+    derived later from operator state; the operator reports it on reconcile.
+
+```
+
 <a id="api-types-func-r-mcpserver-validateupdate-runtime-object-admission-warnings-error"></a>
 ```text
 func (r *MCPServer) ValidateUpdate(_ runtime.Object) (admission.Warnings, error)
@@ -876,6 +901,7 @@ type MCPServerDefaultOptions struct {
 	DefaultIngressHost        string
 	DefaultIngressTLS         bool
 	DefaultAnalyticsIngestURL string
+	DefaultOAuthIssuerURL     string
 }
     MCPServerDefaultOptions holds operator-scoped values that the admission
     webhook can use while defaulting MCPServer objects.
@@ -1624,10 +1650,9 @@ func NormalizePlatformDomain(raw string) string
 <a id="metadata-helpers-func-resolvemcpingresshost-string"></a>
 ```text
 func ResolveMcpIngressHost() string
-    ResolveMcpIngressHost is the public hostname for the MCP / gateway
-    (operator default): MCP_MCP_INGRESS_HOST, else mcp.<MCP_PLATFORM_DOMAIN>
-    when the platform domain is set, else empty (operator falls back to spec or
-    publicPathPrefix).
+    ResolveMcpIngressHost is the public hostname for the MCP / gateway.
+    All consumers use the same precedence: MCP_MCP_INGRESS_HOST,
+    MCP_DEFAULT_INGRESS_HOST, then mcp.<MCP_PLATFORM_DOMAIN>.
 
 ```
 
@@ -2044,6 +2069,55 @@ const (
 	TrustLevelMedium TrustLevel = "medium"
 	TrustLevelHigh   TrustLevel = "high"
 )
+```
+
+<a id="oauth-resource-url-helpers"></a>
+## OAuth resource URL helpers
+
+Package: `oauthresource`
+Import path: `mcp-runtime/pkg/oauthresource`
+
+Source command:
+
+```bash
+go doc -all ./pkg/oauthresource
+```
+
+<a id="oauth-resource-url-helpers-overview"></a>
+### Overview
+
+Package oauthresource contains dependency-light OAuth resource URL helpers
+shared by the API and runtime services.
+
+### Jump To
+
+- [Overview](#oauth-resource-url-helpers-overview)
+- [Index](#oauth-resource-url-helpers-index)
+- [Functions](#oauth-resource-url-helpers-functions)
+
+<a id="oauth-resource-url-helpers-index"></a>
+### Index
+
+- [`func ProtectedResourceMetadataPath(resourcePath string) string`](#oauth-resource-url-helpers-func-protectedresourcemetadatapath-resourcepath-string-string)
+- [`func ProtectedResourceMetadataURL(resource string) string`](#oauth-resource-url-helpers-func-protectedresourcemetadataurl-resource-string-string)
+
+<a id="oauth-resource-url-helpers-functions"></a>
+### Functions
+
+<a id="oauth-resource-url-helpers-func-protectedresourcemetadatapath-resourcepath-string-string"></a>
+```text
+func ProtectedResourceMetadataPath(resourcePath string) string
+    ProtectedResourceMetadataPath returns the metadata document path for a
+    resource path, trimming a trailing slash the same way the URL form does so
+    ingress routes and advertised URLs always agree.
+
+```
+
+<a id="oauth-resource-url-helpers-func-protectedresourcemetadataurl-resource-string-string"></a>
+```text
+func ProtectedResourceMetadataURL(resource string) string
+    ProtectedResourceMetadataURL returns the RFC 9728 metadata document URL for
+    a resource URL by inserting the well-known path between its origin and path.
 ```
 
 <a id="publish-scope-helpers"></a>
@@ -2699,6 +2773,10 @@ type MCPServerReconciler struct {
 	// OAuthInternalIssuerURL is the in-cluster URL used by gateway sidecars for
 	// OAuth metadata and JWKS discovery.
 	OAuthInternalIssuerURL string
+
+	// OAuthIssuerURL enables bundled authorization-server resource reconciliation
+	// and supplies the default public issuer for OAuth MCPServers.
+	OAuthIssuerURL string
 
 	// MTLSClusterIssuer is the pre-existing cert-manager ClusterIssuer used for
 	// gateway and adapter workload certificates.
@@ -6601,6 +6679,7 @@ components.
 ### Index
 
 - [`func BuildOperatorArgs(metricsAddr, probeAddr string, leaderElect, leaderElectChanged bool) []string`](#cli-setup-platform-func-buildoperatorargs-metricsaddr-probeaddr-string-leaderelect-leaderelectchanged-bool-string)
+- [`func DefaultMCPAuthIssuerURL() string`](#cli-setup-platform-func-defaultmcpauthissuerurl-string)
 - [`func SetupPlatform(logger *zap.Logger, plan setupplan.Plan, clusterMgr ClusterManagerAPI) error`](#cli-setup-platform-func-setupplatform-logger-zap-logger-plan-setupplan-plan-clustermgr-clustermanagerapi-error)
 - [`func ValidateMTLSSetupCLIFlags(testMode, tlsEnabled bool, mtlsClusterIssuer string) error`](#cli-setup-platform-func-validatemtlssetupcliflags-testmode-tlsenabled-bool-mtlsclusterissuer-string-error)
 - [`func ValidatePlatformMode(mode string) error`](#cli-setup-platform-func-validateplatformmode-mode-string-error)
@@ -6630,6 +6709,14 @@ components.
 func BuildOperatorArgs(metricsAddr, probeAddr string, leaderElect, leaderElectChanged bool) []string
     buildOperatorArgs constructs operator command-line arguments from flags.
     Only includes flags that were explicitly set.
+
+```
+
+<a id="cli-setup-platform-func-defaultmcpauthissuerurl-string"></a>
+```text
+func DefaultMCPAuthIssuerURL() string
+    DefaultMCPAuthIssuerURL derives the bundled server's fixed public route from
+    the platform domain, returning empty when no public domain is configured.
 
 ```
 

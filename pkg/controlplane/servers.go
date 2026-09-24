@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -14,6 +13,7 @@ import (
 	apiruntime "k8s.io/apimachinery/pkg/runtime"
 
 	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
+	"mcp-runtime/pkg/metadata"
 )
 
 const stableDeploymentSelector = "app.kubernetes.io/managed-by=mcp-runtime,mcpruntime.org/rollout-track=stable"
@@ -323,12 +323,7 @@ func PublicMCPEndpoint(mcpServer mcpv1alpha1.MCPServer) string {
 	}
 	host := strings.TrimSpace(mcpServer.Spec.IngressHost)
 	if host == "" {
-		host = strings.TrimSpace(os.Getenv("MCP_MCP_INGRESS_HOST"))
-	}
-	if host == "" {
-		if domain := strings.TrimSpace(os.Getenv("MCP_PLATFORM_DOMAIN")); domain != "" {
-			host = "mcp." + strings.Trim(strings.TrimPrefix(strings.TrimPrefix(domain, "https://"), "http://"), "/")
-		}
+		host = metadata.ResolveMcpIngressHost()
 	}
 	if host == "" {
 		return path

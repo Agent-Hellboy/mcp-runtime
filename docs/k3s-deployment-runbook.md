@@ -153,8 +153,8 @@ OIDC for the dashboard.
 
 | Variable | Required | Purpose |
 |----------|----------|---------|
-| `MCP_SETUP_MCP_AUTH_ISSUER_URL` | required when enabled | Public HTTPS issuer URL, for example `https://auth.<domain>/mcp-auth`. |
-| `MCP_SETUP_MCP_AUTH_RESOURCE_URL` | required when enabled | Canonical MCP resource URL; must exactly match the protected server's `spec.auth.audience`. |
+| `MCP_SETUP_MCP_AUTH_ISSUER_URL` | optional | Public HTTPS issuer URL; defaults to `https://auth.<MCP_PLATFORM_DOMAIN>/mcp-auth`. |
+| `MCP_SETUP_MCP_AUTH_RESOURCE_URL` | optional | Initial canonical MCP resource URL; any supplied value must exactly match a protected server's `spec.auth.audience`. The operator reconciles the accepted list from current OAuth MCPServers. |
 | `MCP_SETUP_MCP_AUTH_CONNECTORS_FILE` | required when enabled | Provider-neutral connector JSON; client secrets are referenced by environment variable, never stored in this file. |
 | `MCP_SETUP_MCP_AUTH_CONNECTOR` | required when enabled | Named connector selected by the mcp-auth server. |
 | `MCP_SETUP_MCP_AUTH_TLS_SECRET` | optional | Override the managed TLS Secret for the authorization-server hostname; required only with `--provided-tls-secrets`. |
@@ -177,7 +177,8 @@ clients should follow its `WWW-Authenticate` challenge or query the resource
 metadata URL generated for that server.
 
 A ready-to-adapt protected server is in `examples/mcpserver-oauth.yaml`. Its
-`auth.issuerURL` must match `MCP_SETUP_MCP_AUTH_ISSUER_URL`, and `auth.audience` must be the
+`auth.issuerURL` defaults from the bundled issuer configured during setup.
+`auth.audience` must be the
 server's canonical resource URI (`https://mcp.<domain>/<prefix>/mcp`). The
 gateway fails closed with 401 when a token's `aud` does not match.
 
@@ -242,16 +243,16 @@ Deploy the optional bundled server through normal setup:
 ./bin/mcp-runtime setup \
   --with-tls --tls-cluster-issuer letsencrypt-prod \
   --with-mcp-auth-server \
-  --mcp-auth-issuer-url https://auth.<domain>/mcp-auth \
-  --mcp-auth-resource-url https://mcp.<domain>/<server-prefix>/mcp \
   --mcp-auth-signing-key-secret mcp-auth-signing-key \
   --mcp-auth-connectors-file /secure/mcp-auth-connectors.json \
   --mcp-auth-connector keycloak
 ```
 
-`--mcp-auth-resource-url` must exactly match the MCPServer's
-`spec.auth.audience`. Production setup requires HTTPS issuer/resource URLs, a
-certificate covering the auth host (provisioned by the configured TLS
+The issuer defaults to `https://auth.<MCP_PLATFORM_DOMAIN>/mcp-auth`, and the
+operator derives `auth.issuerURL` and reconciles accepted resource audiences
+from OAuth MCPServers. Any optional `--mcp-auth-resource-url` must exactly
+match an MCPServer's `spec.auth.audience`. Production requires a certificate
+covering the auth host (provisioned by the configured TLS
 ClusterIssuer), a selected connector, and a persistent RSA signing key
 stored in the Secret key `private-key.pem`. Use `--mcp-auth-tls-secret` only
 for an externally managed certificate. The connector's

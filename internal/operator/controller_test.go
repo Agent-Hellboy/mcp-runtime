@@ -1560,7 +1560,9 @@ func TestReconcileIngress(t *testing.T) {
 		assertEqual(t, "tls", ingress.Annotations["traefik.ingress.kubernetes.io/router.tls"], "true")
 	})
 
-	t.Run("adds oauth protected resource path for oauth servers", func(t *testing.T) {
+	// The route follows the server's own path, never a tenant-chosen
+	// audience path that could claim another server's metadata route.
+	t.Run("adds oauth protected resource path for the server's own route", func(t *testing.T) {
 		mcpServer := &mcpv1alpha1.MCPServer{
 			ObjectMeta: metav1.ObjectMeta{Name: "oauth-server", Namespace: "default"},
 			Spec: mcpv1alpha1.MCPServerSpec{
@@ -1568,7 +1570,8 @@ func TestReconcileIngress(t *testing.T) {
 				IngressHost: "example.com",
 				IngressPath: "/oauth-server/mcp",
 				Auth: &mcpv1alpha1.AuthConfig{
-					Mode: mcpv1alpha1.AuthModeOAuth,
+					Mode:     mcpv1alpha1.AuthModeOAuth,
+					Audience: "https://example.com/custom/resource",
 				},
 			},
 		}
@@ -1964,26 +1967,68 @@ func TestBuildServerEnvVarsDerivesOAuthResource(t *testing.T) {
 		}
 	})
 
-	t.Run("explicit env vars are not overridden", func(t *testing.T) {
+	t.Run("operator owns derived env vars", func(t *testing.T) {
 		got := envMap(r.buildServerEnvVars(standalone(mcpv1alpha1.EnvVar{Name: "MCP_PATH", Value: "/mcp"})))
-		assertEqual(t, "MCP_PATH", got["MCP_PATH"], "/mcp")
+		assertEqual(t, "MCP_PATH", got["MCP_PATH"], "/buddy/mcp")
 		assertEqual(t, "MCP_AUTH_RESOURCE", got["MCP_AUTH_RESOURCE"], "https://mcp.example.com/buddy/mcp")
 	})
 
-	t.Run("gateway-fronted servers are left alone", func(t *testing.T) {
+	t.Run("gateway-fronted servers get only the operator-owned path", func(t *testing.T) {
 		server := standalone()
 		server.Spec.Gateway.Enabled = true
 		got := envMap(r.buildServerEnvVars(server))
+		assertEqual(t, "MCP_PATH", got["MCP_PATH"], "/buddy/mcp")
 		if _, ok := got["MCP_AUTH_RESOURCE"]; ok {
 			t.Fatalf("gateway-fronted server should not get MCP_AUTH_RESOURCE, got %v", got)
 		}
 	})
 
-	t.Run("non-oauth servers are left alone", func(t *testing.T) {
+	t.Run("non-oauth servers still get the operator-owned path", func(t *testing.T) {
 		server := standalone()
 		server.Spec.Auth.Mode = mcpv1alpha1.AuthModeHeader
-		if got := r.buildServerEnvVars(server); len(got) != 0 {
-			t.Fatalf("non-oauth server should get no derived env, got %v", got)
+		got := envMap(r.buildServerEnvVars(server))
+		if len(got) != 1 || got["MCP_PATH"] != "/buddy/mcp" {
+			t.Fatalf("non-oauth server env = %v, want only MCP_PATH=/buddy/mcp", got)
 		}
 	})
+}
+
+// A gateway with stripPrefix forwards the shortened path, so MCP_PATH must be
+// where the server actually receives requests, not the public path.
+func TestUpstreamMCPPathFollowsGatewayStripPrefix(t *testing.T) {
+	server := func(prefix, strip string, gateway bool) *mcpv1alpha1.MCPServer {
+		return &mcpv1alpha1.MCPServer{
+			ObjectMeta: metav1.ObjectMeta{Name: "buddy"},
+			Spec: mcpv1alpha1.MCPServerSpec{
+				PublicPathPrefix: prefix,
+				Gateway:          &mcpv1alpha1.GatewayConfig{Enabled: gateway, StripPrefix: strip},
+			},
+		}
+	}
+	for _, testCase := range []struct {
+		name   string
+		server *mcpv1alpha1.MCPServer
+		want   string
+	}{
+		{"no strip prefix", server("buddy", "", true), "/buddy/mcp"},
+		{"strip prefix removes the public segment", server("buddy", "/buddy", true), "/mcp"},
+		{"trailing slash on strip prefix", server("buddy", "/buddy/", true), "/mcp"},
+		{"strip prefix equal to the whole path", server("buddy", "/buddy/mcp", true), "/"},
+		{"non-matching strip prefix is ignored", server("buddy", "/other", true), "/buddy/mcp"},
+		{"partial segment is not stripped", server("buddy", "/bud", true), "/buddy/mcp"},
+		{"strip prefix without the gateway does nothing", server("buddy", "/buddy", false), "/buddy/mcp"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := upstreamMCPPath(testCase.server); got != testCase.want {
+				t.Fatalf("upstreamMCPPath = %q, want %q", got, testCase.want)
+			}
+			env := map[string]string{}
+			for _, e := range (&MCPServerReconciler{}).buildServerEnvVars(testCase.server) {
+				env[e.Name] = e.Value
+			}
+			if env["MCP_PATH"] != testCase.want {
+				t.Fatalf("MCP_PATH = %q, want %q", env["MCP_PATH"], testCase.want)
+			}
+		})
+	}
 }

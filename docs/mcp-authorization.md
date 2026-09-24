@@ -177,32 +177,54 @@ Set OAuth on the governed MCPServer and choose one canonical resource URI:
 spec:
   auth:
     mode: oauth
-    issuerURL: https://auth.example.com/mcp-auth
+    # Defaults from the bundled issuer configured on the operator.
     audience: https://mcp.example.com/my-server/mcp
 ```
 
-The audience must exactly equal the `--mcp-auth-resource-url` value. The
+The audience must equal the MCP server's canonical public URL. The operator
+keeps the bundled mcp-auth resource list aligned with OAuth MCPServer
+audiences. An optional `--mcp-auth-resource-url` is an initial bootstrap value
+and must exactly match the corresponding `spec.auth.audience`. The
 gateway rejects tokens with a different issuer or audience and strips the
 client bearer token before forwarding upstream.
 
 You can omit `audience`. The operator then derives it from the server's public
 URL: `https://` when the operator runs with `MCP_DEFAULT_INGRESS_TLS=true` or
 the ingress has the `traefik.ingress.kubernetes.io/router.tls: "true"`
-annotation, then `spec.ingressHost` (or the operator's
-`MCP_DEFAULT_INGRESS_HOST`), then `/<publicPathPrefix>/mcp`. A path-based
+annotation, then `spec.ingressHost` (or the shared MCP host resolver's
+`MCP_MCP_INGRESS_HOST`, `MCP_DEFAULT_INGRESS_HOST`, or `mcp.<MCP_PLATFORM_DOMAIN>`),
+then `/<publicPathPrefix>/mcp`. A path-based
 server named `my-server` on `mcp.example.com` gets
 `https://mcp.example.com/my-server/mcp`. If no host is known (for example in
 local test mode), set `audience` explicitly.
+
+Derived `audience` and `issuerURL` values are computed on every reconcile and
+are not written back to `spec`. Changing the host, path, TLS setting, or
+platform domain therefore changes them too; `status.url` shows the current
+public URL.
+
+Each public route has one owner. When two MCPServers resolve to the same path
+on the same host (or one of them is path-based and matches every host), the
+older one keeps the route. The later one reports an `Error` phase naming the
+owner, gets no Ingress, and its audience is not added to the bundled
+authorization server. Otherwise the two servers would accept each other's
+tokens.
+
+The operator owns `MCP_PATH` for every server and derives it from the public
+ingress route. When the gateway sets `gateway.stripPrefix`, it is the route
+with that prefix removed, because that is the path the gateway forwards to the
+server. Do not add it to `spec.envVars` or `.mcp/servers.yaml`; the operator
+replaces any value set there.
 
 For a standalone resource server (`gateway.enabled: false`), the operator also
 injects the values the server needs to publish matching metadata:
 `MCP_AUTH_RESOURCE` (the audience), `MCP_AUTH_RESOURCE_METADATA_URL`
 (`<origin>/.well-known/oauth-protected-resource<path>`), `MCP_AUTH_ISSUER`
-(`auth.issuerURL`), and `MCP_PATH` (the public MCP path). Any of these set in
-`spec.envVars` or `spec.secretEnvVars` takes precedence. Remove hand-set copies
-so the advertised resource stays in step with the ingress host. MCP clients
-reject metadata whose `resource` names a different origin than the URL they
-connected to.
+(`auth.issuerURL`). Remove hand-set copies of these derived values so the
+advertised resource stays in step with the ingress host. The gateway challenge
+and ingress metadata route use the same metadata URL derived from `audience`.
+MCP clients reject metadata whose `resource` names a different origin than the
+URL they connected to.
 
 ## Deploy through setup
 
@@ -215,8 +237,6 @@ KEYCLOAK_CLIENT_SECRET='from-your-secret-manager' \
 ./bin/mcp-runtime setup \
   --with-tls --tls-cluster-issuer letsencrypt-prod \
   --with-mcp-auth-server \
-  --mcp-auth-issuer-url https://auth.example.com/mcp-auth \
-  --mcp-auth-resource-url https://mcp.example.com/my-server/mcp \
   --mcp-auth-signing-key-secret mcp-auth-signing-key \
   --mcp-auth-connectors-file /secure/mcp-auth-connectors.json \
   --mcp-auth-connector keycloak
@@ -253,8 +273,8 @@ The same values can be supplied through the public deployment environment:
 
 ```bash
 export MCP_SETUP_WITH_MCP_AUTH_SERVER=1
-export MCP_SETUP_MCP_AUTH_ISSUER_URL=https://auth.example.com/mcp-auth
-export MCP_SETUP_MCP_AUTH_RESOURCE_URL=https://mcp.example.com/my-server/mcp
+# Issuer defaults to https://auth.<MCP_PLATFORM_DOMAIN>/mcp-auth.
+# Resource audiences are reconciled from OAuth MCPServer objects.
 # Optional only for externally managed TLS (required with provided-tls-secrets).
 export MCP_SETUP_MCP_AUTH_TLS_SECRET=mcp-auth-server-tls
 export MCP_SETUP_MCP_AUTH_SIGNING_KEY_SECRET=mcp-auth-signing-key
@@ -469,7 +489,7 @@ exchange boundaries.
 - discovery connection refused from the auth pod: do not point the pod at the
   node's public IP. Use a reachable, trusted HTTPS service endpoint or fix
   cluster egress/DNS.
-- `audience mismatch`: compare `spec.auth.audience` with
-  `--mcp-auth-resource-url` character-for-character.
+- `audience mismatch`: compare `spec.auth.audience` with the canonical MCP URL
+  and confirm the bundled auth server resource list reflects current OAuth MCPServers.
 - tokens fail after restart: use a persistent RSA signing-key Secret; do not
   rely on the test-mode ephemeral key.

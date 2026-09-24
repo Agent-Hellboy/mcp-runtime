@@ -711,30 +711,62 @@ func (r *MCPServerReconciler) buildImagePullSecrets(mcpServer *mcpv1alpha1.MCPSe
 // protected-resource metadata, so it must advertise exactly the audience the
 // authorization server mints tokens for. Those values are derived from the
 // public URL here rather than hand-copied into envVars, where a stale host
-// makes MCP clients reject the metadata before OAuth even starts. Names the
-// spec sets explicitly are left alone.
+// makes MCP clients reject the metadata before OAuth even starts. Reconciled
+// path and OAuth values replace matching spec entries so they cannot drift.
 func (r *MCPServerReconciler) buildServerEnvVars(mcpServer *mcpv1alpha1.MCPServer) []corev1.EnvVar {
 	result := r.buildEnvVars(mcpServer.Spec.EnvVars, mcpServer.Spec.SecretEnvVars)
+	// MCP_PATH is the path the server receives requests on and belongs to
+	// reconciliation, so CLI and API clients cannot persist a stale copy in
+	// spec.envVars.
+	if upstreamPath := upstreamMCPPath(mcpServer); upstreamPath != "" {
+		result = setEnvVarValue(result, "MCP_PATH", upstreamPath)
+	}
 	if gatewayEnabled(mcpServer) || !serverUsesOAuth(mcpServer) {
 		return result
-	}
-	set := make(map[string]bool, len(result))
-	for _, env := range result {
-		set[env.Name] = true
 	}
 	resource := strings.TrimSpace(mcpServer.Spec.Auth.Audience)
 	for _, derived := range []corev1.EnvVar{
 		{Name: "MCP_AUTH_RESOURCE", Value: resource},
 		{Name: "MCP_AUTH_RESOURCE_METADATA_URL", Value: mcpv1alpha1.ProtectedResourceMetadataURL(resource)},
 		{Name: "MCP_AUTH_ISSUER", Value: strings.TrimSpace(mcpServer.Spec.Auth.IssuerURL)},
-		{Name: "MCP_PATH", Value: strings.TrimSpace(mcpServer.EffectivePublicPath())},
 	} {
-		if derived.Value == "" || set[derived.Name] {
+		if derived.Value == "" {
 			continue
 		}
-		result = append(result, derived)
+		result = setEnvVarValue(result, derived.Name, derived.Value)
 	}
 	return result
+}
+
+// upstreamMCPPath is the path the MCP server container receives: the public
+// path, minus the gateway's stripPrefix when the gateway strips one before
+// forwarding. It mirrors the gateway's trimRequestPathPrefix so the server
+// listens exactly where the gateway sends requests.
+func upstreamMCPPath(mcpServer *mcpv1alpha1.MCPServer) string {
+	publicPath := strings.TrimSpace(mcpServer.EffectivePublicPath())
+	if publicPath == "" || !gatewayEnabled(mcpServer) {
+		return publicPath
+	}
+	prefix := strings.TrimRight(strings.TrimSpace(mcpServer.Spec.Gateway.StripPrefix), "/")
+	if prefix == "" || (publicPath != prefix && !strings.HasPrefix(publicPath, prefix+"/")) {
+		return publicPath
+	}
+	if trimmed := strings.TrimPrefix(publicPath, prefix); trimmed != "" {
+		return trimmed
+	}
+	return "/"
+}
+
+func setEnvVarValue(envVars []corev1.EnvVar, name, value string) []corev1.EnvVar {
+	for i := range envVars {
+		if envVars[i].Name == name {
+			envVars[i].Value = value
+			envVars[i].ValueFrom = nil
+			return envVars
+		}
+	}
+	envVars = append(envVars, corev1.EnvVar{Name: name, Value: value})
+	return envVars
 }
 
 func (r *MCPServerReconciler) buildEnvVars(envVars []mcpv1alpha1.EnvVar, secretEnvVars []mcpv1alpha1.SecretEnvVar) []corev1.EnvVar {
