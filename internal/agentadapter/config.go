@@ -104,10 +104,12 @@ type ShimConfig struct {
 
 // DefaultAnonymousMethods is the set of MCP methods the stdio shim allows in
 // anonymous mode when no explicit AnonymousMethods list is configured. These
-// are read-only discovery methods and the protocol handshake.
+// are read-only discovery methods and the protocol handshake (initialize for
+// legacy revisions, server/discover for 2026-07-28 and later).
 var DefaultAnonymousMethods = []string{
 	"initialize",
 	"notifications/initialized",
+	"server/discover",
 	"ping",
 	"tools/list",
 	"resources/list",
