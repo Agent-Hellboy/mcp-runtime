@@ -37,6 +37,34 @@ func TestReconcileMTLSNetworkPolicy(t *testing.T) {
 	}
 	key := types.NamespacedName{Name: "secure-server-mtls-gateway", Namespace: "mcp-servers"}
 
+	t.Run("admits the detected ingress controller instead of repo traefik", func(t *testing.T) {
+		server := newServer(mcpv1alpha1.AuthModeMTLS)
+		client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(server).Build()
+		k3sTraefik := map[string]string{"app.kubernetes.io/name": "traefik", "app.kubernetes.io/instance": "traefik-kube-system"}
+		r := MCPServerReconciler{
+			Client:                     client,
+			Scheme:                     scheme,
+			IngressControllerNamespace: "kube-system",
+			IngressControllerPodLabels: k3sTraefik,
+		}
+
+		if err := r.reconcileMTLSNetworkPolicy(context.Background(), server); err != nil {
+			t.Fatalf("reconcile: %v", err)
+		}
+		var np networkingv1.NetworkPolicy
+		if err := client.Get(context.Background(), key, &np); err != nil {
+			t.Fatalf("expected NetworkPolicy: %v", err)
+		}
+		peer := np.Spec.Ingress[0].From[0]
+		if got := peer.NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"]; got != "kube-system" {
+			t.Fatalf("namespaceSelector = %q, want kube-system", got)
+		}
+		if len(peer.PodSelector.MatchLabels) != 2 || peer.PodSelector.MatchLabels["app.kubernetes.io/name"] != "traefik" ||
+			peer.PodSelector.MatchLabels["app.kubernetes.io/instance"] != "traefik-kube-system" {
+			t.Fatalf("podSelector = %v, want the detected k3s Traefik labels", peer.PodSelector.MatchLabels)
+		}
+	})
+
 	t.Run("created and locks the gateway port to traefik for mtls", func(t *testing.T) {
 		server := newServer(mcpv1alpha1.AuthModeMTLS)
 		client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(server).Build()

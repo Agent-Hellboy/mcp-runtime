@@ -28,13 +28,20 @@ func mtlsServer() *mcpv1alpha1.MCPServer {
 }
 
 func TestTraefikProxySPIFFEID(t *testing.T) {
-	if got := traefikProxySPIFFEID(mtlsServer()); got != "spiffe://example.org/ns/traefik/sa/traefik" {
+	if got := (&MCPServerReconciler{}).traefikProxySPIFFEID(mtlsServer()); got != "spiffe://example.org/ns/traefik/sa/traefik" {
 		t.Fatalf("traefikProxySPIFFEID = %q", got)
 	}
 	noTrust := mtlsServer()
 	noTrust.Spec.Auth.TrustDomain = ""
-	if got := traefikProxySPIFFEID(noTrust); got != "" {
+	if got := (&MCPServerReconciler{}).traefikProxySPIFFEID(noTrust); got != "" {
 		t.Fatalf("traefikProxySPIFFEID without trust domain = %q, want empty", got)
+	}
+}
+
+func TestTraefikProxySPIFFEIDNamesDetectedIngressController(t *testing.T) {
+	r := &MCPServerReconciler{IngressControllerNamespace: "kube-system", IngressControllerServiceAccount: "traefik-sa"}
+	if got := r.traefikProxySPIFFEID(mtlsServer()); got != "spiffe://example.org/ns/kube-system/sa/traefik-sa" {
+		t.Fatalf("traefikProxySPIFFEID = %q", got)
 	}
 }
 
@@ -130,6 +137,9 @@ func TestGatewaySidecarPinsTrustedProxyForMTLS(t *testing.T) {
 	}
 	if env["TRUSTED_PROXY_SPIFFE_ID"] != "spiffe://example.org/ns/traefik/sa/traefik" {
 		t.Fatalf("TRUSTED_PROXY_SPIFFE_ID = %q, want the traefik SPIFFE id", env["TRUSTED_PROXY_SPIFFE_ID"])
+	}
+	if env["VERIFIED_SPIFFE_HEADER"] != verifiedSPIFFEHeader {
+		t.Fatalf("VERIFIED_SPIFFE_HEADER = %q, want the header the Middleware injects", env["VERIFIED_SPIFFE_HEADER"])
 	}
 	if env["TLS_CLIENT_CA_FILE"] == "" {
 		t.Fatal("expected TLS_CLIENT_CA_FILE to be set for mtls gateway")

@@ -226,3 +226,24 @@ func TestNewManagerOptions(t *testing.T) {
 		t.Fatalf("unexpected leader election id: %q", opts.LeaderElectionID)
 	}
 }
+
+func TestIngressControllerPodLabelsFromEnv(t *testing.T) {
+	env := func(value string) func(string) string {
+		return func(key string) string {
+			if key == "MCP_INGRESS_CONTROLLER_POD_LABELS" {
+				return value
+			}
+			return ""
+		}
+	}
+	got := ingressControllerPodLabelsFromEnv(env("app.kubernetes.io/instance=traefik-kube-system,app.kubernetes.io/name=traefik"))
+	if len(got) != 2 || got["app.kubernetes.io/name"] != "traefik" || got["app.kubernetes.io/instance"] != "traefik-kube-system" {
+		t.Fatalf("labels = %v", got)
+	}
+	if got := ingressControllerPodLabelsFromEnv(env("")); got != nil {
+		t.Fatalf("empty env labels = %v, want nil", got)
+	}
+	if got := ingressControllerPodLabelsFromEnv(env("not a selector!")); got != nil {
+		t.Fatalf("malformed env labels = %v, want nil fallback", got)
+	}
+}

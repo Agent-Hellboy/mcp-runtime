@@ -967,6 +967,7 @@ func operatorEnvOverrides(gatewayProxyImage, existingGatewayOTLPEndpoint string)
 	if clusterName != "" {
 		envVars = append(envVars, operatorEnvVar{Name: "MCP_CLUSTER_NAME", Value: clusterName})
 	}
+	envVars = append(envVars, ingressControllerOperatorEnv(detectIngressControllerIdentity())...)
 	return envVars
 }
 

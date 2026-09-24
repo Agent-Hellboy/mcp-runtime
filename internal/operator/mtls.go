@@ -22,9 +22,13 @@ import (
 )
 
 const (
-	// traefikNamespace is where the ingress controller runs; the gateway only
-	// honors the injected verified-identity header on connections from it.
-	traefikNamespace = "traefik"
+	// defaultIngressControllerNamespace, ServiceAccount, and pod labels describe
+	// the repo-managed Traefik. Setup passes the detected controller instead
+	// (k3s runs its own Traefik in kube-system with Helm labels), because the
+	// gateway only honors the injected verified-identity header on connections
+	// from it and the NetworkPolicy must admit exactly those pods.
+	defaultIngressControllerNamespace      = "traefik"
+	defaultIngressControllerServiceAccount = "traefik"
 	// operatorFieldManager is the Server-Side Apply field owner for operator-
 	// managed cert-manager and Traefik resources.
 	operatorFieldManager = "mcp-runtime-operator"
@@ -58,7 +62,8 @@ var (
 const spiffeIdentityPluginName = "spiffe-identity"
 
 // verifiedSPIFFEHeader is the header the spiffe-identity middleware injects and
-// the gateway reads. It must match the gateway's defaultVerifiedSPIFFEHeader.
+// the gateway reads. The operator configures both sides with it: the
+// Middleware's verifiedHeader and the gateway's VERIFIED_SPIFFE_HEADER.
 const verifiedSPIFFEHeader = "X-MCP-Verified-SPIFFE-ID"
 
 func serverUsesMTLS(mcpServer *mcpv1alpha1.MCPServer) bool {
@@ -80,7 +85,7 @@ func mtlsTrustBundleSecretName(mcpServer *mcpv1alpha1.MCPServer) string {
 // traefikProxySPIFFEID is the identity the ingress presents to the gateway over
 // the re-encrypted hop. The gateway pins this via TRUSTED_PROXY_SPIFFE_ID so a
 // non-ingress holder of an identity-CA cert cannot impersonate the ingress.
-func traefikProxySPIFFEID(mcpServer *mcpv1alpha1.MCPServer) string {
+func (r *MCPServerReconciler) traefikProxySPIFFEID(mcpServer *mcpv1alpha1.MCPServer) string {
 	trustDomain := ""
 	if mcpServer.Spec.Auth != nil {
 		trustDomain = strings.TrimSpace(mcpServer.Spec.Auth.TrustDomain)
@@ -88,7 +93,28 @@ func traefikProxySPIFFEID(mcpServer *mcpv1alpha1.MCPServer) string {
 	if trustDomain == "" {
 		return ""
 	}
-	return fmt.Sprintf("spiffe://%s/ns/%s/sa/traefik", trustDomain, traefikNamespace)
+	return fmt.Sprintf("spiffe://%s/ns/%s/sa/%s", trustDomain, r.ingressControllerNamespace(), r.ingressControllerServiceAccount())
+}
+
+func (r *MCPServerReconciler) ingressControllerNamespace() string {
+	if namespace := strings.TrimSpace(r.IngressControllerNamespace); namespace != "" {
+		return namespace
+	}
+	return defaultIngressControllerNamespace
+}
+
+func (r *MCPServerReconciler) ingressControllerServiceAccount() string {
+	if serviceAccount := strings.TrimSpace(r.IngressControllerServiceAccount); serviceAccount != "" {
+		return serviceAccount
+	}
+	return defaultIngressControllerServiceAccount
+}
+
+func (r *MCPServerReconciler) ingressControllerPodLabels() map[string]string {
+	if len(r.IngressControllerPodLabels) > 0 {
+		return r.IngressControllerPodLabels
+	}
+	return map[string]string{"app": "traefik"}
 }
 
 func (r *MCPServerReconciler) reconcileGatewayCertificate(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer) error {
@@ -184,7 +210,7 @@ func (r *MCPServerReconciler) reconcileTraefikClientCertificate(ctx context.Cont
 	if issuer == "" {
 		return fmt.Errorf("auth.mode mtls requires MCP_MTLS_CLUSTER_ISSUER on the operator")
 	}
-	spiffeID := traefikProxySPIFFEID(mcpServer)
+	spiffeID := r.traefikProxySPIFFEID(mcpServer)
 	if spiffeID == "" {
 		return fmt.Errorf("auth.mode mtls requires auth.trustDomain to derive the ingress identity")
 	}
@@ -302,10 +328,10 @@ func (r *MCPServerReconciler) reconcileMTLSNetworkPolicy(ctx context.Context, mc
 					// Only the ingress controller may reach the gateway port.
 					From: []networkingv1.NetworkPolicyPeer{{
 						NamespaceSelector: &metav1.LabelSelector{
-							MatchLabels: map[string]string{"kubernetes.io/metadata.name": traefikNamespace},
+							MatchLabels: map[string]string{"kubernetes.io/metadata.name": r.ingressControllerNamespace()},
 						},
 						PodSelector: &metav1.LabelSelector{
-							MatchLabels: map[string]string{"app": "traefik"},
+							MatchLabels: r.ingressControllerPodLabels(),
 						},
 					}},
 					Ports: []networkingv1.NetworkPolicyPort{{Protocol: &tcp, Port: &gatewayTarget}},

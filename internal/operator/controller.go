@@ -57,6 +57,14 @@ type MCPServerReconciler struct {
 	// of the namespaces Traefik's kubernetescrd provider watches.
 	DefaultIngressTLSSecretNamespace string
 
+	// IngressControllerNamespace, IngressControllerServiceAccount, and
+	// IngressControllerPodLabels identify the ingress controller pods that
+	// reach mtls gateways. Setup detects them from the running Traefik; empty
+	// values fall back to the repo-managed traefik/traefik deployment.
+	IngressControllerNamespace      string
+	IngressControllerServiceAccount string
+	IngressControllerPodLabels      map[string]string
+
 	// IngressReadinessMode controls how ingress readiness is evaluated.
 	IngressReadinessMode string
 

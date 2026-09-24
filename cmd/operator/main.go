@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	_ "go.uber.org/automaxprocs" // align GOMAXPROCS with container CPU quota
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -70,6 +71,9 @@ func main() {
 		ClusterName:                      clusterNameFromEnv(os.Getenv),
 		OAuthInternalIssuerURL:           strings.TrimSpace(os.Getenv("OAUTH_INTERNAL_ISSUER_URL")),
 		MTLSClusterIssuer:                strings.TrimSpace(os.Getenv("MCP_MTLS_CLUSTER_ISSUER")),
+		IngressControllerNamespace:       strings.TrimSpace(os.Getenv("MCP_INGRESS_CONTROLLER_NAMESPACE")),
+		IngressControllerServiceAccount:  strings.TrimSpace(os.Getenv("MCP_INGRESS_CONTROLLER_SERVICE_ACCOUNT")),
+		IngressControllerPodLabels:       ingressControllerPodLabelsFromEnv(os.Getenv),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "MCPServer")
 		os.Exit(1)
@@ -192,6 +196,23 @@ func ingressReadinessModeFromEnv(getenv func(string) string) (string, bool) {
 func webhooksEnabledFromEnv(getenv func(string) string) bool {
 	value := getenv("MCP_ENABLE_WEBHOOKS")
 	return value == "true" || value == "1"
+}
+
+// ingressControllerPodLabelsFromEnv parses MCP_INGRESS_CONTROLLER_POD_LABELS,
+// a "key=value,key=value" selector setup copies from the detected Traefik
+// Deployment. A malformed value is ignored so the operator falls back to the
+// repo-managed Traefik labels instead of admitting an unintended selector.
+func ingressControllerPodLabelsFromEnv(getenv func(string) string) map[string]string {
+	raw := strings.TrimSpace(getenv("MCP_INGRESS_CONTROLLER_POD_LABELS"))
+	if raw == "" {
+		return nil
+	}
+	parsed, err := labels.ConvertSelectorToLabelsMap(raw)
+	if err != nil {
+		setupLog.Info("Invalid MCP_INGRESS_CONTROLLER_POD_LABELS; using default ingress controller labels", "value", raw)
+		return nil
+	}
+	return parsed
 }
 
 func boolFromEnv(value string) bool {
