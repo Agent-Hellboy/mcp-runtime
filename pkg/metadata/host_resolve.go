@@ -85,12 +85,13 @@ func ResolvePlatformIngressHost() string {
 	return ""
 }
 
-// ResolveRegistryHost resolves the host used for default image names and
-// registry credentials. Precedence is MCP_REGISTRY_INGRESS_HOST,
-// MCP_REGISTRY_HOST, MCP_REGISTRY_ENDPOINT, registry.<MCP_PLATFORM_DOMAIN>,
-// then the local development default.
+// ResolveRegistryHost resolves the public host used for default image names,
+// ingress, and registry credentials. Precedence is MCP_REGISTRY_INGRESS_HOST,
+// MCP_REGISTRY_HOST, registry.<MCP_PLATFORM_DOMAIN>, then the local
+// development default. MCP_REGISTRY_ENDPOINT is reserved for internal pulls
+// and transfers, so it must not become a public host fallback.
 func ResolveRegistryHost() string {
-	for _, key := range []string{envMCPRegistryIngressHost, envMCPRegistryHost, envMCPRegistryEndpoint} {
+	for _, key := range []string{envMCPRegistryIngressHost, envMCPRegistryHost} {
 		if host := strings.TrimSpace(os.Getenv(key)); host != "" {
 			return host
 		}
