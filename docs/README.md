@@ -1,25 +1,17 @@
 # MCP Runtime
 
-**Deploy, broker, and govern MCP servers on Kubernetes. Per-call policy enforcement, multi-team isolation, full audit trail. No YAML.**
-
-MCP Runtime is an open-source, Kubernetes-native control plane for deploying, governing, and brokering MCP servers. It packages server deployment, registry workflows, gateway routing, access policy, audit evidence, and observability into one operating surface for platform, security, and compliance teams.
-
-Unlike public MCP directories or client-specific catalogs, MCP Runtime is not
-just a place to discover servers, and it is not a marketplace for MCP listings.
-The platform control surface is the front door to a deployable runtime:
-Kubernetes reconciliation, registry workflow, brokered tool calls, access
-grants, consented sessions, audit, compliance evidence, and operational
-visibility. The hosted platform shows what that experience looks like; companies
-can run the same model inside their own clusters for agents, IDEs, and direct
-human workflows.
+MCP Runtime is a Kubernetes control plane for MCP servers. It deploys servers
+into your cluster, enforces per-tool access policy on every call through a
+gateway sidecar, and records each decision for audit. It is open source and
+self-hosted.
 
 <div class="docs-home">
 <p class="docs-brand-banner"><img src="assets/brand/mcp-runtime-banner.png" alt="MCP Runtime — Deploy, govern, and broker MCP servers using a Kubernetes-native control plane" /></p>
 <section class="docs-hero">
   <div class="docs-hero-copy">
-  <p class="docs-eyebrow">Vendor-neutral MCP infrastructure for platform teams</p>
+  <p class="docs-eyebrow">Kubernetes control plane for MCP servers</p>
 
-  <p class="docs-lead">Build and publish MCP server images, reconcile them with Kubernetes CRDs, expose them through governed gateway routes, and keep policy decisions, consented sessions, audit trails, and telemetry attached to every agent call.</p>
+  <p class="docs-lead">Build and push an MCP server image, deploy it as an <code>MCPServer</code> resource, and control which agents may call which tools with grants and sessions.</p>
 
   <div class="docs-actions">
     <a class="docs-button docs-button-primary" href="quickstart/">Try in 10 min</a>
@@ -34,19 +26,19 @@ human workflows.
 
 OAuth setup and identity-provider configuration: [MCP authorization](mcp-authorization.md).
 
-## What MCP Runtime is
+## How it works
 
-MCP Runtime is a self-hosted Kubernetes control plane for internal MCP servers. It
-does not act as a public directory for finding servers. It helps a company run the
-servers it already operates: deploy workloads, route MCP traffic, authorize tool
-calls, expire or revoke access, and audit requests inside the company's cluster.
+- An `MCPServer` resource describes a server: image, port, route, and the tools it
+  exposes with their required trust and side effect. The operator turns it into a
+  Deployment, Service, Ingress, and a policy ConfigMap.
+- An `MCPAccessGrant` says which agent or team may call which tools, up to what
+  trust level. An `MCPAgentSession` carries the trust a person consented to, an
+  expiry, and a revoke switch.
+- The `mcp-gateway` sidecar in each server pod checks every `tools/call` against
+  the grant and session before forwarding it, and emits an audit event with the
+  decision.
 
-Connecting an agent to a server is straightforward: configure the client with an
-endpoint. Operating that connection raises the harder questions: who may call a
-specific tool, what a person consented to, how quickly access can be revoked, and
-what the agent did. MCP Runtime makes servers, grants, and consented sessions
-inspectable Kubernetes state, then evaluates access policy on the live gateway
-request path. Audit events record the decisions for later review.
+See [Concepts](concepts.md) for details.
 
 ## Deploy a governed MCP server in 5 commands
 
@@ -59,31 +51,24 @@ mcp-runtime server push --image registry.mcpruntime.org/myteam/my-server:v1 --sc
 mcp-runtime server deploy my-server --scope tenant --metadata-dir .mcp
 ```
 
-The gateway enforces grants and sessions on every tool call. No Kubernetes manifests. No ingress config.
-Point any MCP client at the adapter proxy — governance headers injected transparently.
-
-Once your server is deployed: [configure the adapter](agent-adapters.md) → connect Claude Desktop, Cursor, or any MCP-compatible IDE → start using your server. Policy, grants, audit, and observability run in the background automatically.
-
----
+The CLI generates the Kubernetes resources. To connect a client, run the
+[adapter](agent-adapters.md) and point Claude Desktop, Cursor, or any MCP client
+at it. The adapter adds the identity and session headers the gateway checks.
 
 ## Who is this for?
 
 | You are | MCP Runtime gives you |
 |---|---|
-| **Platform engineer** | Kubernetes operator + registry + ingress wiring without writing a single manifest |
+| **Platform engineer** | Operator, registry, and ingress wiring generated from one resource |
 | **Security team** | Per-tool audit trail, trust levels, session revocation, deny rules, compliance evidence |
 | **Team lead** | Isolated namespace per team, grants scoped to teams, cross-team access without sharing credentials |
-| **Developer** | One CLI to deploy, one adapter to connect — no Kubernetes knowledge needed |
-
----
+| **Developer** | One CLI to deploy and one adapter to connect; no Kubernetes knowledge needed |
 
 ## Why I built this
 
 I got introduced to MCP while building a Superset MCP server at work. While implementing it I started reading the spec, which led me to a similar platform-level project I was building internally — it never got approved. Along the way I noticed a real infrastructure problem: there is no good way for small teams to deploy and govern MCP servers without either buying an expensive gateway or wiring everything up manually. Everyone ends up running redundant copies of the same server — payments team has one, infra team has one, data team has one. Wasteful and impossible to govern. I thought everyone should have this, so here I am building it in the open.
 
 I have been reading the MCP SEPs for gateway and identity management patterns. There are active proposals for exactly these problems. The gateway policy enforcement is a work in progress — I am following the spec and iterating. MCP still has a long way to go here and so do I.
-
----
 
 ## What MCP Runtime installs
 
@@ -92,49 +77,29 @@ integration, ingress wiring, and the bundled Sentinel stack. Sentinel includes
 the gateway request path, grant/session policy materialization, analytics
 ingest and processing, dashboard/API services, and observability components.
 
-## Compared with MCP directories
+## Comparison
 
-Top MCP directories and catalogs such as Glama, Smithery, Docker MCP Catalog,
-PulseMCP, mcp.so, and client-specific catalogs are useful for public discovery,
-metadata, install snippets, or client onboarding. MCP Runtime is different: it
-is an open-source control plane for operating governed MCP servers inside a
-company environment.
-
-| Others usually provide | MCP Runtime provides |
-|---|---|
-| Public discovery and categories | Deployable runtime plus an internal server view when teams need one |
-| Install snippets and connection docs | Kubernetes `MCPServer` reconciliation and routes |
-| Popularity or metadata signals | Trust, grants, sessions, policy decisions, audit, and compliance evidence |
-| Hosted directory or client-specific UX | Self-hosted, vendor-neutral Kubernetes control plane |
-
-Several open-source MCP projects now overlap with parts of that surface:
-gateway/proxy control planes, Kubernetes-aware deployment APIs, registries,
-catalog UIs, auth, audit, and agent governance. MCP Runtime's narrower
-distinction is that Kubernetes desired state is the product boundary:
-`MCPServer`, `MCPAccessGrant`, and `MCPAgentSession` are CRDs, the operator
-reconciles workloads and policy materialization, and the Sentinel stack records
-gateway decisions, usage, and operational state for the running platform.
+For how MCP Runtime relates to MCP directories and to other MCP gateways and
+platforms, see [Comparison](comparison.md).
 
 ## Governance, audit, and compliance
 
-MCP Runtime keeps governance on the live request path instead of leaving it as
-out-of-band documentation. The gateway evaluates `MCPAccessGrant` and
+The gateway evaluates `MCPAccessGrant` and
 `MCPAgentSession` policy before tool calls reach a server, including tool-level
 allow/deny rules, side-effect allowances, trust requirements, consented trust,
 expiry, and revocation.
 
 Each decision can emit audit and analytics events with the server, namespace,
 team ID, human ID, agent ID, session ID, tool name, policy version, decision,
-reason, and trust and side-effect context. That gives platform and security teams a
-queryable record for reviewing access, investigating denied calls, and preparing
-compliance evidence for governed agent workflows.
+reason, and trust and side-effect context. Use these records to review access,
+investigate denied calls, and prepare compliance evidence.
 
 ## Before setup
 
-MCP Runtime expects an already-running Kubernetes cluster and a workstation with
-the CLI prerequisites installed. The setup flow applies the runtime manifests,
+You need a running Kubernetes cluster and a workstation with the CLI
+prerequisites installed. `mcp-runtime setup` applies the runtime manifests,
 installs the operator and Sentinel services, and wires ingress and registry
-resources for the selected environment.
+resources for your environment.
 
 For provider-specific prerequisites such as container runtime registry trust,
 DNS, ingress, TLS, and k3s configuration, start with
@@ -158,7 +123,7 @@ preparation.
 </a>
 </div>
 
-**Developer guide** — publish and govern MCP servers
+**Developer guide:** publish and govern MCP servers
 
 <div class="docs-grid docs-grid-3">
 <a class="docs-card" href="publish-mcp-server/">
@@ -180,7 +145,7 @@ preparation.
 </a>
 </div>
 
-**Operator guide** — deploy and operate the platform
+**Operator guide:** deploy and operate the platform
 
 <div class="docs-grid docs-grid-3">
 <a class="docs-card" href="deployment-targets/">
@@ -227,16 +192,12 @@ preparation.
 | **k3s on-prem** | Production on your own hardware | 2–4 hours |
 | **EKS / GKE / AKS** | Production in cloud | 1–2 hours |
 
----
-
 ## Project status
 
 MCP Runtime is **alpha**. The architecture is stable enough to evaluate as governed MCP infrastructure, but API and UX details are still evolving. Treat the `v1alpha1` types as the source of truth. A security audit is planned but has not been completed — do not use this in production without your own review.
 
----
-
 ## Community
 
-- [GitHub Issues](https://github.com/mcp-runtime/mcp-runtime/issues) — bug reports and feature requests
-- [GitHub Discussions](https://github.com/mcp-runtime/mcp-runtime/discussions) — questions, ideas, and general discussion
-- [Releases](https://github.com/mcp-runtime/mcp-runtime/releases) — changelog and binary downloads
+- [GitHub Issues](https://github.com/mcp-runtime/mcp-runtime/issues): bug reports and feature requests
+- [GitHub Discussions](https://github.com/mcp-runtime/mcp-runtime/discussions): questions, ideas, and general discussion
+- [Releases](https://github.com/mcp-runtime/mcp-runtime/releases): changelog and binary downloads

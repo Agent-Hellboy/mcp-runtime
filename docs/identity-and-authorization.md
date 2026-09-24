@@ -1,9 +1,8 @@
 # Identity and authorization
 
-MCP Runtime uses different identities for platform administration, delegated
-agent access, and Kubernetes workloads. Keeping these identities separate makes
-it clear **who is acting, what they may do, and which component enforces the
-decision**.
+MCP Runtime uses separate identities for platform administration, delegated
+agent access, and Kubernetes workloads. Each identity defines **who is acting,
+what they may do, and which component enforces the decision**.
 
 ## The three identity planes
 
@@ -13,9 +12,9 @@ decision**.
 | Agent governance | `humanID + agentID + teamID + sessionID` | MCP `tools/call` authorization | MCP gateway |
 | Kubernetes workload | ServiceAccount plus RBAC bindings | Reading and changing cluster resources | Kubernetes API server |
 
-These identities are related, but they are not interchangeable. A platform
-administrator is not automatically an agent session, and an MCP agent identity
-is not a Kubernetes ServiceAccount.
+Each plane is enforced independently. A platform administrator does not
+automatically have an agent session, and an MCP agent identity is separate
+from any Kubernetes ServiceAccount.
 
 ## Platform identity: who controls the platform
 
@@ -66,14 +65,13 @@ hop, falling back to `RemoteAddr`. This IP is used both for audit `ActorIP`
 labelling and for **login-lockout bucketing** (brute-force throttling on
 `/api/v1/auth/login`). Because clients can set `X-Forwarded-For` freely, the
 ingress in front of platform-api **must** set/overwrite this header
-authoritatively and strip any client-supplied value — otherwise a caller can
+authoritatively and strip any client-supplied value. Otherwise a caller can
 rotate the header to evade lockout or poison another address's bucket.
 
-Operators are responsible for this at the ingress layer: configure Traefik (and
-any upstream load balancer) so the real client address is the value
-platform-api sees, and so inbound `X-Forwarded-For` from untrusted clients is
-discarded rather than appended. This is the single trusted boundary for client
-IP; platform-api does not attempt to second-guess the proxy chain.
+Configure Traefik (and any upstream load balancer) so platform-api sees the
+real client address, and so inbound `X-Forwarded-For` from untrusted clients is
+discarded, not appended. The ingress is the only trusted boundary for client
+IP; platform-api uses the header value it receives.
 
 ## Agent identity: who is using an MCP tool
 
@@ -90,9 +88,9 @@ The adapter obtains this identity from the platform and writes it to the
 configured governance headers on every request. It removes caller-supplied
 identity headers before applying the issued values.
 
-In the default header mode, the gateway reads these headers. Therefore, the
-adapter, ingress path, and gateway form a trust boundary: untrusted clients
-should not be able to bypass the adapter and inject governance headers directly.
+In the default header mode, the gateway reads these headers, so the adapter,
+ingress path, and gateway form a trust boundary. Make sure untrusted clients
+cannot bypass the adapter and inject governance headers directly.
 OAuth-configured servers additionally authenticate the bearer token at the
 gateway.
 
@@ -193,10 +191,10 @@ tools:
     sideEffect: destructive
 ```
 
-The gateway does not infer risk by inspecting tool implementation. The declared
-metadata is the policy input. A tool that the server never declared, or whose
+The gateway uses the declared metadata as its policy input; it does not
+inspect tool implementations. A tool that the server never declared, or whose
 side-effect metadata is missing or unknown, is denied with
-`tool_side_effect_unknown` rather than silently treated as safe.
+`tool_side_effect_unknown`.
 
 ## Gateway decision for every `tools/call`
 
@@ -221,7 +219,7 @@ denial response. A denied call never reaches the MCP server.
 
 | # | Check | Fails with |
 |---|---|---|
-| 0 | Is `policy.mode: observe`? If so, allow now — nothing below runs. | *(allowed, still audited)* |
+| 0 | Is `policy.mode: observe`? If so, allow now; nothing below runs. | *(allowed, still audited)* |
 | 1 | Is there any human, agent, or team identity? | `missing_identity` (401) |
 | 2 | With `session.required: true`: is there a session ID, a matching session, not revoked, not expired? | `missing_session`, `session_not_found`, `session_revoked`, `session_expired` (401) |
 | 3 | Does any grant's subject match? Every populated subject field must match exactly. | `no_matching_grant` |
@@ -267,7 +265,7 @@ Session consent:    high
 Result:             deny, side_effect_not_allowed
 ```
 
-The allow rule is insufficient because authorization is an intersection. The
+Authorization is an intersection, so the allow rule alone is not enough. The
 grant must also permit `destructive`.
 
 ## Kubernetes workload identity

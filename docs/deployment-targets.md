@@ -1,32 +1,28 @@
 # Deployment Targets
 
-Use this guide when you know you want to deploy MCP Runtime, but still need to
-choose the right Kubernetes target and install shape. It sits between
-[Getting Started](getting-started.md) and
-[Cluster Readiness](cluster-readiness.md):
+Pick a Kubernetes target and install shape for MCP Runtime on common
+self-managed and managed distributions.
 
-- [Getting Started](getting-started.md) is the step-by-step install flow.
-- This page explains which path to use for common self-managed and managed
-  Kubernetes distributions.
+- [Getting Started](getting-started.md) has the step-by-step install flow.
 - [Cluster Readiness](cluster-readiness.md) has the detailed registry,
   container runtime, DNS, ingress, TLS, and failure-mode checks.
 
-`mcp-runtime setup` installs into an existing Kubernetes cluster. It does not
-create EKS, GKE, AKS, k3s, or kubeadm clusters for you, and it does not modify
-node container runtime trust unless a documented provider path says so.
+`mcp-runtime setup` installs into an existing Kubernetes cluster. Create the
+EKS, GKE, AKS, k3s, or kubeadm cluster first. Setup changes node container
+runtime trust only where a documented provider path says so.
 
-## Tested Public Reference
+## Tested public reference
 
 The public example platform at [platform.mcpruntime.org](https://platform.mcpruntime.org)
 is deployed on the project's k3s cluster. Use the [k3s Deployment Runbook](k3s-deployment-runbook.md)
 for its production operations, including secure cluster access, certificate
-reuse, image rollout, and verification. This is the currently tested public
-deployment shape; the other distribution entries below describe supported
-installation shapes and prerequisites, not equivalent production validation.
+reuse, image rollout, and verification. It is the only production-validated
+deployment. The other entries below describe supported installation shapes and
+prerequisites.
 
 ## Common Deployment Model
 
-Every distribution needs the same high-level shape:
+Every distribution follows the same steps:
 
 1. Create or choose a Kubernetes cluster.
 2. Configure `kubectl` for that cluster.
@@ -39,9 +35,8 @@ Every distribution needs the same high-level shape:
 8. Run `./bin/mcp-runtime cluster diagnostics` as the post-setup check suite.
 9. Deploy the first MCP server and verify the dashboard/API.
 
-Keep the environment for a given install in a file and pass it with
-`--env-file` instead of exporting variables ad hoc, so reruns use the same
-configuration (`config/deployments/mcpruntime-org.env.example` is the template;
+Keep the environment for an install in a file and pass it with `--env-file`
+so reruns use the same configuration (`config/deployments/mcpruntime-org.env.example` is the template;
 variables already present in the environment are not overridden).
 
 ### Get a kubeconfig for the target distribution
@@ -114,7 +109,7 @@ before setup so in-cluster image pulls use the same hostname as the Let's Encryp
 certificate. Using the registry Service ClusterIP with `bundled-https` causes
 `ImagePullBackOff` (`x509: cannot validate certificate ... doesn't contain any IP SANs`).
 
-For an existing external registry instead:
+For an existing external registry:
 
 ```bash
 # Existing managed or enterprise registry.
@@ -139,19 +134,17 @@ For an existing external registry instead:
 | GKE | Google managed Kubernetes | Artifact Registry | Use node/workload identity registry access, Cloud DNS or equivalent DNS, and a Kubernetes ingress controller compatible with this platform. |
 | AKS | Azure managed Kubernetes | ACR | Use AKS/ACR integration or pull secrets, Azure DNS or equivalent DNS, and a supported ingress/TLS path. |
 
-OpenShift and other Kubernetes distributions are not a first-class documented
-target yet. They can work only if the cluster can satisfy the same Kubernetes
-contracts: CRDs, Deployments, Services, Ingress, storage, image pulls, TLS
+OpenShift and other Kubernetes distributions have no documented install path
+yet. They work only if the cluster satisfies the same Kubernetes contracts: CRDs, Deployments, Services, Ingress, storage, image pulls, TLS
 secrets, and pod security requirements. Review the generated manifests and
 platform security policy before using those clusters.
 
 ## Self-Managed Clusters
 
-Self-managed clusters give you direct control over node runtime configuration.
-That is useful for labs and edge clusters, but it also means you own every node
-pull path.
+On self-managed clusters you control node runtime configuration, and you own
+every node pull path.
 
-### k3s Lab Example
+### k3s lab example
 
 Use this for a single-node k3s lab or internal evaluation with the bundled
 plain HTTP registry. Do not copy the insecure registry settings into
@@ -218,7 +211,7 @@ If setup prints a different registry internal URL, copy that exact `host:port`
 into `/etc/rancher/k3s/registries.yaml`, restart k3s, and rerun setup. k3s
 containerd registry matching is exact.
 
-### k3s Production-Style Shape
+### k3s production-style shape
 
 For a public or persistent k3s cluster there are two common registry shapes.
 
@@ -226,7 +219,7 @@ For a public or persistent k3s cluster there are two common registry shapes.
 
 Use this when MCP Runtime owns the in-cluster registry and exposes it at
 `registry.<domain>` with Let's Encrypt (or an enterprise issuer). k3s often
-already runs Traefik in `kube-system` — pass `--ingress none`, set
+already runs Traefik in `kube-system`. Pass `--ingress none`, set
 `PLATFORM_TRAEFIK_NAMESPACE=kube-system`, and
 `PLATFORM_TEAM_TRAEFIK_WATCH=disabled` so setup does not install a second
 ingress stack and team create does not patch k3s Traefik.
@@ -267,7 +260,7 @@ For a complete four-node reference topology, worker join commands, ServiceLB
 pinning, public DNS, Cloudflare or enterprise proxy front doors, TLS, registry,
 validation, and a five-node extension, use [k3s On-Prem Cluster](k3s-on-prem-cluster.md).
 
-### kubeadm, RKE2, and Other Self-Managed Clusters
+### kubeadm, RKE2, and other self-managed clusters
 
 For self-managed production clusters:
 
@@ -291,9 +284,8 @@ Then use the same production-style setup command:
 
 ## Managed Kubernetes
 
-Managed clusters reduce node lifecycle work, but they do not remove registry,
-DNS, TLS, or ingress decisions. In most managed environments, use an external
-registry instead of the bundled registry.
+The provider manages node lifecycle. You still choose the registry, DNS, TLS,
+and ingress. In most managed environments, use an external registry.
 
 ### EKS
 
@@ -375,11 +367,10 @@ export GOOGLE_CLIENT_ID=<google-oauth-client-id>
   --strict-prod
 ```
 
-## Ingress and Registry Ownership
+## Ingress and registry ownership
 
-MCP Runtime can install repo-managed Traefik, or it can reuse an existing
-ingress controller. Avoid running two ingress stacks for the same public
-surface.
+MCP Runtime installs repo-managed Traefik or reuses an existing ingress
+controller. Run one ingress stack per public surface.
 
 If you bring your own ingress controller:
 

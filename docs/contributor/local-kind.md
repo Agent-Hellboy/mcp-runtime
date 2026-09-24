@@ -99,7 +99,7 @@ these local-only tenant accounts:
 Fresh local clusters only have the `test` and `admin` accounts unless you create
 tenant teams and users yourself.
 
-## Catalog Visibility Checks
+## Catalog visibility checks
 
 Anonymous users must not see the MCP catalog:
 
@@ -149,7 +149,7 @@ curl -sS -o /tmp/mcp-tenant-a-cross.txt -w '%{http_code}\n' \
 Tenant A should see `mcp-team-tenant-a`, and the explicit Tenant B namespace
 read should return `403`.
 
-## Quick Cluster Inventory
+## Quick cluster inventory
 
 ```bash
 kubectl get pods -n mcp-runtime -o wide
@@ -170,7 +170,7 @@ kubectl delete mcpserver <server-name> -n <namespace> --ignore-not-found
 kubectl delete secret <server-name>-analytics-creds -n <namespace> --ignore-not-found
 ```
 
-## Optional: Bundled mcp-auth Integration Fixture
+## Optional: bundled mcp-auth integration fixture
 
 The bundled authorization server is opt-in and separate from MCP application
 deployment. Setup pulls `princekrroshan01/mcp-auth-server:latest` from Docker

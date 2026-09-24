@@ -1,4 +1,4 @@
-# MCP Runtime Platform
+# MCP Runtime
 
 <p align="center">
   <img src="website/static/brand/mcp-runtime-banner.png" alt="MCP Runtime — Deploy, govern, and broker MCP servers using a Kubernetes-native control plane" />
@@ -13,30 +13,27 @@
 [![Trivy Image Scan](https://img.shields.io/github/actions/workflow/status/mcp-runtime/mcp-runtime/security-trivy.yaml?branch=main&label=Trivy%20Image%20Scan&job=Trivy%20operator%20Image)](https://github.com/mcp-runtime/mcp-runtime/actions/workflows/security-trivy.yaml?query=branch%3Amain+event%3Apush)
 [![Coverage](https://codecov.io/gh/mcp-runtime/mcp-runtime/branch/main/graph/badge.svg)](https://codecov.io/gh/mcp-runtime/mcp-runtime/branch/main)
 
-MCP Runtime is a self-hosted Kubernetes control plane for internal [Model Context Protocol](https://modelcontextprotocol.io/) servers. It provides declarative MCP server deployment, registry workflows, operator reconciliation, request-path governance, access/session resources, audit, analytics, dashboards, and a platform control surface for browsing and operating MCP servers.
+MCP Runtime is a Kubernetes control plane for [Model Context Protocol](https://modelcontextprotocol.io/) servers. It deploys MCP servers into your cluster, enforces per-tool access policy on every call, and records each decision for audit.
 
-The public platform at `platform.mcpruntime.org` is a live preview of the deployable platform experience. It runs the public preview catalog mode, where visitors can browse public preview MCP servers and signed-in preview users can publish into the public catalog namespace. It is still not a general-purpose public MCP marketplace. Companies can deploy the same model in their own Kubernetes clusters, then host, manage, govern, and audit MCP servers through both the CLI and the platform control surface for agents, IDEs, and direct human workflows.
+You describe a server with an `MCPServer` resource and the operator creates its Deployment, Service, Ingress, and policy. Access is granted with `MCPAccessGrant` and time-boxed with `MCPAgentSession`. A gateway sidecar in each server pod checks the caller's identity, session, trust level, and the tool's side effect before a call reaches your code.
 
-- [Website](https://mcpruntime.org/)
-- [Platform preview](https://platform.mcpruntime.org/) for the platform control surface; companies can deploy the same model in their own clusters
-- [Docs](https://docs.mcpruntime.org/) and [`docs/`](docs/)
-- [API reference](https://docs.mcpruntime.org/api) and [`docs/api.md`](docs/api.md)
-- [Articles](https://articles.mcpruntime.org/) and [`articles/`](articles/)
-- Early adopters: MCP Runtime is looking for teams running or evaluating internal MCP platforms. Open a [GitHub issue](https://github.com/mcp-runtime/mcp-runtime/issues) with your use case, cluster shape, or integration feedback.
+A public preview runs at [platform.mcpruntime.org](https://platform.mcpruntime.org/). The same stack installs into your own cluster with `mcp-runtime setup`.
+
+- [Website](https://mcpruntime.org/) · [Docs](https://docs.mcpruntime.org/) ([`docs/`](docs/)) · [API reference](https://docs.mcpruntime.org/api) · [Articles](https://articles.mcpruntime.org/)
+- Running or evaluating an internal MCP platform? Open a [GitHub issue](https://github.com/mcp-runtime/mcp-runtime/issues) with your use case, cluster shape, or integration feedback.
 
 > [!CAUTION]
 > MCP Runtime is alpha software. APIs, commands, and behavior are still evolving. Use the docs, CRDs, and `api/v1alpha1` types as the source of truth before production use.
 
-## Why teams use MCP Runtime
+## Features
 
-- **Operate MCP servers where company data already lives.** Deploy into an existing Kubernetes cluster instead of sending internal tools, tokens, or traffic through a third-party catalog or hosted proxy.
-- **Use Kubernetes as the source of truth.** `MCPServer`, `MCPAccessGrant`, and `MCPAgentSession` resources make server delivery, access grants, agent sessions, policy, rollout, and status inspectable with normal Kubernetes workflows.
-- **Move beyond "connect an agent to a URL."** The gateway can enforce identity, deny-by-default tool policy, trust ceilings, side-effect limits, session expiry, revocation, and audit emission on the live MCP request path.
-- **Give agents a clean integration path.** The stdio and Streamable HTTP adapters let IDEs, agent frameworks, and scripts attach platform-issued governance identity without each client reimplementing grants or session handling.
-- **Support internal catalog models.** Run private tenant namespaces, an org-wide catalog, or a public preview-style catalog while keeping the same CLI, CRDs, platform UI, and operator model.
-- **Separate teams without separate platforms.** Team namespaces, RBAC, `teamID`, subject matching, and namespace-scoped grants/sessions let multiple teams publish and govern MCP servers on one cluster.
-- **Own the day-two path.** Setup, registry workflows, image pull wiring, ingress, rollout readiness, `cluster diagnostics`, status commands, dashboards, audit, analytics, and Sentinel services are part of the platform rather than afterthoughts.
-- **Fit different cluster shapes.** The documented paths cover disposable Kind development, laptop evaluation, k3s labs, self-managed production clusters, and managed Kubernetes with external registries.
+- `MCPServer`, `MCPAccessGrant`, and `MCPAgentSession` are namespaced CRDs, so servers, access, and sessions are visible and reviewable with `kubectl`.
+- The `mcp-gateway` sidecar applies deny-by-default tool rules, trust ceilings, side-effect limits, session expiry, and revocation on every `tools/call`.
+- Every allow and deny decision is recorded with the identity, tool, reason, and policy version, and is queryable through the Sentinel API and dashboards.
+- `adapter proxy` (HTTP) and `adapter stdio` let IDEs, agent frameworks, and scripts connect with platform-issued identity and automatic session refresh.
+- Team namespaces, RBAC, and `teamID` subject matching let several teams publish and govern servers on one cluster, with private, org-wide, or public catalogs.
+- Setup, registry and image-pull wiring, ingress, rollout readiness, `cluster doctor`, `cluster diagnostics`, and status commands are included.
+- Documented install paths cover Kind, k3s, self-managed clusters, and managed Kubernetes with external registries.
 
 ## What ships
 
@@ -53,43 +50,7 @@ The public platform at `platform.mcpruntime.org` is a live preview of the deploy
 - Optional gateway enforcement for identity, tool policy, trust, and audit emission
 - Bundled Sentinel stack for ingest, processing, API, UI, and observability
 
-## How it differs from MCP directories
-
-The [Official MCP Registry](https://registry.modelcontextprotocol.io/) and public MCP directories such as [Glama](https://glama.ai/mcp), [Smithery](https://smithery.ai/), [Docker MCP Catalog on Docker Hub](https://hub.docker.com/mcp), [PulseMCP](https://www.pulsemcp.com/), [mcp.so](https://mcp.so/), and client-specific catalogs are useful discovery and installation surfaces. MCP Runtime is different: it is a deployable operating layer for running MCP servers inside a company's own environment. It can provide an internal catalog-like view, but the main product is deployment, governance, brokered access, audit, compliance evidence, and day-two operations.
-
-| Public MCP directory or catalog | MCP Runtime |
-|---|---|
-| Helps users find or install public MCP servers | Helps companies host, deploy, govern, observe, and audit their own MCP servers |
-| Optimizes for discovery metadata, popularity, and install snippets | Optimizes for deployment, runtime governance, Kubernetes reconciliation, policy, sessions, audit, and compliance |
-| Usually runs as a third-party hosted directory or client feature | Runs in the company's Kubernetes environment or in a hosted preview shape |
-| Stops at configuration or connection | Owns the governed request path through the broker/gateway |
-
-## How MCP Runtime compares
-
-Kubernetes-native MCP management is now a direction shared by several projects: some run MCP server workloads in Kubernetes, while others define Kubernetes APIs for MCP routing and management. Kubernetes support alone does not distinguish MCP Runtime.
-
-**Runtime’s focus is managing MCP business logic and access as validated platform state.** `MCPServer`, `MCPAccessGrant`, and `MCPAgentSession` let the platform reconcile server workloads and express trust ceilings, allowed side effects, per-tool rules, user consent, expiry, and revocation as Kubernetes resources. This gives teams a reviewable control plane for validating what is deployed and what an agent session is allowed to do.
-
-| Project | What it focuses on | How it compares with MCP Runtime |
-|---|---|---|
-| **MCP Runtime** | Kubernetes-managed MCP workloads, access grants, consented sessions, gateway enforcement, audit, and operations | Combines workload reconciliation with platform-validated trust, side-effect, tool, consent, expiry, and revocation policy. |
-| [Archestra](https://github.com/archestra-ai/archestra) | MCP platform with Kubernetes server orchestration, gateway, registry, and agent/chat features | Direct overlap in Kubernetes-hosted MCP servers; broader agent platform, while Runtime centers access on grant and session resources. |
-| [Obot](https://github.com/obot-platform/obot) | MCP hosting, registry, gateway, and organization-facing AI experience | Also hosts MCP servers; Runtime emphasizes Kubernetes-managed workload and access policy state. |
-| [Microsoft MCP Gateway](https://github.com/microsoft/mcp-gateway) | Kubernetes-oriented MCP gateway and management APIs, with adapter/tool lifecycle and identity integrations | Direct Kubernetes overlap; Runtime models server deployment, grants, and consented sessions as platform resources. |
-| [Agent Router](https://github.com/theagentrouter/agent-router) | Kubernetes Gateway API routing for MCP and AI traffic, including MCP routes and policy | Direct Kubernetes API overlap, focused on traffic routing; Runtime also manages MCP server workloads and session consent. |
-| [agentgateway](https://github.com/agentgateway/agentgateway) | High-performance gateway for MCP, agents, and AI traffic | Focuses on data-plane routing and policy; Runtime owns workload lifecycle and access state in Kubernetes. |
-| [IBM ContextForge](https://github.com/IBM/mcp-context-forge) | Federation and gateway for MCP, A2A, REST, and gRPC | Broader protocol federation and API virtualization; Runtime focuses on Kubernetes workload and access governance. |
-| [MCPJungle](https://github.com/mcpjungle/MCPJungle) | Self-hosted team gateway, unified endpoint, discovery, and tool grouping | Centers aggregation and gateway workflows; Runtime connects access decisions to reconciled cluster resources. |
-| [Unla](https://github.com/AmoyLab/Unla) | MCP/API gateway with API-to-MCP conversion and configurable integrations | Stronger API conversion focus; Runtime focuses on deployed MCP workloads and governed sessions. |
-| [OpenZiti MCP Gateway](https://github.com/openziti/mcp-gateway) | Zero-trust networking and secure remote access for MCP tools | Stronger remote access/networking focus; Runtime governs workloads and agent access within Kubernetes. |
-| [Docker MCP Gateway](https://github.com/docker/mcp-gateway) | Docker-centered local MCP server lifecycle, catalog, and configuration | Stronger local/container developer workflow; Runtime targets platform-managed Kubernetes operations and policy. |
-| [LiteLLM](https://github.com/BerriAI/litellm) | AI/model gateway with MCP access, provider routing, keys, and spend controls | Stronger model/provider routing and spend management; Runtime focuses on MCP server lifecycle and consented access. |
-| [Kong](https://github.com/Kong/kong) | Mature API gateway with MCP proxy and AI gateway capabilities | Stronger general API gateway; Runtime provides an MCP-specific Kubernetes control plane for workloads, grants, and sessions. |
-| [Portkey](https://github.com/Portkey-AI/gateway) | AI gateway and managed MCP gateway capabilities | Stronger AI traffic and hosted gateway focus; Runtime centers self-managed Kubernetes resources and reconciliation. |
-| [Composio](https://github.com/ComposioHQ/composio) | SaaS integrations, toolkits, and user-scoped OAuth connections for agents | Stronger breadth of integrations and OAuth; Runtime focuses on operating MCP workloads and access policy in Kubernetes. |
-| [Preloop](https://github.com/preloop/preloop) | Agent control plane with MCP firewall, model gateway, approvals, and budgets | Stronger model controls and approval workflows; Runtime expresses MCP grants and consented sessions as Kubernetes state. |
-
-Choose MCP Runtime when you want the platform to deploy MCP servers and validate access rules and user consent through Kubernetes-managed state. Other projects may fit better when your primary need is broad SaaS integrations, model routing and spend controls, API conversion, remote zero-trust networking, or a full agent/chat platform. Features and deployment models change; verify the current project documentation before choosing.
+For how MCP Runtime relates to MCP directories and to other MCP gateways and platforms, see [Comparison](docs/comparison.md).
 
 ## Requirements
 
