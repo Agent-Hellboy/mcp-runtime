@@ -49,13 +49,27 @@ func platformDomainFromEnv() string {
 }
 
 // ResolveRegistryEndpoint returns the registry endpoint used by pulls and
-// in-cluster skopeo. An explicit MCP_REGISTRY_ENDPOINT is the internal
-// endpoint override; otherwise it falls back to the common registry host.
+// in-cluster skopeo: MCP_REGISTRY_ENDPOINT, then MCP_REGISTRY_HOST, then
+// registry.<MCP_PLATFORM_DOMAIN>, then the local default. It deliberately
+// skips MCP_REGISTRY_INGRESS_HOST, the public auth-protected host, so an
+// install that only names its ingress still gets the "set
+// MCP_REGISTRY_ENDPOINT" guidance instead of pulling through the public edge.
 func ResolveRegistryEndpoint() string {
-	if v := strings.TrimSpace(os.Getenv(envMCPRegistryEndpoint)); v != "" {
-		return v
+	for _, key := range []string{envMCPRegistryEndpoint, envMCPRegistryHost} {
+		if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+			return v
+		}
 	}
-	return ResolveRegistryHost()
+	if p := platformDomainFromEnv(); p != "" {
+		return registryHostForDomain(p)
+	}
+	return DefaultRegistryHost
+}
+
+// registryHostForDomain names the platform registry for a platform domain,
+// without doubling a domain that already starts with "registry.".
+func registryHostForDomain(domain string) string {
+	return "registry." + strings.TrimPrefix(domain, "registry.")
 }
 
 // ResolveMcpIngressHost is the public hostname for the MCP / gateway (operator
@@ -97,7 +111,7 @@ func ResolveRegistryHost() string {
 		}
 	}
 	if p := platformDomainFromEnv(); p != "" {
-		return "registry." + p
+		return registryHostForDomain(p)
 	}
 	return DefaultRegistryHost
 }
