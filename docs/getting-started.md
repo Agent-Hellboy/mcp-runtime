@@ -306,7 +306,14 @@ export MCP_INGRESS_READINESS_MODE=permissive
 kubectl port-forward -n traefik svc/traefik 18080:8000
 ```
 
-Then use `http://127.0.0.1:18080/<publicPathPrefix>/mcp` for local MCP traffic. Keep the default strict readiness mode for production clusters that rely on published load-balancer status.
+Then use `http://127.0.0.1:18080/<publicPathPrefix>/mcp` for local MCP traffic.
+
+!!! warning "`MCPServer` stuck in `PartiallyReady` while traffic works"
+    Strict readiness (the default) waits for the Ingress to publish
+    `status.loadBalancer.ingress[]`. Many dev and NodePort-style controllers route
+    traffic without ever publishing it. `permissive` treats an Ingress with rules as
+    ready — keep `strict` for production clusters that rely on published
+    load-balancer status.
 
 ## 6. Confirm health
 

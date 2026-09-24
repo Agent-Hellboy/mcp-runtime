@@ -212,33 +212,47 @@ AND tool side effect allowed by the grant
 AND effective trust >= required trust
 ```
 
-The evaluation order is:
+### The decision ladder
 
-1. Inspect the JSON-RPC request and extract the tool name.
-2. Load the rendered policy for the target MCP server.
-3. Read the human, agent, team, and session identity.
-4. Find a non-revoked, non-expired session whose subject matches that identity.
-5. Find grants whose populated subject fields match the identity.
-6. Apply explicit per-tool deny or allow rules.
-7. Compare the tool's declared side effect with the grant's
-   `allowedSideEffects`.
-8. Calculate effective trust:
+The gateway extracts the tool name from the JSON-RPC request, loads the rendered
+policy for the target server, and walks these checks in order. **The first
+failing rung wins**, and its reason code is what lands in the audit event and the
+denial response. A denied call never reaches the MCP server.
 
-   ```text
-   effectiveTrust = min(grant.maxTrust, session.consentedTrust)
-   ```
+| # | Check | Fails with |
+|---|---|---|
+| 0 | Is `policy.mode: observe`? If so, allow now — nothing below runs. | *(allowed, still audited)* |
+| 1 | Is there any human, agent, or team identity? | `missing_identity` (401) |
+| 2 | With `session.required: true`: is there a session ID, a matching session, not revoked, not expired? | `missing_session`, `session_not_found`, `session_revoked`, `session_expired` (401) |
+| 3 | Does any grant's subject match? Every populated subject field must match exactly. | `no_matching_grant` |
+| 4 | Does a tool rule deny this tool, or does no enabled grant allow it? Disabled grants are skipped; a grant with no `toolRules` allows every tool name. | `tool_denied` (403), `tool_not_granted` |
+| 5 | Did the server declare this tool's side effect, and does the grant's `allowedSideEffects` include it? | `tool_side_effect_unknown`, `side_effect_not_allowed` (403) |
+| 6 | Does the grant carry a `maxTrust`? | `grant_without_trust` |
+| 7 | Is effective trust at least the required trust? | `trust_too_low` (403) |
+| ✓ | Forward to the MCP server and emit the audit event. | `allowed` |
 
-9. Require `effectiveTrust` to meet both the tool's and matching rule's required
-   trust.
-10. Forward an allowed request or return a denial without contacting the MCP
-    server.
-11. Emit an audit event containing the identity, tool, decision, reason, trust
-    values, server, namespace, and policy version.
+The trust comparison on rung 7 is:
 
-`policy.mode: observe` short-circuits this sequence after step 2: the call is
-allowed without any identity, session, grant, side-effect, or trust check, and
-only the audit trail keeps visibility. Treat it as a reporting mode, never as
-enforcement.
+```text
+effectiveTrust = min(grant.maxTrust, session.consentedTrust)
+requiredTrust  = max(tool.requiredTrust, matchingToolRule.requiredTrust)
+```
+
+When no session is required or none matches, `consentedTrust` falls back to the
+grant's `maxTrust`.
+
+Reasons without a status code (`no_matching_grant`, `tool_not_granted`,
+`grant_without_trust`) follow `policy.defaultDecision`: `403` under the shipped
+`deny` default, allowed only if a server explicitly sets `defaultDecision: allow`.
+
+Every decision, allowed or denied, emits an audit event containing the identity,
+tool, decision, reason, trust values, server, namespace, and policy version.
+
+!!! warning "Observe mode is reporting, not enforcement"
+    `policy.mode: observe` allows the call without any identity, session, grant,
+    side-effect, or trust check; only the audit trail keeps visibility. Use it to
+    preview what enforcement would deny on a new server, then switch back to
+    `allow-list`.
 
 Example:
 
