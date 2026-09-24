@@ -97,8 +97,9 @@ authenticate with a bearer token at the gateway.
 Clients without an adapter certificate use OAuth. An adapter can instead
 authenticate with its session-bound client certificate; Traefik verifies it and
 the gateway resolves its session identity for grant/session authorization.
-Adapter enrollment requires the platform-wide `MCP_MTLS_CLUSTER_ISSUER`
-and `MCP_TRUST_DOMAIN` settings. Persisted `auth.mode: mtls` resources must be
+Adapter certificates are opt-in (`MCP_ADAPTER_CERTIFICATES=true`) and
+require the platform-wide `MCP_MTLS_CLUSTER_ISSUER` and `MCP_TRUST_DOMAIN`
+settings. Persisted `auth.mode: mtls` resources must be
 migrated to OAuth; that per-server mode was removed.
 
 ## Grant: administrator-approved authority

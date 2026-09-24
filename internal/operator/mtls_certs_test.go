@@ -81,7 +81,7 @@ func TestReconcileMTLSTrustBundle(t *testing.T) {
 	t.Run("materializes bundle from gateway ca.crt", func(t *testing.T) {
 		server := mtlsServer()
 		client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(server, gatewaySecret()).Build()
-		r := MCPServerReconciler{Client: client, Scheme: scheme, AdapterTrustDomain: "example.org", MTLSClusterIssuer: "mcp-runtime-ca"}
+		r := MCPServerReconciler{Client: client, Scheme: scheme, AdapterCertificatesEnabled: true, AdapterTrustDomain: "example.org", MTLSClusterIssuer: "mcp-runtime-ca"}
 		if err := r.reconcileMTLSTrustBundle(context.Background(), server); err != nil {
 			t.Fatalf("reconcile: %v", err)
 		}
@@ -97,7 +97,7 @@ func TestReconcileMTLSTrustBundle(t *testing.T) {
 	t.Run("skips when gateway certificate not yet issued", func(t *testing.T) {
 		server := mtlsServer()
 		client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(server).Build()
-		r := MCPServerReconciler{Client: client, Scheme: scheme, AdapterTrustDomain: "example.org", MTLSClusterIssuer: "mcp-runtime-ca"}
+		r := MCPServerReconciler{Client: client, Scheme: scheme, AdapterCertificatesEnabled: true, AdapterTrustDomain: "example.org", MTLSClusterIssuer: "mcp-runtime-ca"}
 		if err := r.reconcileMTLSTrustBundle(context.Background(), server); err != nil {
 			t.Fatalf("reconcile should not error when gateway secret absent: %v", err)
 		}
@@ -112,7 +112,7 @@ func TestReconcileMTLSTrustBundle(t *testing.T) {
 		server.Spec.Auth.Mode = mcpv1alpha1.AuthModeHeader
 		existing := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "secure-server-mtls-ca", Namespace: "mcp-servers"}}
 		client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(server, existing).Build()
-		r := MCPServerReconciler{Client: client, Scheme: scheme, AdapterTrustDomain: "example.org", MTLSClusterIssuer: "mcp-runtime-ca"}
+		r := MCPServerReconciler{Client: client, Scheme: scheme, AdapterCertificatesEnabled: true, AdapterTrustDomain: "example.org", MTLSClusterIssuer: "mcp-runtime-ca"}
 		if err := r.reconcileMTLSTrustBundle(context.Background(), server); err != nil {
 			t.Fatalf("reconcile: %v", err)
 		}
@@ -124,7 +124,7 @@ func TestReconcileMTLSTrustBundle(t *testing.T) {
 }
 
 func TestGatewaySidecarPinsTrustedProxyForMTLS(t *testing.T) {
-	r := MCPServerReconciler{AdapterTrustDomain: "example.org", MTLSClusterIssuer: "mcp-runtime-ca"}
+	r := MCPServerReconciler{AdapterCertificatesEnabled: true, AdapterTrustDomain: "example.org", MTLSClusterIssuer: "mcp-runtime-ca"}
 	container, err := r.buildGatewayContainer(mtlsServer())
 	if err != nil {
 		t.Fatalf("buildGatewayContainer: %v", err)
@@ -138,5 +138,41 @@ func TestGatewaySidecarPinsTrustedProxyForMTLS(t *testing.T) {
 	}
 	if env["TLS_CLIENT_CA_FILE"] == "" {
 		t.Fatal("expected TLS_CLIENT_CA_FILE to be set for mtls gateway")
+	}
+}
+
+// Adapter certificates reroute an OAuth server through an IngressRoute and an
+// mTLS gateway hop, so they need the explicit opt-in, Traefik, and a gateway;
+// platform PKI being present (as in test mode) is not enough.
+func TestUsesAdapterCertificatesRequiresOptInTraefikAndGateway(t *testing.T) {
+	pki := MCPServerReconciler{AdapterTrustDomain: "example.org", MTLSClusterIssuer: "mcp-runtime-ca"}
+	enabled := pki
+	enabled.AdapterCertificatesEnabled = true
+
+	if pki.usesAdapterCertificates(mtlsServer()) {
+		t.Fatal("platform PKI alone must not enable adapter certificates")
+	}
+	if !enabled.usesAdapterCertificates(mtlsServer()) {
+		t.Fatal("opt-in with platform PKI should enable adapter certificates for a Traefik OAuth server")
+	}
+	nginx := mtlsServer()
+	nginx.Spec.IngressClass = "nginx"
+	if enabled.usesAdapterCertificates(nginx) {
+		t.Fatal("non-Traefik ingress classes must keep their plain Ingress")
+	}
+	standalone := mtlsServer()
+	standalone.Spec.Gateway.Enabled = false
+	if enabled.usesAdapterCertificates(standalone) {
+		t.Fatal("a server without a gateway cannot validate the certificate hop")
+	}
+}
+
+func TestAdapterCertificateEntryPointsFollowOperatorDefault(t *testing.T) {
+	if got := (&MCPServerReconciler{}).adapterCertificateEntryPoints(); len(got) != 1 || got[0] != "websecure" {
+		t.Fatalf("entryPoints = %v, want [websecure] fallback", got)
+	}
+	got := (&MCPServerReconciler{DefaultIngressEntryPoints: "web, websecure"}).adapterCertificateEntryPoints()
+	if len(got) != 2 || got[0] != "web" || got[1] != "websecure" {
+		t.Fatalf("entryPoints = %v, want the operator's configured entrypoints", got)
 	}
 }

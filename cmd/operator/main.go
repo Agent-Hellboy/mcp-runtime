@@ -72,6 +72,7 @@ func main() {
 		OAuthInternalIssuerURL:           strings.TrimSpace(os.Getenv("OAUTH_INTERNAL_ISSUER_URL")),
 		MTLSClusterIssuer:                strings.TrimSpace(os.Getenv("MCP_MTLS_CLUSTER_ISSUER")),
 		AdapterTrustDomain:               strings.TrimSpace(os.Getenv("MCP_TRUST_DOMAIN")),
+		AdapterCertificatesEnabled:       boolFromEnv(os.Getenv("MCP_ADAPTER_CERTIFICATES")),
 		IngressControllerNamespace:       strings.TrimSpace(os.Getenv("MCP_INGRESS_CONTROLLER_NAMESPACE")),
 		IngressControllerServiceAccount:  strings.TrimSpace(os.Getenv("MCP_INGRESS_CONTROLLER_SERVICE_ACCOUNT")),
 		IngressControllerPodLabels:       ingressControllerPodLabelsFromEnv(os.Getenv),

@@ -95,6 +95,10 @@ func (s *AccessService) HandleAdapterCertificate(w http.ResponseWriter, r *http.
 		writeAPIError(w, http.StatusForbidden, "adapter session is expired")
 		return
 	}
+	if session.Spec.Revoked {
+		writeAPIError(w, http.StatusForbidden, "adapter session is revoked")
+		return
+	}
 	serverName := string(session.Spec.ServerRef.Name)
 	serverNamespace := string(session.Spec.ServerRef.Namespace)
 	if serverNamespace == "" {

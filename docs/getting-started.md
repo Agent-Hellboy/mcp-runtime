@@ -279,7 +279,8 @@ registry, TLS, and rollout sequencing stay the same.
 To enable optional adapter client certificates alongside OAuth, add
 `--mtls-cluster-issuer <cluster-issuer>` alongside `--with-tls`. Name an
 enterprise cert-manager issuer, or the bundled `mcp-runtime-ca` to have setup
-provision one; `--test-mode` defaults to `mcp-runtime-ca`. Production must also
+provision one; `--test-mode` defaults to `mcp-runtime-ca`. Set
+`MCP_ADAPTER_CERTIFICATES=true` to turn the feature on; production must also
 set `MCP_TRUST_DOMAIN` (for example `mcpruntime.org`). See
 [Agent Adapters](agent-adapters.md#enterprise-mtls-and-spiffe).
 

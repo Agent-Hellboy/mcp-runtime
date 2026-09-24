@@ -346,8 +346,9 @@ X-MCP-Agent-Session: sess-8f1b9d
 On OAuth routes, adapters may also present a session-bound client certificate.
 Traefik verifies it before forwarding; the gateway still requires OAuth and
 binds the token subject to the session encoded by the certificate. Clients
-without a certificate use OAuth normally. Configure platform-wide
-`MCP_MTLS_CLUSTER_ISSUER` and `MCP_TRUST_DOMAIN` to enable adapter enrollment.
+without a certificate use OAuth normally. Set
+`MCP_ADAPTER_CERTIFICATES=true` with platform-wide `MCP_MTLS_CLUSTER_ISSUER`
+and `MCP_TRUST_DOMAIN` to enable adapter enrollment.
 
 ## Dashboard API
 

@@ -85,6 +85,10 @@ type MCPServerReconciler struct {
 	// not depend on an MCPServer auth mode.
 	MTLSClusterIssuer string
 
+	// AdapterCertificatesEnabled opts OAuth servers into optional adapter
+	// client certificates on their route (MCP_ADAPTER_CERTIFICATES).
+	AdapterCertificatesEnabled bool
+
 	// AdapterTrustDomain is the platform-wide SPIFFE trust domain used for
 	// session-bound adapter certificates and the trusted Traefik identity.
 	AdapterTrustDomain              string

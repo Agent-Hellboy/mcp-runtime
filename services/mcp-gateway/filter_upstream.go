@@ -9,6 +9,9 @@ package main
 // (all set by earlier stages) and must not mutate them. It always returns Respond
 // so the pipeline halts and stage 6 (audit) runs from the orchestrator.
 func (s *gatewayServer) upstreamFilter(ex *Exchange) Result {
+	// The verified SPIFFE header is an ingress-to-gateway assertion; the MCP
+	// server must never see it, forged or not.
+	ex.R.Header.Del(s.verifiedSPIFFEHeaderName())
 	s.applyIdentityHeaders(ex.R, ex.Policy, ex.Identity)
 	s.applyUpstreamToken(ex.R, ex.Policy, ex.OAuthToken)
 

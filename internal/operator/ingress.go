@@ -24,10 +24,15 @@ func (r *MCPServerReconciler) reconcileIngress(ctx context.Context, mcpServer *m
 		},
 	}
 	if r.usesAdapterCertificates(mcpServer) {
+		// Create the IngressRoute first so the server is never left without
+		// a route while switching from the plain Ingress.
+		if err := r.reconcileMTLSIngress(ctx, mcpServer); err != nil {
+			return err
+		}
 		if err := r.Delete(ctx, ingress); err != nil && !apierrors.IsNotFound(err) {
 			return err
 		}
-		return r.reconcileMTLSIngress(ctx, mcpServer)
+		return nil
 	}
 	if err := r.deleteMTLSIngress(ctx, mcpServer); err != nil {
 		return err

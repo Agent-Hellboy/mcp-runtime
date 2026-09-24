@@ -402,9 +402,15 @@ mcp-runtime setup \
   --mtls-cluster-issuer company-workload-ca
 ```
 
-Naming a workload issuer with `--mtls-cluster-issuer` enables adapter
-certificate authentication on OAuth-configured server routes. It requires
-`--with-tls` because Traefik terminates client TLS on the websecure entrypoint.
+Adapter certificate authentication on OAuth-configured server routes is
+opt-in: set `MCP_ADAPTER_CERTIFICATES=true` for setup (it passes it to the
+operator) in addition to naming a workload issuer with `--mtls-cluster-issuer`.
+Enabling it moves every OAuth server that uses the Traefik ingress class and
+the gateway from a plain Ingress to a Traefik IngressRoute, and puts the
+gateway behind an mTLS hop that only Traefik can reach; servers are then no
+longer reachable directly on their Service. It requires `--with-tls` because
+Traefik terminates client TLS; the IngressRoute uses the operator's configured
+ingress entrypoints (`websecure` when none are set).
 `--tls-cluster-issuer` controls public ingress and registry certificates and is
 separate from the workload issuer. Set `MCP_TRUST_DOMAIN` to the platform's
 SPIFFE trust domain. Production must configure both `MCP_TRUST_DOMAIN` and

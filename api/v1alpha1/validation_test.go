@@ -384,3 +384,19 @@ func TestMCPServerValidateIngressRequirements(t *testing.T) {
 		t.Fatalf("expected ingressPath validation error, got %v", err)
 	}
 }
+
+// Standalone OAuth resource servers (gateway disabled) validate their own
+// tokens and are supported; only the removed mtls mode is rejected.
+func TestMCPServerValidateAllowsStandaloneOAuthServer(t *testing.T) {
+	server := &MCPServer{
+		Spec: MCPServerSpec{
+			Image:            "example.com/server",
+			PublicPathPrefix: "server",
+			Gateway:          &GatewayConfig{Enabled: false},
+			Auth:             &AuthConfig{Mode: AuthModeOAuth, IssuerURL: "https://auth.example.com/mcp-auth", Audience: "https://mcp.example.com/server/mcp"},
+		},
+	}
+	if err := server.validate(); err != nil {
+		t.Fatalf("standalone OAuth server rejected: %v", err)
+	}
+}

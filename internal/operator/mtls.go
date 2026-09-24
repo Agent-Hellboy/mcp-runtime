@@ -61,9 +61,20 @@ const spiffeIdentityPluginName = "spiffe-identity"
 const verifiedSPIFFEHeader = "X-MCP-Verified-SPIFFE-ID"
 
 // usesAdapterCertificates enables optional adapter client-certificate
-// validation on OAuth routes when the platform has workload PKI configured.
+// validation on an OAuth server's route. It moves the route from a plain
+// Ingress to a Traefik IngressRoute and puts the gateway behind an mTLS hop,
+// so it must be switched on explicitly (MCP_ADAPTER_CERTIFICATES) rather than
+// implied by workload PKI being present, and it only applies to servers that
+// route through Traefik and have a gateway to validate the hop.
 func (r *MCPServerReconciler) usesAdapterCertificates(mcpServer *mcpv1alpha1.MCPServer) bool {
-	return serverUsesOAuth(mcpServer) && strings.TrimSpace(r.AdapterTrustDomain) != "" && strings.TrimSpace(r.MTLSClusterIssuer) != ""
+	if !r.AdapterCertificatesEnabled || !serverUsesOAuth(mcpServer) || !gatewayEnabled(mcpServer) {
+		return false
+	}
+	ingressClass := strings.TrimSpace(mcpServer.Spec.IngressClass)
+	if ingressClass != "" && ingressClass != DefaultIngressClass {
+		return false
+	}
+	return strings.TrimSpace(r.AdapterTrustDomain) != "" && strings.TrimSpace(r.MTLSClusterIssuer) != ""
 }
 
 func gatewayTLSSecretName(mcpServer *mcpv1alpha1.MCPServer) string {
@@ -484,7 +495,7 @@ func (r *MCPServerReconciler) reconcileMTLSIngress(ctx context.Context, mcpServe
 		})
 	}
 	ingressRoute := r.traefikResource(mcpServer, ingressRouteGVK, mcpServer.Name, map[string]any{
-		"entryPoints": []any{"websecure"},
+		"entryPoints": r.adapterCertificateEntryPoints(),
 		"routes":      routes,
 		"tls": map[string]any{
 			"options": map[string]any{"name": mtlsTLSOptionName(mcpServer)},
@@ -543,4 +554,20 @@ func (r *MCPServerReconciler) traefikResource(mcpServer *mcpv1alpha1.MCPServer, 
 	})
 	obj.SetOwnerReferences([]metav1.OwnerReference{*metav1.NewControllerRef(mcpServer, mcpv1alpha1.GroupVersion.WithKind("MCPServer"))})
 	return obj
+}
+
+// adapterCertificateEntryPoints follows the operator's configured ingress
+// entrypoints, so the IngressRoute is served where the plain Ingress was.
+// Client certificates need TLS, so the fallback is websecure.
+func (r *MCPServerReconciler) adapterCertificateEntryPoints() []any {
+	var entryPoints []any
+	for _, entryPoint := range strings.Split(r.DefaultIngressEntryPoints, ",") {
+		if trimmed := strings.TrimSpace(entryPoint); trimmed != "" {
+			entryPoints = append(entryPoints, trimmed)
+		}
+	}
+	if len(entryPoints) == 0 {
+		return []any{"websecure"}
+	}
+	return entryPoints
 }

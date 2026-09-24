@@ -40,7 +40,7 @@ func TestReconcileMTLSNetworkPolicy(t *testing.T) {
 	t.Run("created and locks the gateway port to traefik for mtls", func(t *testing.T) {
 		server := newServer(mcpv1alpha1.AuthModeOAuth)
 		client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(server).Build()
-		r := MCPServerReconciler{Client: client, Scheme: scheme, AdapterTrustDomain: "example.org", MTLSClusterIssuer: "mcp-runtime-ca"}
+		r := MCPServerReconciler{Client: client, Scheme: scheme, AdapterCertificatesEnabled: true, AdapterTrustDomain: "example.org", MTLSClusterIssuer: "mcp-runtime-ca"}
 
 		if err := r.reconcileMTLSNetworkPolicy(context.Background(), server); err != nil {
 			t.Fatalf("reconcile: %v", err)

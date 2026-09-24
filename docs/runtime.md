@@ -217,8 +217,9 @@ Implemented and stable enough to evaluate:
 - Adapter certificates: optional session-bound certificates are verified at
   ingress on OAuth server routes. The gateway derives the adapter session
   identity from the verified certificate and applies grant/session policy.
-  Clients without a certificate use OAuth. Configure platform
-  `MCP_MTLS_CLUSTER_ISSUER` and `MCP_TRUST_DOMAIN` to enable enrollment.
+  Clients without a certificate use OAuth. Set
+  `MCP_ADAPTER_CERTIFICATES=true` with platform `MCP_MTLS_CLUSTER_ISSUER` and
+  `MCP_TRUST_DOMAIN` to enable enrollment.
 
 Not yet:
 

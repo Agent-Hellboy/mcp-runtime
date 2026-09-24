@@ -304,9 +304,6 @@ func (r *MCPServer) validate() error {
 	if r.Spec.Gateway != nil && r.Spec.Gateway.Enabled && r.Spec.Gateway.Port == r.Spec.Port {
 		allErrs = append(allErrs, field.Invalid(specPath.Child("gateway", "port"), r.Spec.Gateway.Port, "gateway.port must differ from spec.port"))
 	}
-	if r.Spec.Auth != nil && r.Spec.Auth.Mode == AuthModeOAuth && !gatewayEnabled(r.Spec) {
-		allErrs = append(allErrs, field.Required(specPath.Child("gateway", "enabled"), "gateway.enabled is required when auth.mode is oauth"))
-	}
 	if gatewayEnabled(r.Spec) && r.Spec.Auth != nil && r.Spec.Auth.Mode == AuthModeOAuth && strings.TrimSpace(r.Spec.Auth.IssuerURL) == "" {
 		allErrs = append(allErrs, field.Required(specPath.Child("auth", "issuerURL"), "auth.issuerURL is required when auth.mode is oauth"))
 	}

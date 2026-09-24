@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -621,6 +622,33 @@ func TestUpstreamFilterAlwaysReturnsRespond(t *testing.T) {
 
 	if got := s.upstreamFilter(ex); got != Respond {
 		t.Fatalf("upstreamFilter = %v, want Respond", got)
+	}
+}
+
+// The verified SPIFFE header is an ingress-to-gateway assertion; forwarding it
+// would let an MCP server behind a plain Ingress trust a client-forged value.
+func TestUpstreamFilterStripsVerifiedIdentityHeader(t *testing.T) {
+	t.Parallel()
+	var seen atomic.Value
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen.Store(r.Header.Get(defaultVerifiedSPIFFEHeader))
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(upstream.Close)
+	target, _ := url.Parse(upstream.URL)
+
+	s := minimalServer()
+	s.proxy = newUpstreamReverseProxy(target)
+	ex := newTestExchange(http.MethodGet, "/mcp", "", map[string]string{
+		defaultVerifiedSPIFFEHeader: "spiffe://example.org/ns/team-a/session/forged",
+	})
+	ex.Policy = headerPolicy()
+
+	if got := s.upstreamFilter(ex); got != Respond {
+		t.Fatalf("upstreamFilter = %v, want Respond", got)
+	}
+	if got, _ := seen.Load().(string); got != "" {
+		t.Fatalf("upstream saw %s = %q, want it stripped", defaultVerifiedSPIFFEHeader, got)
 	}
 }
 
