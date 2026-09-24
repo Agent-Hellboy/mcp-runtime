@@ -144,7 +144,7 @@ mcp-runtime adapter proxy
 | `MCP_RUNTIME_SESSION_ID` | yes¹ | `MCPAgentSession` name (`X-MCP-Agent-Session`). |
 | `MCP_RUNTIME_HOST_HEADER` | no | Override the `Host` header for host-based ingress. |
 | `MCP_RUNTIME_LISTEN_ADDR` | proxy | Local listener; defaults to `127.0.0.1:8099`. |
-| `MCP_RUNTIME_PROTOCOL_VERSION` | no | MCP protocol header. Defaults to `2025-06-18`; the negotiated `result.protocolVersion` from the runtime's `initialize` response overrides it for the rest of the process. |
+| `MCP_RUNTIME_PROTOCOL_VERSION` | stdio | `MCP-Protocol-Version` header the stdio adapter sends for legacy (`initialize`-based) requests. Defaults to `2025-06-18`; the negotiated `result.protocolVersion` from the runtime's `initialize` response overrides it for the rest of the process. Requests that declare a version in `params._meta` use that version. The HTTP proxy forwards the client's own header. |
 | `--no-xforwarded` flag | proxy | Pass this flag to suppress `X-Forwarded-*` headers forwarded to the runtime. Defaults to enabled (headers are sent). There is no corresponding env var. |
 | `MCP_RUNTIME_REQUEST_TIMEOUT` | no | Go duration for adapter→runtime calls. Defaults to unbounded. |
 | `MCP_RUNTIME_MAX_INBOUND_BYTES` | proxy | Caps inbound JSON-RPC bodies; over-cap responds 413. Defaults to 16 MiB. |
@@ -182,11 +182,12 @@ identity. Run the stdio shim anonymously:
 mcp-runtime adapter stdio \
   --runtime-url https://mcp.example.com/public-catalog/mcp \
   --anonymous \
-  --anonymous-methods initialize,notifications/initialized,ping,tools/list,resources/list,prompts/list
+  --anonymous-methods initialize,notifications/initialized,server/discover,ping,tools/list,resources/list,prompts/list
 ```
 
-Anonymous methods default to the protocol handshake plus the three read-only
-discovery calls. Any method outside the allowlist is rejected with a JSON-RPC
+Anonymous methods default to the protocol handshake (`initialize` for legacy
+clients, `server/discover` for MCP `2026-07-28` clients), `ping`, and the three
+read-only discovery calls. Any method outside the allowlist is rejected with a JSON-RPC
 `-32601` error before the request leaves the adapter, so an agent SDK cannot
 accidentally call `tools/call` against a public route.
 
@@ -338,9 +339,35 @@ Shim behavior:
   as JSON-RPC errors. Runtime denials matching `session_expired` /
   `session_not_found` are repackaged with `error.data.runtime_status =
   "session_expired"` so the SDK can choose to re-initialize.
-- Idempotent reads (`tools/list`, `resources/list`, `prompts/list`, `ping`)
-  retry on `502`/`504`/connection-reset with exponential backoff (100 ms →
+- Idempotent reads (`tools/list`, `resources/list`, `prompts/list`, `ping`,
+  `server/discover`) retry on `502`/`504`/connection-reset with exponential backoff (100 ms →
   200 ms → 1 s cap). `tools/call` never retries automatically.
+
+### MCP 2026-07-28 clients
+
+MCP revision [`2026-07-28`](https://modelcontextprotocol.io/specification/2026-07-28/changelog)
+removed the `initialize` handshake. A modern client puts its protocol version
+in each request's `params._meta` (`io.modelcontextprotocol/protocolVersion`).
+The shim serves legacy and modern clients side by side. For a request that
+declares `2026-07-28` or later, it:
+
+- sends `MCP-Protocol-Version` from that request's `_meta`, so the header always
+  matches the body;
+- adds `Mcp-Method`, and `Mcp-Name` for `tools/call`, `prompts/get`, and
+  `resources/read`, Base64-encoding values that cannot safely appear as plain
+  HTTP header values, including non-ASCII and control characters, leading or
+  trailing whitespace, and values matching the Base64 sentinel pattern;
+- mirrors tool arguments annotated with `x-mcp-header` into `Mcp-Param-*`
+  headers, using the schemas from earlier `tools/list` results. Tools whose
+  annotations are invalid are dropped from `tools/list` with a warning on
+  stderr;
+- sends no `Mcp-Session-Id`;
+- on a stdio `notifications/cancelled` for an in-flight request, closes that
+  HTTP request and does not forward the notification;
+- keeps `subscriptions/listen` streams open regardless of
+  `MCP_RUNTIME_REQUEST_TIMEOUT`.
+
+Requests without a `_meta` version keep the legacy behavior described above.
 
 ## Expected outcomes
 

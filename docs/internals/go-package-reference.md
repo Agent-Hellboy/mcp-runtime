@@ -2119,6 +2119,19 @@ const (
 	MCPSessionHeader   = "Mcp-Session-Id"
 )
 const (
+	// ModernProtocolVersion is the first MCP revision that uses per-request
+	// metadata instead of an initialize handshake.
+	ModernProtocolVersion = "2026-07-28"
+
+	// MetaProtocolVersionKey is the params._meta key carrying a request's
+	// protocol version in modern revisions.
+	MetaProtocolVersionKey = "io.modelcontextprotocol/protocolVersion"
+
+	MCPMethodHeader      = "Mcp-Method"
+	MCPNameHeader        = "Mcp-Name"
+	MCPParamHeaderPrefix = "Mcp-Param-"
+)
+const (
 
 	// DefaultMaxInboundBytes caps the size of inbound JSON-RPC bodies that
 	// the proxy buffers for metadata capture. Requests over the cap get a
@@ -2134,6 +2147,7 @@ const (
 var DefaultAnonymousMethods = []string{
 	"initialize",
 	"notifications/initialized",
+	"server/discover",
 	"ping",
 	"tools/list",
 	"resources/list",
@@ -2141,7 +2155,8 @@ var DefaultAnonymousMethods = []string{
 }
     DefaultAnonymousMethods is the set of MCP methods the stdio shim allows
     in anonymous mode when no explicit AnonymousMethods list is configured.
-    These are read-only discovery methods and the protocol handshake.
+    These are read-only discovery methods and the protocol handshake (initialize
+    for legacy revisions, server/discover for 2026-07-28 and later).
 ```
 
 <a id="agent-adapters-functions"></a>
