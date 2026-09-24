@@ -1,7 +1,6 @@
 # Contributor Guide
 
-This section is the practical contributor runbook for MCP Runtime. Use it when
-you need to set up a disposable cluster, change code, rebuild one service,
+Use this runbook when you need to set up a disposable cluster, change code, rebuild one service,
 exercise tenant isolation, or debug the platform UI and MCP request path.
 
 For product concepts, start with [Architecture](../architecture.md). For code

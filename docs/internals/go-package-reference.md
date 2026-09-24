@@ -1550,18 +1550,23 @@ func ResolvePlatformIngressHost() string
 <a id="metadata-helpers-func-resolveregistryendpoint-string"></a>
 ```text
 func ResolveRegistryEndpoint() string
-    ResolveRegistryEndpoint returns the registry hostname/endpoint for pulls
-    and in-cluster skopeo (MCP_REGISTRY_ENDPOINT, then MCP_REGISTRY_HOST,
-    then registry.<MCP_PLATFORM_DOMAIN> when the platform domain is set).
+    ResolveRegistryEndpoint returns the registry endpoint used by pulls
+    and in-cluster skopeo: MCP_REGISTRY_ENDPOINT, then MCP_REGISTRY_HOST,
+    then registry.<MCP_PLATFORM_DOMAIN>, then the local default. It
+    deliberately skips MCP_REGISTRY_INGRESS_HOST, the public auth-protected
+    host, so an install that only names its ingress still gets the "set
+    MCP_REGISTRY_ENDPOINT" guidance instead of pulling through the public edge.
 
 ```
 
 <a id="metadata-helpers-func-resolveregistryhost-string"></a>
 ```text
 func ResolveRegistryHost() string
-    ResolveRegistryHost resolves the host used for default image names.
-    Precedence: MCP_REGISTRY_INGRESS_HOST, legacy MCP_REGISTRY_HOST, then
-    registry.<MCP_PLATFORM_DOMAIN>, else fallback default.
+    ResolveRegistryHost resolves the public host used for default image names,
+    ingress, and registry credentials. Precedence is MCP_REGISTRY_INGRESS_HOST,
+    MCP_REGISTRY_HOST, registry.<MCP_PLATFORM_DOMAIN>, then the local
+    development default. MCP_REGISTRY_ENDPOINT is reserved for internal pulls
+    and transfers, so it must not become a public host fallback.
 
 ```
 
@@ -2119,6 +2124,19 @@ const (
 	MCPSessionHeader   = "Mcp-Session-Id"
 )
 const (
+	// ModernProtocolVersion is the first MCP revision that uses per-request
+	// metadata instead of an initialize handshake.
+	ModernProtocolVersion = "2026-07-28"
+
+	// MetaProtocolVersionKey is the params._meta key carrying a request's
+	// protocol version in modern revisions.
+	MetaProtocolVersionKey = "io.modelcontextprotocol/protocolVersion"
+
+	MCPMethodHeader      = "Mcp-Method"
+	MCPNameHeader        = "Mcp-Name"
+	MCPParamHeaderPrefix = "Mcp-Param-"
+)
+const (
 
 	// DefaultMaxInboundBytes caps the size of inbound JSON-RPC bodies that
 	// the proxy buffers for metadata capture. Requests over the cap get a
@@ -2134,6 +2152,7 @@ const (
 var DefaultAnonymousMethods = []string{
 	"initialize",
 	"notifications/initialized",
+	"server/discover",
 	"ping",
 	"tools/list",
 	"resources/list",
@@ -2141,7 +2160,8 @@ var DefaultAnonymousMethods = []string{
 }
     DefaultAnonymousMethods is the set of MCP methods the stdio shim allows
     in anonymous mode when no explicit AnonymousMethods list is configured.
-    These are read-only discovery methods and the protocol handshake.
+    These are read-only discovery methods and the protocol handshake (initialize
+    for legacy revisions, server/discover for 2026-07-28 and later).
 ```
 
 <a id="agent-adapters-functions"></a>

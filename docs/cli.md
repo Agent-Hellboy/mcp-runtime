@@ -1,8 +1,6 @@
 # CLI reference
 
-This guide walks through every `mcp-runtime` command using the real example servers
-in the repository so you can follow along, test the platform, and build a demo from
-a single working script.
+Examples on this page use the example servers in the repository.
 
 ## Quick reference
 
@@ -33,8 +31,6 @@ a single working script.
 All three listen on `http://localhost:8088/mcp` by default.
 `--from-server http://localhost:8088` appends `/mcp` automatically.
 
----
-
 ## Access model
 
 Three roles control what each command can do:
@@ -43,11 +39,9 @@ Three roles control what each command can do:
 |---|---|---|
 | User | Team member deploying servers | `mcp-runtime auth login` |
 | Admin | Platform admin or kube operator | Platform API admin role, or `--use-kube` with cluster-admin RBAC |
-| Operator | Cluster operator | `KUBECONFIG` with cluster-admin RBAC — no platform login needed |
+| Operator | Cluster operator | `KUBECONFIG` with cluster-admin RBAC; no platform login needed |
 
-Commands are labelled **[User]**, **[Admin]**, or **[Operator]** throughout this page.
-
----
+Commands on this page are labelled **[User]**, **[Admin]**, or **[Operator]**.
 
 ## Profiles
 
@@ -78,8 +72,6 @@ mcp-runtime auth status
 mcp-runtime auth logout
 ```
 
----
-
 ## Command map
 
 | Command | Role | What it does | Guide |
@@ -98,15 +90,12 @@ mcp-runtime auth logout
 | `setup` | Operator | Install the full platform stack | [setup](#setup) |
 | `cluster` | Operator | Initialize clusters, run readiness and post-install checks, manage cert-manager | [Deployment targets](deployment-targets.md) |
 
-`server push` is the user-facing image publishing workflow. It publishes an
-image through the authenticated platform API. Registry administration stays
-under `registry`; use `admin registry push` only for direct Kubernetes operator
-debugging.
+`server push` publishes an image through the authenticated platform API.
+Registry administration is under `registry`. Use `admin registry push` only for
+direct Kubernetes operator debugging.
 
-MCP Runtime is alpha software as a whole: every command, flag, and output shape
-on this page may still change between releases.
-
----
+MCP Runtime is alpha software. Commands, flags, and output shapes on this page
+may change between releases.
 
 ## auth
 
@@ -135,7 +124,7 @@ mcp-runtime auth logout
 `--api-url` takes scheme and host only, with no `/api` path. `--username` is an
 alias for `--email`; prefer `--email`.
 
-**[Operator]** — check an OIDC provider before enabling the bundled mcp-auth
+**[Operator]** Check an OIDC provider before enabling the bundled mcp-auth
 authorization server. The command fetches
 `/.well-known/openid-configuration` and reports what setup needs:
 
@@ -145,11 +134,9 @@ mcp-runtime auth provider-check --issuer-url https://keycloak.example.com/realms
 
 See [MCP authorization](mcp-authorization.md) for the full provider flow.
 
----
-
 ## status
 
-**[User]** — kubeconfig optional for sentinel detail
+**[User]** (kubeconfig optional for sentinel detail)
 
 ```bash
 mcp-runtime status                                         # registry, operator, platform API
@@ -157,22 +144,20 @@ mcp-runtime registry status                               # registry pod + endpo
 KUBECONFIG=~/.kube/config mcp-runtime sentinel status     # sentinel stack
 ```
 
----
-
 ## server
 
-**[User]** by default — **[Admin]** with `--use-kube`
+**[User]** by default, **[Admin]** with `--use-kube`
 
 > Full guide: [Publish an MCP Server](publish-mcp-server.md)
 
-The developer flow is five steps: **init → validate → build → push → deploy**.
+The developer flow: **init → validate → build → push → deploy**.
 
 ### server init
 
 `server init` creates `.mcp/servers.yaml` with tool names, trust levels, side effects,
 and policy. Tool names must exactly match what your server implements.
 
-Use `--from-server` to discover them automatically from a running local instance:
+Use `--from-server` to discover them from a running local instance:
 
 ```bash
 # workspace-assistant-mcp (Go)
@@ -221,7 +206,7 @@ mcp-runtime server init workspace-demo \
 
 ### server validate
 
-Catches tool name mismatches before a build. A mismatch causes `tool_side_effect_unknown`
+Checks tool names before a build. A mismatch causes `tool_side_effect_unknown`
 errors at the gateway at runtime.
 
 ```bash
@@ -277,7 +262,7 @@ mcp-runtime server push --image ... --scope org      # org-wide catalog
 mcp-runtime server push --image ... --scope public   # anonymous catalog
 ```
 
-`server push` requires platform credentials and is the supported developer path.
+`server push` requires platform credentials.
 
 ### server deploy
 
@@ -293,7 +278,7 @@ mcp-runtime server deploy workspace-demo \
   --update
 ```
 
-### Full example — workspace-assistant-mcp
+### Full example: workspace-assistant-mcp
 
 ```bash
 cd examples/workspace-assistant-mcp
@@ -332,8 +317,6 @@ mcp-runtime server delete workspace-demo
 mcp-runtime server generate --metadata-dir .mcp --output manifests/
 ```
 
----
-
 ## catalog
 
 **[User]** platform API only
@@ -345,7 +328,7 @@ mcp-runtime catalog tools --namespace mcp-team-acme --side-effect write
 mcp-runtime catalog tool refund_invoice --server payments --output json
 ```
 
-The catalog is visibility-only. It shows tools from visible servers with trust,
+The catalog is read-only. It shows tools from visible servers with trust,
 side effect, computed or declared risk, drift (`declared`, `ungoverned`,
 `missing`), and copyable connect config.
 
@@ -361,8 +344,6 @@ mcp-runtime server patch  workspace-demo --namespace mcp-team-acme \
 mcp-runtime server logs   workspace-demo --namespace mcp-team-acme --follow --use-kube
 ```
 
----
-
 ## registry
 
 **[Operator]**
@@ -377,15 +358,13 @@ mcp-runtime registry provision --url registry.example.com
 ```
 
 Publish MCP server images with [`server push`](#server-push). The registry
-group contains only distinct operator tasks: status, info, and external
-registry provisioning. `admin registry push` remains a separate hidden command
-for direct Kubernetes debugging and requires cluster-admin access.
-
----
+group covers operator tasks: status, info, and external registry provisioning.
+`admin registry push` is a separate hidden command for direct Kubernetes
+debugging and requires cluster-admin access.
 
 ## access
 
-**[User]** for grants — **[Admin]** for session `apply`
+**[User]** for grants, **[Admin]** for session `apply`
 
 > Full reference: [API reference](api.md)
 
@@ -431,8 +410,8 @@ mcp-runtime access grant delete  workspace-ops --namespace mcp-team-acme
 
 ### Sessions
 
-Agents normally get sessions automatically via `adapter --auto-refresh`. Use
-`session init` + `session apply` only for explicit manual sessions.
+Agents normally get sessions from `adapter --auto-refresh`. Use
+`session init` + `session apply` only for manual sessions.
 
 ```bash
 mcp-runtime access session init cursor-session \
@@ -505,22 +484,20 @@ MCP_PLATFORM_API_PROFILE=admin \
 
 See [Multi-team isolation](multi-team.md).
 
----
-
 ## adapter
 
 **[User]**
 
 > Full guide: [Agent adapters](agent-adapters.md)
 
-The adapter injects platform session and governance headers before every request
-reaches the MCP server. When `--server` is set, the adapter creates the session
-automatically. `--agent` (session name) is required in that case. `--agent-id`
+The adapter adds platform session and governance headers to every request
+before it reaches the MCP server. When `--server` is set, the adapter creates
+the session. `--agent` (session name) is required in that case. `--agent-id`
 sets the identity header forwarded to the server.
 
-The adapter never creates grants. Apply an enabled `MCPAccessGrant` that matches
-the server, the signed-in user, and the agent first (`access grant apply`);
-otherwise the platform refuses to issue or refresh the session and the adapter
+The adapter never creates grants. First apply an enabled `MCPAccessGrant` that
+matches the server, the signed-in user, and the agent (`access grant apply`).
+Without it, the platform refuses to issue or refresh the session and the adapter
 exits with a 403.
 
 `--platform-url` takes scheme and host only, with no `/api` path; it defaults to
@@ -555,8 +532,8 @@ mcp-runtime adapter stdio \
   --auto-refresh
 ```
 
-Once the adapter is running, point any MCP client at `http://127.0.0.1:8099`.
-Session creation and governance headers are handled transparently.
+With the adapter running, point any MCP client at `http://127.0.0.1:8099`.
+The adapter handles session creation and governance headers.
 
 For servers running with `auth.mode: mtls`, either enroll once and pass the
 files, or let the adapter enroll a session-bound certificate in memory with
@@ -586,11 +563,9 @@ mcp-runtime adapter proxy \
 `spec.auth.trustDomain` on the target MCPServer. See
 [Agent adapters](agent-adapters.md#enterprise-mtls-and-spiffe).
 
----
-
 ## team
 
-**[Admin]** — all `team` commands require the platform API admin role.
+**[Admin]** All `team` commands require the platform API admin role.
 
 > Full guide: [Multi-team isolation](multi-team.md)
 
@@ -616,11 +591,9 @@ mcp-runtime auth login \
 
 Note: `team init` is deprecated. Use `team create`.
 
----
-
 ## sentinel
 
-**[Operator]** — requires `KUBECONFIG` with cluster-admin RBAC.
+**[Operator]** Requires `KUBECONFIG` with cluster-admin RBAC.
 
 > Full guide: [Sentinel](sentinel.md)
 
@@ -645,11 +618,9 @@ Component names for `logs` and `restart`:
 `clickhouse`, `kafka`, `ingest`, `processor`, `api`, `ui`,
 `gateway`, `prometheus`, `grafana`, `otel-collector`, `tempo`, `loki`, `promtail`
 
----
-
 ## bootstrap
 
-**[Operator]** — run before `setup` on a fresh cluster.
+**[Operator]** Run before `setup` on a fresh cluster.
 
 > Full guide: [Cluster readiness](cluster-readiness.md)
 
@@ -659,11 +630,9 @@ mcp-runtime bootstrap --provider k3s
 mcp-runtime bootstrap --apply --provider k3s    # automated fix on k3s
 ```
 
----
-
 ## setup
 
-**[Operator]** — runs pre-flight checks automatically before installing anything.
+**[Operator]** Runs pre-flight checks before installing anything.
 
 ```bash
 # Recommended: drive all flags from an env file
@@ -746,7 +715,7 @@ mcp-runtime setup \
 
 Outside `--test-mode`, the issuer URL, at least one resource URL, and the
 signing-key Secret are required. With managed TLS, setup provisions the issuer
-certificate automatically. Each resource URL must match that server's
+certificate. Each resource URL must match that server's
 `auth.audience`. Full walkthrough:
 [MCP authorization](mcp-authorization.md).
 
@@ -768,8 +737,6 @@ Deeper guides: [Cluster readiness](cluster-readiness.md),
 [Deployment targets](deployment-targets.md), and
 [Getting started](getting-started.md#4-production-style-install).
 
----
-
 ## cluster
 
 **[Operator]**
@@ -789,7 +756,6 @@ mcp-runtime cluster cert wait --timeout 10m
 mcp-runtime cluster doctor                                   # pre-setup readiness
 KUBECONFIG=~/.kube/config mcp-runtime cluster diagnostics    # post-setup diagnostic
 ```
-
 
 ## Further reading
 

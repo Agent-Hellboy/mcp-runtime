@@ -30,6 +30,9 @@ type rpcRequestMetadata struct {
 	HasID    bool
 	Method   string
 	ToolName string
+	// ProtocolVersion is params._meta's protocol version; empty for legacy
+	// (initialize-based) requests.
+	ProtocolVersion string
 }
 
 func parseRPCRequestMetadata(payload []byte) rpcRequestMetadata {
@@ -41,6 +44,8 @@ func parseRPCRequestMetadata(payload []byte) rpcRequestMetadata {
 		HasID:    hasID,
 		Method:   envelope.Method,
 		ToolName: toolNameFromRPCParams(envelope.Method, envelope.Params),
+
+		ProtocolVersion: requestProtocolVersion(envelope.Params),
 	}
 	if len(envelope.ID) > 0 {
 		meta.ID = append(json.RawMessage(nil), envelope.ID...)

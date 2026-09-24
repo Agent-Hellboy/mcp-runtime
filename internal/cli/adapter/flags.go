@@ -63,7 +63,7 @@ func bindIdentityFlags(cmd *cobra.Command, f *identityFlags) {
 	cmd.Flags().StringVar(&f.hostHeader, "host-header", os.Getenv(agentadapter.EnvHostHeader),
 		"Override the Host header sent to the runtime (default: $"+agentadapter.EnvHostHeader+")")
 	cmd.Flags().StringVar(&f.protocolVersion, "protocol-version", os.Getenv(agentadapter.EnvProtocolVersion),
-		"MCP protocol version header to advertise (default: $"+agentadapter.EnvProtocolVersion+" or "+agentadapter.DefaultProtocolVersion+")")
+		"MCP protocol version header the stdio adapter sends for legacy (initialize-based) requests; requests that declare a version in params._meta use that version, and the HTTP proxy forwards the client's own header (default: $"+agentadapter.EnvProtocolVersion+" or "+agentadapter.DefaultProtocolVersion+")")
 	cmd.Flags().StringVar(&f.logLevel, "log-level", os.Getenv(agentadapter.EnvLogLevel),
 		"Adapter log level: info logs runtime denials (default: $"+agentadapter.EnvLogLevel+")")
 	cmd.Flags().BoolVar(&f.disableXFF, "no-xforwarded", parseEnvBool(agentadapter.EnvSetXForwarded, false),
@@ -228,7 +228,7 @@ func bindStdioFlags(cmd *cobra.Command, f *identityFlags) {
 	cmd.Flags().StringVar(&f.anonymousMethods, "anonymous-methods",
 		os.Getenv(agentadapter.EnvAnonymousMethods),
 		"Comma-separated list of MCP methods allowed in anonymous mode "+
-			"(default: $"+agentadapter.EnvAnonymousMethods+" or initialize,notifications/initialized,ping,tools/list,resources/list,prompts/list)")
+			"(default: $"+agentadapter.EnvAnonymousMethods+" or "+strings.Join(agentadapter.DefaultAnonymousMethods, ",")+")")
 	cmd.Flags().StringVar(&f.toolsCacheTTL, "tools-cache-ttl",
 		os.Getenv(agentadapter.EnvToolsCacheTTL),
 		"Cache tools/list responses for this duration, e.g. 30s. Empty disables the cache. "+

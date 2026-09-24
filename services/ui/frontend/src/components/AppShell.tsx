@@ -66,7 +66,11 @@ export function AppShell({
       <header className="topbar">
         <div className="topbar-inner">
           <span className="brand">
-            <img className="brand-logo" src={theme === "dark" ? "/brand/mcp-runtime-logo-dark.png" : "/brand/mcp-runtime-logo.png"} alt="MCP Runtime" />
+            <img
+              className={`brand-logo${theme === "dark" ? " brand-logo-dark" : ""}`}
+              src={theme === "dark" ? "/brand/mcp-runtime-logo-dark.png" : "/brand/mcp-runtime-logo.png"}
+              alt="MCP Runtime"
+            />
           </span>
 
           <nav className="primary-nav" aria-label="Primary">

@@ -1,6 +1,6 @@
 # Internals
 
-This section teaches the MCP Runtime codebase from the inside out. Use it when you want to modify the CLI, operator, Kubernetes API types, Sentinel services, manifests, or tests without reverse-engineering the repository from scratch.
+These pages describe how the MCP Runtime codebase is organized: the CLI, operator, Kubernetes API types, Sentinel services, manifests, and tests. Read them before changing one of those areas.
 
 For platform usage, start with the [user docs](../README.md). This section is
 for contributors who need to understand package boundaries, runtime flows, and

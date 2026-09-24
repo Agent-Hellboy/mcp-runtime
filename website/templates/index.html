@@ -6,17 +6,14 @@
       <span class="eyebrow">Spec 00 · MCP infrastructure for Kubernetes · Alpha</span>
       <h1 id="hero-title">Deploy, govern, and broker MCP servers using a Kubernetes-native control plane.</h1>
       <p class="lede">
-        MCP Runtime gives platform teams one place to deploy, route, govern, and observe
-        Model Context Protocol servers. Define services once, enforce policy on the live
-        request path, and give AI agents, IDE users, and direct human workflows a
-        controlled way to reach internal tools.
+        MCP Runtime deploys Model Context Protocol servers into your Kubernetes cluster,
+        checks every tool call against access policy, and records each decision for
+        audit. Agents, IDEs, and people reach your internal tools through one governed
+        gateway.
       </p>
       <p class="lede">
-        The public entrypoint at <a href="{{ platform_url }}">platform.mcpruntime.org</a>
-        is not a public or private marketplace. It is a live preview of the control
-        surface companies get when they deploy MCP Runtime in their own cluster:
-        easy deployment, governed access, brokered execution, audit, compliance
-        evidence, and operations on infrastructure they control.
+        A public preview runs at <a href="{{ platform_url }}">platform.mcpruntime.org</a>.
+        The same platform installs into your own cluster.
       </p>
       <div class="hero-actions" aria-label="Primary actions">
         <a class="button primary" href="{{ platform_url }}">Open hosted platform</a>
@@ -52,20 +49,14 @@
       <h2 id="what-it-is-title">A control plane for the MCP servers your company runs.</h2>
       <p>
         MCP Runtime is a self-hosted Kubernetes control plane for internal MCP servers.
-        It helps a company deploy and route those servers, authorize tool calls, expire
-        or revoke access, and audit requests inside its own cluster, alongside the data
-        and services those servers already use.
+        It deploys and routes those servers, authorizes tool calls, expires or revokes
+        access, and audits requests inside your cluster, next to the data and services
+        the servers already use.
       </p>
       <p>
-        Connecting an agent is the easy part: point the client at a URL. The hard part
-        is deciding who can call a tool such as <code>delete_invoice</code>, recording
-        what a person consented to, revoking access when needed, and reviewing past
-        requests. MCP Runtime models servers, grants, and sessions as Kubernetes state
-        and enforces policy on the live gateway request path.
-      </p>
-      <p>
-        A directory gives an agent an address. MCP Runtime runs the service behind it,
-        checks requests at the door, manages access, and keeps the logbook.
+        You decide who can call a tool such as <code>delete_invoice</code>, up to what
+        trust level, and for how long. Servers, grants, and sessions are Kubernetes
+        resources, and a gateway in each server pod enforces them on every call.
       </p>
     </div>
   </section>
@@ -95,11 +86,11 @@ spec:
     enabled: true</code></pre>
       </div>
       <div class="blueprint-notes">
-        <p class="caption">Ship internal MCP servers with the same discipline as any other production service.</p>
+        <p class="caption">Deploy an MCP server the way you deploy any other service.</p>
         <ul class="check-list">
           <li>Define the server, image, port, route, gateway, and analytics in one resource.</li>
           <li>Let the operator reconcile services, ingress, rollouts, and updates.</li>
-          <li>Keep policy, audit, and analytics attached to the endpoint from day one.</li>
+          <li>Configure policy, audit, and analytics on the same resource.</li>
         </ul>
       </div>
     </div>
@@ -108,7 +99,7 @@ spec:
   <section id="architecture" class="container pillars" aria-labelledby="architecture-title">
     <div class="section-heading span-two">
       <span class="section-label">02 / Architecture</span>
-      <h2 id="architecture-title">The pieces companies need to run MCP safely.</h2>
+      <h2 id="architecture-title">Three components.</h2>
     </div>
     <article>
       <span class="card-index">A</span>
@@ -130,11 +121,10 @@ spec:
   <section class="container features" aria-labelledby="features-title">
     <div class="section-heading">
       <span class="section-label">03 / Capabilities</span>
-      <h2 id="features-title">Built for enterprise MCP operations.</h2>
+      <h2 id="features-title">What it does.</h2>
       <p>
-        MCP Runtime turns scattered MCP experiments into one operating surface for platform
-        teams: deploy servers, apply access policy, broker requests, and inspect audit and
-        traffic data from one place.
+        Deploy servers, apply access policy, route requests through the gateway, and
+        inspect audit and traffic data from one place.
       </p>
     </div>
     <div class="features-grid">
@@ -144,19 +134,19 @@ spec:
       </article>
       <article class="feature-card accent">
         <h3>Company access model</h3>
-        <p>Grants and sessions make consent, trust level, expiry, and revocation inspectable Kubernetes resources so governed access is the default path.</p>
+        <p>Grants and sessions make consent, trust level, expiry, and revocation Kubernetes resources. A call is denied unless a grant and a session allow it.</p>
       </article>
       <article class="feature-card">
         <h3>Hosted platform shape</h3>
-        <p>The public <code>platform.mcpruntime.org</code> experience shows how the platform looks after deployment. It is a product preview, not a vendor storefront, listing site, or MCP marketplace.</p>
+        <p><code>platform.mcpruntime.org</code> shows the platform UI as it looks after installation. Anyone can browse the preview catalog; signed-in users can publish servers to it.</p>
       </article>
       <article class="feature-card">
         <h3>Brokered tool calls</h3>
-        <p>Route agent traffic through a gateway that can enforce policy before sensitive tools are executed.</p>
+        <p>Agent traffic goes through a gateway that checks policy before a tool runs.</p>
       </article>
       <article class="feature-card">
         <h3>Operational visibility</h3>
-        <p>Observe MCP calls with policy decisions, timing, tool names, status, and dashboard-ready event data instead of treating agent traffic like unstructured logs.</p>
+        <p>See each MCP call with its policy decision, timing, tool name, and status in dashboards and the analytics API.</p>
       </article>
       <article class="feature-card accent">
         <h3>Audit-ready history</h3>
@@ -169,38 +159,9 @@ spec:
     </div>
   </section>
 
-  <section class="container pillars" aria-labelledby="market-title">
-    <div class="section-heading span-two">
-      <span class="section-label">04 / Position</span>
-      <h2 id="market-title">More than discovery.</h2>
-      <p>
-        Public MCP directories such as Glama, Smithery, Docker MCP Catalog, PulseMCP,
-        mcp.so, and client-specific catalogs help people discover or install MCP servers.
-        MCP Runtime is different: it is an open-source runtime platform for companies
-        that need to host, deploy, govern, audit, and operate MCP servers inside their
-        own Kubernetes environment.
-      </p>
-    </div>
-    <article>
-      <span class="card-index">D</span>
-      <h3>Deployment first</h3>
-      <p>Define MCP servers as Kubernetes resources and let the platform handle routes, rollouts, registry wiring, and status.</p>
-    </article>
-    <article>
-      <span class="card-index">E</span>
-      <h3>Open source runtime</h3>
-      <p>As of April 2026, we have not found another open-source MCP product that combines a deployable Kubernetes control plane, registry workflow, brokered request path, access/session model, audit pipeline, and operational control surface.</p>
-    </article>
-    <article>
-      <span class="card-index">F</span>
-      <h3>Governed by design</h3>
-      <p>Companies can manage MCP access for agents, IDEs, and humans with grants, sessions, policy decisions, and audit evidence.</p>
-    </article>
-  </section>
-
   <section class="container runbook" aria-labelledby="runbook-title">
     <div class="section-heading">
-      <span class="section-label">05 / Runbook</span>
+      <span class="section-label">04 / Runbook</span>
       <h2 id="runbook-title">Install the stack, then connect servers.</h2>
     </div>
     <ol class="runbook-steps">
@@ -225,7 +186,7 @@ spec:
 
   <section class="container use-cases" aria-labelledby="use-cases-title">
     <div class="section-heading">
-      <span class="section-label">06 / Use Cases</span>
+      <span class="section-label">05 / Use cases</span>
       <h2 id="use-cases-title">Where companies put it to work.</h2>
     </div>
     <div class="use-cases-grid">
@@ -235,28 +196,28 @@ spec:
       </article>
       <article class="use-case">
         <h3>Internal MCP operations</h3>
-        <p>Give teams a shared control surface to publish, operate, govern, and inspect MCP servers instead of one-off sidecars.</p>
+        <p>Give teams one place to publish, operate, govern, and inspect MCP servers.</p>
       </article>
       <article class="use-case">
-        <h3>Private platform preview</h3>
-        <p>Use the public platform to understand the deployed product, then run the same control surface inside a company cluster for owned MCP servers.</p>
+        <h3>Try, then self-host</h3>
+        <p>Try the public preview, then install the same platform in your own cluster for your own servers.</p>
       </article>
       <article class="use-case">
         <h3>Cross-team governance</h3>
-        <p>Grant temporary, reviewable access between teams with clear trust ceilings and easy revocation.</p>
+        <p>Grant another team time-limited access with a trust ceiling, and revoke it with one field.</p>
       </article>
       <article class="use-case">
         <h3>Compliance review</h3>
-        <p>Give security and compliance teams searchable request history instead of scattered service logs.</p>
+        <p>Give security and compliance teams a searchable history of every tool call.</p>
       </article>
     </div>
   </section>
 
   <section class="container platforms" aria-labelledby="platforms-title">
     <div class="section-heading compact">
-      <span class="section-label">07 / Targets</span>
+      <span class="section-label">06 / Targets</span>
       <h2 id="platforms-title">Runs where your company already runs Kubernetes.</h2>
-      <p>Kubernetes 1.25+. Self-hosted. Open source. Vendor-neutral across Kubernetes distributions. No proprietary control plane.</p>
+      <p>Kubernetes 1.25 or later, on any distribution. Open source and self-hosted.</p>
     </div>
     <div class="platforms-list" aria-label="Supported Kubernetes environments">
       <span class="platform-badge">k3s</span>
@@ -270,15 +231,56 @@ spec:
     </div>
   </section>
 
+  <section id="hosting" class="container pillars" aria-labelledby="hosting-title">
+    <div class="section-heading span-two">
+      <span class="section-label">07 / Hosting</span>
+      <h2 id="hosting-title">We can run it for you.</h2>
+      <p>
+        If you would rather not operate MCP Runtime yourself, we can host it for you on
+        our infrastructure, or set it up and manage it in yours. Either way you get the
+        same guardrails: deny-by-default tool policy, time-limited and revocable agent
+        sessions, and an audit record of every tool call.
+      </p>
+      <p>
+        Email
+        <a
+          class="js-email-link"
+          data-email-user="10nahsorkecnirp"
+          data-email-domain="moc.liamg"
+          data-email-reverse="true"
+          data-email-text="address"
+          href="#"
+        >us</a>
+        with your use case and where you want it to run.
+      </p>
+    </div>
+    <article>
+      <span class="card-index">G</span>
+      <h3>On our infrastructure</h3>
+      <p>A dedicated MCP Runtime install that we run and maintain. You deploy servers and manage access; we handle the cluster, upgrades, and monitoring.</p>
+    </article>
+    <article>
+      <span class="card-index">H</span>
+      <h3>On your infrastructure</h3>
+      <p>We install and manage MCP Runtime in your own Kubernetes cluster, so your MCP servers and their data stay on infrastructure you control.</p>
+    </article>
+    <article>
+      <span class="card-index">I</span>
+      <h3>Priced at cost</h3>
+      <p>We charge only what it costs to run and manage the platform, with no profit margin. We are looking for our first customers: the first few pay the infrastructure cost only.</p>
+    </article>
+  </section>
+
   <section class="container cta-band" aria-labelledby="cta-title">
     <span class="section-label">Next action</span>
     <h2 id="cta-title">Preview the platform, then run it yourself.</h2>
-    <p>Open the public platform to see the control surface. Install MCP Runtime to give your company that same experience on private infrastructure, with governance and audit built into the runtime path.</p>
+    <p>Open the public platform to see the UI, or follow the install guide to run MCP Runtime in your own cluster.</p>
     <div class="hero-actions">
       <a class="button primary" href="{{ platform_url }}">Open platform.mcpruntime.org</a>
       <a class="button primary" href="{{ docs_url }}getting-started/">Open install guide</a>
       <a class="button secondary" href="{{ articles_url }}">Read articles</a>
       <a class="button secondary" href="{{ docs_url }}architecture/">Read architecture</a>
+      <a class="button secondary" href="#hosting">Ask about hosting</a>
     </div>
   </section>
 {% endblock %}

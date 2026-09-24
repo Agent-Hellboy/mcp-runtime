@@ -23,7 +23,7 @@ Expected UI/API behavior:
 | User in public mode | MCPs from `mcp-servers-public` |
 | Admin | Cluster-wide management visibility, with namespace/team checks on writes |
 
-## Deploy the Bundled Workspace Assistant
+## Deploy the bundled workspace assistant
 
 The bundled workspace assistant sample is useful for disposable local testing.
 Keep it separate from long-lived shared-cluster MCPs.
@@ -134,7 +134,7 @@ SERVER_NAMESPACE="$(
 kubectl rollout status deploy/workspace-assistant-mcp -n "$SERVER_NAMESPACE" --timeout=180s
 ```
 
-## Inspect Runtime Outputs
+## Inspect runtime outputs
 
 ```bash
 SERVER=workspace-assistant-mcp
@@ -256,7 +256,7 @@ kubectl get mcpservers -A \
 Tenant visibility should be checked through the UI/API, not only `kubectl`,
 because the UI/API path enforces principal namespaces.
 
-## Remove a Stale Test MCP
+## Remove a stale test MCP
 
 Remove access resources first, then the server and single-purpose Secret:
 

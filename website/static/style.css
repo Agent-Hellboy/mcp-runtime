@@ -136,6 +136,7 @@ pre {
   max-height: 64px;
   display: block;
   object-fit: contain;
+  filter: brightness(0) invert(1);
 }
 
 .brand-title,

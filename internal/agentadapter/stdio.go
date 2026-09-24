@@ -5,9 +5,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 )
@@ -44,14 +46,33 @@ const (
 )
 
 type stdioShim struct {
-	cfg             ShimConfig
-	client          *http.Client
+	cfg    ShimConfig
+	client *http.Client
+	// streamClient has no overall timeout. It carries subscriptions/listen,
+	// whose response stream stays open for as long as the client listens.
+	streamClient    *http.Client
 	mu              sync.Mutex
 	sessionSt       sessionState
 	sessionID       string
 	protocolVersion string
 	toolsCache      *toolsListCache
+	// toolHeaders holds x-mcp-header bindings learned from modern tools/list
+	// results, used to mirror tool arguments into Mcp-Param-* headers.
+	toolHeaders *toolHeaderIndex
+	// inflight maps a JSON-RPC request ID to its cancel func so a stdio
+	// notifications/cancelled can close the HTTP request (modern revisions).
+	inflightMu sync.Mutex
+	inflight   map[string]inflightRequest
 }
+
+type inflightRequest struct {
+	cancel context.CancelCauseFunc
+	modern bool
+}
+
+// errRequestCancelled is the cancellation cause for a request the stdio
+// client cancelled with notifications/cancelled.
+var errRequestCancelled = errors.New("request cancelled by client")
 
 type stdioScanResult struct {
 	line []byte
@@ -113,7 +134,10 @@ func RunStdioShim(ctx context.Context, cfg ShimConfig, opts StdioOptions) error 
 		sessionSt:       initState,
 		protocolVersion: cfg.ProtocolVersion,
 		toolsCache:      newToolsListCache(cfg.ToolsCacheTTL),
+		toolHeaders:     newToolHeaderIndex(),
+		inflight:        make(map[string]inflightRequest),
 	}
+	shim.streamClient = &http.Client{Transport: shim.client.Transport}
 
 	scanResults := scanStdioLines(ctx, opts.Stdin)
 	var stdoutMu sync.Mutex
@@ -175,7 +199,8 @@ func RunStdioShim(ctx context.Context, cfg ShimConfig, opts StdioOptions) error 
 				continue
 			}
 			payload := append([]byte(nil), line...)
-			if parseRPCRequestMetadata(payload).Method == "initialize" {
+			meta := parseRPCRequestMetadata(payload)
+			if meta.Method == "initialize" {
 				if err := shim.forward(ctx, payload, emit); err != nil {
 					if ctx.Err() != nil {
 						return nil
@@ -184,12 +209,21 @@ func RunStdioShim(ctx context.Context, cfg ShimConfig, opts StdioOptions) error 
 				}
 				continue
 			}
+			if meta.Method == "notifications/cancelled" && shim.cancelInflight(payload) {
+				// Modern Streamable HTTP defines no client notifications:
+				// closing the request's response stream is the cancellation.
+				continue
+			}
+			// Track and register before starting the goroutine so a
+			// notifications/cancelled read on the next line finds the request.
+			fwdCtx, trackID := tracker.track(ctx)
+			reqCtx, release := shim.registerInflight(fwdCtx, meta)
 			forwards.Add(1)
 			go func() {
 				defer forwards.Done()
-				fwdCtx, id := tracker.track(ctx)
-				defer tracker.done(id)
-				if err := shim.forward(fwdCtx, payload, emit); err != nil && ctx.Err() == nil {
+				defer tracker.done(trackID)
+				defer release()
+				if err := shim.forward(reqCtx, payload, emit); err != nil && ctx.Err() == nil && reqCtx.Err() == nil {
 					sendErr(err)
 				}
 			}()
@@ -250,7 +284,7 @@ func (s *stdioShim) forward(ctx context.Context, payload []byte, emit stdioRespo
 		// Key on the live identity, not the startup cfg.Identity, so a
 		// rotated SessionID (auto-refresh) starts fresh and never serves
 		// entries that belong to a previous session/policy context.
-		cacheKey = toolsCacheKey(s.currentIdentity(), s.cfg.RuntimeURL.String())
+		cacheKey = toolsCacheKey(s.currentIdentity(), s.cfg.RuntimeURL.String()+"|"+meta.ProtocolVersion)
 		if cached, ok := s.toolsCache.get(cacheKey); ok {
 			if rebound := rebindResponseID(cached, envelope.ID); rebound != nil {
 				return emit(rebound)
@@ -261,6 +295,15 @@ func (s *stdioShim) forward(ctx context.Context, payload []byte, emit stdioRespo
 	}
 
 	protocolVersion, sessionID := s.prepareRequestState(envelope)
+	modern := isModernProtocolVersion(meta.ProtocolVersion)
+	if meta.ProtocolVersion != "" {
+		// The header must match the version the request itself declares.
+		protocolVersion = meta.ProtocolVersion
+	}
+	if modern {
+		// 2026-07-28 removed protocol-level sessions.
+		sessionID = ""
+	}
 
 	// Tag context with method so RuntimeTransport can key retry and OTel on it.
 	ctx = withRPCMethod(ctx, meta.Method)
@@ -275,12 +318,19 @@ func (s *stdioShim) forward(ctx context.Context, payload []byte, emit stdioRespo
 	if sessionID != "" {
 		req.Header.Set(MCPSessionHeader, sessionID)
 	}
+	if modern {
+		applyModernRequestHeaders(req.Header, meta.Method, envelope.Params, s.toolHeaders)
+	}
 	s.currentIdentity().Apply(req.Header)
 	if s.cfg.HostHeader != "" {
 		req.Host = s.cfg.HostHeader
 	}
 
-	resp, err := s.client.Do(req)
+	client := s.client
+	if meta.Method == "subscriptions/listen" {
+		client = s.streamClient
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil
@@ -303,14 +353,14 @@ func (s *stdioShim) forward(ctx context.Context, payload []byte, emit stdioRespo
 		// MCP runtimes typically deliver server-to-client notifications over
 		// SSE, so cache invalidation must inspect each SSE message. Wrapping
 		// emit keeps the buffered-body fallback unchanged.
-		sseEmit := emit
-		if s.toolsCache != nil {
-			sseEmit = func(message []byte) error {
-				if isToolsListChangedNotification(message) {
-					s.toolsCache.invalidate()
-				}
-				return emit(message)
+		sseEmit := func(message []byte) error {
+			if isToolsListChangedNotification(message) {
+				s.toolsCache.invalidate()
+				s.toolHeaders.invalidate()
+			} else if modern && meta.Method == "tools/list" && !looksLikeJSONRPCError(message) {
+				message = s.filterToolsList(message)
 			}
+			return emit(message)
 		}
 		return streamStreamableHTTPEventMessages(resp.Body, sseEmit)
 	}
@@ -361,6 +411,9 @@ func (s *stdioShim) forward(ctx context.Context, payload []byte, emit stdioRespo
 			}
 		}
 	}
+	if modern && meta.Method == "tools/list" && looksLikeJSONRPC(body) && !looksLikeJSONRPCError(body) {
+		body = s.filterToolsList(body)
+	}
 	if cacheableTools && looksLikeJSONRPC(body) && !looksLikeJSONRPCError(body) {
 		s.toolsCache.put(cacheKey, body)
 	}
@@ -368,6 +421,7 @@ func (s *stdioShim) forward(ctx context.Context, payload []byte, emit stdioRespo
 	// so the next tools/list call refetches the authoritative response.
 	if isToolsListChangedNotification(body) {
 		s.toolsCache.invalidate()
+		s.toolHeaders.invalidate()
 	}
 	if !hasResponseID {
 		return nil
@@ -387,6 +441,79 @@ func (s *stdioShim) prepareRequestState(envelope rpcRequestEnvelope) (string, st
 		}
 	}
 	return s.protocolVersion, s.sessionID
+}
+
+// filterToolsList drops tools with invalid x-mcp-header annotations from a
+// modern tools/list result and records the bindings of the rest.
+func (s *stdioShim) filterToolsList(body []byte) []byte {
+	filtered, bindings, rejected := filterToolsListResult(body)
+	s.toolHeaders.update(bindings)
+	for _, tool := range rejected {
+		writer := s.cfg.LogWriter
+		if writer == nil {
+			writer = os.Stderr
+		}
+		fmt.Fprintf(writer, "adapter/stdio: dropped tool %s from tools/list: %s\n", sanitizeLogField(tool.name), tool.reason)
+	}
+	return filtered
+}
+
+// registerInflight derives a cancellable context for a request that expects a
+// response and records it under its JSON-RPC ID. The returned release func
+// must be called when the request finishes.
+func (s *stdioShim) registerInflight(parent context.Context, meta rpcRequestMetadata) (context.Context, func()) {
+	ctx, cancel := context.WithCancelCause(parent)
+	key := inflightKey(meta.ID)
+	if !meta.HasID || key == "" {
+		return ctx, func() { cancel(nil) }
+	}
+	s.inflightMu.Lock()
+	s.inflight[key] = inflightRequest{cancel: cancel, modern: isModernProtocolVersion(meta.ProtocolVersion)}
+	s.inflightMu.Unlock()
+	return ctx, func() {
+		s.inflightMu.Lock()
+		delete(s.inflight, key)
+		s.inflightMu.Unlock()
+		cancel(nil)
+	}
+}
+
+// cancelInflight handles a stdio notifications/cancelled. For an in-flight
+// modern request it cancels the HTTP request and returns true; the caller
+// then drops the notification. Legacy requests return false so the
+// notification is forwarded as before.
+func (s *stdioShim) cancelInflight(payload []byte) bool {
+	envelope, _, err := parseRPCEnvelope(payload)
+	if err != nil {
+		return false
+	}
+	var params struct {
+		RequestID json.RawMessage `json:"requestId"`
+	}
+	if err := json.Unmarshal(envelope.Params, &params); err != nil {
+		return false
+	}
+	key := inflightKey(params.RequestID)
+	s.inflightMu.Lock()
+	entry, ok := s.inflight[key]
+	s.inflightMu.Unlock()
+	if !ok || !entry.modern {
+		return false
+	}
+	entry.cancel(errRequestCancelled)
+	return true
+}
+
+// inflightKey normalizes a raw JSON-RPC ID so 7 and 7 with whitespace match.
+func inflightKey(id json.RawMessage) string {
+	if len(id) == 0 {
+		return ""
+	}
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, id); err != nil {
+		return ""
+	}
+	return compact.String()
 }
 
 func (s *stdioShim) setRuntimeSessionID(sessionID string) {

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"mcp-runtime/pkg/metadata"
 	"mcp-runtime/pkg/publishscope"
 	"mcp-runtime/pkg/registrypush"
 )
@@ -329,10 +330,10 @@ func registryPushInternalHostnames() []string {
 		strings.TrimSpace(os.Getenv("MCP_REGISTRY_INGRESS_HOST")),
 		strings.TrimSpace(os.Getenv("MCP_REGISTRY_HOST")),
 	}
-	if domain := strings.TrimSpace(os.Getenv("MCP_PLATFORM_DOMAIN")); domain != "" {
-		hosts = append(hosts, fmt.Sprintf("registry.%s", strings.TrimPrefix(domain, "registry.")))
-	}
 	if host := registryPullSecretHost(); host != "" {
+		hosts = append(hosts, host)
+	}
+	if host := metadata.ResolveRegistryHost(); host != "" && host != metadata.DefaultRegistryHost {
 		hosts = append(hosts, host)
 	}
 	seen := map[string]struct{}{}

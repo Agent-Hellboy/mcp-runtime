@@ -1,9 +1,8 @@
 # Identity and authorization
 
-MCP Runtime uses different identities for platform administration, delegated
-agent access, and Kubernetes workloads. Keeping these identities separate makes
-it clear **who is acting, what they may do, and which component enforces the
-decision**.
+MCP Runtime uses separate identities for platform administration, delegated
+agent access, and Kubernetes workloads. Each identity defines **who is acting,
+what they may do, and which component enforces the decision**.
 
 ## The three identity planes
 
@@ -13,9 +12,9 @@ decision**.
 | Agent governance | `humanID + agentID + teamID + sessionID` | MCP `tools/call` authorization | MCP gateway |
 | Kubernetes workload | ServiceAccount plus RBAC bindings | Reading and changing cluster resources | Kubernetes API server |
 
-These identities are related, but they are not interchangeable. A platform
-administrator is not automatically an agent session, and an MCP agent identity
-is not a Kubernetes ServiceAccount.
+Each plane is enforced independently. A platform administrator does not
+automatically have an agent session, and an MCP agent identity is separate
+from any Kubernetes ServiceAccount.
 
 ## Platform identity: who controls the platform
 
@@ -66,14 +65,13 @@ hop, falling back to `RemoteAddr`. This IP is used both for audit `ActorIP`
 labelling and for **login-lockout bucketing** (brute-force throttling on
 `/api/v1/auth/login`). Because clients can set `X-Forwarded-For` freely, the
 ingress in front of platform-api **must** set/overwrite this header
-authoritatively and strip any client-supplied value — otherwise a caller can
+authoritatively and strip any client-supplied value. Otherwise a caller can
 rotate the header to evade lockout or poison another address's bucket.
 
-Operators are responsible for this at the ingress layer: configure Traefik (and
-any upstream load balancer) so the real client address is the value
-platform-api sees, and so inbound `X-Forwarded-For` from untrusted clients is
-discarded rather than appended. This is the single trusted boundary for client
-IP; platform-api does not attempt to second-guess the proxy chain.
+Configure Traefik (and any upstream load balancer) so platform-api sees the
+real client address, and so inbound `X-Forwarded-For` from untrusted clients is
+discarded, not appended. The ingress is the only trusted boundary for client
+IP; platform-api uses the header value it receives.
 
 ## Agent identity: who is using an MCP tool
 
@@ -90,9 +88,9 @@ The adapter obtains this identity from the platform and writes it to the
 configured governance headers on every request. It removes caller-supplied
 identity headers before applying the issued values.
 
-In the default header mode, the gateway reads these headers. Therefore, the
-adapter, ingress path, and gateway form a trust boundary: untrusted clients
-should not be able to bypass the adapter and inject governance headers directly.
+In the default header mode, the gateway reads these headers, so the adapter,
+ingress path, and gateway form a trust boundary. Make sure untrusted clients
+cannot bypass the adapter and inject governance headers directly.
 OAuth-configured servers additionally authenticate the bearer token at the
 gateway.
 
@@ -193,10 +191,10 @@ tools:
     sideEffect: destructive
 ```
 
-The gateway does not infer risk by inspecting tool implementation. The declared
-metadata is the policy input. A tool that the server never declared, or whose
+The gateway uses the declared metadata as its policy input; it does not
+inspect tool implementations. A tool that the server never declared, or whose
 side-effect metadata is missing or unknown, is denied with
-`tool_side_effect_unknown` rather than silently treated as safe.
+`tool_side_effect_unknown`.
 
 ## Gateway decision for every `tools/call`
 
@@ -212,33 +210,47 @@ AND tool side effect allowed by the grant
 AND effective trust >= required trust
 ```
 
-The evaluation order is:
+### The decision ladder
 
-1. Inspect the JSON-RPC request and extract the tool name.
-2. Load the rendered policy for the target MCP server.
-3. Read the human, agent, team, and session identity.
-4. Find a non-revoked, non-expired session whose subject matches that identity.
-5. Find grants whose populated subject fields match the identity.
-6. Apply explicit per-tool deny or allow rules.
-7. Compare the tool's declared side effect with the grant's
-   `allowedSideEffects`.
-8. Calculate effective trust:
+The gateway extracts the tool name from the JSON-RPC request, loads the rendered
+policy for the target server, and walks these checks in order. **The first
+failing rung wins**, and its reason code is what lands in the audit event and the
+denial response. A denied call never reaches the MCP server.
 
-   ```text
-   effectiveTrust = min(grant.maxTrust, session.consentedTrust)
-   ```
+| # | Check | Fails with |
+|---|---|---|
+| 0 | Is `policy.mode: observe`? If so, allow now; nothing below runs. | *(allowed, still audited)* |
+| 1 | Is there any human, agent, or team identity? | `missing_identity` (401) |
+| 2 | With `session.required: true`: is there a session ID, a matching session, not revoked, not expired? | `missing_session`, `session_not_found`, `session_revoked`, `session_expired` (401) |
+| 3 | Does any grant's subject match? Every populated subject field must match exactly. | `no_matching_grant` |
+| 4 | Does a tool rule deny this tool, or does no enabled grant allow it? Disabled grants are skipped; a grant with no `toolRules` allows every tool name. | `tool_denied` (403), `tool_not_granted` |
+| 5 | Did the server declare this tool's side effect, and does the grant's `allowedSideEffects` include it? | `tool_side_effect_unknown`, `side_effect_not_allowed` (403) |
+| 6 | Does the grant carry a `maxTrust`? | `grant_without_trust` |
+| 7 | Is effective trust at least the required trust? | `trust_too_low` (403) |
+| ✓ | Forward to the MCP server and emit the audit event. | `allowed` |
 
-9. Require `effectiveTrust` to meet both the tool's and matching rule's required
-   trust.
-10. Forward an allowed request or return a denial without contacting the MCP
-    server.
-11. Emit an audit event containing the identity, tool, decision, reason, trust
-    values, server, namespace, and policy version.
+The trust comparison on rung 7 is:
 
-`policy.mode: observe` short-circuits this sequence after step 2: the call is
-allowed without any identity, session, grant, side-effect, or trust check, and
-only the audit trail keeps visibility. Treat it as a reporting mode, never as
-enforcement.
+```text
+effectiveTrust = min(grant.maxTrust, session.consentedTrust)
+requiredTrust  = max(tool.requiredTrust, matchingToolRule.requiredTrust)
+```
+
+When no session is required or none matches, `consentedTrust` falls back to the
+grant's `maxTrust`.
+
+Reasons without a status code (`no_matching_grant`, `tool_not_granted`,
+`grant_without_trust`) follow `policy.defaultDecision`: `403` under the shipped
+`deny` default, allowed only if a server explicitly sets `defaultDecision: allow`.
+
+Every decision, allowed or denied, emits an audit event containing the identity,
+tool, decision, reason, trust values, server, namespace, and policy version.
+
+!!! warning "Observe mode is reporting, not enforcement"
+    `policy.mode: observe` allows the call without any identity, session, grant,
+    side-effect, or trust check; only the audit trail keeps visibility. Use it to
+    preview what enforcement would deny on a new server, then switch back to
+    `allow-list`.
 
 Example:
 
@@ -253,7 +265,7 @@ Session consent:    high
 Result:             deny, side_effect_not_allowed
 ```
 
-The allow rule is insufficient because authorization is an intersection. The
+Authorization is an intersection, so the allow rule alone is not enough. The
 grant must also permit `destructive`.
 
 ## Kubernetes workload identity

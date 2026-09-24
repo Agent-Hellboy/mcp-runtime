@@ -445,6 +445,26 @@ body {
   background: var(--infra-blue-soft);
 }
 
+.md-typeset .admonition.tip,
+.md-typeset details.tip {
+  border-color: #99d5cf;
+}
+
+.md-typeset .admonition.tip > .admonition-title,
+.md-typeset details.tip > summary {
+  background: #e6f4f2;
+}
+
+.md-typeset .admonition.warning,
+.md-typeset details.warning {
+  border-color: #f2cf8f;
+}
+
+.md-typeset .admonition.warning > .admonition-title,
+.md-typeset details.warning > summary {
+  background: #fdf3e1;
+}
+
 .md-nav {
   font-size: 0.72rem;
 }

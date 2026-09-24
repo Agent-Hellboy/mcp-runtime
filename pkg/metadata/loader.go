@@ -79,8 +79,9 @@ func setDefaults(server *ServerMetadata) error {
 	server.Scope = PublishScope(scope)
 
 	// Set default image if not provided (will be updated by build command).
-	// ResolveRegistryHost names the public registry for docker push/build. Pipeline
-	// generate rewrites MCPServer image refs to ResolveRegistryPullHost for kubelet pulls.
+	// ResolveRegistryHost names the platform registry for docker push/build. Pipeline
+	// generation rewrites unqualified or platform-registry MCPServer image refs to
+	// ResolveRegistryPullHost for kubelet pulls, while preserving external registries.
 	if server.Image == "" {
 		repository := server.Name
 		if alias, ok := publishscope.RegistryAlias(scope); ok {

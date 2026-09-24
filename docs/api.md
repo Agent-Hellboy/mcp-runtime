@@ -1,6 +1,6 @@
 # API Reference
 
-The MCP Runtime API surface comes in three layers:
+The MCP Runtime API has three layers:
 
 1. **CRDs** under `mcpruntime.org/v1alpha1`: `MCPServer`, `MCPAccessGrant`, `MCPAgentSession`.
 2. **Gateway headers** carried on live MCP requests when `gateway.enabled`.
@@ -10,7 +10,7 @@ The MCP Runtime API surface comes in three layers:
 
 ### Route ownership
 
-Traefik ingress (`internal/cli/setup/ingressmanifest/paths.go`, `k8s/10-gateway.yaml`) maps prefixes to Deployments. Direct port-forward to a single service is useful for debugging but does not match public routing.
+Traefik ingress (`internal/cli/setup/ingressmanifest/paths.go`, `k8s/10-gateway.yaml`) maps prefixes to Deployments. A direct port-forward to one service works for debugging but does not match public routing.
 
 | Service | Deployment | Owns (prefix examples) |
 |---|---|---|
@@ -63,7 +63,7 @@ flowchart LR
 | Enum | Values | Notes |
 |---|---|---|
 | **auth.mode** | `none`, `header`, `oauth`, `mtls` | `header` is the default identity-extraction path. `oauth` enables MCP protected-resource metadata and JWT validation at the gateway. `mtls` ignores client-supplied governance headers and derives identity from the ingress-verified SPIFFE header, matched against `auth.trustDomain`. |
-| **policy.mode** | `allow-list`, `observe` | `allow-list` enforces deny-by-default. `observe` skips identity, grant, session, side-effect, and trust enforcement — calls are forwarded, and audit events still record the tool and risk level. |
+| **policy.mode** | `allow-list`, `observe` | `allow-list` enforces deny-by-default. `observe` skips identity, grant, session, side-effect, and trust enforcement. Calls are forwarded, and audit events still record the tool and risk level. |
 | **trust** | `low`, `medium`, `high` | Used on tools, grants, sessions. Effective trust = min(grant `maxTrust`, session `consentedTrust`); required trust = max(tool `requiredTrust`, matching tool rule `requiredTrust`). |
 | **tool sideEffect** | `read`, `write`, `destructive` | Required on each listed tool. Grants must include the tool's side effect in `allowedSideEffects` before a tool call can pass. |
 | **tool riskLevel** | `low`, `medium`, `high` | Optional informational catalog/audit badge. If omitted, the platform computes a default from trust and side effect. It does not gate calls. |
@@ -71,7 +71,7 @@ flowchart LR
 
 ### Validation rules in code
 
-- Analytics emission requires `gateway.enabled`; setting `analytics.disabled: true` (or omitting the analytics block) is the way to opt out per server.
+- Analytics emission requires `gateway.enabled`. To opt out per server, set `analytics.disabled: true` or omit the analytics block.
 - `gateway.port` must differ from `spec.port`.
 - Every listed `tools[]` entry must declare `sideEffect`. A tool called at runtime that the server never declared has no side effect to check, so the gateway fails closed with `403 tool_side_effect_unknown`.
 - Canary rollouts require positive `canaryReplicas` strictly less than total replicas.
@@ -133,7 +133,7 @@ spec:
 
 ## Grants and sessions
 
-`MCPAccessGrant.spec.disabled` and `MCPAgentSession.spec.revoked` are the hard kill switches — they turn off access without deleting the underlying object's history.
+`MCPAccessGrant.spec.disabled` and `MCPAgentSession.spec.revoked` are the hard kill switches. They turn off access and keep the object's history.
 
 `MCPServer.spec.teamID` records the owning platform team. `SubjectRef` has
 `humanID`, `agentID`, and `teamID`; the gateway matches every non-empty subject
@@ -156,8 +156,8 @@ matches every non-empty subject field exactly.
 
 ### MCPAccessGrant
 
-`allowedSideEffects` is independent from `toolRules`: tool rules select names,
-and side-effect allowances select risk kind. A call must pass both. The
+`allowedSideEffects` and `toolRules` are independent. Tool rules select names;
+side-effect allowances select risk kind. A call must pass both. The
 Runtime Governance API and UI require at least one `allowedSideEffects` entry
 when creating or updating a grant; direct CRD objects that omit it still
 evaluate fail-closed.
@@ -230,18 +230,18 @@ OIDC connector, a TLS Secret, and a persistent signing-key Secret.
 
 When its public issuer is `https://auth.example.com/mcp-auth`, it exposes:
 
-- `GET https://auth.example.com/.well-known/oauth-authorization-server/mcp-auth` — RFC 8414 inserts the issuer path segment before the issuer path, so the discovery document does not live under the issuer URL (OIDC discovery compatibility paths are also served)
+- `GET https://auth.example.com/.well-known/oauth-authorization-server/mcp-auth`. RFC 8414 inserts the well-known segment before the issuer path, so the discovery document is outside the issuer URL. OIDC discovery compatibility paths are also served.
 - `GET /oauth/jwks.json`
 - `GET, POST /oauth/authorize` with mandatory S256 PKCE
 - `POST /oauth/token` for authorization-code and rotating refresh-token grants
 - `POST /oauth/register` for deprecated Dynamic Client Registration compatibility
 
-OAuth Client ID Metadata Documents (CIMD) are preferred: an HTTPS `client_id`
-URL is fetched and validated when the client is not pre-registered. Clients
-that cannot resolve or use CIMD must fall back to DCR, which remains available
-at `/oauth/register`. Redirect URIs are exact-match, except that native
-loopback clients may select an ephemeral port; all other URI components must
-match and non-loopback redirects must use HTTPS. Access tokens are RS256 JWTs
+Use OAuth Client ID Metadata Documents (CIMD) where possible. The server
+fetches and validates an HTTPS `client_id` URL when the client is not
+pre-registered. Clients that cannot use CIMD fall back to DCR at
+`/oauth/register`. Redirect URIs are exact-match, except that native loopback
+clients may select an ephemeral port. All other URI components must match, and
+non-loopback redirects must use HTTPS. Access tokens are RS256 JWTs
 with the MCP `resource` as their audience; the gateway validates that audience
 and never forwards the bearer token to an upstream MCP server.
 
@@ -249,28 +249,26 @@ and never forwards the bearer token to an upstream MCP server.
 
 Use the official MCP SDK in an application service for Streamable HTTP,
 JSON-RPC, tool/resource dispatch, and client-side OAuth flows. The SDK's
-server authorization middleware verifies tokens issued by an authorization
-server; it is not a replacement for the first-party authorization service
-described above. MCP Runtime terminates OAuth at the gateway so it can apply
-resource audience checks, grants, agent sessions, scopes, and token stripping
-before forwarding a request to the SDK-backed application. Do not add a
+server authorization middleware verifies tokens; it does not issue them. MCP
+Runtime terminates OAuth at the gateway, which applies resource audience checks,
+grants, agent sessions, scopes, and token stripping before forwarding a request
+to the SDK-backed application. Do not add a
 second bearer-token gate to the upstream application unless that application
 is intentionally exposed outside the gateway.
 
 Configure the MCP server's external `auth.issuerURL` and explicit
 `auth.audience` to match the authorization server and canonical MCP resource.
-`auth.audience` is the single resource identifier for the server: it must be an
-absolute URI without a fragment, it is what the gateway publishes as `resource`
-in Protected Resource Metadata, and it is what the gateway validates the token's
-audience against. A client that follows the metadata therefore always requests a
-token the gateway accepts.
+`auth.audience` is the single resource identifier for the server. It must be an
+absolute URI without a fragment. The gateway publishes it as `resource` in
+Protected Resource Metadata and validates the token's audience against it, so a
+client that follows the metadata requests a token the gateway accepts.
 Do not enable insecure HTTP or ephemeral signing keys outside local
 development.
 
 For local Cursor testing, set `OAUTH_ALLOWED_REDIRECT_URI_SCHEMES=cursor`.
-This is an explicit interoperability allow-list for Cursor's native
-`cursor://anysphere.cursor-mcp/oauth/callback` redirect; arbitrary custom URI
-schemes remain rejected, and the setting should remain empty in production.
+This allow-lists Cursor's native `cursor://anysphere.cursor-mcp/oauth/callback`
+redirect. Other custom URI schemes are rejected. Leave the setting empty in
+production.
 
 Gateway pods use `OAUTH_INTERNAL_ISSUER_URL` for authorization-server
 discovery and JWKS retrieval when the public issuer is reachable only through a
@@ -335,7 +333,7 @@ sequenceDiagram
 - **Enforcement point:** authorization is evaluated at `call_tool` / `tools/call`, not at discovery time.
 - **Allow-list first:** missing grants deny by default unless the policy explicitly overrides the default decision. Empty `toolRules` means name-unrestricted access, still constrained by `allowedSideEffects` and trust.
 - **Side-effect guard:** `allowedSideEffects` is fail-closed. If it is omitted or empty, no tool side-effect class is allowed by that grant. A tool that the server did not declare in `tools[]` is denied for the same reason: there is no declared side effect to authorize.
-- **Observe mode:** `policy.mode: observe` returns an allow before identity, session, grant, side-effect, and trust checks run. Traffic is still proxied and audited, so use it for visibility only, never as an enforcement setting.
+- **Observe mode:** `policy.mode: observe` returns an allow before identity, session, grant, side-effect, and trust checks run. Traffic is still proxied and audited. Use it for visibility only; it enforces nothing.
 - **Audit on allow and deny:** the gateway emits decision, reason, trust levels, required side effect, human, agent, session, server, cluster, and namespace fields.
 
 ```text
@@ -391,7 +389,7 @@ without authentication receive `401`. `POST` requests create the Kubernetes CRs
 that the operator renders into the gateway policy ConfigMap. Server redeploys
 must opt in with `update: true`; grants and sessions remain create-or-update.
 
-For `POST /api/v1/runtime/grants` and admin-only direct `POST /api/v1/runtime/sessions`, the API resolves `serverRef` to an `MCPServer` in the cluster. If that server does not exist, the call returns `400` with a clear `unknown serverRef` message. The server lookup is **not** part of a single distributed transaction with the grant/session write — a concurrent delete can leave a stale reference (same as `kubectl apply`). Kubernetes apply errors are surfaced with the status the API server would use, when available. Non-admin grant mutations and session item mutations require the caller to be the server owner or a team owner for the server namespace; normal adapter flows should use `POST /api/v1/runtime/adapter/sessions` instead of direct session apply.
+For `POST /api/v1/runtime/grants` and admin-only direct `POST /api/v1/runtime/sessions`, the API resolves `serverRef` to an `MCPServer` in the cluster. If that server does not exist, the call returns `400` with an `unknown serverRef` message. The server lookup is **not** in the same transaction as the grant/session write, so a concurrent delete can leave a stale reference (same as `kubectl apply`). Kubernetes apply errors are surfaced with the status the API server would use, when available. Non-admin grant mutations and session item mutations require the caller to be the server owner or a team owner for the server namespace; normal adapter flows use `POST /api/v1/runtime/adapter/sessions`.
 
 ```text
 GET  /api/v1/runtime/servers              # List authenticated MCP catalog entries
@@ -446,7 +444,7 @@ sets `update: true`.
 `POST /api/v1/runtime/servers` is governed by the platform publish policy. Admins
 configure `PLATFORM_MCP_ACTIVE_SERVER_LIMIT` (default `5`, set `0` to disable)
 and `PLATFORM_MCP_PUSH_COOLDOWN` (Go duration such as `30m`, default `0s` to
-disable). A quota or cooldown denial returns `429` with a clear error; cooldown
+disable). A quota or cooldown denial returns `429` with an error; cooldown
 responses include `next_allowed_at` and `Retry-After`. `GET /api/v1/runtime/servers`
 includes `publish_policy` so UI clients can show the active limit and count.
 Server list/get responses keep CRD `tools`, `prompts`, `resources`, and
@@ -512,7 +510,7 @@ POST /api/v1/runtime/actions/restart     # Body: {component: "platform-api"} or 
 | **Session Revoke** | Revoke / unrevoke an `MCPAgentSession`. Revoked sessions cannot be used for tool calls. |
 | **Component Restart** | Rolling restart of Sentinel components (`platform-api`, `runtime-api`, `analytics-api`, `ingest`, `processor`, `gateway`, `ui`) or all. |
 
-## Platform Admin and User API
+## Platform admin and user API
 
 Additional authenticated routes on the split API services (see [route ownership](#route-ownership)):
 
@@ -537,7 +535,7 @@ POST /api/v1/user/activity/image-publish  # Record a successful user image publi
 ```
 
 User API-key creation returns the cleartext key once as both `api_key` and
-`one_time_key`; clients should store it immediately.
+`one_time_key`. Store it immediately.
 
 The bundled `registry.<domain>` ingress calls `/api/v1/registry/authz` before
 proxying Docker Registry API traffic. Platform admin credentials (`x-api-key` or
@@ -606,6 +604,6 @@ GET /api/v1/events?trace_id=<trace>&server=payments&decision=deny&agent_id=ops-a
 
 ## Next
 
-- [Sentinel](sentinel.md) — what each HTTP surface above maps to.
-- [Architecture](architecture.md) — how requests flow through the gateway.
-- [internals/api-types.md](internals/api-types.md) — contributor-oriented guide to the CRD Go types and generated API contract.
+- [Sentinel](sentinel.md): what each HTTP surface above maps to.
+- [Architecture](architecture.md): how requests flow through the gateway.
+- [internals/api-types.md](internals/api-types.md): contributor guide to the CRD Go types and generated API contract.

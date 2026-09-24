@@ -1,7 +1,7 @@
 # Multi-Team Isolation
 
-MCP Runtime's beta multi-team model uses both first-class team identity and
-Kubernetes namespace boundaries. `MCPServer.spec.teamID` records the owning
+MCP Runtime's beta multi-team model combines team identity with Kubernetes
+namespace boundaries. `MCPServer.spec.teamID` records the owning
 platform team. `SubjectRef.teamID` constrains grants and sessions to callers
 from that team. Namespaces and RBAC still isolate who can create resources.
 
@@ -17,7 +17,7 @@ The source-of-truth data plane is:
   from OAuth `team_id`, `tenant_id`, or `tid` claims in OAuth mode, or from the
   session that the verified SPIFFE identity resolves to in mtls mode.
 
-## When To Use This
+## When to use this
 
 The default `mcp-servers` namespace is fine for a single team, local
 development, and simple evaluation clusters. For a deployment that hosts
@@ -34,12 +34,10 @@ Keep each server's grants and sessions in the same namespace as the server they
 govern. When `serverRef.namespace` is omitted, clients and renderers should
 treat the current resource namespace as the intended boundary.
 
-## Provisioning A Team Namespace
+## Provisioning a team namespace
 
-There are two supported provisioning paths.
-
-If the platform API is configured, admins can create a managed team namespace
-through the platform-backed team command:
+Admins create a managed team namespace through the platform API with
+`team create`:
 
 ```bash
 mcp-runtime auth login --api-url https://platform.example.com
@@ -105,7 +103,7 @@ rules:
     verbs: ["get", "list", "watch"]
 ```
 
-`kubectl apply` uses create, update, and patch under the hood; Kubernetes has no
+`kubectl apply` uses create, update, and patch; Kubernetes has no
 separate `apply` verb.
 
 ## Team Fields
@@ -148,7 +146,7 @@ subject:
 ```
 
 When more than one subject field is set, every field must match the request
-identity. This means a moved user stops matching the old team's grants as soon
+identity, so a moved user stops matching the old team's grants as soon
 as their trusted `teamID` claim/header changes.
 
 ## Gateway Identity
@@ -193,7 +191,7 @@ default:
   on the caller's principal. Anonymous public-mode reads are limited to the
   catalog namespaces.
 - Server publish requests may pass `scope: tenant`, `scope: org`, or
-  `scope: public` instead of spelling the catalog namespace directly. The API
+  `scope: public` in place of an explicit catalog namespace. The API
   resolves `org` and `public` only when the matching platform mode is enabled;
   `tenant` resolves to the caller's team namespace unless an authorized team
   namespace is provided.
@@ -219,7 +217,7 @@ only grants and sessions whose `serverRef` points at the target server. Missing
 subject teams are rendered and enforced by the gateway, which matches every
 non-empty `humanID`, `agentID`, and `teamID` exactly.
 
-## Ingress Controller Watch Scope
+## Ingress controller watch scope
 
 The bundled Traefik manifests watch only `registry`, `mcp-sentinel`,
 `mcp-servers`, `mcp-servers-org`, and `mcp-servers-public` by default so Traefik
@@ -256,13 +254,13 @@ Keep identifiers stable:
 `mcp-runtime access grant init` and `access session init` scaffold local YAML on
 the workstation only. `access grant apply` uses the platform API by default after
 `mcp-runtime auth login --api-url <platform-url>`; `access session apply` is
-admin-only on the platform API (agents should use `adapter stdio|proxy --server …
---agent … --auto-refresh` instead). Add `--use-kube` only for admin/operator
-direct Kubernetes writes. The apply commands run a non-blocking advisory pass
-before applying manifests. The command warns about obvious
-`humanID` shape problems, such as whitespace, malformed email-like strings,
-case-sensitive uppercase email identifiers, or values that appear to encode
-`mcp-team-*` namespace names. These warnings never block the apply.
+admin-only on the platform API (agents use `adapter stdio|proxy --server …
+--agent … --auto-refresh`). Add `--use-kube` only for admin/operator
+direct Kubernetes writes. Before applying manifests, the apply commands warn
+about obvious `humanID` shape problems, such as whitespace, malformed
+email-like strings, case-sensitive uppercase email identifiers, or values that
+appear to encode `mcp-team-*` namespace names. The warnings never block the
+apply.
 
 ## Audit And Reporting
 

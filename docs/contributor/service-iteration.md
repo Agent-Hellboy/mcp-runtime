@@ -158,7 +158,7 @@ new controllers to agree on validation:
 kubectl apply -f config/crd/bases/mcpruntime.org_mcpservers.yaml
 ```
 
-## MCP Gateway Sidecar
+## MCP gateway sidecar
 
 `services/mcp-gateway` runs as the `mcp-gateway` sidecar in each MCP server pod.
 To test gateway changes, rebuild and push `mcp-sentinel-mcp-gateway`, update the
