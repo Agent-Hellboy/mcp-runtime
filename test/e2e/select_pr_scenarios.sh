@@ -50,6 +50,13 @@ classify_path() {
       mark_all
       return
       ;;
+    internal/operator/mtls*|internal/cli/certmanager/*|traefik-plugins/spiffe-identity/*|config/cert-manager/*|pkg/identity/*|pkg/certauth/*)
+      # Optional adapter certificates ride the OAuth route; the adapter proxy
+      # scenario covers enrollment and the oauth scenario the route itself.
+      add_scenario "oauth"
+      add_scenario "adapter-proxy"
+      return
+      ;;
     traefik-plugins/pii-redactor/*)
       # PII redaction is asserted in the observability pass.
       add_observability

@@ -140,7 +140,7 @@ selector_expect "api" "smoke-auth,api-platform" "services/platform-api/auth/logi
 selector_expect "runtime-tools-api" "smoke-auth,api-platform,cli-platform" "services/runtime-api/internal/runtimeapi/tools.go"
 selector_expect "catalog-cli" "smoke-auth,cli-platform" "internal/cli/catalog/catalog.go"
 selector_expect "adapter" "smoke-auth,adapter-proxy,governance" "internal/cli/adapter/proxy.go"
-selector_expect "mtls-operator" "smoke-auth,oauth" "internal/operator/mtls.go"
+selector_expect "mtls-operator" "smoke-auth,oauth,adapter-proxy" "internal/operator/mtls.go"
 selector_expect "gateway" "smoke-auth,governance,trust,oauth,adapter-proxy" "services/mcp-gateway/main.go"
 selector_expect "observability" "smoke-auth,governance,trust,oauth,observability" "services/ingest/main.go"
 selector_expect "broad" "all" "api/v1alpha1/mcpserver_types.go"
