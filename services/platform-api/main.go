@@ -77,7 +77,7 @@ func main() {
 		}
 		if jwksURL == "" {
 			var err error
-			jwksURL, err = serviceutil.DiscoverOIDCJWKSURL(context.Background(), oidcIssuer)
+			jwksURL, err = serviceutil.DiscoverOIDCJWKSURLWithRetry(context.Background(), oidcIssuer, 5, time.Second)
 			if err != nil {
 				log.Fatalf("OIDC_JWKS_URL is not configured and issuer discovery failed: %v", err)
 			}

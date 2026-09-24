@@ -3,6 +3,7 @@ package serviceutil
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -33,11 +34,15 @@ func DiscoverOIDCJWKSURL(ctx context.Context, issuer string) (string, error) {
 	client := &http.Client{Timeout: 5 * time.Second}
 	response, err := client.Do(request)
 	if err != nil {
-		return "", fmt.Errorf("fetch OIDC discovery metadata: %w", err)
+		return "", transientOIDCError{fmt.Errorf("fetch OIDC discovery metadata: %w", err)}
 	}
 	defer response.Body.Close()
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return "", fmt.Errorf("OIDC discovery returned HTTP %d", response.StatusCode)
+		err := fmt.Errorf("OIDC discovery returned HTTP %d", response.StatusCode)
+		if response.StatusCode >= http.StatusInternalServerError || response.StatusCode == http.StatusTooManyRequests {
+			return "", transientOIDCError{err}
+		}
+		return "", err
 	}
 	var metadata struct {
 		Issuer  string `json:"issuer"`
@@ -53,5 +58,48 @@ func DiscoverOIDCJWKSURL(ctx context.Context, issuer string) (string, error) {
 	if err != nil || jwksURL.Scheme == "" || jwksURL.Host == "" || (jwksURL.Scheme != "https" && jwksURL.Scheme != "http") {
 		return "", fmt.Errorf("OIDC discovery metadata has no valid jwks_uri")
 	}
+	// Signing keys decide which tokens are trusted, so an HTTPS issuer must not
+	// hand them out over plain HTTP. HTTP stays possible only for an HTTP
+	// issuer, which is a local test setup.
+	if issuerURL.Scheme == "https" && jwksURL.Scheme != "https" {
+		return "", fmt.Errorf("OIDC discovery jwks_uri %q must use https for an https issuer", metadata.JWKSURI)
+	}
 	return jwksURL.String(), nil
+}
+
+// transientOIDCError marks discovery failures worth retrying: the provider
+// was unreachable or answered 5xx/429. A mismatched issuer or bad metadata is
+// a configuration error and fails immediately.
+type transientOIDCError struct{ err error }
+
+func (e transientOIDCError) Error() string { return e.err.Error() }
+func (e transientOIDCError) Unwrap() error { return e.err }
+
+// DiscoverOIDCJWKSURLWithRetry retries transient discovery failures with
+// exponential backoff, so a service starting while its identity provider is
+// briefly unreachable does not crash-loop on the first attempt.
+func DiscoverOIDCJWKSURLWithRetry(ctx context.Context, issuer string, attempts int, initialBackoff time.Duration) (string, error) {
+	if attempts < 1 {
+		attempts = 1
+	}
+	backoff := initialBackoff
+	var lastErr error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		jwksURL, err := DiscoverOIDCJWKSURL(ctx, issuer)
+		if err == nil {
+			return jwksURL, nil
+		}
+		lastErr = err
+		var transient transientOIDCError
+		if !errors.As(err, &transient) || attempt == attempts {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(backoff):
+		}
+		backoff *= 2
+	}
+	return "", lastErr
 }
