@@ -2,11 +2,13 @@ package platform
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
 	"k8s.io/apimachinery/pkg/labels"
 
+	"mcp-runtime/internal/cli/core"
 	"mcp-runtime/pkg/k8sclient"
 )
 
@@ -52,13 +54,24 @@ func detectIngressControllerIdentityClientGo() ingressControllerIdentity {
 	}
 	clients, err := platformKubernetesClients()
 	if err != nil {
+		warnPartialIngressControllerIdentity(namespace, err)
 		return ingressControllerIdentity{Namespace: namespace}
 	}
 	deployment, err := k8sclient.GetDeployment(context.Background(), clients, namespace, "traefik")
 	if err != nil {
+		warnPartialIngressControllerIdentity(namespace, err)
 		return ingressControllerIdentity{Namespace: namespace}
 	}
 	return ingressControllerIdentityFromDeployment(deployment)
+}
+
+// warnPartialIngressControllerIdentity reports that only the namespace is
+// known. The operator then assumes the repo Traefik's app=traefik pod label
+// and traefik ServiceAccount, which do not match every Traefik install (k3s
+// uses Helm labels); on a mismatch the adapter-certificate NetworkPolicy and
+// the pinned ingress identity reject Traefik's own traffic.
+func warnPartialIngressControllerIdentity(namespace string, err error) {
+	core.Warn(fmt.Sprintf("could not read the traefik Deployment in namespace %s (%v); set MCP_INGRESS_CONTROLLER_POD_LABELS and MCP_INGRESS_CONTROLLER_SERVICE_ACCOUNT on the operator if Traefik does not use app=traefik and the traefik ServiceAccount", namespace, err))
 }
 
 func ingressControllerOperatorEnv(identity ingressControllerIdentity) []operatorEnvVar {

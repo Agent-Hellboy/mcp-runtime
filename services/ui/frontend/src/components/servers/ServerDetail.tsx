@@ -132,7 +132,7 @@ export function ServerDetail({ server, tools, onClose, onShowTools, onSelectTool
           </div>
           <p className="section-note" style={{ marginBottom: "var(--space-2)" }}>
             Paste this into {configTabs[configTab].hint}.
-            {auth.label === "OAuth" || auth.label === "mTLS"
+            {auth.label === "OAuth"
               ? ` The client must also satisfy ${auth.label} before calls are allowed.`
               : ""}
           </p>

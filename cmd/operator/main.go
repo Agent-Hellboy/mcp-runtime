@@ -126,6 +126,9 @@ func ingressControllerPodLabelsFromEnv(getenv func(string) string) map[string]st
 	}
 	parsed, err := labels.ConvertSelectorToLabelsMap(raw)
 	if err != nil {
+		// Falling back to app=traefik can lock Traefik out of adapter-
+		// certificate gateways, so make the misconfiguration visible.
+		setupLog.Error(err, "Invalid MCP_INGRESS_CONTROLLER_POD_LABELS; falling back to app=traefik, which may not match the running ingress controller", "value", raw)
 		return nil
 	}
 	return parsed

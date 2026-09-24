@@ -2,6 +2,8 @@ package operator
 
 import (
 	"context"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"strings"
 	"testing"
 
@@ -20,6 +22,9 @@ func traefikScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
 	scheme := runtime.NewScheme()
 	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("scheme: %v", err)
+	}
+	if err := corev1.AddToScheme(scheme); err != nil {
 		t.Fatalf("scheme: %v", err)
 	}
 	for _, gvk := range []schema.GroupVersionKind{
@@ -147,9 +152,59 @@ func TestReconcileMTLSIngressNeverSetsPerRouteSecretName(t *testing.T) {
 	if _, found, _ := unstructured.NestedString(ir.Object, "spec", "tls", "secretName"); found {
 		t.Fatal("tls.secretName must never be set on the IngressRoute (cross-namespace); use the default TLSStore")
 	}
-	if name, _, _ := unstructured.NestedString(ir.Object, "spec", "tls", "options", "name"); name != mtlsTLSOptionName(server) {
-		t.Fatalf("tls.options.name = %q", name)
+	// With a platform TLS namespace every route uses the shared default
+	// TLSOption; a per-route option would make Traefik fall back to defaults
+	// on a host shared by several servers.
+	if _, found, _ := unstructured.NestedMap(ir.Object, "spec", "tls", "options"); found {
+		t.Fatal("tls.options must be unset so the route uses the platform default TLSOption")
 	}
+}
+
+func TestReconcileDefaultClientAuthTLSOption(t *testing.T) {
+	scheme := traefikScheme(t)
+	caSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: platformClientAuthCASecret, Namespace: "traefik"},
+		Data:       map[string][]byte{"ca.crt": []byte("ca")},
+	}
+	reconciler := func(objects ...client.Object) (MCPServerReconciler, client.Client) {
+		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build()
+		return MCPServerReconciler{Client: c, Scheme: scheme, DefaultIngressTLSSecretNamespace: "traefik"}, c
+	}
+
+	t.Run("requests client certificates on every host once the CA exists", func(t *testing.T) {
+		r, c := reconciler(caSecret.DeepCopy())
+		if err := r.reconcileDefaultClientAuthTLSOption(context.Background()); err != nil {
+			t.Fatalf("reconcile: %v", err)
+		}
+		option := getCR(t, c, tlsOptionGVK, "default", "traefik")
+		if authType, _, _ := unstructured.NestedString(option.Object, "spec", "clientAuth", "clientAuthType"); authType != "VerifyClientCertIfGiven" {
+			t.Fatalf("clientAuthType = %q, want VerifyClientCertIfGiven", authType)
+		}
+		if names, _, _ := unstructured.NestedStringSlice(option.Object, "spec", "clientAuth", "secretNames"); len(names) != 1 || names[0] != platformClientAuthCASecret {
+			t.Fatalf("secretNames = %v", names)
+		}
+	})
+
+	t.Run("waits for the CA before creating the option", func(t *testing.T) {
+		r, c := reconciler()
+		if err := r.reconcileDefaultClientAuthTLSOption(context.Background()); err != nil {
+			t.Fatalf("reconcile: %v", err)
+		}
+		option := &unstructured.Unstructured{}
+		option.SetGroupVersionKind(tlsOptionGVK)
+		if err := c.Get(context.Background(), types.NamespacedName{Name: "default", Namespace: "traefik"}, option); !apierrors.IsNotFound(err) {
+			t.Fatalf("default TLSOption should wait for the CA, got %v", err)
+		}
+	})
+
+	t.Run("leaves a cluster-owned default TLSOption alone", func(t *testing.T) {
+		owned := crFixture(tlsOptionGVK, "default", "traefik")
+		r, _ := reconciler(caSecret.DeepCopy(), owned)
+		err := r.reconcileDefaultClientAuthTLSOption(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "not managed by mcp-runtime") {
+			t.Fatalf("err = %v, want a refusal to overwrite the cluster's TLSOption", err)
+		}
+	})
 }
 
 func TestReconcileDefaultTLSStore(t *testing.T) {

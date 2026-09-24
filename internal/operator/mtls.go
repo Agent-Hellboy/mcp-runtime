@@ -294,7 +294,10 @@ func (r *MCPServerReconciler) reconcileMTLSTrustBundle(ctx context.Context, mcpS
 		secret.Labels["mcpruntime.org/server"] = mcpServer.Name
 		return ctrl.SetControllerReference(mcpServer, secret, r.Scheme)
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	return r.reconcilePlatformClientAuthCA(ctx, ca)
 }
 
 func mtlsNetworkPolicyName(mcpServer *mcpv1alpha1.MCPServer) string {
@@ -403,8 +406,11 @@ func (r *MCPServerReconciler) cleanupRemovedMTLSResources(ctx context.Context, m
 	if err := r.deleteMTLSIngress(ctx, mcpServer); err != nil {
 		return err
 	}
+	// The mtls NetworkPolicy is kept: the old gateway pods keep running until
+	// the server is migrated, and the policy is what keeps other pods from
+	// reaching them. The normal reconcile removes it once the server is no
+	// longer on the adapter-certificate path.
 	for _, obj := range []client.Object{
-		&networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: mtlsNetworkPolicyName(mcpServer), Namespace: mcpServer.Namespace}},
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: mtlsTrustBundleSecretName(mcpServer), Namespace: mcpServer.Namespace}},
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: gatewayTLSSecretName(mcpServer), Namespace: mcpServer.Namespace}},
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: traefikClientCertSecretName(mcpServer), Namespace: mcpServer.Namespace}},
@@ -494,23 +500,111 @@ func (r *MCPServerReconciler) reconcileMTLSIngress(ctx context.Context, mcpServe
 			"services":    []any{service},
 		})
 	}
+	// Path-based servers share one host, and Traefik falls back to its default
+	// TLS options when routers on the same host name different ones, so
+	// per-server options would never ask for a client certificate. With a
+	// platform TLS namespace every route uses the single platform "default"
+	// TLSOption (see reconcileDefaultClientAuthTLSOption); the per-server
+	// option remains only as a fallback when no platform namespace is set.
+	tls := map[string]any{}
+	objects := []*unstructured.Unstructured{middleware, serversTransport}
+	if r.platformClientAuthNamespace() == "" {
+		tls["options"] = map[string]any{"name": mtlsTLSOptionName(mcpServer)}
+		objects = append(objects, tlsOption)
+	} else if err := r.deleteUnstructured(ctx, tlsOptionGVK, mtlsTLSOptionName(mcpServer), mcpServer.Namespace); err != nil {
+		return err
+	}
 	ingressRoute := r.traefikResource(mcpServer, ingressRouteGVK, mcpServer.Name, map[string]any{
 		"entryPoints": r.adapterCertificateEntryPoints(),
 		"routes":      routes,
-		"tls": map[string]any{
-			"options": map[string]any{"name": mtlsTLSOptionName(mcpServer)},
-		},
+		"tls":         tls,
 	})
+	objects = append(objects, ingressRoute)
 
 	if err := r.reconcileDefaultTLSStore(ctx); err != nil {
 		return err
 	}
-	for _, obj := range []*unstructured.Unstructured{tlsOption, middleware, serversTransport, ingressRoute} {
+	if err := r.reconcileDefaultClientAuthTLSOption(ctx); err != nil {
+		return err
+	}
+	for _, obj := range objects {
 		if err := r.applyUnstructured(ctx, obj); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// platformClientAuthCASecret holds the workload CA in the platform TLS
+// namespace. Every gateway certificate is issued by MTLSClusterIssuer, so any
+// server's CA is the platform's.
+const platformClientAuthCASecret = "mcp-adapter-client-ca"
+
+func (r *MCPServerReconciler) platformClientAuthNamespace() string {
+	return strings.TrimSpace(r.DefaultIngressTLSSecretNamespace)
+}
+
+// reconcilePlatformClientAuthCA copies the workload CA into the platform TLS
+// namespace for the default TLSOption. It carries no owner reference: it is
+// shared by every adapter-certificate server.
+func (r *MCPServerReconciler) reconcilePlatformClientAuthCA(ctx context.Context, ca []byte) error {
+	namespace := r.platformClientAuthNamespace()
+	if namespace == "" || len(ca) == 0 {
+		return nil
+	}
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: platformClientAuthCASecret, Namespace: namespace}}
+	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, secret, func() error {
+		secret.Type = corev1.SecretTypeOpaque
+		secret.Data = map[string][]byte{"tls.ca": ca, "ca.crt": ca}
+		if secret.Labels == nil {
+			secret.Labels = map[string]string{}
+		}
+		secret.Labels["app.kubernetes.io/managed-by"] = "mcp-runtime"
+		return nil
+	})
+	return err
+}
+
+// reconcileDefaultClientAuthTLSOption makes Traefik's global default TLS
+// options request (never require) a client certificate verified against the
+// workload CA, so adapter certificates are seen on every shared host while
+// clients without one are unaffected. A "default" TLSOption the operator did
+// not create is left alone and reported, since it is the cluster's own TLS
+// policy.
+func (r *MCPServerReconciler) reconcileDefaultClientAuthTLSOption(ctx context.Context) error {
+	namespace := r.platformClientAuthNamespace()
+	if namespace == "" {
+		return nil
+	}
+	var ca corev1.Secret
+	if err := r.Get(ctx, types.NamespacedName{Name: platformClientAuthCASecret, Namespace: namespace}, &ca); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil // the CA is copied once a gateway certificate is issued
+		}
+		return err
+	}
+	existing := &unstructured.Unstructured{}
+	existing.SetGroupVersionKind(tlsOptionGVK)
+	err := r.Get(ctx, types.NamespacedName{Name: "default", Namespace: namespace}, existing)
+	switch {
+	case err == nil && existing.GetLabels()["app.kubernetes.io/managed-by"] != "mcp-runtime":
+		return fmt.Errorf("TLSOption %s/default exists and is not managed by mcp-runtime; add clientAuth (VerifyClientCertIfGiven, secret %s) to it or remove it to enable adapter certificates", namespace, platformClientAuthCASecret)
+	case err != nil && !apierrors.IsNotFound(err) && !meta.IsNoMatchError(err):
+		return err
+	}
+	option := &unstructured.Unstructured{}
+	option.SetGroupVersionKind(tlsOptionGVK)
+	option.SetName("default")
+	option.SetNamespace(namespace)
+	option.SetLabels(map[string]string{"app.kubernetes.io/managed-by": "mcp-runtime"})
+	option.Object["spec"] = map[string]any{
+		"minVersion": "VersionTLS12",
+		"clientAuth": map[string]any{
+			"secretNames":    []any{platformClientAuthCASecret},
+			"clientAuthType": "VerifyClientCertIfGiven",
+		},
+	}
+	return r.applyUnstructured(ctx, option)
 }
 
 // reconcileDefaultTLSStore provisions the cluster-wide caller-facing server

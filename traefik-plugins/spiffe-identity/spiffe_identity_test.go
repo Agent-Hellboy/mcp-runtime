@@ -103,3 +103,54 @@ func TestUnverifiedChainIsIgnored(t *testing.T) {
 		t.Fatalf("verified header = %q, want empty for unverified chain", got)
 	}
 }
+
+// With rejectInvalidCertificate, a presented certificate that carries no SPIFFE
+// ID in the trust domain is refused instead of silently falling back to OAuth.
+func TestRejectInvalidCertificate(t *testing.T) {
+	called := false
+	next := http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) { called = true })
+	cfg := CreateConfig()
+	cfg.TrustDomain = "example.org"
+	cfg.RejectInvalidCertificate = true
+	h, err := New(context.Background(), next, cfg, "test")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	req.TLS = verifiedTLS(mustURL(t, "spiffe://other.example/ns/team-a/session/s1"))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized || called {
+		t.Fatalf("status = %d, called = %v; want 401 without reaching the gateway", rec.Code, called)
+	}
+
+	// Without the option the same request continues, unauthenticated, to OAuth.
+	cfg.RejectInvalidCertificate = false
+	h, _ = New(context.Background(), next, cfg, "test")
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	if !called {
+		t.Fatal("without rejectInvalidCertificate the request should continue to OAuth")
+	}
+}
+
+// Clients without a certificate are ordinary OAuth clients: the middleware
+// removes only the internal assertion and leaves their other headers, which
+// the gateway treats as untrusted input on the OAuth path.
+func TestNoCertificateKeepsGovernanceHeaders(t *testing.T) {
+	var seen *http.Request
+	next := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { seen = r })
+	h, _ := New(context.Background(), next, CreateConfig(), "test")
+
+	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	req.Header.Set("X-MCP-Verified-SPIFFE-ID", "spiffe://example.org/ns/admin/session/victim")
+	req.Header.Set("X-MCP-Agent-Session", "session-1")
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	if got := seen.Header.Get("X-MCP-Verified-SPIFFE-ID"); got != "" {
+		t.Fatalf("verified header = %q, want stripped", got)
+	}
+	if got := seen.Header.Get("X-MCP-Agent-Session"); got != "session-1" {
+		t.Fatalf("X-MCP-Agent-Session = %q, want preserved for the OAuth path", got)
+	}
+}

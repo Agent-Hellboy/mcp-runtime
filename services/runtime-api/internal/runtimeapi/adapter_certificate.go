@@ -151,34 +151,6 @@ func (s *AccessService) HandleAdapterCertificate(w http.ResponseWriter, r *http.
 	})
 }
 
-func (s *AccessService) issueSessionCertificate(
-	ctx context.Context,
-	namespace, sessionName, trustDomain, csr string,
-) (string, string, error) {
-	csrDER, err := certauth.ValidateCSRPEM(csr, identity.SessionSPIFFEID(trustDomain, namespace, sessionName))
-	if err != nil {
-		return "", "", err
-	}
-	if s.k8sClients == nil || s.k8sClients.Dynamic == nil || s.accessMgr == nil {
-		return "", "", fmt.Errorf("kubernetes not available")
-	}
-	session, err := s.accessMgr.GetSession(ctx, sessionName, namespace)
-	if err != nil || session == nil {
-		return "", "", fmt.Errorf("adapter session not found")
-	}
-	if session.Spec.ExpiresAt == nil || !session.Spec.ExpiresAt.After(time.Now()) {
-		return "", "", fmt.Errorf("adapter session is expired")
-	}
-	duration := time.Until(session.Spec.ExpiresAt.Time.UTC())
-	if duration > adapterSessionMaxTTL {
-		duration = adapterSessionMaxTTL
-	}
-	if duration < time.Minute {
-		return "", "", fmt.Errorf("adapter session is too close to expiry")
-	}
-	return s.issueSessionCertificateDER(ctx, namespace, sessionName, csrDER, duration)
-}
-
 func (s *AccessService) issueSessionCertificateDER(
 	ctx context.Context,
 	namespace, sessionName string,

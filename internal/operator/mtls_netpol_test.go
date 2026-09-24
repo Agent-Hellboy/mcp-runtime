@@ -87,3 +87,28 @@ func TestReconcileMTLSNetworkPolicy(t *testing.T) {
 		}
 	})
 }
+
+// A stored auth.mode mtls server is refused, but its old gateway pods keep
+// running until it is migrated, so cleanup must keep the NetworkPolicy that
+// isolates them while removing the route material.
+func TestCleanupRemovedMTLSResourcesKeepsNetworkPolicy(t *testing.T) {
+	scheme := traefikScheme(t)
+	if err := networkingv1.AddToScheme(scheme); err != nil {
+		t.Fatalf("scheme: %v", err)
+	}
+	server := mtlsServer()
+	policy := &networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: mtlsNetworkPolicyName(server), Namespace: server.Namespace}}
+	bundle := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: mtlsTrustBundleSecretName(server), Namespace: server.Namespace}}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(server, policy, bundle).Build()
+	r := MCPServerReconciler{Client: c, Scheme: scheme}
+
+	if err := r.cleanupRemovedMTLSResources(context.Background(), server); err != nil {
+		t.Fatalf("cleanup: %v", err)
+	}
+	if err := c.Get(context.Background(), types.NamespacedName{Name: policy.Name, Namespace: policy.Namespace}, &networkingv1.NetworkPolicy{}); err != nil {
+		t.Fatalf("NetworkPolicy should be kept until migration, got %v", err)
+	}
+	if err := c.Get(context.Background(), types.NamespacedName{Name: bundle.Name, Namespace: bundle.Namespace}, &corev1.Secret{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("trust bundle should be removed, got %v", err)
+	}
+}
