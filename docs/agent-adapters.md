@@ -354,7 +354,9 @@ declares `2026-07-28` or later, it:
 - sends `MCP-Protocol-Version` from that request's `_meta`, so the header always
   matches the body;
 - adds `Mcp-Method`, and `Mcp-Name` for `tools/call`, `prompts/get`, and
-  `resources/read`, Base64-encoding values that are not plain ASCII;
+  `resources/read`, Base64-encoding values that cannot safely appear as plain
+  HTTP header values, including non-ASCII and control characters, leading or
+  trailing whitespace, and values matching the Base64 sentinel pattern;
 - mirrors tool arguments annotated with `x-mcp-header` into `Mcp-Param-*`
   headers, using the schemas from earlier `tools/list` results. Tools whose
   annotations are invalid are dropped from `tools/list` with a warning on
