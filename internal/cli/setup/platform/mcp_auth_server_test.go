@@ -154,6 +154,7 @@ func TestMCPAuthResourceURLsTestModeCoversEveryBundledExample(t *testing.T) {
 	want := []string{
 		"http://localhost:18080/mcp-auth-sdk-ping/mcp",
 		"http://localhost:18080/mcp-auth-sdk-echo/mcp",
+		"http://localhost:18080/mcp-auth-sdk-ping-py/mcp",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("mcpAuthResourceURLs() = %v, want %v", got, want)
