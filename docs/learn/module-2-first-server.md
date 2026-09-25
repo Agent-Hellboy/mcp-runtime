@@ -1,16 +1,14 @@
-# Module 2 — Your first governed server
+# Module 2: Your first governed server
 
-End-to-end hands-on: deploy a real MCP server, create a grant, connect a client,
-and observe live traffic in the analytics dashboard.
+Deploy an MCP server, create a grant, connect a client, and watch live traffic
+in the analytics dashboard.
 
 **Prerequisites:**
 - Module 1 completed (you understand Grants, Sessions, and the gateway)
 - `mcp-runtime` CLI installed from the [latest GitHub release](https://github.com/mcp-runtime/mcp-runtime/releases/latest)
 - Account on the live platform (`platform.mcpruntime.org`) or a local cluster running
 
----
-
-## Step 1 — Log in
+## Step 1: Log in
 
 ```bash
 mcp-runtime auth login \
@@ -21,9 +19,7 @@ mcp-runtime auth login \
 mcp-runtime auth status    # confirm profile is active
 ```
 
----
-
-## Step 2 — Get the example server
+## Step 2: Get the example server
 
 Clone the repo to use the workspace-assistant MCP server:
 
@@ -35,9 +31,7 @@ cd mcp-runtime/examples/workspace-assistant-mcp
 This is a Go MCP server with 8 tools: `echo`, `add`, `upper`, `lower`,
 `create_task`, `draft_release_note`, `slugify`, `aaa-ping`.
 
----
-
-## Step 3 — Discover tools and scaffold metadata
+## Step 3: Discover tools and scaffold metadata
 
 Run the server locally so `server init` can call its `tools/list` endpoint:
 
@@ -53,22 +47,18 @@ mcp-runtime server init my-server \
 kill $SERVER_PID
 ```
 
-Open `.mcp/servers.yaml` and look at what was generated. Notice every tool
-has a `sideEffect` and `requiredTrust`. These are what the gateway enforces.
+Open the generated `.mcp/servers.yaml`. Every tool has a `sideEffect` and
+`requiredTrust`; the gateway enforces both.
 
----
-
-## Step 4 — Validate before building
+## Step 4: Validate before building
 
 ```bash
 mcp-runtime server validate --metadata-dir .mcp
 ```
 
-This catches tool name mismatches before you spend time on a build.
+Validation catches tool name mismatches before the build.
 
----
-
-## Step 5 — Build, push, deploy
+## Step 5: Build, push, deploy
 
 ```bash
 # Build (from the directory with the Dockerfile)
@@ -84,9 +74,7 @@ mcp-runtime server push \
 mcp-runtime server deploy my-server --scope tenant --metadata-dir .mcp
 ```
 
----
-
-## Step 6 — Confirm the server is up
+## Step 6: Confirm the server is up
 
 ```bash
 mcp-runtime server list
@@ -99,12 +87,10 @@ mcp-runtime server get my-server --namespace mcp-team-myteam
 mcp-runtime server policy inspect my-server --namespace mcp-team-myteam
 ```
 
-The policy inspect output shows the full policy document the gateway will
-enforce — every tool, its trust level, and its side-effect class.
+`policy inspect` shows the policy document the gateway enforces: every tool,
+its trust level, and its side-effect class.
 
----
-
-## Step 7 — Create a grant
+## Step 7: Create a grant
 
 Grant your cursor agent access to `echo` and `add`:
 
@@ -124,15 +110,12 @@ mcp-runtime access grant apply --file grant.yaml
 mcp-runtime access grant list
 ```
 
-**Why validate first?** If `echo` is not in `.mcp/servers.yaml`, the gateway
-returns `tool_side_effect_unknown` and denies the call. Validate catches this
-before you deploy.
+Validate before you apply. If `echo` is not in `.mcp/servers.yaml`, the gateway
+returns `tool_side_effect_unknown` and denies the call.
 
----
+## Step 8: Connect via the adapter
 
-## Step 8 — Connect via the adapter
-
-Start the adapter proxy. It creates the agent session automatically:
+Start the adapter proxy. It creates the agent session:
 
 ```bash
 mcp-runtime adapter proxy \
@@ -146,12 +129,10 @@ mcp-runtime adapter proxy \
 
 Point Claude Desktop, Cursor, or any MCP client at `http://127.0.0.1:8099`.
 
-Call the `echo` tool — it goes through. Try `create_task` — it is denied
-because it is not in the grant. That is the gateway enforcing policy.
+Call the `echo` tool; it succeeds. Call `create_task`; the gateway denies it
+because it is not in the grant.
 
----
-
-## Step 9 — See it in analytics
+## Step 9: See it in analytics
 
 Open [platform.mcpruntime.org](https://platform.mcpruntime.org) → **Analytics → Tools**.
 
@@ -161,34 +142,26 @@ You should see rows like:
 |---|---|---|---|---|---|---|
 | my-server | echo | you@example.com | myteam | cursor | 3 | 0 |
 
-Every call is recorded with the full identity context. A denied call shows
+Each call is recorded with its user, team, and agent. A denied call shows
 `Denied: 1`.
-
----
 
 ## What just happened
 
-You deployed a Kubernetes-native MCP server with:
-
-- **No YAML written** — the operator created Deployment, Service, and Ingress
-- **Policy enforced at the gateway** — the grant's allow list blocked `create_task`
-- **Audit trail** — every call is in the analytics database with user, team, agent, tool, decision
-
----
+- The operator created the Deployment, Service, and Ingress from the `MCPServer`.
+- The gateway enforced the grant's allow list and blocked `create_task`.
+- Every call is in the analytics database with user, team, agent, tool, and decision.
 
 ## Try breaking it intentionally
 
 1. Delete the grant: `mcp-runtime access grant delete my-grant --namespace mcp-team-myteam`
-2. Try calling `echo` again — all calls are now denied
+2. Call `echo` again. All calls are now denied.
 3. Re-apply the grant: `mcp-runtime access grant apply --file grant.yaml`
-4. Calls go through again
+4. Calls succeed again.
 
-This is the revocation model. You can also revoke the session:
+You can also revoke the session:
 ```bash
 mcp-runtime access session list --namespace mcp-team-myteam
 mcp-runtime access session revoke <session-name> --namespace mcp-team-myteam
 ```
 
----
-
-**Next:** [Module 3 — Multi-team production setup](module-3-multi-team.md)
+**Next:** [Module 3: Multi-team production setup](module-3-multi-team.md)

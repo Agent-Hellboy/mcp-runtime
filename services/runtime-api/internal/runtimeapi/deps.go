@@ -10,6 +10,7 @@ import (
 
 	"mcp-runtime-api/internal/platformclient"
 	"mcp-runtime/pkg/apihttp"
+	"mcp-runtime/pkg/mcpdefaults"
 	"mcp-runtime/pkg/platformauth"
 	"mcp-runtime/pkg/serviceutil"
 )
@@ -17,7 +18,7 @@ import (
 const (
 	roleAdmin               = platformauth.RoleAdmin
 	roleUser                = platformauth.RoleUser
-	sharedCatalogNamespace  = "mcp-servers"
+	sharedCatalogNamespace  = mcpdefaults.MCPServersNamespace
 	teamNamespacePrefix     = "mcp-team-"
 	teamRoleOwner           = "owner"
 	teamRoleMember          = "member"

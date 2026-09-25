@@ -213,10 +213,11 @@ func (t *RuntimeTransport) initOTelInstruments() {
 // transient gateway failure. tools/call and other mutating methods are never
 // retried to avoid double-execution.
 var retryableMethods = map[string]struct{}{
-	"tools/list":     {},
-	"resources/list": {},
-	"prompts/list":   {},
-	"ping":           {},
+	"tools/list":      {},
+	"resources/list":  {},
+	"prompts/list":    {},
+	"ping":            {},
+	"server/discover": {},
 }
 
 func isRetryableMethod(method string) bool {

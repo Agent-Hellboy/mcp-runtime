@@ -1,6 +1,7 @@
 FROM golang:1.26.6 AS build
 WORKDIR /src
 COPY go.mod go.sum ./
+COPY pkg/ ./pkg/
 COPY cmd/doctor-smoke/ ./cmd/doctor-smoke/
 ARG TARGETOS=linux
 ARG TARGETARCH=amd64

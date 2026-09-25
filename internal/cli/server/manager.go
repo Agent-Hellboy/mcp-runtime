@@ -24,6 +24,7 @@ import (
 	"mcp-runtime/internal/cli/kube"
 	"mcp-runtime/internal/cli/kubeerr"
 	"mcp-runtime/internal/cli/platformapi"
+	"mcp-runtime/pkg/mcpdefaults"
 	"mcp-runtime/pkg/metadata"
 	"mcp-runtime/pkg/publishscope"
 )
@@ -142,7 +143,7 @@ func (m *ServerManager) InitServer(name, metadataDir, image, imageTag, scope, po
 		ImageTag:         imageTag,
 		Scope:            metadata.PublishScope(scope),
 		PublicPathPrefix: name,
-		Route:            "/" + name + "/mcp",
+		Route:            mcpdefaults.DefaultIngressPath(name),
 		Port:             port,
 		Tools:            nil,
 		Auth:             &metadata.AuthConfig{Mode: metadata.AuthModeHeader},
@@ -537,7 +538,7 @@ func (m *ServerManager) CreateServer(name, namespace, image, imageTag string) er
 			Replicas:    1,
 			Port:        core.GetDefaultServerPort(),
 			ServicePort: 80,
-			IngressPath: "/" + name + "/mcp",
+			IngressPath: mcpdefaults.DefaultIngressPath(name),
 		},
 	}
 
@@ -839,7 +840,6 @@ func normalizeDeployImageForCompare(image string) string {
 }
 
 func buildDeployServerSpec(name, image, imageTag string, replicas, port, servicePort int32) mcpv1alpha1.MCPServerSpec {
-	ingressPath := "/" + name + "/mcp"
 	return mcpv1alpha1.MCPServerSpec{
 		Image:            image,
 		ImageTag:         imageTag,
@@ -847,11 +847,8 @@ func buildDeployServerSpec(name, image, imageTag string, replicas, port, service
 		Port:             port,
 		ServicePort:      servicePort,
 		PublicPathPrefix: name,
-		IngressPath:      ingressPath,
+		IngressPath:      "/" + name + "/mcp",
 		Gateway:          &mcpv1alpha1.GatewayConfig{Enabled: true},
-		EnvVars: []mcpv1alpha1.EnvVar{
-			{Name: "MCP_PATH", Value: ingressPath},
-		},
 	}
 }
 
@@ -1332,7 +1329,7 @@ func (m *ServerManager) InspectServerPolicy(name, namespace string) error {
 		return nil
 	}
 
-	configMapName := name + "-gateway-policy"
+	configMapName := mcpdefaults.GatewayPolicyConfigMapName(name)
 	args := []string{"get", "configmap", configMapName, "-n", namespace, "-o", `go-template={{index .data "policy.json"}}`}
 	cmd, err := m.kubectl.CommandArgs(args)
 	if err != nil {

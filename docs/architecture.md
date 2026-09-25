@@ -1,8 +1,7 @@
 # Architecture
 
-MCP Runtime is a Kubernetes-native platform for publishing, governing, and
-observing MCP servers. This page is the high-level map; deeper detail lives in
-the linked guides below.
+MCP Runtime has four planes: control, runtime, data and policy, and
+observability. The linked guides at the end cover each part in detail.
 
 ## Planes
 
@@ -113,9 +112,8 @@ component-level paths, and E2E scenario mapping.
 
 ## Related reading
 
-- [Home / product overview](README.md) — positioning vs MCP directories and catalogs
-- [Getting Started](getting-started.md) — install and first server
-- [Publish an MCP Server](publish-mcp-server.md) — metadata, build, push, deploy
-- [Agent Adapters](agent-adapters.md) — stdio and HTTP proxy shims
-- [CLI](cli.md) — command reference
-- [Cluster Readiness](cluster-readiness.md) — registry, DNS, TLS, node trust checks
+- [Getting Started](getting-started.md): install and first server
+- [Publish an MCP Server](publish-mcp-server.md): metadata, build, push, deploy
+- [Agent Adapters](agent-adapters.md): stdio and HTTP proxy shims
+- [CLI](cli.md): command reference
+- [Cluster Readiness](cluster-readiness.md): registry, DNS, TLS, node trust checks

@@ -1,23 +1,23 @@
 # Agent Adapters
 
 MCP Runtime includes two agent-side adapters that attach governed identity to
-MCP traffic without requiring the agent framework to know anything about
-grants, sessions, or policy:
+MCP traffic. The agent framework needs no knowledge of grants, sessions, or
+policy:
 
 - `mcp-runtime adapter proxy` exposes a local Streamable HTTP MCP endpoint and
   forwards requests to an MCP Runtime route.
 - `mcp-runtime adapter stdio` exposes a stdio MCP server process and forwards
   each JSON-RPC message to the same MCP Runtime HTTP route.
 
-Both adapters only **present** issued identity values. They do not create
-grants, evaluate policy, or bypass the gateway. Platform admins author
-`MCPAccessGrant` resources first — scaffold with `mcp-runtime access grant init`
-when helpful — and the platform API issues `MCPAgentSession` values through
-`POST /api/v1/runtime/adapter/sessions` when the adapter starts with `--server`
-and `--agent`. The gateway is the enforcement point.
+Both adapters only **present** issued identity values; all traffic still goes
+through the gateway, which enforces policy. Platform admins author
+`MCPAccessGrant` resources first (scaffold them with
+`mcp-runtime access grant init`), and the platform API issues `MCPAgentSession`
+values through `POST /api/v1/runtime/adapter/sessions` when the adapter starts
+with `--server` and `--agent`.
 
-The adapter surface is intentionally limited to stdio and Streamable HTTP, the
-two standard MCP transports. There is no separate legacy HTTP+SSE adapter.
+The adapters support stdio and Streamable HTTP, the two standard MCP
+transports. There is no separate legacy HTTP+SSE adapter.
 
 ## How the adapter gets its identity
 
@@ -42,9 +42,9 @@ returned by the platform-issued session, so a caller can pin a specific field
 (e.g. a long-lived `--session-id` for a test) while letting the platform fill
 in the rest. The override survives every auto-refresh tick.
 
-## Platform-issued sessions — quickstart
+## Platform-issued sessions: quickstart
 
-Apply the grant first. The platform issues — and later refreshes — an adapter
+Apply the grant first. The platform issues (and later refreshes) an adapter
 session only when an enabled `MCPAccessGrant` matches the server, the signed-in
 principal, and the agent; without one the session call returns 403 and the
 adapter refuses to start. See [Required grant](#required-grant) below.
@@ -144,7 +144,7 @@ mcp-runtime adapter proxy
 | `MCP_RUNTIME_SESSION_ID` | yes¹ | `MCPAgentSession` name (`X-MCP-Agent-Session`). |
 | `MCP_RUNTIME_HOST_HEADER` | no | Override the `Host` header for host-based ingress. |
 | `MCP_RUNTIME_LISTEN_ADDR` | proxy | Local listener; defaults to `127.0.0.1:8099`. |
-| `MCP_RUNTIME_PROTOCOL_VERSION` | no | MCP protocol header. Defaults to `2025-06-18`; the negotiated `result.protocolVersion` from the runtime's `initialize` response overrides it for the rest of the process. |
+| `MCP_RUNTIME_PROTOCOL_VERSION` | stdio | `MCP-Protocol-Version` header the stdio adapter sends for legacy (`initialize`-based) requests. Defaults to `2025-06-18`; the negotiated `result.protocolVersion` from the runtime's `initialize` response overrides it for the rest of the process. Requests that declare a version in `params._meta` use that version. The HTTP proxy forwards the client's own header. |
 | `--no-xforwarded` flag | proxy | Pass this flag to suppress `X-Forwarded-*` headers forwarded to the runtime. Defaults to enabled (headers are sent). There is no corresponding env var. |
 | `MCP_RUNTIME_REQUEST_TIMEOUT` | no | Go duration for adapter→runtime calls. Defaults to unbounded. |
 | `MCP_RUNTIME_MAX_INBOUND_BYTES` | proxy | Caps inbound JSON-RPC bodies; over-cap responds 413. Defaults to 16 MiB. |
@@ -175,18 +175,19 @@ the upstream call. MCP protocol headers (`Mcp-Protocol-Version`,
 
 ## Anonymous mode (stdio)
 
-For public/read-only routes — for example a catalog discovery endpoint —
-identity is unnecessary and the stdio shim can run anonymous:
+Public read-only routes, such as a catalog discovery endpoint, need no
+identity. Run the stdio shim anonymously:
 
 ```bash
 mcp-runtime adapter stdio \
   --runtime-url https://mcp.example.com/public-catalog/mcp \
   --anonymous \
-  --anonymous-methods initialize,notifications/initialized,ping,tools/list,resources/list,prompts/list
+  --anonymous-methods initialize,notifications/initialized,server/discover,ping,tools/list,resources/list,prompts/list
 ```
 
-Anonymous methods default to the protocol handshake plus the three read-only
-discovery calls. Any method outside the allowlist is rejected with a JSON-RPC
+Anonymous methods default to the protocol handshake (`initialize` for legacy
+clients, `server/discover` for MCP `2026-07-28` clients), `ping`, and the three
+read-only discovery calls. Any method outside the allowlist is rejected with a JSON-RPC
 `-32601` error before the request leaves the adapter, so an agent SDK cannot
 accidentally call `tools/call` against a public route.
 
@@ -249,9 +250,9 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-This is the only path that requires the consumer to know about the platform
-API. For framework code that cannot attach headers, prefer the proxy or stdio
-adapter described below.
+This is the only path where the consumer calls the platform API itself. For
+framework code that cannot attach headers, use the proxy or stdio adapter
+below.
 
 ## HTTP proxy adapter
 
@@ -280,8 +281,8 @@ loopback paths where they only add audit noise.
 
 The proxy also exposes:
 
-- `GET /healthz`, `GET /livez`, `GET /readyz` — 204 No Content when running.
-- `GET /metrics` — delegates to `ProxyConfig.MetricsHandler` when wired up
+- `GET /healthz`, `GET /livez`, `GET /readyz`: 204 No Content when running.
+- `GET /metrics`: delegates to `ProxyConfig.MetricsHandler` when wired up
   (typically a Prometheus exporter backed by `RuntimeTransport.Meter`).
   Returns 404 when no metrics handler is configured.
 
@@ -321,7 +322,7 @@ Claude Desktop, similar):
 The shim reads newline-delimited JSON-RPC messages from stdin, posts them to
 the runtime, and writes responses back to stdout.
 
-Behaviour worth knowing:
+Shim behavior:
 
 - `initialize` is forwarded synchronously so the runtime `Mcp-Session-Id` is
   captured before later requests. The negotiated `protocolVersion` from the
@@ -338,9 +339,35 @@ Behaviour worth knowing:
   as JSON-RPC errors. Runtime denials matching `session_expired` /
   `session_not_found` are repackaged with `error.data.runtime_status =
   "session_expired"` so the SDK can choose to re-initialize.
-- Idempotent reads (`tools/list`, `resources/list`, `prompts/list`, `ping`)
-  retry on `502`/`504`/connection-reset with exponential backoff (100 ms →
+- Idempotent reads (`tools/list`, `resources/list`, `prompts/list`, `ping`,
+  `server/discover`) retry on `502`/`504`/connection-reset with exponential backoff (100 ms →
   200 ms → 1 s cap). `tools/call` never retries automatically.
+
+### MCP 2026-07-28 clients
+
+MCP revision [`2026-07-28`](https://modelcontextprotocol.io/specification/2026-07-28/changelog)
+removed the `initialize` handshake. A modern client puts its protocol version
+in each request's `params._meta` (`io.modelcontextprotocol/protocolVersion`).
+The shim serves legacy and modern clients side by side. For a request that
+declares `2026-07-28` or later, it:
+
+- sends `MCP-Protocol-Version` from that request's `_meta`, so the header always
+  matches the body;
+- adds `Mcp-Method`, and `Mcp-Name` for `tools/call`, `prompts/get`, and
+  `resources/read`, Base64-encoding values that cannot safely appear as plain
+  HTTP header values, including non-ASCII and control characters, leading or
+  trailing whitespace, and values matching the Base64 sentinel pattern;
+- mirrors tool arguments annotated with `x-mcp-header` into `Mcp-Param-*`
+  headers, using the schemas from earlier `tools/list` results. Tools whose
+  annotations are invalid are dropped from `tools/list` with a warning on
+  stderr;
+- sends no `Mcp-Session-Id`;
+- on a stdio `notifications/cancelled` for an in-flight request, closes that
+  HTTP request and does not forward the notification;
+- keeps `subscriptions/listen` streams open regardless of
+  `MCP_RUNTIME_REQUEST_TIMEOUT`.
+
+Requests without a `_meta` version keep the legacy behavior described above.
 
 ## Expected outcomes
 
@@ -383,8 +410,8 @@ a managed CA for you. `--tls-cluster-issuer` controls public ingress and
 registry certificates and is separate from `--mtls-cluster-issuer` (which
 controls gateway and adapter workload certificates). Environment equivalent:
 `MCP_SETUP_MTLS_CLUSTER_ISSUER=company-workload-ca`. Test mode
-(`setup --test-mode`) defaults the issuer to `mcp-runtime-ca` automatically — no
-mTLS flag needed.
+(`setup --test-mode`) defaults the issuer to `mcp-runtime-ca`, so no mTLS flag
+is needed.
 
 Configure the MCPServer for path-based routing under mtls:
 
@@ -403,8 +430,8 @@ spec:
 **How termination works.** Traefik terminates the caller's mTLS, verifies the
 client certificate against the identity CA, injects the verified SPIFFE identity
 as a trusted header (`X-MCP-Verified-SPIFFE-ID`), and re-encrypts to the gateway
-over a second mTLS hop. This is what allows **path-based routing** — a passthrough
-ingress could only route on SNI/host. The operator generates the Traefik
+over a second mTLS hop. Terminating at Traefik enables **path-based routing**; a
+passthrough ingress can only route on SNI/host. The operator generates the Traefik
 `TLSOption` (`RequireAndVerifyClientCert`), the `spiffe-identity` middleware
 (strips client-supplied identity headers, then injects the verified one), a
 `ServersTransport` (the re-encrypted hop with a pinned ingress certificate), and
@@ -472,7 +499,7 @@ mcp-runtime adapter proxy \
 `--server`/`--agent` inputs as `enroll` (the certificate's SPIFFE URI encodes
 the issued session). With `--auto-refresh`, the adapter re-enrolls a fresh
 certificate a few minutes before the session expires and drains idle
-connections so subsequent requests renegotiate with it — long-running adapters
+connections so subsequent requests renegotiate with it. Long-running adapters
 keep working without restarts. Governance identity headers are suppressed in
 this mode. To reuse `enroll` output instead of in-memory enrollment, pass
 `--auth mtls` together with the `--tls-client-cert`/`-key`/`-ca-bundle` files.
@@ -488,14 +515,10 @@ this mode. To reuse `enroll` output instead of in-memory enrollment, pass
    issues the gateway and Traefik certificates, writes the trust bundle, and
    applies the gateway NetworkPolicy.
 3. Switch each adapter to `--auth mtls` (or distribute `enroll` output). In mtls
-   mode the gateway **ignores** `X-MCP-*` identity headers entirely — it derives
+   mode the gateway **ignores** `X-MCP-*` identity headers entirely. It derives
    human, agent, team, and session identity from the verified SPIFFE URI mapped
-   to the rendered session binding — so header-mode and mtls-mode callers cannot
-   be mixed against the same server.
+   to the operator-rendered session binding. Header-mode and mtls-mode callers
+   cannot be mixed against the same server.
 
 Grants and sessions are unchanged: the same `MCPAccessGrant`/`MCPAgentSession`
 model applies; only how the caller's identity reaches the gateway changes.
-
-The gateway ignores `X-MCP-*` identity headers in mTLS mode. It derives human,
-agent, team, and session identity from the verified SPIFFE URI and the
-operator-rendered session binding.

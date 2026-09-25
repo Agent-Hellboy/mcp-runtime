@@ -13,6 +13,8 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
+
+	"mcp-runtime/pkg/mcpdefaults"
 )
 
 var (
@@ -25,28 +27,28 @@ var (
 const (
 	defaultImageTag          = "latest"
 	defaultReplicas          = int32(1)
-	defaultPort              = int32(8088)
+	defaultPort              = int32(mcpdefaults.MCPServerPort)
 	defaultServicePort       = int32(80)
 	defaultIngressClass      = "traefik"
-	defaultGatewayPort       = int32(8091)
+	defaultGatewayPort       = int32(mcpdefaults.MCPGatewayPort)
 	defaultToolRequiredTrust = "low"
 
 	defaultAuthMode            = AuthModeHeader
-	defaultAuthHumanIDHeader   = "X-MCP-Human-ID"
-	defaultAuthAgentIDHeader   = "X-MCP-Agent-ID"
-	defaultAuthTeamIDHeader    = "X-MCP-Team-ID"
-	defaultAuthSessionIDHeader = "X-MCP-Agent-Session"
-	defaultAuthTokenHeader     = "Authorization"
+	defaultAuthHumanIDHeader   = mcpdefaults.AuthHumanIDHeader
+	defaultAuthAgentIDHeader   = mcpdefaults.AuthAgentIDHeader
+	defaultAuthTeamIDHeader    = mcpdefaults.AuthTeamIDHeader
+	defaultAuthSessionIDHeader = mcpdefaults.AuthSessionIDHeader
+	defaultAuthTokenHeader     = mcpdefaults.AuthTokenHeader
 
-	defaultPolicyMode      = PolicyModeAllowList
-	defaultPolicyDecision  = PolicyDecisionDeny
-	defaultPolicyEnforceOn = "call_tool"
-	defaultPolicyVersion   = "v1"
-	defaultSessionStore    = "kubernetes"
-	defaultSessionHeader   = "X-MCP-Agent-Session"
-	defaultSessionMaxLife  = "24h"
-	defaultSessionIdleTime = "1h"
-	defaultSessionUpstream = "Authorization"
+	defaultPolicyMode      = PolicyMode(mcpdefaults.PolicyMode)
+	defaultPolicyDecision  = PolicyDecision(mcpdefaults.PolicyDecision)
+	defaultPolicyEnforceOn = mcpdefaults.PolicyEnforceOn
+	defaultPolicyVersion   = mcpdefaults.PolicyVersion
+	defaultSessionStore    = mcpdefaults.SessionStore
+	defaultSessionHeader   = mcpdefaults.AuthSessionIDHeader
+	defaultSessionMaxLife  = mcpdefaults.SessionMaxLife
+	defaultSessionIdleTime = mcpdefaults.SessionIdleTime
+	defaultSessionUpstream = mcpdefaults.SessionUpstream
 
 	defaultAnalyticsEventType    = "mcp.request"
 	defaultAnalyticsSourceSuffix = "-gateway"
@@ -59,7 +61,7 @@ func defaultIngressPathFromName(name string) string {
 	if strings.TrimSpace(name) == "" {
 		return ""
 	}
-	return "/" + strings.TrimSpace(name) + "/mcp"
+	return mcpdefaults.DefaultIngressPath(strings.TrimSpace(name))
 }
 
 func defaultPublicPathPrefixFromName(name string) string {
@@ -84,7 +86,9 @@ func gatewayEnabled(spec MCPServerSpec) bool {
 // webhook can use while defaulting MCPServer objects.
 type MCPServerDefaultOptions struct {
 	DefaultIngressHost        string
+	DefaultIngressTLS         bool
 	DefaultAnalyticsIngestURL string
+	DefaultOAuthIssuerURL     string
 }
 
 func (r *MCPServer) Default() {
@@ -93,6 +97,49 @@ func (r *MCPServer) Default() {
 
 // DefaultWithOptions applies MCPServer defaults, including operator-configured
 // fallbacks when the webhook is registered by the operator manager.
+// ResolveDerivedAuth fills an OAuth server's unset audience and issuer from
+// platform state: the audience from the public URL the ingress serves, the
+// issuer from the bundled authorization server. It is applied to the
+// operator's in-memory copy on every reconcile and is never persisted by the
+// admission webhook, so a later change to the host, path, TLS setting, or
+// platform domain re-derives the values instead of leaving a stale copy in
+// spec. Explicit values are kept.
+func (r *MCPServer) ResolveDerivedAuth(options MCPServerDefaultOptions) {
+	if r.Spec.Auth == nil || r.Spec.Auth.Mode != AuthModeOAuth {
+		return
+	}
+	if strings.TrimSpace(r.Spec.Auth.IssuerURL) == "" {
+		r.Spec.Auth.IssuerURL = strings.TrimSpace(options.DefaultOAuthIssuerURL)
+	}
+	if strings.TrimSpace(r.Spec.Auth.Audience) == "" {
+		r.Spec.Auth.Audience = r.CanonicalResourceURL(PublicURLOptions{
+			DefaultIngressHost: options.DefaultIngressHost,
+			DefaultIngressTLS:  options.DefaultIngressTLS,
+		})
+	}
+}
+
+// ValidateResolvedAuth reports OAuth settings that are still missing after
+// ResolveDerivedAuth. Admission cannot check this, because the values are
+// derived later from operator state; the operator reports it on reconcile.
+func (r *MCPServer) ValidateResolvedAuth() error {
+	if r.Spec.Auth == nil || r.Spec.Auth.Mode != AuthModeOAuth {
+		return nil
+	}
+	specPath := field.NewPath("spec")
+	var allErrs field.ErrorList
+	if gatewayEnabled(r.Spec) && strings.TrimSpace(r.Spec.Auth.IssuerURL) == "" {
+		allErrs = append(allErrs, field.Required(specPath.Child("auth", "issuerURL"), "auth.issuerURL is required when auth.mode is oauth and no bundled authorization server is configured"))
+	}
+	if strings.TrimSpace(r.Spec.Auth.Audience) == "" {
+		allErrs = append(allErrs, field.Required(specPath.Child("auth", "audience"), "auth.audience is required when auth.mode is oauth and cannot be derived; set spec.ingressHost or MCP_DEFAULT_INGRESS_HOST on the operator so it defaults to the public MCP URL, or set auth.audience"))
+	}
+	if len(allErrs) == 0 {
+		return nil
+	}
+	return apierrors.NewInvalid(schema.GroupKind{Group: GroupVersion.Group, Kind: "MCPServer"}, r.Name, allErrs)
+}
+
 func (r *MCPServer) DefaultWithOptions(options MCPServerDefaultOptions) {
 	ingressHostUnset := strings.TrimSpace(r.Spec.IngressHost) == ""
 	publicPathPrefixUnset := strings.TrimSpace(r.Spec.PublicPathPrefix) == ""
@@ -304,17 +351,15 @@ func (r *MCPServer) validate() error {
 	if r.Spec.Gateway != nil && r.Spec.Gateway.Enabled && r.Spec.Gateway.Port == r.Spec.Port {
 		allErrs = append(allErrs, field.Invalid(specPath.Child("gateway", "port"), r.Spec.Gateway.Port, "gateway.port must differ from spec.port"))
 	}
-	if gatewayEnabled(r.Spec) && r.Spec.Auth != nil && r.Spec.Auth.Mode == AuthModeOAuth && strings.TrimSpace(r.Spec.Auth.IssuerURL) == "" {
-		allErrs = append(allErrs, field.Required(specPath.Child("auth", "issuerURL"), "auth.issuerURL is required when auth.mode is oauth"))
-	}
 	if r.Spec.Auth != nil && r.Spec.Auth.Mode == AuthModeOAuth {
 		// auth.audience is also the resource identifier the gateway advertises
 		// in protected resource metadata, so it must be a URI a conforming
-		// client can send back as the RFC 8707 resource parameter.
-		if audience := strings.TrimSpace(r.Spec.Auth.Audience); audience == "" {
-			allErrs = append(allErrs, field.Required(specPath.Child("auth", "audience"), "auth.audience is required when auth.mode is oauth"))
-		} else if parsed, err := url.Parse(audience); err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.Fragment != "" {
-			allErrs = append(allErrs, field.Invalid(specPath.Child("auth", "audience"), r.Spec.Auth.Audience, "auth.audience must be an absolute URI without a fragment, matching the canonical MCP server URL clients connect to"))
+		// client can send back as the RFC 8707 resource parameter. An unset
+		// audience or issuer is derived at reconcile (ResolveDerivedAuth).
+		if audience := strings.TrimSpace(r.Spec.Auth.Audience); audience != "" {
+			if parsed, err := url.Parse(audience); err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.Fragment != "" {
+				allErrs = append(allErrs, field.Invalid(specPath.Child("auth", "audience"), r.Spec.Auth.Audience, "auth.audience must be an absolute URI without a fragment, matching the canonical MCP server URL clients connect to"))
+			}
 		}
 	}
 	if r.Spec.Auth != nil && r.Spec.Auth.Mode == AuthModeMTLS {

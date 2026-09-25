@@ -1,19 +1,17 @@
 # k3s On-Prem Cluster
 
-This guide creates a small public or on-prem k3s cluster that can run MCP
-Runtime with real DNS, TLS, ingress, registry pulls, and multi-node scheduling.
-It is the production-style version of the lab path in
-[Deployment Targets](deployment-targets.md): still small enough for a demo or
-pilot, but close enough to a real customer environment to test the platform
-honestly.
+Build a small public or on-prem k3s cluster that runs MCP Runtime with real
+DNS, TLS, ingress, registry pulls, and multi-node scheduling. This is the
+production-style version of the lab path in
+[Deployment Targets](deployment-targets.md), sized for a demo or pilot.
 
-The reference layout is four nodes because that is the smallest shape that
-separates the control plane, public ingress, and general workloads. A fifth
-node is an easy extension and is covered below.
+The reference layout has four nodes, the smallest shape that separates the
+control plane, public ingress, and general workloads. A five-node variant is
+covered below.
 
-This is a demo or pilot topology, not a high-availability control plane. For a
-production control plane, use the k3s HA topology with three server nodes and
-plan datastore backups separately.
+The control plane in this topology is not highly available. For a production
+control plane, use the k3s HA topology with three server nodes and plan
+datastore backups separately.
 
 ## Reference Topology
 
@@ -25,13 +23,13 @@ plan datastore backups separately.
 | `mcp-worker-2` | agent | 2-4 vCPU, 4-8 GiB RAM | Extra capacity and scheduling headroom |
 
 For a five-node demo, add `mcp-worker-3` as another general worker. If you need
-control-plane high availability, use the k3s HA server topology instead of just
-adding one more server node; that is a different operational shape.
+control-plane high availability, use the k3s HA server topology; adding one
+more server node does not provide HA.
 
 This guide assumes all nodes use the same CPU architecture. Standard VPS and
 most on-prem x86 servers are `amd64`, so setup builds `linux/amd64` images. Do
-not mix `amd64` and `arm64` nodes until MCP Runtime publishes multi-arch setup
-images.
+not mix `amd64` and `arm64` nodes; MCP Runtime does not yet publish multi-arch
+setup images.
 
 ## Prerequisites
 
@@ -42,7 +40,7 @@ images.
 - Kubernetes API port 6443 reachable from worker nodes and your admin
   workstation. Restrict it to trusted IPs when the node has a public address.
 - A default storage path. k3s installs `local-path` by default; use a real CSI,
-  NFS, Longhorn, or another durable storage class for serious production.
+  NFS, Longhorn, or another durable storage class for production.
 - DNS records for the platform hosts:
 
   ```text
@@ -57,12 +55,12 @@ above.
 
 Let's Encrypt HTTP-01 requires public DNS and public port 80. For private-only
 on-prem DNS, use an enterprise cert-manager `ClusterIssuer` or pre-created TLS
-secrets instead of `--acme-email`.
+secrets in place of `--acme-email`.
 
-## Choose the Front Door
+## Choose the front door
 
-Pick the public or internal traffic path before installing MCP Runtime. The
-platform expects the same three hostnames either way:
+Pick the public or internal traffic path before installing MCP Runtime. Every
+path uses the same three hostnames:
 
 - `platform.example.com` for the dashboard, API, and Grafana.
 - `registry.example.com` for OCI registry push and pull flows.
@@ -70,7 +68,7 @@ platform expects the same three hostnames either way:
 
 ### Direct DNS to k3s Ingress
 
-This is the simplest public demo shape:
+The simplest public demo shape:
 
 ```text
 client -> DNS A record -> mcp-ingress-1 public IP -> k3s ServiceLB -> Traefik
@@ -80,10 +78,10 @@ Use this when you can expose ports 80 and 443 directly on the ingress node or
 on a small external load balancer. `--acme-email` works in this shape because
 Let's Encrypt HTTP-01 can reach Traefik on port 80.
 
-### Cloudflare, WAF, or Public Reverse Proxy
+### Cloudflare, WAF, or public reverse proxy
 
-For internet-facing demos, it is usually better to put Cloudflare, an
-enterprise WAF, or another reverse proxy in front of the ingress node:
+For internet-facing demos, put Cloudflare, an enterprise WAF, or another
+reverse proxy in front of the ingress node:
 
 ```text
 client -> Cloudflare/WAF/proxy -> origin ingress IP -> k3s ServiceLB -> Traefik
@@ -106,13 +104,13 @@ In this shape:
 
 `--acme-email` still uses HTTP-01. If the proxy is in front during issuance,
 `/.well-known/acme-challenge/*` must pass through to Traefik without auth,
-cache, forced HTTPS loops, or WAF blocks. A practical rollout is to start with
-DNS-only/direct records until cert-manager issues certificates, then enable the
-proxy after validation. For private or always-proxied environments, prefer an
-enterprise cert-manager `ClusterIssuer`, proxy-managed origin certificates, or
-pre-created TLS secrets instead of public HTTP-01.
+cache, forced HTTPS loops, or WAF blocks. Start with DNS-only/direct records
+until cert-manager issues certificates, then enable the proxy after validation.
+For private or always-proxied environments, use an enterprise cert-manager
+`ClusterIssuer`, proxy-managed origin certificates, or pre-created TLS secrets
+in place of public HTTP-01.
 
-Test the registry path through the proxy before calling the install done:
+Test the registry path through the proxy before you finish the install:
 
 ```bash
 curl -i https://registry.example.com/v2/
@@ -122,7 +120,7 @@ Unauthenticated `401` or `403` is healthy. A proxy-generated HTML error,
 timeout, body-size error, or cached response means Docker/OCI clients may fail
 even if the dashboard works.
 
-### Internal Enterprise Proxy or Load Balancer
+### Internal enterprise proxy or load balancer
 
 For private on-prem installs, put an internal reverse proxy, F5/HAProxy/NGINX,
 or a private load balancer in front of `mcp-ingress-1`:
@@ -133,8 +131,8 @@ internal client -> internal DNS/proxy/LB -> k3s ServiceLB -> Traefik
 
 Keep the same hostnames, but resolve them in internal DNS. Use
 `--tls-cluster-issuer <issuer-name>` or pre-created TLS secrets so certificates
-chain to your enterprise trust store. Public Let's Encrypt ACME is not the
-right fit unless the names and HTTP-01 challenge path are publicly reachable.
+chain to your enterprise trust store. Public Let's Encrypt ACME works only when
+the names and HTTP-01 challenge path are publicly reachable.
 
 ## Install k3s
 
@@ -157,12 +155,12 @@ curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="server \
   --tls-san mcp.example.com" sh -
 ```
 
-If you intentionally want MCP Runtime to own ingress instead, add
+To have MCP Runtime own ingress, add
 `--disable traefik` to the server install command. Then run setup without
 `--ingress none` so it installs the repo-managed Traefik into the `traefik`
 namespace, and leave `PLATFORM_TRAEFIK_NAMESPACE` unset (it defaults to
 `traefik`). Every Traefik and ServiceLB check below then uses the `traefik`
-namespace instead of `kube-system`.
+namespace in place of `kube-system`.
 
 If nodes have more than one network interface, add `--flannel-iface <iface>` to
 the server and every agent install command so pod networking uses the intended
@@ -206,9 +204,9 @@ kubectl get nodes -o wide
 For macOS, the `sed -i.bak` form works with the default BSD `sed`.
 Treat the kubeconfig as a cluster-admin credential and do not commit it.
 
-## Pin ServiceLB to the Ingress Node
+## Pin ServiceLB to the ingress node
 
-k3s ServiceLB will schedule load-balancer pods on eligible nodes. For a public
+k3s ServiceLB schedules load-balancer pods on eligible nodes. For a public
 demo, keep ports 80 and 443 on one known public ingress node.
 
 Label the ingress node:
@@ -241,8 +239,7 @@ that node out of Kubernetes scheduling:
 kubectl cordon <docs-node-name>
 ```
 
-Cordoning a node does not remove it from the cluster; it just prevents new pods
-from being scheduled there.
+A cordoned node stays in the cluster, but no new pods are scheduled on it.
 
 ## Preflight Checks
 
@@ -291,8 +288,7 @@ export MCP_IMAGE_PLATFORM=linux/amd64
 ```
 
 `MCP_IMAGE_PLATFORM` is optional when all Kubernetes nodes report the same
-architecture, but setting it explicitly is useful when building from an ARM
-laptop for amd64 servers. Use `linux/arm64` only for a homogeneous ARM cluster.
+architecture. Set it when you build from an ARM laptop for amd64 servers. Use `linux/arm64` only for a homogeneous ARM cluster.
 
 Run setup:
 
@@ -340,7 +336,7 @@ MCP_SETUP_WAIT_TIMEOUT=1200 ./bin/mcp-runtime setup \
   --parallel-builds
 ```
 
-If your organization already owns a registry, prefer the external registry path:
+If your organization already owns a registry, use the external registry path:
 
 ```bash
 MCP_SETUP_WAIT_TIMEOUT=1200 ./bin/mcp-runtime setup \
@@ -360,9 +356,9 @@ registry needs credentials.
 
 Use this mode when enterprise IT supplies a certificate chain (`fullchain.pem`)
 and its matching private key (`privkey.pem`) but does **not** operate a
-cert-manager `ClusterIssuer`. It is different from `--tls-cluster-issuer`:
-Runtime references the Secrets below and never creates a cert-manager
-`Certificate` or renews it.
+cert-manager `ClusterIssuer`. Unlike `--tls-cluster-issuer`, this mode only
+references the Secrets below. Runtime never creates or renews a cert-manager
+`Certificate`.
 
 Verify that the certificate SANs cover every public Runtime hostname, and keep
 the PEM files outside the repository and shell history. Kubernetes Secrets are
@@ -391,7 +387,7 @@ through the optional `--mcp-auth-tls-secret` override.
 
 ### Renewal
 
-This mode is intentionally operator-managed. Before the enterprise certificate
+You renew certificates in this mode. Before the enterprise certificate
 expires, IT supplies a replacement matching pair; rerun the two `kubectl create
 secret tls ... --dry-run=client -o yaml | kubectl apply -f -` commands above.
 Traefik observes Secret updates and serves the replacement certificate. Verify
@@ -417,7 +413,7 @@ curl -i https://registry.example.com/v2/
 ```
 
 The platform route should return `200`. The registry route should return
-`401` or `403` without credentials; that means the public registry route is up
+`401` or `403` without credentials, which means the public registry route is up
 and guarded.
 
 Before deploying MCP servers, `https://mcp.example.com/<server>/mcp` can return
@@ -439,8 +435,8 @@ more general worker:
 | `mcp-worker-3` | general workloads, observability, or larger MCP servers |
 
 Do not label the extra worker with
-`svccontroller.k3s.cattle.io/enablelb=true` unless you intentionally want ports
-80 and 443 spread across more than one public node. Keep DNS pointed at the
+`svccontroller.k3s.cattle.io/enablelb=true` unless you want ports 80 and 443
+spread across more than one public node. Keep DNS pointed at the
 node or load balancer that actually receives HTTP and HTTPS traffic.
 
 ## Migration Notes

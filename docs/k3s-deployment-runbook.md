@@ -1,16 +1,15 @@
-# MCP Runtime — k3s Deployment Runbook
+# MCP Runtime k3s Deployment Runbook
 
-Operational guide for deploying, re-deploying, and testing MCP Runtime on a
-public k3s cluster with DNS and TLS. Complements the reference topology guide
-in [k3s-on-prem-cluster.md](k3s-on-prem-cluster.md).
+Deploy, redeploy, and test MCP Runtime on a public k3s cluster with DNS and
+TLS. For the reference topology, see [k3s-on-prem-cluster.md](k3s-on-prem-cluster.md).
 
 ## Reference cluster
 
 The public example at `platform.mcpruntime.org` runs on the project's k3s
 cluster. Cluster size, node names, and addresses can change; inspect the
 selected kubeconfig context with `kubectl get nodes`. The multi-node topology
-in [k3s-on-prem-cluster.md](k3s-on-prem-cluster.md) is a reference design, not
-a promise that the live example currently has that node count.
+in [k3s-on-prem-cluster.md](k3s-on-prem-cluster.md) is a reference design; the
+live example may have a different node count.
 
 ## Obtain and select cluster access
 
@@ -103,7 +102,7 @@ default. Override the path with `MCP_DEPLOY_ENV=/path/to/other.env`. See
 | Variable | Required | Used by | Purpose |
 |----------|----------|---------|---------|
 | `MCP_IMAGE_PLATFORM` | strongly recommended | setup, rollout | Target OS/arch for platform images (for example `linux/amd64` when nodes are amd64). |
-| `MCP_REGISTRY_ENDPOINT` | yes (`bundled-https`) | setup, rollout (via configmap patch) | Hostname nodes use to **pull** platform and tenant images. With public TLS, set to `registry.<domain>` — **not** the registry Service ClusterIP. |
+| `MCP_REGISTRY_ENDPOINT` | yes (`bundled-https`) | setup, rollout (via configmap patch) | Hostname nodes use to **pull** platform and tenant images. With public TLS, set to `registry.<domain>`; **do not** use the registry Service ClusterIP. |
 | `MCP_REGISTRY_INGRESS_HOST` | optional | rollout, CLI build/push | Public registry hostname for `docker push` / `server push`. Defaults from `MCP_PLATFORM_DOMAIN` when unset. |
 | `MCP_REGISTRY_HOST` | do not set | — | Public ingress hostname; derived from `MCP_PLATFORM_DOMAIN`. Do not use as the internal pull URL. |
 | `MCP_REGISTRY_INTERNAL` | optional | rollout | Override registry ClusterIP:port for **build/push** inside rollout script only. Pull path still uses `MCP_REGISTRY_ENDPOINT` in configmap. |
@@ -148,23 +147,23 @@ default. Override the path with `MCP_DEPLOY_ENV=/path/to/other.env`. See
 
 #### MCP OAuth authorization server
 
-Applies to MCP servers with `spec.auth.mode: oauth`. Browser sign-in above is a
-separate thing: that is OIDC for the dashboard, this is the authorization server
-MCP clients use.
+Applies to MCP servers with `spec.auth.mode: oauth`. These variables configure
+the authorization server that MCP clients use. Browser sign-in above configures
+OIDC for the dashboard.
 
 | Variable | Required | Purpose |
 |----------|----------|---------|
-| `MCP_SETUP_MCP_AUTH_ISSUER_URL` | required when enabled | Public HTTPS issuer URL, for example `https://auth.<domain>/mcp-auth`. |
-| `MCP_SETUP_MCP_AUTH_RESOURCE_URL` | required when enabled | Canonical MCP resource URL; must exactly match the protected server's `spec.auth.audience`. |
+| `MCP_SETUP_MCP_AUTH_ISSUER_URL` | optional | Public HTTPS issuer URL; defaults to `https://auth.<MCP_PLATFORM_DOMAIN>/mcp-auth`. |
+| `MCP_SETUP_MCP_AUTH_RESOURCE_URL` | optional | Initial canonical MCP resource URL; any supplied value must exactly match a protected server's `spec.auth.audience`. The operator reconciles the accepted list from current OAuth MCPServers. |
 | `MCP_SETUP_MCP_AUTH_CONNECTORS_FILE` | required when enabled | Provider-neutral connector JSON; client secrets are referenced by environment variable, never stored in this file. |
 | `MCP_SETUP_MCP_AUTH_CONNECTOR` | required when enabled | Named connector selected by the mcp-auth server. |
 | `MCP_SETUP_MCP_AUTH_TLS_SECRET` | optional | Override the managed TLS Secret for the authorization-server hostname; required only with `--provided-tls-secrets`. |
 | `MCP_SETUP_MCP_AUTH_SIGNING_KEY_SECRET` | required when enabled | Persistent RSA signing-key Secret containing `private-key.pem`. |
 
 The issuer must be the exact public URL configured for the optional
-`mcp-auth-server`, normally `https://auth.<domain>/mcp-auth`. It is a separate
-authorization-server hostname and must not be confused with dashboard OIDC or
-the Runtime gateway. The identity provider hostname, realm, client, users,
+`mcp-auth-server`, normally `https://auth.<domain>/mcp-auth`. This
+authorization-server hostname is separate from dashboard OIDC and from the
+Runtime gateway. The identity provider hostname, realm, client, users,
 redirect URI, scopes, and certificates are operated by the platform user.
 
 Discovery is served at the authorization-server metadata URL:
@@ -178,25 +177,25 @@ clients should follow its `WWW-Authenticate` challenge or query the resource
 metadata URL generated for that server.
 
 A ready-to-adapt protected server is in `examples/mcpserver-oauth.yaml`. Its
-`auth.issuerURL` must match `MCP_SETUP_MCP_AUTH_ISSUER_URL`, and `auth.audience` must be the
-server's canonical resource URI (`https://mcp.<domain>/<prefix>/mcp`) — the
+`auth.issuerURL` defaults from the bundled issuer configured during setup.
+`auth.audience` must be the
+server's canonical resource URI (`https://mcp.<domain>/<prefix>/mcp`). The
 gateway fails closed with 401 when a token's `aud` does not match.
 
 #### Optional bundled MCP authorization server
 
-MCP authorization is optional: an MCP client may connect to a server without
-OAuth when the deployment does not require bearer tokens. Enable this feature
-when the server needs standards-based user login, PKCE, token issuance, and
-Protected Resource Metadata discovery. The bundled `mcp-auth-server` is the
-OAuth authorization server; it authenticates users through one external OIDC
-identity provider such as Keycloak and issues MCP access tokens. It does not
-make Runtime governance decisions.
+MCP authorization is optional. Without it, an MCP client connects to a server
+with no bearer token. Enable it when the server needs standards-based user
+login, PKCE, token issuance, and Protected Resource Metadata discovery. The
+bundled `mcp-auth-server` is the OAuth authorization server: it authenticates
+users through one external OIDC identity provider such as Keycloak and issues
+MCP access tokens. Runtime governance decisions stay in the gateway.
 
-The Runtime gateway remains the protected-resource boundary. It verifies the
+The Runtime gateway is the protected-resource boundary. It verifies the
 issuer, signature, audience/resource, expiry, and scope, then applies grants,
-agent sessions, trust, and tool policy. This separation is required because an
-authorization server sees login/token requests, while Runtime policy needs the
-actual MCP JSON-RPC tool call and current grant/session state.
+agent sessions, trust, and tool policy. The authorization server sees only
+login and token requests; Runtime policy needs the MCP JSON-RPC tool call and
+current grant/session state, so the two stay separate.
 
 For a public test deployment, create DNS records for two hosts pointing to the
 ingress node:
@@ -244,17 +243,17 @@ Deploy the optional bundled server through normal setup:
 ./bin/mcp-runtime setup \
   --with-tls --tls-cluster-issuer letsencrypt-prod \
   --with-mcp-auth-server \
-  --mcp-auth-issuer-url https://auth.<domain>/mcp-auth \
-  --mcp-auth-resource-url https://mcp.<domain>/<server-prefix>/mcp \
   --mcp-auth-signing-key-secret mcp-auth-signing-key \
   --mcp-auth-connectors-file /secure/mcp-auth-connectors.json \
   --mcp-auth-connector keycloak
 ```
 
-`--mcp-auth-resource-url` must exactly match the MCPServer's
-`spec.auth.audience`. Production setup requires HTTPS issuer/resource URLs, a
-certificate covering the auth host (automatically provisioned by the configured
-TLS ClusterIssuer), a selected connector, and a persistent RSA signing key
+The issuer defaults to `https://auth.<MCP_PLATFORM_DOMAIN>/mcp-auth`, and the
+operator derives `auth.issuerURL` and reconciles accepted resource audiences
+from OAuth MCPServers. Any optional `--mcp-auth-resource-url` must exactly
+match an MCPServer's `spec.auth.audience`. Production requires a certificate
+covering the auth host (provisioned by the configured TLS
+ClusterIssuer), a selected connector, and a persistent RSA signing key
 stored in the Secret key `private-key.pem`. Use `--mcp-auth-tls-secret` only
 for an externally managed certificate. The connector's
 `KEYCLOAK_CLIENT_SECRET` value is read from the environment and converted into
@@ -263,8 +262,8 @@ a Kubernetes Secret; it must not be committed to Git.
 The bundled server uses SQLite on a PVC in production and memory storage only
 in `--test-mode`. Test mode also permits the loopback development issuer and an
 ephemeral signing key. A public deployment must use HTTPS for Keycloak's
-issuer, authorization endpoint, token endpoint, and JWKS endpoint; an internal
-HTTP shortcut is only suitable for local testing.
+issuer, authorization endpoint, token endpoint, and JWKS endpoint. Use internal
+HTTP only for local testing.
 
 #### Platform-runtime backup (`hack/deploy/mcpruntime-org/clean.sh`)
 
@@ -274,8 +273,9 @@ HTTP shortcut is only suitable for local testing.
 | `MCP_RESTORE_TLS_AFTER_SETUP` | `1` | When `1`, `hack/deploy/mcpruntime-org/setup.sh` runs `hack/deploy/mcpruntime-org/restore.sh` after setup. |
 | `MCP_DEPLOY_ENV` | `config/deployments/mcpruntime-org.env` | Env file path for all hack scripts. |
 
-Backup scope is **platform-runtime state only** (TLS, cert-manager, OIDC,
-bootstrap secrets — not tenant users, teams, MCP CRs, or registry images).
+Backup scope is **platform-runtime state only**: TLS, cert-manager, OIDC, and
+bootstrap secrets. Tenant users, teams, MCP CRs, and registry images are not
+backed up.
 
 #### Rollout-only (`hack/deploy/mcpruntime-org/rollout.sh`)
 
@@ -285,7 +285,7 @@ bootstrap secrets — not tenant users, teams, MCP CRs, or registry images).
 
 #### Multitenancy test (`hack/deploy/mcpruntime-org/multitenancy-test.sh`)
 
-These are **not** in the deployment profile — export them when running the test against production URLs:
+These are **not** in the deployment profile. Export them when you run the test against production URLs:
 
 | Variable | Example | Purpose |
 |----------|---------|---------|
@@ -333,8 +333,8 @@ cert-manager ownership, OIDC, bootstrap secrets) before wiping app namespaces:
 hack/deploy/mcpruntime-org/clean.sh --yes --wait
 ```
 
-Tenant/user data (teams, Postgres identity store, MCP CRs, registry images) is
-**not** preserved — platform-runtime state only. See
+The backup covers platform-runtime state only. Tenant/user data (teams,
+Postgres identity store, MCP CRs, registry images) is **not** preserved. See
 [Deployment Targets - k3s Production](deployment-targets.md#option-a-bundled-https-registry-on-prem-reference).
 
 Manual TLS-only backup (legacy):
@@ -356,9 +356,9 @@ hack/deploy/mcpruntime-org/clean.sh --restore-platform
 
 ## Safe cluster wipe (app workloads only)
 
-Deleting kube-system resources breaks k3s's reconciliation loop (CoreDNS,
-Traefik, svclb-traefik, local-path-provisioner all become unrecoverable
-without an SSH restart). Only delete app namespaces.
+Delete only app namespaces. Deleting kube-system resources breaks k3s's
+reconciliation loop: CoreDNS, Traefik, svclb-traefik, and
+local-path-provisioner cannot recover without an SSH restart.
 
 ```bash
 # 1. Back up TLS secrets (see Step 0)
@@ -418,7 +418,7 @@ MCP_SETUP_WAIT_TIMEOUT=900 MCP_CERT_TIMEOUT=15m \
   --platform-mode tenant
 ```
 
-### Reruns / upgrades (reuse existing certs — avoids LE rate limits)
+### Reruns / upgrades (reuse existing certs to avoid LE rate limits)
 
 When cert-manager already issued `registry-cert` and
 `mcp-sentinel-platform-tls`, **do not** pass `--acme-email` again. Use the saved
@@ -467,9 +467,9 @@ exits. It reads the registry credential from the existing Kubernetes Secret;
 the key is not printed or stored in the deployment profile. Record the previous
 image tags before rollout so they remain available for rollback.
 
-By default, keep the published mcp-auth release and do not update its
-Deployment. If the user requests the published Docker Hub image, opt in to
-copying `latest` into the Runtime registry under a unique tag:
+By default, rollout leaves the mcp-auth Deployment on its current release. To
+deploy the published Docker Hub image, opt in to copying `latest` into the
+Runtime registry under a unique tag:
 
 ```bash
 MCP_UPDATE_MCP_AUTH=1 \
@@ -480,8 +480,8 @@ MCP_ROLLOUT_TAG="$ROLLOUT_TAG" \
 bash hack/deploy/mcpruntime-org/rollout.sh
 ```
 
-Only when intentionally testing mcp-auth source changes, set the source
-checkout path and selected ref in the rollout environment. The workstation's
+To test mcp-auth source changes, set the source checkout path and selected
+ref in the rollout environment. The workstation's
 Docker daemon receives the local build context and builds for the target
 platform. First confirm the selected ref is checked out and the worktree is
 clean:
@@ -512,10 +512,10 @@ TLS Secret. Do not rerun `setup --with-tls` for an image-only release.
 
 The Runtime CLI release and the hosted platform images are separate artifacts.
 Tagging a Runtime release publishes platform-specific CLI binaries through
-`.github/workflows/release.yaml`; it does not update the hosted platform. The
+`.github/workflows/release.yaml`; it does not update the hosted platform.
 The production rollout updates platform APIs/UI (and mcp-auth only when explicitly
-selected); it does not publish a new CLI release. Wait to publish either
-project's release until its candidate passes the checks below.
+selected); it does not publish a new CLI release. Publish either project's
+release only after its candidate passes the checks below.
 
 Verify the user path after rollout:
 
@@ -556,41 +556,40 @@ MCP_SETUP_WAIT_TIMEOUT=900 ./bin/mcp-runtime setup \
 ```
 
 **Why no `--test-mode`:** CI does not publish pre-built container images, so
-every deployment builds operator/gateway/Sentinel images from the source tree
-regardless. Without `--test-mode`, setup requires `MCP_PLATFORM_ADMIN_EMAIL`
-to be explicitly set, but is otherwise identical. The only run-time effect of
-`--test-mode` is setting `MCP_RUNTIME_TEST_MODE=1` inside deployed pods. For
-a clean production deployment that avoids that flag, provide the admin email env
-var above.
+every deployment builds operator/gateway/Sentinel images from the source tree.
+Without `--test-mode`, setup requires `MCP_PLATFORM_ADMIN_EMAIL` and is
+otherwise identical. At run time, `--test-mode` only sets
+`MCP_RUNTIME_TEST_MODE=1` inside deployed pods. For a production deployment
+without that flag, set the admin email env var above.
 
 **Flag notes:**
-- `MCP_PLATFORM_DOMAIN=mcpruntime.org` — derives `registry.`, `mcp.`, and
-  `platform.` hostnames; do not also export a registry ClusterIP as
+- `MCP_PLATFORM_DOMAIN=mcpruntime.org`: derives `registry.`, `mcp.`, and
+  `platform.` hostnames. Do not also export a registry ClusterIP as
   `MCP_REGISTRY_ENDPOINT`.
-- `MCP_PLATFORM_ADMIN_EMAIL` — required by non-test-mode setup validation;
+- `MCP_PLATFORM_ADMIN_EMAIL`: required by non-test-mode setup validation;
   seeds the platform admin account in the `mcp-sentinel-secrets` Secret.
-- `--ingress none` — k3s already runs Traefik in `kube-system`; avoids
-  installing a second ingress stack. Setup sets `PLATFORM_TRAEFIK_NAMESPACE=kube-system`
+- `--ingress none`: k3s already runs Traefik in `kube-system`, so setup skips
+  the second ingress stack. Setup sets `PLATFORM_TRAEFIK_NAMESPACE=kube-system`
   and `PLATFORM_TEAM_TRAEFIK_WATCH=disabled` so `team create` does not patch
   k3s Traefik (it watches ingresses cluster-wide).
-- `--registry-mode bundled-https` — bundled registry with TLS ingress at
+- `--registry-mode bundled-https`: bundled registry with TLS ingress at
   `registry.mcpruntime.org`.
-- `--tls-cluster-issuer letsencrypt-prod` (reruns) — reuses the existing
+- `--tls-cluster-issuer letsencrypt-prod` (reruns): reuses the existing
   ClusterIssuer; cert-manager keeps current certs when specs are unchanged.
-- `--acme-email` (first install only) — creates/applies the Let's Encrypt
-  ClusterIssuer; omit on reruns to avoid duplicate ACME orders.
-- `MCP_CERT_TIMEOUT=15m` — extends the default 5-minute certificate-issuance
+- `--acme-email` (first install only): creates/applies the Let's Encrypt
+  ClusterIssuer. Omit it on reruns to avoid duplicate ACME orders.
+- `MCP_CERT_TIMEOUT=15m`: extends the default 5-minute certificate-issuance
   wait on a fresh cluster.
-- `--kubeconfig` — must be passed explicitly when multiple kubeconfig files
-  exist on the workstation. The `KUBECONFIG` env var alone is not sufficient
-  because TLS and cert-manager operations use a package-level client that
-  requires the explicit path (see `internal/cli/setup/platform/kube_client.go`).
+- `--kubeconfig`: pass it explicitly when multiple kubeconfig files exist on
+  the workstation. TLS and cert-manager operations use a package-level client
+  that requires the explicit path, so the `KUBECONFIG` env var alone is not
+  enough (see `internal/cli/setup/platform/kube_client.go`).
 
 If setup reports "cert-manager already installed" but TLS issuance times out,
-check two things: (1) port 80 is being served by Traefik; (2) cert-manager
-pods are actually Running — the "already installed" check only tests for CRD
-existence, not pod health. After a k3s restart the CRDs survive but pods may
-be gone. Reinstall manually if needed:
+check two things: (1) Traefik serves port 80; (2) cert-manager pods are
+Running. The "already installed" check tests only for the CRDs. After a k3s
+restart the CRDs survive, but the pods may be gone. Reinstall manually if
+needed:
 ```bash
 kubectl get pods -n cert-manager
 # If not running:
@@ -659,7 +658,7 @@ Expected: push succeeds in under ~30s; deploy reports `status Ready`; the team
 namespace contains `mcp-runtime-registry-pull` and a running MCPServer pod.
 This platform CLI path also verifies that the API provisions a namespace-local
 registry pull Secret and attaches it for workload pulls. Keep this `server push`
-and `server deploy` smoke in k3s production QA; `kubectl apply` alone bypasses
+and `server deploy` smoke in k3s production QA. `kubectl apply` alone bypasses
 the platform's namespace and pull-secret provisioning path.
 The `.mcp` metadata must contain `tools[*].sideEffect`; `server deploy` copies
 that metadata into the platform request so governed `tools/call` requests can
@@ -694,7 +693,7 @@ SKIP_SETUP=1 hack/deploy/mcpruntime-org/multitenancy-test.sh
 
 ### TLS cert not issued after 5+ minutes
 
-1. `kubectl describe challenge -A` — look for ACME HTTP-01 status
+1. `kubectl describe challenge -A`: look for ACME HTTP-01 status
 2. `kubectl logs -n cert-manager deploy/cert-manager --tail=60`
 3. Check Traefik is serving port 80: `curl -sm5 http://mcp.mcpruntime.org/`
 4. Verify DNS: `dig registry.mcpruntime.org +short` should return
@@ -718,7 +717,7 @@ Set `MCP_IMAGE_PLATFORM=linux/amd64` (cluster nodes are amd64; local Mac is arm6
 ### kube-system empty / HelmChart CRD missing
 
 See **If you accidentally wiped kube-system** above. Restart k3s on the control
-plane; do not try to manually re-create the HelmChart CRDs.
+plane. Do not re-create the HelmChart CRDs manually.
 
 ### Namespaces stuck in Terminating
 
@@ -732,7 +731,7 @@ done
 
 ### Let's Encrypt rate limit hit
 
-Restore the backed-up TLS secrets (Step 0) instead of re-requesting certs:
+Restore the backed-up TLS secrets (Step 0). Do not re-request certs:
 
 ```bash
 kubectl apply -f /tmp/registry-tls-backup.yaml

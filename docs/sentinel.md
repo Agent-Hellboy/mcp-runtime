@@ -1,26 +1,26 @@
 # Sentinel
 
-`mcp-sentinel` is the bundled service stack for gateway enforcement, audit, query, governance UI, and observability around MCP servers. It governs **live MCP requests**, not arbitrary cluster traffic. It ships in `services/` and is installed by default with `mcp-runtime setup` (skip with `--without-sentinel`).
+`mcp-sentinel` is the bundled service stack for gateway enforcement, audit, query, governance UI, and observability for MCP servers. It governs **live MCP requests** only. It ships in `services/` and is installed by default with `mcp-runtime setup` (skip with `--without-sentinel`).
 
 ## Services
 
 | Service | Role |
 |---|---|
 | **mcp-gateway** | Transparent sidecar. Extracts identity, evaluates tool-level policy, emits allow/deny audit events, forwards traffic upstream. |
-| **mcp-auth-server (opt-in)** | Bundled OAuth authorization server. Setup deploys it only with `--with-mcp-auth-server`; it issues tokens but does not perform Runtime governance. |
+| **mcp-auth-server (opt-in)** | Bundled OAuth authorization server. Setup deploys it only with `--with-mcp-auth-server`. It issues tokens; governance stays in `mcp-gateway`. |
 | **ingest** | Receives `POST /events`, validates ingest-scoped API keys or optional JWTs, writes to Kafka. |
 | **processor** | Consumes Kafka, batches, writes into ClickHouse with indexed audit fields. |
 | **api** | Three HTTP services behind Traefik path routing: **platform-api** (Postgres identity/auth/registry), **runtime-api** (Kubernetes runtime governance + registry push), **analytics-api** (ClickHouse events/stats/usage). OpenAPI at `GET /api/v1/openapi.yaml` per service. |
 | **ui** | Control-plane dashboard: user MCP server dashboard, MCP server catalog and connect config, user API keys, analytics dashboard, governance, MCP operations, and platform management. |
-| **gateway** | The Traefik ingress Deployment fronting the API, ingest, and UI surfaces. Despite the shared word, it is cluster ingress and makes no policy decisions — `mcp-gateway` above is the per-server enforcement sidecar. |
+| **gateway** | The Traefik ingress Deployment in front of the API, ingest, and UI. It is cluster ingress and makes no policy decisions. Per-server enforcement happens in `mcp-gateway`. |
 | **workspace assistant sample** | Sample MCP server in `examples/workspace-assistant-mcp` for end-to-end smoke tests. |
 
 ## Kubernetes awareness and hardening
 
-Sentinel services usually run as Kubernetes workloads, but not every service
-needs the Kubernetes API. For hardening, separate **Kubernetes-aware** services
-that hold a service account token and RBAC from **Kubernetes-agnostic** services
-that only use HTTP, Kafka, ClickHouse, Postgres, or local files.
+Sentinel services run as Kubernetes workloads, but only some call the
+Kubernetes API. For hardening, separate **Kubernetes-aware** services that hold
+a service account token and RBAC from **Kubernetes-agnostic** services that only
+use HTTP, Kafka, ClickHouse, Postgres, or local files.
 
 | Component | Kubernetes awareness | Runtime access | Hardening notes |
 |---|---|---|---|
@@ -34,11 +34,10 @@ that only use HTTP, Kafka, ClickHouse, Postgres, or local files.
 | **processor** | Kubernetes API-agnostic. | Consumes Kafka and writes ClickHouse. It only exposes health and metrics. | Do not expose it through ingress. Restrict network access to Kafka, ClickHouse, metrics scraping, and tracing endpoints. |
 | **storage and observability** | Mixed. ClickHouse, Kafka, Postgres, Grafana, Prometheus, Tempo, Loki, and the OTel collector are Kubernetes API-agnostic in the bundled manifests; Promtail is Kubernetes-aware so it can discover pod logs. | Data stores and dashboards back Sentinel audit, identity, metrics, traces, and logs. Promtail has pod read/watch RBAC. | Review persistence, retention, backups, and dashboard auth before production use. The generated platform-host observability route uses `sentinel-admin-auth@file`; provide equivalent auth if you replace repo-managed Traefik, and review Promtail's cluster log visibility before enabling it on multi-tenant clusters. |
 
-Operationally, the safest production posture is to give Kubernetes API access
-only to **runtime-api**, ingress controllers, the runtime operator, and log collectors
-that need it. Services that do not call Kubernetes should keep service account
-token automounting disabled and should be isolated with NetworkPolicies where
-the cluster supports them.
+In production, give Kubernetes API access only to **runtime-api**, ingress
+controllers, the runtime operator, and log collectors that need it. For services
+that do not call Kubernetes, disable service account token automounting and
+isolate them with NetworkPolicies where the cluster supports them.
 
 ## Event path
 
@@ -86,9 +85,9 @@ offset ranges.
 
 ## Service HTTP reference
 
-The Sentinel stack has multiple HTTP services. In local test mode, Traefik
-usually exposes them through `http://localhost:18080/`; inside the cluster,
-call the service DNS names directly.
+In local test mode, Traefik usually exposes the Sentinel HTTP services through
+`http://localhost:18080/`. Inside the cluster, call the service DNS names
+directly.
 
 For the local build, push, and rollout loop while editing `services/`, see
 [Iterate on one Sentinel service](contributor/service-iteration.md).
@@ -134,6 +133,14 @@ The `query_id` is allowlisted (`up`, `request_rate`, `deny_rate`,
 `latency_p95`); arbitrary PromQL is never accepted. `PROMETHEUS_API_URL`
 defaults to `http://prometheus:9090/prometheus`.
 
+The link form depends on the caller. Requests that arrive through the UI
+session proxy (`x-mcp-source: ui`) get `/api/ui/v1/runtime/observability/...`
+links. That same-origin proxy forwards the signed-in platform session to
+runtime-api, so browser users do not need to copy an API key or bearer token.
+Direct API and CLI callers get `/api/v1/runtime/observability/...` links, which
+they call with their own API key or bearer token. Both paths apply the same
+runtime-api authorization and tenant checks.
+
 Without an external Grafana dashboard template, the API renders a scoped
 dashboard from the same allowlisted queries. Set `GRAFANA_SERVER_DASHBOARD_URL`
 to a template containing `{namespace}` and `{server}` only when that Grafana
@@ -162,7 +169,7 @@ cardinality.
 
 ### API services
 
-Traefik routes `/api/v1/*` by path prefix to three HTTP services; there is no `/api/*` compatibility
+Traefik routes `/api/v1/*` by path prefix to three HTTP services. There is no `/api/*` compatibility
 layer. Each service publishes `GET /api/v1/openapi.yaml` and uses `pkg/apihttp`
 stable error envelopes.
 
@@ -277,8 +284,8 @@ emits audit events to `ANALYTICS_INGEST_URL` when configured.
 
 The sidecar emits audit events on allowed and denied tool calls. Denied calls do
 not reach the upstream MCP server. With `policy.mode: observe` the call is
-allowed before identity, session, grant, side-effect, and trust checks run, so
-the audit trail keeps visibility while nothing is enforced.
+allowed before identity, session, grant, side-effect, and trust checks run. The
+audit trail still records it, but nothing is enforced.
 
 ### First-party OAuth authorization server
 
@@ -286,11 +293,9 @@ The bundled `mcp-auth-server` is an opt-in authorization server for test
 fixtures and separately deployed MCP environments. It issues tokens; Runtime
 governance and policy remain in the gateway.
 
-The official MCP SDK remains the owner of MCP transport and client-side OAuth
-helpers. Runtime does not duplicate those client helpers in the gateway or
-authorization server: the gateway is the policy-aware protected resource, and
-the separate OAuth service is the token issuer and resource-owner login
-boundary.
+The official MCP SDK provides MCP transport and client-side OAuth helpers.
+The gateway is the policy-aware protected resource. The separate OAuth service
+is the token issuer and resource-owner login boundary.
 
 ## Governance UI walkthrough
 
@@ -300,9 +305,9 @@ The UI's **Governance** tab creates and operates the same `MCPAccessGrant` and `
 |---|---|
 | **Create grant** | `Create Grant` button. Required: name, namespace, server, at least one of human, agent, or team ID, and the allowed side-effect classes. Tool rules use one rule per line: `tool:allow` or `tool:allow:trust`. |
 | **Create session** | `Create Session`. Pick a consented trust level and optional expiry. The gateway looks it up at `tools/call` time alongside the grant. |
-| **Disable / enable grant** | Single-action row. Disable flips `spec.disabled=true` — grant is preserved for audit, but the gateway treats it as denying. |
+| **Disable / enable grant** | Single-action row. Disable sets `spec.disabled=true`. The grant is kept for audit, and the gateway treats it as denying. |
 | **Revoke / unrevoke session** | Same row pattern toggles `spec.revoked`. Revoked sessions deny subsequent tool calls immediately. |
-| **Filter** | Search box on each table filters by server, human ID, agent ID, or team ID. Local to the loaded set — refresh first if cluster state has changed. |
+| **Filter** | Search box on each table filters by server, human ID, agent ID, or team ID. Filters only the loaded set; refresh first if cluster state has changed. |
 
 Tool-rule example:
 
@@ -315,7 +320,7 @@ CLI parity: `mcp-runtime access grant init|apply` covers grant CRUD for
 authorized principals. `access session init|apply` matches the UI for
 **admin** session writes; agents and normal users should use
 `POST /api/v1/runtime/adapter/sessions` via `adapter stdio|proxy --server …
---agent …`. CRs are the source of truth — the UI is a convenience layer.
+--agent …`. CRs are the source of truth; the UI edits them.
 
 For platform API writes, grants and sessions must reference a server in the same
 namespace as the access resource. Non-admin callers cannot write access
@@ -327,13 +332,12 @@ for delegated cross-team access.
 
 ## Verifying per-server policy isolation
 
-This check verifies that one server's rendered gateway policy does not bleed
-into another server. It is per-server policy isolation, not the team namespace
-model described in [Multi-team isolation](multi-team.md).
+Verify that one server's rendered gateway policy does not apply to another
+server. For the team namespace model, see [Multi-team isolation](multi-team.md).
 
 The operator renders a per-server policy ConfigMap
 (`<server>-gateway-policy`) holding only the grants and sessions whose
-`serverRef` points at that server, and the `mcp-gateway` sidecar evaluates
+`serverRef` points at that server. The `mcp-gateway` sidecar evaluates
 traffic against that policy alone. To verify isolation end-to-end, deploy two
 gateway-enabled servers in `mcp-servers` and grant disjoint subjects on each.
 
@@ -368,8 +372,8 @@ outcomes distinguish the two deny modes:
 | Subject | Target server | Tool | Outcome |
 |---|---|---|---|
 | alice | A | grant-listed tool | **200** allow |
-| alice | A | other tool | **403** — known subject, tool not in grant |
-| alice | B | any | **401** — gateway has no session/grant for alice on B |
+| alice | A | other tool | **403**: known subject, tool not in grant |
+| alice | B | any | **401**: gateway has no session/grant for alice on B |
 | bob | B | grant-listed tool | **200** allow |
 | bob | A | any | **401** |
 | no headers / unknown session | any | any | **401** (`reason: session_not_found`) |
@@ -393,8 +397,8 @@ source subject preserved, never on the other server.
 
 ## Operating the stack
 
-These commands require **admin/operator kubectl** access. Normal users should
-use the platform dashboard and `/api/v1/*` instead.
+These commands require **admin/operator kubectl** access. Normal users use the
+platform dashboard and `/api/v1/*`.
 
 ```bash
 # Health + Kubernetes events
@@ -426,5 +430,5 @@ Services live in `services/`, manifests in `k8s/`, shared libraries in `pkg/` (r
 
 ## Next
 
-- [API → Runtime Governance API](api.md#runtime-governance-api) — the HTTP surface the UI uses.
-- [Architecture](architecture.md) — how the proxy fits into the broader request path.
+- [API → Runtime Governance API](api.md#runtime-governance-api): the HTTP surface the UI uses.
+- [Architecture](architecture.md): how the proxy fits into the request path.

@@ -1,24 +1,23 @@
 # Runtime
 
-The runtime is the Kubernetes-native control plane for MCP servers. It owns the manager, registry, broker wiring, cluster bootstrap, ingress setup, operator reconciliation, deployment resources, rollout, and the access model that sits beside each server before requests reach the [Sentinel](sentinel.md) request path.
+The runtime is the Kubernetes control plane for MCP servers. It handles cluster bootstrap, the registry, ingress setup, operator reconciliation, deployment resources, rollout, and the access model for each server. Requests then pass to the [Sentinel](sentinel.md) request path.
 
-> Higher-level than ingress and service mesh. The runtime sits **above** lower-level networking infrastructure and models MCP-specific delivery, access, and rollout concerns. It is not a generic data plane for arbitrary cluster traffic.
+The runtime runs on top of your ingress and networking layer and handles MCP-specific delivery, access, and rollout. It does not route general cluster traffic.
 
 ## What the runtime owns
 
 | Area | Responsibility |
 |---|---|
 | **Bootstrap** | `cluster` and `setup` initialize CRDs and namespaces, configure ingress, provision clusters, optionally wire cert-manager TLS. |
-| **Registry workflow** | Registry commands and setup wiring give teams a controlled place to publish and pull MCP server images. |
-| **Server delivery** | The operator reconciles `MCPServer` into Deployments, Services, and Ingress so each server lands at a stable route. |
-| **Access and consent** | Grants and sessions are separate resources so policy, side-effect allowances, trust ceilings, consent, expiry, and revocation stay outside deployment-only YAML. |
-| **Brokered rollout** | Servers can stay direct or run behind the proxy sidecar while rollout settings live on the same server resource. |
+| **Registry workflow** | Registry commands and setup wiring provide a place to publish and pull MCP server images. |
+| **Server delivery** | The operator reconciles `MCPServer` into Deployments, Services, and Ingress. Each server gets a stable route. |
+| **Access and consent** | Grants and sessions are separate resources. They hold policy, side-effect allowances, trust ceilings, consent, expiry, and revocation, apart from the deployment YAML. |
+| **Brokered rollout** | Servers run direct or behind the proxy sidecar. Rollout settings live on the same server resource. |
 
 ## Core resources
 
 Three CRDs form the runtime surface: `MCPServer`, `MCPAccessGrant`, and `MCPAgentSession`.
-`MCPServer` is referenced by many grants and sessions; grant + session are evaluated
-together by the gateway policy layer on every tool call.
+Many grants and sessions can reference one `MCPServer`. The gateway policy layer evaluates the grant and session together on every tool call.
 
 See the [API reference](api.md) for full field definitions and examples.
 
@@ -26,18 +25,18 @@ See the [API reference](api.md) for full field definitions and examples.
 
 For every `MCPServer`, the operator reconciles:
 
-- **Deployment** — image, replicas, resource requests/limits, env, image-pull secrets.
-- **Service** — ClusterIP exposing `spec.servicePort` → `spec.port`.
-- **Ingress** — routes `spec.publicPathPrefix` as `/<prefix>/mcp`, or explicit `spec.ingressHost` + `spec.ingressPath`, to the Service with per-class annotations (Traefik / NGINX / Istio).
-- **Policy ConfigMap** — rendered from the matching `MCPAccessGrant` + `MCPAgentSession` resources, consumed by the proxy sidecar when `gateway.enabled`.
+- **Deployment**: image, replicas, resource requests/limits, env, image-pull secrets.
+- **Service**: ClusterIP exposing `spec.servicePort` → `spec.port`.
+- **Ingress**: routes `spec.publicPathPrefix` as `/<prefix>/mcp`, or explicit `spec.ingressHost` + `spec.ingressPath`, to the Service with per-class annotations (Traefik / NGINX / Istio).
+- **Policy ConfigMap**: rendered from the matching `MCPAccessGrant` + `MCPAgentSession` resources, consumed by the proxy sidecar when `gateway.enabled`.
 
 `MCPServer.status` exposes:
 
-- `phase` — `Pending` → `PartiallyReady` → `Ready`.
-- `message` — human-readable progress.
-- `conditions` — standard Kubernetes condition slice.
+- `phase`: `Pending` → `PartiallyReady` → `Ready`.
+- `message`: human-readable progress.
+- `conditions`: standard Kubernetes condition slice.
 - Per-resource readiness booleans: `deploymentReady`, `serviceReady`, `ingressReady`, `gatewayReady`, `policyReady`, and `canaryReady` when a canary rollout is configured.
-- `ingressReady` defaults to strict mode: the Ingress must publish `status.loadBalancer.ingress[]`. Set operator env `MCP_INGRESS_READINESS_MODE=permissive` for dev or NodePort-style ingress controllers that route traffic without publishing load-balancer status; permissive mode treats an Ingress with rules as ready.
+- `ingressReady` defaults to strict mode: the Ingress must publish `status.loadBalancer.ingress[]`. For dev or NodePort-style ingress controllers that route traffic without publishing load-balancer status, set operator env `MCP_INGRESS_READINESS_MODE=permissive`. Permissive mode treats an Ingress with rules as ready.
 
 ### Useful defaults
 
@@ -93,10 +92,10 @@ flowchart LR
 | Mode | Behavior |
 |---|---|
 | **Direct** | No `gateway.enabled`. Service points at the MCP server directly. Server is exposed at `/{server-name}/mcp`. |
-| **Gateway** | `spec.gateway.enabled: true`. Traffic flows through the proxy sidecar; identity, policy, audit, and telemetry happen in one place. |
+| **Gateway** | `spec.gateway.enabled: true`. Traffic flows through the proxy sidecar, which handles identity, policy, audit, and telemetry. |
 | **Trust evaluation** | At tool-call time, effective trust is `min(grant.maxTrust, session.consentedTrust)` and must meet the required trust, which is the higher of the tool's `requiredTrust` and the matching tool rule's `requiredTrust`. |
-| **Side-effect evaluation** | Each listed tool must declare `sideEffect: read`, `write`, or `destructive`; a grant only authorizes tools whose side effect is present in `allowedSideEffects`. Omitted or empty `allowedSideEffects` allows no side-effect classes, and a tool the server never declared is denied because it has no side effect to authorize. |
-| **Observe mode** | `policy.mode: observe` allows the call before identity, session, grant, side-effect, and trust checks run. Requests are still proxied and audited, so it gives visibility without enforcement. |
+| **Side-effect evaluation** | Each listed tool must declare `sideEffect: read`, `write`, or `destructive`. A grant authorizes only tools whose side effect is in `allowedSideEffects`. Omitted or empty `allowedSideEffects` allows no side-effect classes. A tool the server never declared is denied, because it has no side effect to authorize. |
+| **Observe mode** | `policy.mode: observe` allows the call before identity, session, grant, side-effect, and trust checks run. Requests are still proxied and audited, but nothing is enforced. |
 
 ### Gateway headers
 
@@ -113,63 +112,61 @@ X-MCP-Agent-Session: sess-8f1b9d
 
 The operator renders `MCPServer` + `MCPAccessGrant` + `MCPAgentSession` state
 into a JSON policy ConfigMap that the gateway sidecar mounts and reloads. The
-rendered document carries document-level metadata distinct from the
-authorization `policyVersion`:
+rendered document carries this metadata, separate from the authorization
+`policyVersion`:
 
 | Field | Meaning |
 |---|---|
 | `schema_version` | Compatibility of the rendered JSON contract. The gateway rejects any version it does not support. |
-| `revision` | Deterministic `sha256:` digest of the canonical policy content. Identical content always yields the same revision; it is computed with `generated_at` excluded so timestamps never change it. |
+| `revision` | Deterministic `sha256:` digest of the canonical policy content. Identical content always yields the same revision. `generated_at` is excluded from the digest, so timestamps never change it. |
 | `generated_at` | Informational only; set at write time and never affects `revision`. |
 
 Both sides share `pkg/policy.Validate`: the operator validates a rendered
 document **before** replacing the ConfigMap, and the gateway validates a decoded
-document **before** activating it. Validation fails closed — unknown trust,
-side-effect, decision, auth-mode, or policy-mode values, duplicate names, and
-OAuth without an issuer are all rejected.
+document **before** activating it. Validation fails closed. It rejects unknown
+trust, side-effect, decision, auth-mode, or policy-mode values, duplicate names,
+and OAuth without an issuer.
 
 Activation is **last-known-good**: a malformed, unsupported, or invalid update
 never replaces the active snapshot. The gateway keeps serving the previous valid
-policy and records the failure, and snapshot swaps are atomic so concurrent
-requests always observe a complete old or new policy, never a partial one.
+policy and records the failure. Snapshot swaps are atomic, so each request sees
+either the complete old policy or the complete new one.
 
-Operators can confirm what is applied via the gateway endpoints:
+To check the applied policy, use the gateway endpoints:
 
-- `GET /health` — liveness (always OK while serving).
-- `GET /ready` — readiness; fails until the first valid policy snapshot loads.
-- `GET /config/status` — sanitized `schema_version`, `revision`, `loaded_at`,
+- `GET /health`: liveness (always OK while serving).
+- `GET /ready`: readiness; fails until the first valid policy snapshot loads.
+- `GET /config/status`: sanitized `schema_version`, `revision`, `loaded_at`,
   and `last_reload_error` (no policy body).
-- `GET /metrics` — `mcp_gateway_policy_reload_total{result}`,
+- `GET /metrics`: `mcp_gateway_policy_reload_total{result}`,
   `mcp_gateway_policy_active_revision_info{revision,schema_version}`, and
   `mcp_gateway_policy_last_success_timestamp_seconds`.
 
 ### Agent adapters
 
-Agent-side adapters are helper processes for frameworks and IDEs that cannot
-attach governance headers directly. `mcp-runtime adapter proxy` accepts local
+Agent adapters are helper processes for frameworks and IDEs that cannot
+attach governance headers. `mcp-runtime adapter proxy` accepts local
 Streamable HTTP MCP traffic and `mcp-runtime adapter stdio` accepts stdio MCP
 traffic; both forward to the governed runtime route with the issued
 identity/session headers.
 
-The recommended path is **platform-issued sessions**: passing `--server
-<MCPServer name> --agent <id>` makes the adapter call `POST
-/api/v1/runtime/adapter/sessions` at startup. The platform derives `humanID` and
+Use **platform-issued sessions**. With `--server <MCPServer name> --agent <id>`,
+the adapter calls `POST /api/v1/runtime/adapter/sessions` at startup. The platform derives `humanID` and
 `teamID` from the logged-in principal, picks a matching enabled
 `MCPAccessGrant` (highest `MaxTrust`, oldest creation as the tiebreak), and
-writes (or reuses) an `MCPAgentSession` with a deterministic name —
+writes (or reuses) an `MCPAgentSession` with a deterministic name:
 `adapter-<sha256-prefix(humanID,agentID,teamID,serverName)>`. Adding
 `--auto-refresh` rotates the issued identity ~5 min before expiry without
 restarting the process. Explicit `--human-id` / `--agent-id` / `--session-id`
-flags still take precedence over the issued values and survive every refresh.
+flags take precedence over the issued values and survive every refresh.
 
-For closed environments without the platform API, the adapters still accept
-explicit `MCP_RUNTIME_*` env vars. Anonymous mode (`--anonymous` on stdio)
+In closed environments without the platform API, set explicit `MCP_RUNTIME_*`
+env vars. Anonymous mode (`--anonymous` on stdio)
 forwards to public/read-only routes with no identity headers and a method
 allowlist.
 
-Either way, the adapters present headers; the gateway is the policy
-enforcement point. They do not bypass `MCPAccessGrant` or `MCPAgentSession`
-checks.
+The adapters only present headers. The gateway enforces policy, including
+`MCPAccessGrant` and `MCPAgentSession` checks.
 
 Operational notes:
 
@@ -208,17 +205,17 @@ Implemented and stable enough to evaluate:
 - Trust evaluation and audit-event flow.
 - Multi-ingress class support (Traefik, NGINX, Istio, generic).
 - OAuth: with `spec.auth.mode: oauth` the gateway acts as an MCP protected
-  resource — it publishes protected-resource metadata, validates the token
+  resource. It publishes protected-resource metadata, validates the token
   issuer and resource audience, and strips the bearer token before forwarding.
   Tokens come either from the opt-in bundled `mcp-auth-server`
   (`setup --with-mcp-auth-server`, authorization code with S256 PKCE, refresh
   rotation, CIMD or DCR client registration) or from an external authorization
-  server you operate. Runtime never owns your identity provider's accounts, the
-  bundled server federates to one configured OIDC connector per process, and
-  policy decisions always stay in the gateway. See
+  server you operate. Accounts stay in your identity provider. The bundled
+  server federates to one configured OIDC connector per process. Policy
+  decisions stay in the gateway. See
   [MCP authorization](mcp-authorization.md).
 - mTLS: `spec.auth.mode: mtls` derives identity from the ingress-verified
-  SPIFFE certificate instead of governance headers. It requires
+  SPIFFE certificate, not from governance headers. It requires
   `gateway.enabled`, `auth.trustDomain`, and the Traefik ingress class.
 
 Not yet:
@@ -227,6 +224,6 @@ Not yet:
 
 ## Next
 
-- [CLI](cli.md) — every command and flag.
-- [API](api.md) — full CRD reference with examples.
-- [Sentinel](sentinel.md) — what happens after traffic enters the gateway.
+- [CLI](cli.md): every command and flag.
+- [API](api.md): full CRD reference with examples.
+- [Sentinel](sentinel.md): what happens after traffic enters the gateway.

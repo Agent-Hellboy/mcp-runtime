@@ -10,11 +10,12 @@ import (
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"mcp-analytics-api/internal/identity"
+	"mcp-runtime/pkg/mcpdefaults"
 	"mcp-runtime/pkg/platformauth"
 )
 
 const (
-	sharedCatalogNamespace = "mcp-servers"
+	sharedCatalogNamespace = mcpdefaults.MCPServersNamespace
 	defaultWindowDays      = 30
 	maxWindowDays          = 365
 	teamIDExpression       = "JSONExtractString(payload, 'team_id')"

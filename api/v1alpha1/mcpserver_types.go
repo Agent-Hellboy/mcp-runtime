@@ -2,6 +2,8 @@ package v1alpha1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"mcp-runtime/pkg/mcpdefaults"
 )
 
 // +kubebuilder:validation:Enum=none;header;oauth;mtls
@@ -18,7 +20,7 @@ const (
 type PolicyMode string
 
 const (
-	PolicyModeAllowList PolicyMode = "allow-list"
+	PolicyModeAllowList PolicyMode = mcpdefaults.PolicyModeAllowList
 	PolicyModeObserve   PolicyMode = "observe"
 )
 
@@ -26,8 +28,8 @@ const (
 type PolicyDecision string
 
 const (
-	PolicyDecisionAllow PolicyDecision = "allow"
-	PolicyDecisionDeny  PolicyDecision = "deny"
+	PolicyDecisionAllow PolicyDecision = mcpdefaults.PolicyDecisionAllow
+	PolicyDecisionDeny  PolicyDecision = mcpdefaults.PolicyDecisionDeny
 )
 
 // +kubebuilder:validation:Enum=low;medium;high
@@ -216,7 +218,11 @@ type AuthConfig struct {
 	SessionIDHeader string   `json:"sessionIDHeader,omitempty"`
 	TokenHeader     string   `json:"tokenHeader,omitempty"`
 	IssuerURL       string   `json:"issuerURL,omitempty"`
-	Audience        string   `json:"audience,omitempty"`
+	// Audience is the OAuth resource identifier tokens must be issued for and
+	// that protected-resource metadata advertises. When auth.mode is oauth and
+	// this is unset, it defaults to the public MCP URL built from the ingress
+	// host (or MCP_DEFAULT_INGRESS_HOST on the operator), TLS setting, and path.
+	Audience string `json:"audience,omitempty"`
 	// TrustDomain is the SPIFFE trust domain accepted from verified client
 	// certificate URI SANs when mode is mtls.
 	TrustDomain string `json:"trustDomain,omitempty"`
@@ -331,6 +337,12 @@ type MCPServerStatus struct {
 
 	// CanaryReady indicates if the canary deployment, when configured, is ready.
 	CanaryReady bool `json:"canaryReady,omitempty"`
+
+	// URL is the public MCP endpoint the operator derived from the ingress
+	// host, TLS setting, and public path. The platform API, CLI, and UI show
+	// this value instead of rebuilding it, so every surface agrees with what
+	// the ingress and gateway actually serve. Empty when no host is known.
+	URL string `json:"url,omitempty"`
 }
 
 // +kubebuilder:object:root=true
@@ -340,6 +352,7 @@ type MCPServerStatus struct {
 // +kubebuilder:printcolumn:name="Policy",type="boolean",JSONPath=".status.policyReady"
 // +kubebuilder:printcolumn:name="Gateway",type="boolean",JSONPath=".status.gatewayReady"
 // +kubebuilder:printcolumn:name="Ready",type="boolean",JSONPath=".status.deploymentReady"
+// +kubebuilder:printcolumn:name="URL",type="string",JSONPath=".status.url",priority=1
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 // +kubebuilder:webhook:path=/mutate-mcpruntime-org-v1alpha1-mcpserver,mutating=true,failurePolicy=ignore,sideEffects=None,groups=mcpruntime.org,resources=mcpservers,verbs=create;update,versions=v1alpha1,name=mmcpserver.kb.io,admissionReviewVersions=v1,serviceName=mcp-runtime-operator-webhook-service,serviceNamespace=mcp-runtime,servicePort=443
 // +kubebuilder:webhook:path=/validate-mcpruntime-org-v1alpha1-mcpserver,mutating=false,failurePolicy=fail,sideEffects=None,groups=mcpruntime.org,resources=mcpservers,verbs=create;update,versions=v1alpha1,name=vmcpserver.kb.io,admissionReviewVersions=v1,serviceName=mcp-runtime-operator-webhook-service,serviceNamespace=mcp-runtime,servicePort=443

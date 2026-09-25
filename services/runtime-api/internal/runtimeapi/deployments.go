@@ -27,6 +27,8 @@ import (
 
 	"mcp-runtime/pkg/apihttp"
 	"mcp-runtime/pkg/kubeworkload"
+	"mcp-runtime/pkg/mcpdefaults"
+	"mcp-runtime/pkg/metadata"
 	"mcp-runtime/pkg/publishscope"
 	"mcp-runtime/pkg/sentinel"
 	"mcp-runtime/pkg/serviceutil"
@@ -39,7 +41,7 @@ const (
 	platformTeamSlugLabel          = "mcpruntime.org/team-slug"
 	platformScopeLabel             = "mcpruntime.org/scope"
 	createdByLabel                 = "created-by"
-	defaultDeployPort              = int32(8088)
+	defaultDeployPort              = int32(mcpdefaults.MCPServerPort)
 	restrictedRunAsUser            = kubeworkload.RestrictedRunAsUser
 	traefikWatchRoleName           = "traefik-watch"
 	platformNamespaceOwnerRoleName = "platform-namespace-owner"
@@ -562,16 +564,13 @@ func (s *DeploymentService) ensureNamespaceRegistryPullSecret(ctx context.Contex
 }
 
 func registryPullSecretHost() string {
-	for _, key := range []string{"MCP_REGISTRY_INGRESS_HOST", "MCP_REGISTRY_HOST"} {
-		if h := normalizeImageRegistryHost(os.Getenv(key)); h != "" && h != "registry.local" && h != "localhost" {
-			return h
-		}
+	if host := normalizeImageRegistryHost(metadata.ResolveRegistryHost()); host != "" && host != "registry.local" && host != "localhost" {
+		return host
 	}
-	if h := normalizeImageRegistryHost(os.Getenv("MCP_REGISTRY_ENDPOINT")); h != "" {
-		return h
-	}
-	if domain := normalizeImageRegistryHost(os.Getenv("MCP_PLATFORM_DOMAIN")); domain != "" {
-		return "registry." + strings.TrimPrefix(domain, "registry.")
+	// Keep the secret useful when a public registry override is a local
+	// placeholder but an explicit internal endpoint is configured.
+	if host := normalizeImageRegistryHost(metadata.ResolveRegistryEndpoint()); host != "" && host != "registry.local" && host != "localhost" {
+		return host
 	}
 	return ""
 }

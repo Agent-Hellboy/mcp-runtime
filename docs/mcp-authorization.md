@@ -20,17 +20,16 @@ MCP client → optional mcp-auth-server → Keycloak/OIDC provider
   upstream OIDC client credentials.
 - The Runtime gateway is the protected-resource boundary. It validates the
   token and applies grants, agent sessions, trust, and per-tool policy before
-  forwarding the call. The authorization server is not the Runtime policy
-  decision point.
+  forwarding the call.
 
-This separation is necessary because the authorization server sees login and
-token requests, while Runtime governance must inspect the actual MCP JSON-RPC
-tool call and current grant/session state.
+The gateway is the policy decision point because governance must inspect the
+actual MCP JSON-RPC tool call and current grant/session state. The
+authorization server only sees login and token requests.
 
 ## Responsibility boundary
 
-Runtime ships and can deploy the optional `mcp-auth-server`, but it does not
-manage your identity provider. You are responsible for operating Keycloak,
+Runtime ships and can deploy the optional `mcp-auth-server`. You operate the
+identity provider. You are responsible for operating Keycloak,
 Okta, PingOne, Entra ID, Auth0, or another OIDC/OAuth provider, including its
 realm or tenant, users, client registration, client secret, redirect URI,
 claims, scopes, availability, backups, and certificate/DNS configuration.
@@ -123,15 +122,15 @@ checks with a dedicated non-admin test account.
 
 ## Write the connector file
 
-The connector file is provider configuration, not a credential store. The
+The connector file holds provider configuration. The
 `client_secret_env` value names the environment variable that setup reads and
 stores in the Kubernetes Secret `mcp-auth-connector-secrets`.
 
 Every referenced environment variable must be exported in the same shell that
-starts setup. Setup intentionally fails before applying the auth server if a
-referenced secret is unset; this prevents a partially configured connector from
-being deployed. Prefer a protected file or secret manager rather than putting
-the value in the connector JSON:
+starts setup. Setup fails before applying the auth server if a referenced
+secret is unset, so a partially configured connector is never deployed. Read
+the value from a protected file or secret manager, and keep it out of the
+connector JSON:
 
 ```bash
 export KEYCLOAK_CLIENT_SECRET="$(tr -d '\n' < /secure/keycloak-client-secret)"
@@ -178,13 +177,54 @@ Set OAuth on the governed MCPServer and choose one canonical resource URI:
 spec:
   auth:
     mode: oauth
-    issuerURL: https://auth.example.com/mcp-auth
+    # Defaults from the bundled issuer configured on the operator.
     audience: https://mcp.example.com/my-server/mcp
 ```
 
-The audience must exactly equal the `--mcp-auth-resource-url` value. The
+The audience must equal the MCP server's canonical public URL. The operator
+keeps the bundled mcp-auth resource list aligned with OAuth MCPServer
+audiences. An optional `--mcp-auth-resource-url` is an initial bootstrap value
+and must exactly match the corresponding `spec.auth.audience`. The
 gateway rejects tokens with a different issuer or audience and strips the
 client bearer token before forwarding upstream.
+
+You can omit `audience`. The operator then derives it from the server's public
+URL: `https://` when the operator runs with `MCP_DEFAULT_INGRESS_TLS=true` or
+the ingress has the `traefik.ingress.kubernetes.io/router.tls: "true"`
+annotation, then `spec.ingressHost` (or the shared MCP host resolver's
+`MCP_MCP_INGRESS_HOST`, `MCP_DEFAULT_INGRESS_HOST`, or `mcp.<MCP_PLATFORM_DOMAIN>`),
+then `/<publicPathPrefix>/mcp`. A path-based
+server named `my-server` on `mcp.example.com` gets
+`https://mcp.example.com/my-server/mcp`. If no host is known (for example in
+local test mode), set `audience` explicitly.
+
+Derived `audience` and `issuerURL` values are computed on every reconcile and
+are not written back to `spec`. Changing the host, path, TLS setting, or
+platform domain therefore changes them too; `status.url` shows the current
+public URL.
+
+Each public route has one owner. When two MCPServers resolve to the same path
+on the same host (or one of them is path-based and matches every host), the
+older one keeps the route. The later one reports an `Error` phase naming the
+owner, gets no Ingress, and its audience is not added to the bundled
+authorization server. Otherwise the two servers would accept each other's
+tokens.
+
+The operator owns `MCP_PATH` for every server and derives it from the public
+ingress route. When the gateway sets `gateway.stripPrefix`, it is the route
+with that prefix removed, because that is the path the gateway forwards to the
+server. Do not add it to `spec.envVars` or `.mcp/servers.yaml`; the operator
+replaces any value set there.
+
+For a standalone resource server (`gateway.enabled: false`), the operator also
+injects the values the server needs to publish matching metadata:
+`MCP_AUTH_RESOURCE` (the audience), `MCP_AUTH_RESOURCE_METADATA_URL`
+(`<origin>/.well-known/oauth-protected-resource<path>`), `MCP_AUTH_ISSUER`
+(`auth.issuerURL`). Remove hand-set copies of these derived values so the
+advertised resource stays in step with the ingress host. The gateway challenge
+and ingress metadata route use the same metadata URL derived from `audience`.
+MCP clients reject metadata whose `resource` names a different origin than the
+URL they connected to.
 
 ## Deploy through setup
 
@@ -197,8 +237,6 @@ KEYCLOAK_CLIENT_SECRET='from-your-secret-manager' \
 ./bin/mcp-runtime setup \
   --with-tls --tls-cluster-issuer letsencrypt-prod \
   --with-mcp-auth-server \
-  --mcp-auth-issuer-url https://auth.example.com/mcp-auth \
-  --mcp-auth-resource-url https://mcp.example.com/my-server/mcp \
   --mcp-auth-signing-key-secret mcp-auth-signing-key \
   --mcp-auth-connectors-file /secure/mcp-auth-connectors.json \
   --mcp-auth-connector keycloak
@@ -235,8 +273,8 @@ The same values can be supplied through the public deployment environment:
 
 ```bash
 export MCP_SETUP_WITH_MCP_AUTH_SERVER=1
-export MCP_SETUP_MCP_AUTH_ISSUER_URL=https://auth.example.com/mcp-auth
-export MCP_SETUP_MCP_AUTH_RESOURCE_URL=https://mcp.example.com/my-server/mcp
+# Issuer defaults to https://auth.<MCP_PLATFORM_DOMAIN>/mcp-auth.
+# Resource audiences are reconciled from OAuth MCPServer objects.
 # Optional only for externally managed TLS (required with provided-tls-secrets).
 export MCP_SETUP_MCP_AUTH_TLS_SECRET=mcp-auth-server-tls
 export MCP_SETUP_MCP_AUTH_SIGNING_KEY_SECRET=mcp-auth-signing-key
@@ -285,9 +323,9 @@ real provider test.
 
 ## Other identity providers
 
-The connector is provider-neutral. Runtime does not compile an Okta, PingOne,
-Auth0, Microsoft Entra ID, Google, or other provider adapter into the gateway.
-The bundled auth server loads a named connector from the JSON file at startup:
+The connector is provider-neutral. The bundled auth server loads a named
+connector from the JSON file at startup; the gateway contains no Okta, PingOne,
+Auth0, Microsoft Entra ID, Google, or other provider-specific adapter:
 
 ```text
 MCP_AUTH_CONNECTORS_FILE → MCP_AUTH_CONNECTOR → IdentityProvider/TokenExchanger
@@ -338,8 +376,7 @@ Typical issuer patterns are:
 | Google | `https://accounts.google.com` | Configure the OAuth client redirect URI and request `openid profile email`. |
 | Generic OIDC | provider's `issuer` URL | The provider must expose discovery, authorization-code login, token, JWKS, and suitable identity claims. |
 
-These are configuration patterns, not a claim that every provider supports
-every optional feature. Verify discovery, callback behavior, token endpoint
+Support for optional features varies by provider. Verify discovery, callback behavior, token endpoint
 authentication, scopes, refresh behavior, and claims with the provider before
 using it in production. The mcp-auth project has provider-specific notes and a
 verified-provider matrix in its [authorization-server guide](https://github.com/Agent-Hellboy/mcp-auth/blob/main/docs/auth-server.md).
@@ -391,9 +428,7 @@ use `--no-backup` on production unless the loss is intentional.
 After setup, verify in order: provider discovery; mcp-auth discovery and JWKS;
 mcp-auth readiness; platform admin login; Runtime server catalog, sessions,
 and grants; governed MCP metadata; unauthenticated `401` challenge; valid token;
-allowed tool; denied tool; and grant/session revocation. The authorization
-server authenticates and mints tokens; Runtime remains the resource server and
-policy/governance decision point.
+allowed tool; denied tool; and grant/session revocation.
 
 If setup stops during image publication with a Kubernetes API TLS handshake
 timeout, first verify the k3s API and registry pod, then rerun the same setup
@@ -424,7 +459,7 @@ explicit token/JWKS rollover plan because existing tokens will become invalid.
 
 ## How the MCP SDK fits
 
-The SDK is used at the application boundary, not as Runtime governance:
+The SDK runs at the application boundary, outside Runtime governance:
 
 - MCP clients use the SDK's discovery, PKCE, token, and `WWW-Authenticate`
   helpers to obtain an MCP token from the authorization server.
@@ -436,9 +471,9 @@ The SDK is used at the application boundary, not as Runtime governance:
   Add SDK verification in the upstream server only when it is intentionally
   independently exposed or defense-in-depth is required.
 
-The SDK does not choose the identity provider. It consumes provider-neutral MCP
-authorization metadata and JWTs, so switching from Keycloak to Okta or PingOne
-changes the connector and IdP client configuration, not MCP tool code. Read the
+The SDK consumes provider-neutral MCP authorization metadata and JWTs. Switching
+from Keycloak to Okta or PingOne changes the connector and IdP client
+configuration; MCP tool code stays the same. Read the
 mcp-auth project's [auth-server architecture](https://github.com/Agent-Hellboy/mcp-auth/blob/main/docs/architecture.md)
 and [auth-client SDK guide](https://github.com/Agent-Hellboy/mcp-auth/blob/main/docs/auth-client.md)
 for the Python and Go APIs, verifier options, metadata discovery, and token
@@ -454,7 +489,7 @@ exchange boundaries.
 - discovery connection refused from the auth pod: do not point the pod at the
   node's public IP. Use a reachable, trusted HTTPS service endpoint or fix
   cluster egress/DNS.
-- `audience mismatch`: compare `spec.auth.audience` with
-  `--mcp-auth-resource-url` character-for-character.
+- `audience mismatch`: compare `spec.auth.audience` with the canonical MCP URL
+  and confirm the bundled auth server resource list reflects current OAuth MCPServers.
 - tokens fail after restart: use a persistent RSA signing-key Secret; do not
   rely on the test-mode ephemeral key.

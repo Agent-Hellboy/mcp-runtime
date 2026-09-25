@@ -10,7 +10,7 @@ default branch and to the latest tagged release when a release tag is available.
 Please do not open a public issue for a suspected vulnerability.
 
 Use GitHub private vulnerability reporting or open a draft security advisory for
-`Agent-Hellboy/mcp-runtime` when that option is available. If private reporting
+`mcp-runtime/mcp-runtime` when that option is available. If private reporting
 is not available, contact the maintainer at `princekroshan01@gmail.com` and ask
 for a private coordination channel.
 

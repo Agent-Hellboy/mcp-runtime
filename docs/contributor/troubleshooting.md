@@ -2,7 +2,7 @@
 
 Start from the symptom and inspect the narrowest surface first.
 
-## Anonymous Users Can See MCPs
+## Anonymous users can see MCPs
 
 Expected behavior:
 
@@ -32,7 +32,7 @@ If it returns servers:
 3. Sign out in the browser or use a fresh private window. A valid UI session
    cookie makes the same URL authenticated.
 
-## Tenant User Sees the Wrong MCPs
+## Tenant user sees the wrong MCPs
 
 Check the API path first:
 
@@ -83,7 +83,7 @@ kubectl get mcpservers -A -o yaml | rg -n "name:|sideEffect"
 
 Patch old local test objects or redeploy them from current metadata.
 
-## Image Pulls Fail
+## Image pulls fail
 
 For Kind test mode, pod images should use:
 
@@ -110,7 +110,7 @@ If events say `http: server gave HTTP response to HTTPS client`, the node tried
 HTTPS against the plain HTTP dev registry. Recreate the Kind cluster with the
 mirror or configure the node runtime for the exact image host.
 
-## Host Cannot Push to Cluster DNS Registry
+## Host cannot push to cluster DNS registry
 
 This is expected:
 
@@ -147,7 +147,7 @@ The local dashboard should be reachable at:
 http://localhost:18080/
 ```
 
-## Browser Login Fails but Direct API Works
+## Browser login fails but direct API works
 
 The HTTP ingress overlay can include the `pii-redactor@file` Traefik middleware.
 That middleware is useful for request-path testing on ingest traffic, but it
@@ -164,7 +164,7 @@ kubectl port-forward -n mcp-sentinel svc/mcp-platform-api 18081:8080
 Then use `http://localhost:18081` for direct API debugging and stop the
 port-forward afterward.
 
-## Operator Is Reconciling but Routes Do Not Work
+## Operator is reconciling but routes do not work
 
 Check each layer in order:
 
@@ -181,7 +181,7 @@ Deployment is ready and traffic works, because strict ingress readiness waits
 for load balancer status. Use the Deployment, Service, Ingress, and actual
 traffic checks to decide whether local routing works.
 
-## Grant or Session Does Not Affect Traffic
+## Grant or session does not affect traffic
 
 Use the platform API path first:
 

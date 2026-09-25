@@ -85,6 +85,6 @@ Optional GitHub secrets:
 - `templates/base.html` — shared shell (header, footer, security headers).
 - `templates/index.html` — single landing page.
 - `static/style.css` — page styles.
-- `static/favicon.png` — downloaded square brand icon.
-- `static/brand/` — canonical downloaded light/dark logo lockups, icon, and website/social banner.
+- `static/favicon.png` — transparent hexagon-and-cube mark, the same mark as the GitHub org avatar.
+- `static/brand/` — light/dark logo lockups and app icon cut from that mark, plus the website/social banner. The same files are copied into `docs/assets/`, `articles/static/`, and `services/ui/{frontend/public,static}/`.
 - `Dockerfile` — container build.

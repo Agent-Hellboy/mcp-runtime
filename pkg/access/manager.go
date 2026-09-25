@@ -17,6 +17,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
+	"mcp-runtime/pkg/mcpdefaults"
 )
 
 const (
@@ -26,7 +27,7 @@ const (
 	AccessSessionResource = mcpv1alpha1.MCPAgentSessionResource
 	MCPServerResource     = mcpv1alpha1.MCPServerResource
 	// DefaultMCPResourceNamespace is used when a ServerReference or access resource omits a namespace.
-	DefaultMCPResourceNamespace = "mcp-servers"
+	DefaultMCPResourceNamespace = mcpdefaults.MCPServersNamespace
 )
 
 var (
@@ -441,7 +442,7 @@ func toUnstructured(obj interface{}, kind string) (*unstructured.Unstructured, e
 // GetServerPolicy returns the rendered policy for a specific server if available.
 func (m *Manager) GetServerPolicy(ctx context.Context, namespace, serverName string) (map[string]interface{}, error) {
 	// First, try to find a ConfigMap with the rendered policy
-	configMapName := fmt.Sprintf("%s-gateway-policy", serverName)
+	configMapName := mcpdefaults.GatewayPolicyConfigMapName(serverName)
 	configMap, err := m.clientset.CoreV1().ConfigMaps(namespace).Get(ctx, configMapName, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("policy not found for server %s/%s: %w", namespace, serverName, err)

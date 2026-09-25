@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -14,6 +13,7 @@ import (
 	apiruntime "k8s.io/apimachinery/pkg/runtime"
 
 	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
+	"mcp-runtime/pkg/metadata"
 )
 
 const stableDeploymentSelector = "app.kubernetes.io/managed-by=mcp-runtime,mcpruntime.org/rollout-track=stable"
@@ -313,26 +313,23 @@ func inventoryItemsOrEmpty(items []mcpv1alpha1.InventoryItem) []mcpv1alpha1.Inve
 }
 
 // PublicMCPEndpoint returns the public MCP endpoint path or URL for a server.
+// The operator publishes the canonical URL in status.url, derived with the
+// same scheme, host, and path rules the ingress and gateway use; that value
+// wins. The fallback covers servers the operator has not reconciled yet.
 func PublicMCPEndpoint(mcpServer mcpv1alpha1.MCPServer) string {
-	path := strings.TrimSpace(mcpServer.Spec.IngressPath)
+	if published := strings.TrimSpace(mcpServer.Status.URL); published != "" {
+		return published
+	}
+	path := strings.TrimSpace(mcpServer.EffectivePublicPath())
 	if path == "" {
-		prefix := strings.Trim(strings.TrimSpace(mcpServer.Spec.PublicPathPrefix), "/")
-		if prefix == "" {
-			prefix = mcpServer.Name
-		}
-		path = "/" + prefix + "/mcp"
+		path = "/" + mcpServer.Name + "/mcp"
 	}
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
 	}
 	host := strings.TrimSpace(mcpServer.Spec.IngressHost)
 	if host == "" {
-		host = strings.TrimSpace(os.Getenv("MCP_MCP_INGRESS_HOST"))
-	}
-	if host == "" {
-		if domain := strings.TrimSpace(os.Getenv("MCP_PLATFORM_DOMAIN")); domain != "" {
-			host = "mcp." + strings.Trim(strings.TrimPrefix(strings.TrimPrefix(domain, "https://"), "http://"), "/")
-		}
+		host = metadata.ResolveMcpIngressHost()
 	}
 	if host == "" {
 		return path

@@ -1,6 +1,8 @@
 // Package operator provides the Kubernetes operator for MCPServer resources.
 package operator
 
+import "mcp-runtime/pkg/mcpdefaults"
+
 // Resource defaults for MCPServer deployments.
 const (
 	// DefaultRequestCPU is the default CPU request for containers.
@@ -18,9 +20,9 @@ const (
 	// DefaultReplicas is the default number of replicas.
 	DefaultReplicas = 1
 	// DefaultPort is the default container port.
-	DefaultPort = 8088
+	DefaultPort = mcpdefaults.MCPServerPort
 	// DefaultGatewayPort is the default container port for the MCP proxy sidecar.
-	DefaultGatewayPort = 8091
+	DefaultGatewayPort = mcpdefaults.MCPGatewayPort
 	// DefaultGatewayMetricsPort is the default Prometheus scrape port for the MCP gateway sidecar.
 	DefaultGatewayMetricsPort = 9103
 	// DefaultServicePort is the default service port.

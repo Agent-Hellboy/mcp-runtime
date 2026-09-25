@@ -99,7 +99,7 @@ these local-only tenant accounts:
 Fresh local clusters only have the `test` and `admin` accounts unless you create
 tenant teams and users yourself.
 
-## Catalog Visibility Checks
+## Catalog visibility checks
 
 Anonymous users must not see the MCP catalog:
 
@@ -149,7 +149,7 @@ curl -sS -o /tmp/mcp-tenant-a-cross.txt -w '%{http_code}\n' \
 Tenant A should see `mcp-team-tenant-a`, and the explicit Tenant B namespace
 read should return `403`.
 
-## Quick Cluster Inventory
+## Quick cluster inventory
 
 ```bash
 kubectl get pods -n mcp-runtime -o wide
@@ -170,7 +170,7 @@ kubectl delete mcpserver <server-name> -n <namespace> --ignore-not-found
 kubectl delete secret <server-name>-analytics-creds -n <namespace> --ignore-not-found
 ```
 
-## Optional: Bundled mcp-auth Integration Fixture
+## Optional: bundled mcp-auth integration fixture
 
 The bundled authorization server is opt-in and separate from MCP application
 deployment. Setup pulls `princekrroshan01/mcp-auth-server:latest` from Docker
@@ -209,8 +209,9 @@ comma-separate) when you deploy your own server:
 ```
 
 Each value must equal the `spec.auth.audience` of the MCP server it fronts.
-Outside `--test-mode` there is no default: `--mcp-auth-resource-url` is
-required, every value must be HTTPS, and the deployment additionally needs
+Outside `--test-mode`, resource URLs can be supplied as an optional bootstrap
+list; the operator reconciles the list from current OAuth MCPServer audiences.
+Any supplied value must be HTTPS, and the deployment additionally needs
 `--mcp-auth-signing-key-secret` (a Secret holding the RSA signing key as
 `private-key.pem`). Test mode lets the server generate an ephemeral key, which
 it only permits for a loopback issuer; in production an ephemeral key would
