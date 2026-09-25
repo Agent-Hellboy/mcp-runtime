@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"mcp-runtime/pkg/mcpdefaults"
 	"mcp-runtime/pkg/metadata"
 )
 
@@ -70,7 +71,7 @@ const (
 	DefaultRegistryEndpoint    = defaultRegistryEndpoint
 	DefaultRegistryIngressHost = defaultRegistryIngressHost
 	defaultSkopeoImage         = "quay.io/skopeo/stable:v1.14"
-	defaultServerPort          = 8088
+	defaultServerPort          = mcpdefaults.MCPServerPort
 )
 
 // DefaultCLIConfig is the global CLI configuration loaded at startup.

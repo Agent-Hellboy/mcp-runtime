@@ -5,6 +5,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"mcp-runtime/internal/cli/core"
+	"mcp-runtime/pkg/mcpdefaults"
 )
 
 // New returns the access command.
@@ -78,6 +79,8 @@ func newGrantInitCmd(mgr *AccessManager) *cobra.Command {
 	cmd.Flags().StringArrayVar(&opts.SideEffects, "side-effect", []string{"read"}, "Allowed side effect class: read, write, or destructive; repeat for multiple")
 	cmd.Flags().StringArrayVar(&opts.Tools, "tool", nil, "Tool name to allow; repeat for multiple tools")
 	cmd.Flags().StringArrayVar(&opts.ToolRules, "tool-rule", nil, "Tool rule as name:allow|deny:low|medium|high; repeat for mixed trust or deny rules")
+	cmd.Flags().StringVar(&opts.ExpiresAt, "expires-at", "", "Optional RFC3339 expiry timestamp")
+	cmd.Flags().StringVar(&opts.ExpiresIn, "expires-in", "", "Optional relative expiry duration, for example 1h or 30m")
 	cmd.Flags().StringVar(&opts.Output, "output", "grant.yaml", "Output manifest path")
 	return cmd
 }
@@ -112,7 +115,7 @@ func bindAccessInitCommonFlags(cmd *cobra.Command, opts *accessManifestInitOptio
 	cmd.Flags().StringVar(&opts.AgentID, "agent-id", "", "Agent subject ID")
 	cmd.Flags().StringVar(&opts.TeamID, "team-id", "", "Team subject ID")
 	cmd.Flags().StringVar(&opts.Trust, "trust", "low", "Trust level: low, medium, or high")
-	cmd.Flags().StringVar(&opts.PolicyVersion, "policy-version", "v1", "Policy version")
+	cmd.Flags().StringVar(&opts.PolicyVersion, "policy-version", mcpdefaults.PolicyVersion, "Policy version")
 	cmd.Flags().BoolVar(&opts.Force, "force", false, "Replace output file if it already exists")
 	_ = cmd.MarkFlagRequired("server")
 }

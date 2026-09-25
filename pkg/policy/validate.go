@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"time"
 )
 
 // Validate checks that a rendered gateway policy document is structurally sound
@@ -21,6 +22,9 @@ func Validate(doc *Document) error {
 	}
 	if _, ok := supportedSchemaVersions[doc.SchemaVersion]; !ok {
 		return fmt.Errorf("policy: unsupported schema version %q", doc.SchemaVersion)
+	}
+	if required := RequiredSchemaVersion(doc); required != SchemaVersion && doc.SchemaVersion == SchemaVersion {
+		return fmt.Errorf("policy: grant expiry requires schema version %q, document declares %q", required, doc.SchemaVersion)
 	}
 	if strings.TrimSpace(doc.Revision) == "" {
 		return fmt.Errorf("policy: revision is required")
@@ -143,6 +147,11 @@ func validateGrants(grants []Grant) error {
 		seen[grant.Name] = struct{}{}
 		if !validTrust(grant.MaxTrust) {
 			return fmt.Errorf("policy: grant %q has invalid max_trust %q", grant.Name, grant.MaxTrust)
+		}
+		if expiresAt := strings.TrimSpace(grant.ExpiresAt); expiresAt != "" {
+			if _, err := time.Parse(time.RFC3339, expiresAt); err != nil {
+				return fmt.Errorf("policy: grant %q has invalid expires_at %q", grant.Name, grant.ExpiresAt)
+			}
 		}
 		for _, sideEffect := range grant.AllowedSideEffects {
 			if !validSideEffect(sideEffect, false) {

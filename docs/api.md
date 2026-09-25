@@ -133,7 +133,11 @@ spec:
 
 ## Grants and sessions
 
-`MCPAccessGrant.spec.disabled` and `MCPAgentSession.spec.revoked` are the hard kill switches. They turn off access and keep the object's history.
+`MCPAccessGrant.spec.expiresAt` can bound a delegation. At or after that time
+the gateway ignores the grant and the Runtime API will not issue or refresh a
+session from it. Session expiry is capped by the grant expiry. Set
+`MCPAccessGrant.spec.disabled` to revoke earlier; it and
+`MCPAgentSession.spec.revoked` are hard kill switches that keep object history.
 
 `MCPServer.spec.teamID` records the owning platform team. `SubjectRef` has
 `humanID`, `agentID`, and `teamID`; the gateway matches every non-empty subject
@@ -176,6 +180,7 @@ spec:
     agentID: ops-agent
     teamID: 7d0a0b8f-7c25-4761-a632-3cf0108e31d6
   maxTrust: high
+  expiresAt: "2030-12-31T23:59:00Z"
   allowedSideEffects:
     - read
     - destructive

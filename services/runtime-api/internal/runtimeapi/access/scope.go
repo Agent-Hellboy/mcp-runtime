@@ -4,9 +4,10 @@ import (
 	"strings"
 
 	sentinelaccess "mcp-runtime/pkg/access"
+	"mcp-runtime/pkg/mcpdefaults"
 )
 
-const DefaultPolicyVersionValue = "v1"
+const DefaultPolicyVersionValue = mcpdefaults.PolicyVersion
 
 func DefaultAccessNamespace(namespace string) string {
 	if namespace = strings.TrimSpace(namespace); namespace != "" {

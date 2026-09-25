@@ -116,3 +116,62 @@ func TestValidateNilDocument(t *testing.T) {
 		t.Fatal("Validate(nil) error = nil, want error")
 	}
 }
+
+func grantExpiryTestDocument(expiresAt string) *Document {
+	return &Document{
+		Server: Server{Name: "demo", Namespace: "mcp-servers"},
+		Policy: &Config{Mode: "allow-list", DefaultDecision: "deny"},
+		Tools:  []Tool{{Name: "read-file", RequiredTrust: "low", SideEffect: "read"}},
+		Grants: []Grant{{
+			Name:               "dev",
+			HumanID:            "user@example.com",
+			MaxTrust:           "low",
+			AllowedSideEffects: []string{"read"},
+			ExpiresAt:          expiresAt,
+		}},
+	}
+}
+
+func TestStampSelectsSchemaVersionForGrantExpiry(t *testing.T) {
+	plain := grantExpiryTestDocument("")
+	if err := Stamp(plain, ""); err != nil {
+		t.Fatalf("Stamp() error = %v", err)
+	}
+	if plain.SchemaVersion != SchemaVersion {
+		t.Fatalf("SchemaVersion = %q, want %q without expiring grants", plain.SchemaVersion, SchemaVersion)
+	}
+
+	expiring := grantExpiryTestDocument("2030-01-01T00:00:00Z")
+	if err := Stamp(expiring, ""); err != nil {
+		t.Fatalf("Stamp() error = %v", err)
+	}
+	if expiring.SchemaVersion != SchemaVersionGrantExpiry {
+		t.Fatalf("SchemaVersion = %q, want %q with an expiring grant", expiring.SchemaVersion, SchemaVersionGrantExpiry)
+	}
+	if err := Validate(expiring); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
+func TestValidateRejectsGrantExpiryUnderV1(t *testing.T) {
+	doc := grantExpiryTestDocument("2030-01-01T00:00:00Z")
+	if err := Stamp(doc, ""); err != nil {
+		t.Fatalf("Stamp() error = %v", err)
+	}
+	// A renderer that forgot to bump the schema must not produce a document
+	// that older gateways would read while dropping expires_at.
+	doc.SchemaVersion = SchemaVersion
+	if err := Validate(doc); err == nil || !strings.Contains(err.Error(), "schema version") {
+		t.Fatalf("Validate() error = %v, want schema version error", err)
+	}
+}
+
+func TestValidateRejectsInvalidGrantExpiry(t *testing.T) {
+	doc := grantExpiryTestDocument("next tuesday")
+	if err := Stamp(doc, ""); err != nil {
+		t.Fatalf("Stamp() error = %v", err)
+	}
+	if err := Validate(doc); err == nil || !strings.Contains(err.Error(), "expires_at") {
+		t.Fatalf("Validate() error = %v, want expires_at error", err)
+	}
+}

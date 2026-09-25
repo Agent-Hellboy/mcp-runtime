@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtimeaccess "mcp-runtime-api/internal/runtimeapi/access"
 	sentinelaccess "mcp-runtime/pkg/access"
 	"mcp-runtime/pkg/k8sclient"
@@ -24,6 +25,7 @@ type accessGrantRequest struct {
 	AllowedSideEffects []sentinelaccess.ToolSideEffect `json:"allowedSideEffects"`
 	PolicyVersion      string                          `json:"policyVersion"`
 	Disabled           *bool                           `json:"disabled,omitempty"`
+	ExpiresAt          *metav1.Time                    `json:"expiresAt,omitempty"`
 	ToolRules          []sentinelaccess.ToolRule       `json:"toolRules"`
 }
 

@@ -13,6 +13,8 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
+
+	"mcp-runtime/pkg/mcpdefaults"
 )
 
 var (
@@ -25,28 +27,28 @@ var (
 const (
 	defaultImageTag          = "latest"
 	defaultReplicas          = int32(1)
-	defaultPort              = int32(8088)
+	defaultPort              = int32(mcpdefaults.MCPServerPort)
 	defaultServicePort       = int32(80)
 	defaultIngressClass      = "traefik"
-	defaultGatewayPort       = int32(8091)
+	defaultGatewayPort       = int32(mcpdefaults.MCPGatewayPort)
 	defaultToolRequiredTrust = "low"
 
 	defaultAuthMode            = AuthModeHeader
-	defaultAuthHumanIDHeader   = "X-MCP-Human-ID"
-	defaultAuthAgentIDHeader   = "X-MCP-Agent-ID"
-	defaultAuthTeamIDHeader    = "X-MCP-Team-ID"
-	defaultAuthSessionIDHeader = "X-MCP-Agent-Session"
-	defaultAuthTokenHeader     = "Authorization"
+	defaultAuthHumanIDHeader   = mcpdefaults.AuthHumanIDHeader
+	defaultAuthAgentIDHeader   = mcpdefaults.AuthAgentIDHeader
+	defaultAuthTeamIDHeader    = mcpdefaults.AuthTeamIDHeader
+	defaultAuthSessionIDHeader = mcpdefaults.AuthSessionIDHeader
+	defaultAuthTokenHeader     = mcpdefaults.AuthTokenHeader
 
-	defaultPolicyMode      = PolicyModeAllowList
-	defaultPolicyDecision  = PolicyDecisionDeny
-	defaultPolicyEnforceOn = "call_tool"
-	defaultPolicyVersion   = "v1"
-	defaultSessionStore    = "kubernetes"
-	defaultSessionHeader   = "X-MCP-Agent-Session"
-	defaultSessionMaxLife  = "24h"
-	defaultSessionIdleTime = "1h"
-	defaultSessionUpstream = "Authorization"
+	defaultPolicyMode      = PolicyMode(mcpdefaults.PolicyMode)
+	defaultPolicyDecision  = PolicyDecision(mcpdefaults.PolicyDecision)
+	defaultPolicyEnforceOn = mcpdefaults.PolicyEnforceOn
+	defaultPolicyVersion   = mcpdefaults.PolicyVersion
+	defaultSessionStore    = mcpdefaults.SessionStore
+	defaultSessionHeader   = mcpdefaults.AuthSessionIDHeader
+	defaultSessionMaxLife  = mcpdefaults.SessionMaxLife
+	defaultSessionIdleTime = mcpdefaults.SessionIdleTime
+	defaultSessionUpstream = mcpdefaults.SessionUpstream
 
 	defaultAnalyticsEventType    = "mcp.request"
 	defaultAnalyticsSourceSuffix = "-gateway"
@@ -59,7 +61,7 @@ func defaultIngressPathFromName(name string) string {
 	if strings.TrimSpace(name) == "" {
 		return ""
 	}
-	return "/" + strings.TrimSpace(name) + "/mcp"
+	return mcpdefaults.DefaultIngressPath(strings.TrimSpace(name))
 }
 
 func defaultPublicPathPrefixFromName(name string) string {

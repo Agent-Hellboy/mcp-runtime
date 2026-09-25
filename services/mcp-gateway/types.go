@@ -11,6 +11,7 @@ import (
 	mcpauth "github.com/Agent-Hellboy/mcp-auth/auth-client/go/mcpauth"
 
 	"mcp-runtime/pkg/events"
+	"mcp-runtime/pkg/mcpdefaults"
 	policypkg "mcp-runtime/pkg/policy"
 )
 
@@ -119,19 +120,19 @@ const (
 	analyticsQueueSize   = 256
 	analyticsWorkerCount = 4
 	analyticsEmitTimeout = 5
-	defaultHumanHeader   = "X-MCP-Human-ID"
-	defaultAgentHeader   = "X-MCP-Agent-ID"
-	defaultTeamHeader    = "X-MCP-Team-ID"
-	defaultSessionHeader = "X-MCP-Agent-Session"
+	defaultHumanHeader   = mcpdefaults.AuthHumanIDHeader
+	defaultAgentHeader   = mcpdefaults.AuthAgentIDHeader
+	defaultTeamHeader    = mcpdefaults.AuthTeamIDHeader
+	defaultSessionHeader = mcpdefaults.AuthSessionIDHeader
 	// defaultVerifiedSPIFFEHeader carries an optional adapter's SPIFFE identity
 	// extracted and injected by the TLS-terminating ingress (Traefik). It is
 	// trusted only on an ingress-authenticated mTLS hop.
 	defaultVerifiedSPIFFEHeader = "X-MCP-Verified-SPIFFE-ID"
-	defaultPolicyMode           = "allow-list"
-	defaultPolicyDecision       = "deny"
-	defaultPolicyVersion        = "v1"
+	defaultPolicyMode           = mcpdefaults.PolicyMode
+	defaultPolicyDecision       = mcpdefaults.PolicyDecision
+	defaultPolicyVersion        = mcpdefaults.PolicyVersion
 	oauthProtectedPrefix        = "/.well-known/oauth-protected-resource"
-	defaultTokenHeader          = "Authorization"
+	defaultTokenHeader          = mcpdefaults.AuthTokenHeader
 )
 
 // main initializes and starts the MCP gateway service.

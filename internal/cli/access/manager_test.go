@@ -137,6 +137,7 @@ func TestInitGrantManifestRejectsUnsupportedTrustAlias(t *testing.T) {
 
 func TestInitSessionManifest(t *testing.T) {
 	output := filepath.Join(t.TempDir(), "session.yaml")
+	expiresAt := time.Now().UTC().Add(time.Hour).Format(time.RFC3339)
 	mgr := NewAccessManager(core.NewTestKubectlClient(&core.MockExecutor{}), zap.NewNop())
 
 	err := mgr.InitSessionManifest(accessManifestInitOptions{
@@ -148,7 +149,7 @@ func TestInitSessionManifest(t *testing.T) {
 		Trust:              "low",
 		UpstreamSecretName: "upstream-token",
 		UpstreamSecretKey:  "token",
-		ExpiresAt:          "2026-05-25T12:00:00Z",
+		ExpiresAt:          expiresAt,
 		Revoked:            true,
 		Output:             output,
 	})
@@ -167,7 +168,7 @@ func TestInitSessionManifest(t *testing.T) {
 		"humanID: user-1",
 		"agentID: cursor",
 		"consentedTrust: low",
-		"expiresAt: \"2026-05-25T12:00:00Z\"",
+		"expiresAt: \"" + expiresAt + "\"",
 		"revoked: true",
 		"upstreamTokenSecretRef:",
 		"name: upstream-token",
@@ -176,6 +177,35 @@ func TestInitSessionManifest(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Fatalf("manifest missing %q:\n%s", want, text)
 		}
+	}
+}
+
+func TestInitGrantManifestExpiresIn(t *testing.T) {
+	output := filepath.Join(t.TempDir(), "grant.yaml")
+	mgr := NewAccessManager(core.NewTestKubectlClient(&core.MockExecutor{}), zap.NewNop())
+	if err := mgr.InitGrantManifest(accessManifestInitOptions{
+		Name: "temporary-debug", Namespace: "mcp-team-acme", Server: "payments",
+		TeamID: "team-globex", AgentID: "incident-helper", Tools: []string{"inspect_trace"},
+		ExpiresIn: "4h", Output: output,
+	}); err != nil {
+		t.Fatalf("InitGrantManifest() error = %v", err)
+	}
+	body, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	text := string(body)
+	for _, want := range []string{"kind: MCPAccessGrant", "teamID: team-globex", "inspect_trace", "expiresAt:"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("manifest missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestNormalizeExpiryRejectsPastTimestamp(t *testing.T) {
+	_, err := normalizeSessionExpiry(time.Now().UTC().Add(-time.Hour).Format(time.RFC3339), "")
+	if err == nil || !strings.Contains(err.Error(), "must be in the future") {
+		t.Fatalf("normalizeSessionExpiry error = %v, want future-expiry validation", err)
 	}
 }
 

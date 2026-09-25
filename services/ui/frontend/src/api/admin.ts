@@ -88,6 +88,7 @@ export async function createGrant(input: {
   subject: { humanID?: string; agentID?: string; teamID?: string };
   maxTrust: string;
   allowedSideEffects: string[];
+  expiresAt?: string;
 }): Promise<void> {
   await fetchJSON("/runtime/grants", jsonBody({ ...input, policyVersion: "", toolRules: [] }));
 }

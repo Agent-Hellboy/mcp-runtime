@@ -2,6 +2,8 @@ package access
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"mcp-runtime/pkg/mcpdefaults"
 )
 
 // ServerName identifies an MCPServer resource by name.
@@ -55,7 +57,7 @@ type PolicyDecision string
 
 const (
 	DecisionAllow PolicyDecision = "allow"
-	DecisionDeny  PolicyDecision = "deny"
+	DecisionDeny  PolicyDecision = mcpdefaults.PolicyDecisionDeny
 	DecisionAudit PolicyDecision = "audit"
 )
 
@@ -80,6 +82,7 @@ type MCPAccessGrantSpec struct {
 	AllowedSideEffects []ToolSideEffect `json:"allowedSideEffects,omitempty"`
 	PolicyVersion      string           `json:"policyVersion,omitempty"`
 	Disabled           bool             `json:"disabled,omitempty"`
+	ExpiresAt          *metav1.Time     `json:"expiresAt,omitempty"`
 	ToolRules          []ToolRule       `json:"toolRules,omitempty"`
 }
 

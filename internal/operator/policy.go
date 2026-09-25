@@ -15,6 +15,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
+	"mcp-runtime/pkg/mcpdefaults"
 	"mcp-runtime/pkg/policy"
 )
 
@@ -170,6 +171,9 @@ func (r *MCPServerReconciler) renderGatewayPolicy(ctx context.Context, mcpServer
 			PolicyVersion: grant.Spec.PolicyVersion,
 			Disabled:      grant.Spec.Disabled,
 		}
+		if grant.Spec.ExpiresAt != nil {
+			rendered.ExpiresAt = grant.Spec.ExpiresAt.UTC().Format(time.RFC3339)
+		}
 		for _, sideEffect := range grant.Spec.AllowedSideEffects {
 			rendered.AllowedSideEffects = append(rendered.AllowedSideEffects, string(sideEffect))
 		}
@@ -238,7 +242,7 @@ func serverReferenceMatches(objectNamespace string, ref mcpv1alpha1.ServerRefere
 }
 
 func gatewayPolicyConfigMapName(serverName string) string {
-	return serverName + "-gateway-policy"
+	return mcpdefaults.GatewayPolicyConfigMapName(serverName)
 }
 
 func defaultTrust(trust mcpv1alpha1.TrustLevel) mcpv1alpha1.TrustLevel {

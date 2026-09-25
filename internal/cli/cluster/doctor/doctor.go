@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"mcp-runtime/internal/cli/core"
+	"mcp-runtime/pkg/mcpdefaults"
 )
 
 // Distribution identifies a Kubernetes flavor for remediation messaging.
@@ -54,7 +55,7 @@ type doctorCheckSpec struct {
 }
 
 const (
-	doctorMCPServersNamespace = "mcp-servers"
+	doctorMCPServersNamespace = mcpdefaults.MCPServersNamespace
 	doctorTraefikNamespace    = "traefik"
 	doctorK3sTraefikNamespace = "kube-system"
 	doctorTraefikServiceName  = "traefik"

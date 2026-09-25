@@ -13,6 +13,9 @@ The source-of-truth data plane is:
   every non-empty field by exact string equality.
 - A subject with only `teamID` grants or binds any authenticated principal in
   that team.
+- `MCPAccessGrant.spec.expiresAt` can end a delegation automatically. Any
+  session issued from the grant expires no later than the grant, including
+  sessions requested by an auto-refreshing adapter.
 - The gateway reads team identity from `spec.auth.teamIDHeader` in header mode,
   from OAuth `team_id`, `tenant_id`, or `tid` claims in OAuth mode, or from the
   session named by a verified adapter certificate.

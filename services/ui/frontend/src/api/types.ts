@@ -256,6 +256,7 @@ export type GrantSummary = {
   subject?: SubjectRef;
   maxTrust?: string;
   allowedSideEffects?: string[];
+  expiresAt?: string;
   disabled: boolean;
   age?: string;
 };
