@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"os"
 	"sort"
 	"strings"
 	"time"
@@ -203,8 +202,6 @@ func (s *RuntimeServer) handleRuntimeServerApply(w http.ResponseWriter, r *http.
 	if req.Spec.IngressHost == "" {
 		req.Spec.IngressHost = defaultRuntimeServerIngressHost()
 	}
-	req.Spec.EnvVars = upsertMCPServerEnvVar(req.Spec.EnvVars, "MCP_PATH", req.Spec.IngressPath)
-
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
 
@@ -342,44 +339,8 @@ func serverApplyNamespaceEnsureError(p principal, namespace string, isTeamNamesp
 	return "failed to ensure server namespace"
 }
 
-func upsertMCPServerEnvVar(envVars []mcpv1alpha1.EnvVar, name, value string) []mcpv1alpha1.EnvVar {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return envVars
-	}
-	for i := range envVars {
-		if envVars[i].Name == name {
-			envVars[i].Value = value
-			return envVars
-		}
-	}
-	return append(envVars, mcpv1alpha1.EnvVar{Name: name, Value: value})
-}
-
 func defaultRuntimeServerIngressHost() string {
-	for _, key := range []string{"MCP_MCP_INGRESS_HOST", "MCP_DEFAULT_INGRESS_HOST"} {
-		if host := normalizeRuntimeServerHost(os.Getenv(key)); host != "" {
-			return host
-		}
-	}
-	if domain := normalizeRuntimeServerHost(os.Getenv("MCP_PLATFORM_DOMAIN")); domain != "" {
-		if strings.HasPrefix(strings.ToLower(domain), "mcp.") {
-			return domain
-		}
-		return "mcp." + domain
-	}
-	return ""
-}
-
-func normalizeRuntimeServerHost(value string) string {
-	value = strings.TrimSpace(value)
-	value = strings.TrimPrefix(value, "https://")
-	value = strings.TrimPrefix(value, "http://")
-	value = strings.Trim(value, "/")
-	if idx := strings.IndexByte(value, '/'); idx >= 0 {
-		value = value[:idx]
-	}
-	return strings.TrimSpace(value)
+	return metadata.ResolveMcpIngressHost()
 }
 
 func (s *RuntimeServer) applyPublishedServerDefaults(ctx context.Context, namespace, name string, spec *mcpv1alpha1.MCPServerSpec) error {

@@ -951,7 +951,7 @@ func TestBuildDeployServerSpecEnablesGateway(t *testing.T) {
 	if spec.IngressPath != "/demo/mcp" {
 		t.Fatalf("ingressPath = %q, want /demo/mcp", spec.IngressPath)
 	}
-	if len(spec.EnvVars) != 1 || spec.EnvVars[0].Name != "MCP_PATH" || spec.EnvVars[0].Value != "/demo/mcp" {
+	if len(spec.EnvVars) != 0 {
 		t.Fatalf("envVars = %#v", spec.EnvVars)
 	}
 }
@@ -1030,8 +1030,8 @@ servers:
 	if spec.IngressPath != "/payments/mcp" || spec.PublicPathPrefix != "payments" || spec.IngressHost != "mcp.example.com" {
 		t.Fatalf("metadata merge changed route unexpectedly: ingressPath=%q publicPathPrefix=%q ingressHost=%q", spec.IngressPath, spec.PublicPathPrefix, spec.IngressHost)
 	}
-	if got := envVarValue(spec.EnvVars, "MCP_PATH"); got != "/payments/mcp" {
-		t.Fatalf("MCP_PATH = %q, want /payments/mcp", got)
+	if got := envVarValue(spec.EnvVars, "MCP_PATH"); got != "" {
+		t.Fatalf("MCP_PATH = %q, want it omitted for operator derivation", got)
 	}
 }
 
@@ -1082,8 +1082,8 @@ servers:
 	if got := envVarValue(spec.EnvVars, "FEATURE_FLAG"); got != "enabled" {
 		t.Fatalf("FEATURE_FLAG = %q, want enabled", got)
 	}
-	if got := envVarValue(spec.EnvVars, "MCP_PATH"); got != "/payments/mcp" {
-		t.Fatalf("MCP_PATH = %q, want preserved deploy path", got)
+	if got := envVarValue(spec.EnvVars, "MCP_PATH"); got != "" {
+		t.Fatalf("MCP_PATH = %q, want it omitted for operator derivation", got)
 	}
 }
 

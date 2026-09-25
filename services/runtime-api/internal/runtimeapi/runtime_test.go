@@ -1507,8 +1507,8 @@ func TestRuntimeServerApplyPublicScopeExpandsShortImage(t *testing.T) {
 	if got, want := current.Spec.Image, "10.96.223.152:5000/public/go-example"; got != want {
 		t.Fatalf("image = %q, want %q", got, want)
 	}
-	if got := envValue(current.Spec.EnvVars, "MCP_PATH"); got != "/go-example/mcp" {
-		t.Fatalf("MCP_PATH = %q, want /go-example/mcp", got)
+	if got := envValue(current.Spec.EnvVars, "MCP_PATH"); got != "" {
+		t.Fatalf("MCP_PATH = %q, want it omitted for operator derivation", got)
 	}
 	if got := current.Spec.IngressHost; got != "mcp.mcpruntime.org" {
 		t.Fatalf("ingressHost = %q, want mcp.mcpruntime.org", got)
@@ -1560,8 +1560,8 @@ func TestRuntimeServerApplyTenantScopeExpandsShortImageToTeamSlug(t *testing.T) 
 	if got := current.Spec.TeamID; got != "team-acme" {
 		t.Fatalf("teamID = %q, want team-acme", got)
 	}
-	if got := envValue(current.Spec.EnvVars, "MCP_PATH"); got != "/go-example/mcp" {
-		t.Fatalf("MCP_PATH = %q, want /go-example/mcp", got)
+	if got := envValue(current.Spec.EnvVars, "MCP_PATH"); got != "" {
+		t.Fatalf("MCP_PATH = %q, want it omitted for operator derivation", got)
 	}
 }
 

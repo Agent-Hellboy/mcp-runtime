@@ -35,8 +35,6 @@ spec:
   envVars:
     - name: PORT
       value: "8090"
-    - name: MCP_PATH
-      value: /oauth-workspace-assistant/mcp
   auth:
     mode: oauth
     tokenHeader: Authorization

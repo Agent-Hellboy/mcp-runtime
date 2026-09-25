@@ -3,6 +3,7 @@ WORKDIR /src
 
 # Copy root module first to satisfy local replace directives used by the gateway module.
 COPY go.mod go.sum ./
+COPY api/ ./api/
 COPY pkg/ ./pkg/
 
 # Copy service module and resolve dependencies from the service directory.
