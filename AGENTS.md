@@ -153,6 +153,16 @@ Grafana: dev ingress `/grafana` or `https://platform.<domain>/grafana` (admin). 
 
 When `graphify-out/graph.json` exists: `graphify query`, `graphify path`, `graphify explain` before broad grep; `graphify update .` after code changes. See `.codex/skills/graphify/SKILL.md`.
 
+### Component discovery
+
+When exploring component structure, imports, hooks, or file relationships, start with `graphify query "<question>"` to avoid redundant searches. For example:
+
+- `graphify query "MCPServerReconciler ingress routes"`
+- `graphify query "ResolveRegistryEndpoint callers"`
+- `graphify query "agent adapter stdio transport implementation"`
+
+If the graph misses a symbol or relationship that exists in the code, run `graphify update .` and query again. Use grep or file searches after confirming the graph does not contain the information.
+
 **Stale graph:** if a query returns no nodes (or misses one) for a symbol that clearly exists in the code, the graph is stale — run `graphify update .` (incremental re-extract of new/changed files) and retry. If the node is still missing, do a full rebuild (`/graphify .`) before falling back to grep, so the graph stays trustworthy for the next query.
 
 In any agent prompt, include:

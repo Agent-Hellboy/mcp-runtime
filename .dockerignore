@@ -1,7 +1,6 @@
 .git/
 .gocache/
 bin/
-.agent-flightdeck/
 man/
 tags
 TAGS

@@ -28,7 +28,7 @@ jobs:
 
       - name: Package repository
         run: |
-          tar --exclude=.git --exclude=.agent-flightdeck --exclude='*/node_modules' \
+          tar --exclude=.git --exclude='*/node_modules' \
             -czf /tmp/mcp-runtime-e2e.tgz .
 
       - name: Install SSH client
