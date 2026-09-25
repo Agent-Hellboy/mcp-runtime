@@ -543,7 +543,7 @@ staging_collect_diagnostics() {
   kubectl get pvc -A >"${out}/pvcs.txt" 2>&1 || true
   kubectl get ingress -A -o yaml >"${out}/ingresses.yaml" 2>&1 || true
   kubectl get ingress -A >"${out}/ingresses.txt" 2>&1 || true
-  kubectl get ingressroutes.traefik.io,middlewares.traefik.io,tlsoptions.traefik.io -A -o yaml \
+  kubectl get ingressroutes.traefik.io,middlewares.traefik.io,tlsoptions.traefik.io,tlsstores.traefik.io,serverstransports.traefik.io -A -o yaml \
     >"${out}/traefik-crs.yaml" 2>&1 || true
   kubectl get clusterissuers -o yaml >"${out}/clusterissuers.yaml" 2>&1 || true
   kubectl get certificates,certificaterequests,orders,challenges -A -o wide >"${out}/certificates.txt" 2>&1 || true
@@ -1264,8 +1264,103 @@ staging_check_oidc() {
   fi
 }
 
-# Adapter certificate enrollment against an auth.mode=mtls MCPServer. Needs the
-# workload issuer from `setup --mtls-cluster-issuer`.
+# Adapter certificates are an opt-in platform feature: since the per-server
+# auth.mode=mtls contract was removed, the operator layers optional client
+# certificates onto OAuth MCPServer routes when MCP_ADAPTER_CERTIFICATES=true,
+# signing them with the platform-wide workload issuer (--mtls-cluster-issuer)
+# under the platform-wide MCP_TRUST_DOMAIN. Path-based servers share the public
+# MCP host, so every route uses one Traefik "default" TLSOption that the
+# operator keeps in MCP_DEFAULT_INGRESS_TLS_SECRET_NAMESPACE (mcp-servers is
+# watched by Traefik). The option only requests (never requires) a client
+# certificate, so callers without one, including the other stages, are
+# unaffected. Setup reads all of these from the environment.
+STAGING_ADAPTER_TLS_NAMESPACE_DEFAULT="mcp-servers"
+
+# The SPIFFE trust domain is a name, not a DNS lookup; default it to the
+# disposable suffix so staging identities never look like production ones.
+staging_adapter_trust_domain() {
+  printf '%s' "${E2E_ADAPTER_TRUST_DOMAIN:-${E2E_MTLS_TRUST_DOMAIN:-$(staging_disposable_suffix)}}"
+}
+
+# Export the setup environment that enables adapter certificates. Off when no
+# workload issuer is configured (E2E_MTLS_CLUSTER_ISSUER empty) or when
+# E2E_ADAPTER_CERTIFICATES is false.
+staging_configure_adapter_certificates() {
+  if [[ -z "${E2E_MTLS_CLUSTER_ISSUER:-}" ]] || ! staging_flag_enabled "${E2E_ADAPTER_CERTIFICATES:-1}"; then
+    unset MCP_ADAPTER_CERTIFICATES
+    return 0
+  fi
+  export MCP_ADAPTER_CERTIFICATES=true
+  export MCP_TRUST_DOMAIN="${MCP_TRUST_DOMAIN:-$(staging_adapter_trust_domain)}"
+  export MCP_DEFAULT_INGRESS_TLS_SECRET_NAMESPACE="${MCP_DEFAULT_INGRESS_TLS_SECRET_NAMESPACE:-${STAGING_ADAPTER_TLS_NAMESPACE_DEFAULT}}"
+}
+
+staging_operator_env() {
+  kubectl -n mcp-runtime get deploy mcp-runtime-operator-controller-manager \
+    -o jsonpath="{.spec.template.spec.containers[0].env[?(@.name==\"$1\")].value}" 2>/dev/null || true
+}
+
+# One MCP JSON-RPC POST through the public MCP ingress; prints the HTTP status.
+# CERT_DIR empty sends no client certificate.
+staging_adapter_mcp_post() {
+  local cert_dir="$1" url="$2" body="$3" out="$4" args=()
+  if [[ -n "${cert_dir}" ]]; then
+    args+=(--cert "${cert_dir}/client.crt" --key "${cert_dir}/client.key")
+  fi
+  curl --silent --show-error --max-time 15 ${args[@]+"${args[@]}"} -o "${out}" --write-out '%{http_code}' \
+    -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' \
+    -H 'Mcp-Protocol-Version: 2025-06-18' --data "${body}" "${url}" || true
+}
+
+# Evidence for a failed adapter-enrollment stage. The stage deletes its
+# objects on exit, so capture them first. Secret data is never collected.
+staging_adapter_diagnostics() {
+  local out="$1" ns="$2" tls_ns="$3"
+  shift 3
+  local server
+  mkdir -p "${out}"
+  kubectl -n "${ns}" get mcpservers "$@" -o yaml >"${out}/mcpservers.yaml" 2>&1 || true
+  kubectl -n "${ns}" get mcpaccessgrants,mcpagentsessions -o yaml >"${out}/grants-sessions.yaml" 2>&1 || true
+  kubectl -n "${ns}" get ingressroutes.traefik.io,middlewares.traefik.io,serverstransports.traefik.io,tlsoptions.traefik.io -o yaml \
+    >"${out}/traefik-crs.yaml" 2>&1 || true
+  kubectl -n "${tls_ns}" get tlsoptions.traefik.io,tlsstores.traefik.io -o yaml >"${out}/traefik-default-tls.yaml" 2>&1 || true
+  kubectl -n "${ns}" describe certificates,certificaterequests >"${out}/certificates-describe.txt" 2>&1 || true
+  kubectl get certificaterequests -A -o wide >"${out}/certificaterequests.txt" 2>&1 || true
+  kubectl -n "${ns}" get secrets >"${out}/secret-names.txt" 2>&1 || true
+  kubectl -n "${ns}" get networkpolicies -o yaml >"${out}/networkpolicies.yaml" 2>&1 || true
+  for server in "$@"; do
+    kubectl -n "${ns}" get configmap "${server}-gateway-policy" -o jsonpath='{.data.policy\.json}' \
+      >"${out}/${server}-gateway-policy.json" 2>&1 || true
+    kubectl -n "${ns}" describe deploy "${server}" >"${out}/${server}-deploy-describe.txt" 2>&1 || true
+    kubectl -n "${ns}" describe pods -l "app=${server}" >"${out}/${server}-pods-describe.txt" 2>&1 || true
+    kubectl -n "${ns}" logs "deploy/${server}" --all-containers --prefix --tail=300 >"${out}/${server}.log" 2>&1 || true
+  done
+  kubectl -n mcp-runtime logs deploy/mcp-runtime-operator-controller-manager --tail=400 >"${out}/operator.log" 2>&1 || true
+  kubectl -n mcp-sentinel logs deploy/mcp-runtime-api --tail=400 >"${out}/runtime-api.log" 2>&1 || true
+  local traefik_ns
+  traefik_ns="$(staging_traefik_namespace 2>/dev/null || true)"
+  [[ -z "${traefik_ns}" ]] || kubectl -n "${traefik_ns}" logs deploy/traefik --tail=300 >"${out}/traefik.log" 2>&1 || true
+  staging_err "adapter-enrollment evidence saved under ${out#"${STAGING_ARTIFACT_DIR}/"}/"
+}
+
+staging_adapter_cleanup() {
+  local rc="$1" ns="$2" tls_ns="$3" grant="$4" pull="$5" certs="$6" session_file="$7"
+  shift 7
+  set +e
+  if [[ "${rc}" -ne 0 && "${rc}" -ne "${STAGING_SKIP_RC}" ]]; then
+    staging_adapter_diagnostics "${STAGING_ARTIFACT_DIR}/adapter-enrollment" "${ns}" "${tls_ns}" "$@"
+  fi
+  if [[ -s "${session_file}" ]]; then
+    kubectl -n "${ns}" delete mcpagentsession "$(cat "${session_file}")" --ignore-not-found >/dev/null 2>&1
+  fi
+  kubectl -n "${ns}" delete mcpaccessgrant "${grant}" --ignore-not-found >/dev/null 2>&1
+  kubectl -n "${ns}" delete mcpserver "$@" --ignore-not-found --wait=false >/dev/null 2>&1
+  kubectl -n "${ns}" delete secret "${pull}" --ignore-not-found >/dev/null 2>&1
+  rm -rf "${certs}" "${session_file}"
+}
+
+# Adapter certificate enrollment on an OAuth MCPServer route, then a
+# certificate-authenticated MCP call through the public MCP ingress.
 staging_check_adapter_enrollment() {
   if ! "${BIN}" adapter enroll --help >/dev/null 2>&1; then
     staging_skip "adapter enroll is not supported on this ref"
@@ -1275,56 +1370,114 @@ staging_check_adapter_enrollment() {
   if [[ -z "${issuer}" ]]; then
     staging_skip "setup ran without --mtls-cluster-issuer (E2E_MTLS_CLUSTER_ISSUER empty), so adapter certificates are not enabled"
   fi
+  if [[ "$(staging_operator_env MCP_ADAPTER_CERTIFICATES)" != "true" ]]; then
+    staging_skip "the operator does not have MCP_ADAPTER_CERTIFICATES=true (E2E_ADAPTER_CERTIFICATES off, or a ref without the adapter-certificate platform feature)"
+  fi
+  if [[ -z "${MCP_PLATFORM_ADMIN_EMAIL:-}" || -z "${MCP_PLATFORM_ADMIN_PASSWORD:-}" ]]; then
+    staging_skip "no platform admin email/password for a human-bound adapter session"
+  fi
   kubectl wait --for=condition=Ready "clusterissuer/${issuer}" --timeout=120s
-  local operator_issuer
-  operator_issuer="$(kubectl -n mcp-runtime get deploy mcp-runtime-operator-controller-manager \
-    -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="MCP_MTLS_CLUSTER_ISSUER")].value}')"
+  local operator_issuer trust platform_trust tls_ns
+  operator_issuer="$(staging_operator_env MCP_MTLS_CLUSTER_ISSUER)"
+  trust="$(staging_operator_env MCP_TRUST_DOMAIN)"
+  platform_trust="$(kubectl -n mcp-sentinel get configmap mcp-sentinel-config -o jsonpath='{.data.MCP_TRUST_DOMAIN}' 2>/dev/null || true)"
+  tls_ns="$(staging_operator_env MCP_DEFAULT_INGRESS_TLS_SECRET_NAMESPACE)"
+  staging_log "workload issuer ${issuer}; trust domain operator=${trust:-<empty>} platform=${platform_trust:-<empty>}; client-auth TLSOption namespace ${tls_ns:-<none>}"
   [[ "${operator_issuer}" == "${issuer}" ]] || {
     staging_err "operator MCP_MTLS_CLUSTER_ISSUER=${operator_issuer:-<empty>}, platform has ${issuer}"
     return 1
   }
-  local server="staging-e2e-mtls" ns=mcp-servers agent=staging-e2e-mtls-agent trust="${E2E_MTLS_TRUST_DOMAIN:-mcpruntime.org}"
+  [[ -n "${trust}" && "${trust}" == "${platform_trust}" ]] || {
+    staging_err "MCP_TRUST_DOMAIN must be set and equal on the operator (${trust:-<empty>}) and in mcp-sentinel-config (${platform_trust:-<empty>}); setup did not receive it"
+    return 1
+  }
+  [[ -n "${tls_ns}" ]] || {
+    staging_err "operator has no MCP_DEFAULT_INGRESS_TLS_SECRET_NAMESPACE; path routes on the shared MCP host would never request a client certificate"
+    return 1
+  }
   local image
-  image="$(kubectl -n mcp-runtime get deploy mcp-runtime-operator-controller-manager -o jsonpath='{.spec.template.spec.containers[0].image}')"
-  # shellcheck disable=SC2064
-  trap "kubectl -n ${ns} delete mcpaccessgrant/${server}-grant mcpserver/${server} --ignore-not-found >/dev/null 2>&1 || true" EXIT
-  # Enrollment only needs the MCPServer contract (auth.mode mtls) and a grant;
-  # zero replicas keeps a placeholder image from running.
-  kubectl apply -f - <<EOF
+  image="$(kubectl -n mcp-sentinel get configmap mcp-sentinel-config -o jsonpath='{.data.MCP_DOCTOR_SMOKE_IMAGE}' 2>/dev/null || true)"
+  [[ -n "${image}" ]] || {
+    staging_err "mcp-sentinel-config has no MCP_DOCTOR_SMOKE_IMAGE to run as the upstream server"
+    return 1
+  }
+  local image_repo="${image}" image_tag=latest
+  if [[ "${image##*/}" == *:* ]]; then
+    image_repo="${image%:*}"
+    image_tag="${image##*:}"
+  fi
+
+  local ns=mcp-servers server=staging-e2e-adapter wrong=staging-e2e-adapter-other
+  local agent=staging-e2e-adapter-agent grant=staging-e2e-adapter-grant pull=staging-e2e-adapter-pull
+  local certs="${WORK_DIR}/adapter-certs" session_file="${WORK_DIR}/adapter-session"
+  local oauth_issuer="${E2E_MCP_AUTH_ISSUER_URL:-${AUTH_URL}}"
+  rm -rf "${certs}" "${session_file}"
+  # shellcheck disable=SC2064 # expand the names now; the trap runs after they go out of scope
+  trap "staging_adapter_cleanup \$? '${ns}' '${tls_ns}' '${grant}' '${pull}' '${certs}' '${session_file}' '${server}' '${wrong}'" EXIT
+
+  # The mcp-servers namespace has no registry pull secret until a managed
+  # deploy provisions one, so lend it the platform pull secret (data is piped,
+  # never printed).
+  kubectl -n mcp-sentinel get secret mcp-runtime-registry-pull -o json |
+    jq --arg name "${pull}" --arg ns "${ns}" \
+      '{apiVersion, kind, type, data, metadata: {name: $name, namespace: $ns, labels: {"app.kubernetes.io/managed-by": "staging-e2e"}}}' |
+    kubectl apply -f - >/dev/null
+
+  # Two OAuth servers with the platform's doctor-smoke image as upstream (it
+  # answers 200 to any request), so a 200 proves the gateway authenticated the
+  # certificate and authorized the tool. The OAuth issuer is only consulted
+  # for bearer tokens, which this stage never sends. The second server proves
+  # a session certificate does not authorize a different server.
+  local name
+  for name in "${server}" "${wrong}"; do
+    kubectl apply -f - <<EOF
 apiVersion: mcpruntime.org/v1alpha1
 kind: MCPServer
 metadata:
-  name: ${server}
+  name: ${name}
   namespace: ${ns}
+  labels:
+    app.kubernetes.io/managed-by: staging-e2e
 spec:
-  image: ${image%:*}
-  imageTag: ${image##*:}
-  replicas: 0
+  image: ${image_repo}
+  imageTag: ${image_tag}
+  imagePullSecrets: [${pull}]
+  replicas: 1
   port: 8088
-  ingressPath: /${server}/mcp
-  publicPathPrefix: ${server}
+  ingressPath: /${name}/mcp
+  publicPathPrefix: ${name}
+  envVars:
+    - name: PORT
+      value: "8088"
   tools:
     - name: aaa-ping
       requiredTrust: low
       sideEffect: read
+    - name: upper
+      requiredTrust: low
+      sideEffect: read
   auth:
-    mode: mtls
-    trustDomain: ${trust}
+    mode: oauth
+    issuerURL: ${oauth_issuer}
+    audience: ${MCP_URL}/${name}/mcp
   policy:
     mode: allow-list
     defaultDecision: deny
     policyVersion: v1
   session:
-    required: true
+    required: false
   gateway:
     enabled: true
 EOF
+  done
   kubectl apply -f - <<EOF
 apiVersion: mcpruntime.org/v1alpha1
 kind: MCPAccessGrant
 metadata:
-  name: ${server}-grant
+  name: ${grant}
   namespace: ${ns}
+  labels:
+    app.kubernetes.io/managed-by: staging-e2e
 spec:
   serverRef:
     name: ${server}
@@ -1337,11 +1490,37 @@ spec:
     - name: aaa-ping
       decision: allow
 EOF
+
+  local deadline
+  for name in "${server}" "${wrong}"; do
+    deadline=$((SECONDS + 120))
+    until kubectl -n "${ns}" get deploy "${name}" >/dev/null 2>&1; do
+      ((SECONDS < deadline)) || {
+        staging_err "operator never created deploy/${name}; see adapter-enrollment/operator.log"
+        return 1
+      }
+      sleep 3
+    done
+  done
+  for name in "${server}" "${wrong}"; do
+    kubectl -n "${ns}" rollout status "deploy/${name}" --timeout=300s
+  done
+  for name in "${server}" "${wrong}"; do
+    kubectl -n "${ns}" wait --for=condition=Ready "certificate/${name}-gateway-mtls" --timeout=120s
+    kubectl -n "${ns}" get "ingressroute.traefik.io/${name}" >/dev/null
+  done
+  deadline=$((SECONDS + 120))
+  until [[ "$(kubectl -n "${tls_ns}" get tlsoption.traefik.io default -o jsonpath='{.spec.clientAuth.clientAuthType}' 2>/dev/null || true)" == "VerifyClientCertIfGiven" ]]; do
+    ((SECONDS < deadline)) || {
+        staging_err "operator never created the client-auth TLSOption ${tls_ns}/default"
+        return 1
+    }
+    sleep 3
+  done
+  staging_log "OAuth routes are on Traefik IngressRoutes with the ${tls_ns}/default client-auth TLSOption"
+
   # Adapter sessions are bound to a human identity; an API key principal has
   # no subject, so enroll with the admin's password-login token.
-  if [[ -z "${MCP_PLATFORM_ADMIN_EMAIL:-}" || -z "${MCP_PLATFORM_ADMIN_PASSWORD:-}" ]]; then
-    staging_skip "no platform admin email/password for a human-bound adapter session"
-  fi
   local human_token
   human_token="$(jq -n --arg e "${MCP_PLATFORM_ADMIN_EMAIL}" --arg p "${MCP_PLATFORM_ADMIN_PASSWORD}" '{email: $e, password: $p}' |
     curl --fail --silent --show-error -X POST -H 'content-type: application/json' --data-binary @- \
@@ -1350,7 +1529,7 @@ EOF
     staging_err "admin password login returned no access token"
     return 1
   }
-  local certs="${WORK_DIR}/adapter-certs" out attempt
+  local out="" attempt
   mkdir -p "${certs}"
   for attempt in 1 2 3 4 5 6; do
     if out="$(MCP_PLATFORM_API_TOKEN="${human_token}" "${BIN}" adapter enroll --platform-url "${PLATFORM_URL}" \
@@ -1367,24 +1546,109 @@ EOF
     return 1
   }
   printf '%s\n' "${out}" | head -1
-  openssl verify -CAfile "${certs}/ca.crt" "${certs}/client.crt"
-  openssl x509 -in "${certs}/client.crt" -noout -subject -issuer -dates -ext subjectAltName
-  openssl x509 -in "${certs}/client.crt" -noout -ext subjectAltName | grep -q "URI:spiffe://${trust}/" || {
-    staging_err "client certificate has no spiffe://${trust}/ URI SAN"
+  local spiffe session
+  spiffe="$(printf '%s\n' "${out}" | sed -n 's#.*issued \(spiffe://[^ ]*\).*#\1#p' | head -1)"
+  session="${spiffe##*/session/}"
+  [[ "${spiffe}" == "spiffe://${trust}/ns/${ns}/session/"* && -n "${session}" && "${session}" != */* ]] || {
+    staging_err "adapter enroll returned ${spiffe:-no SPIFFE ID}, want spiffe://${trust}/ns/${ns}/session/<id>"
     return 1
   }
+  printf '%s' "${session}" >"${session_file}"
+  openssl verify -CAfile "${certs}/ca.crt" "${certs}/client.crt"
+  openssl x509 -in "${certs}/client.crt" -noout -subject -issuer -dates -ext subjectAltName
+  openssl x509 -in "${certs}/client.crt" -noout -ext subjectAltName | grep -qF "URI:${spiffe}" || {
+    staging_err "client certificate does not carry the session-bound URI SAN ${spiffe}"
+    return 1
+  }
+  local session_ref
+  session_ref="$(kubectl -n "${ns}" get mcpagentsession "${session}" -o jsonpath='{.spec.serverRef.name}/{.spec.subject.agentID}')"
+  [[ "${session_ref}" == "${server}/${agent}" ]] || {
+    staging_err "MCPAgentSession ${ns}/${session} is for ${session_ref:-<missing>}, want ${server}/${agent}"
+    return 1
+  }
+  staging_log "MCPAgentSession ${ns}/${session} binds ${agent} to ${server}"
+
+  # Session creation is asynchronous with policy reconciliation; wait for this
+  # exact binding before the first certificate-authenticated call.
+  deadline=$((SECONDS + 120))
+  until kubectl -n "${ns}" get configmap "${server}-gateway-policy" -o jsonpath='{.data.policy\.json}' 2>/dev/null |
+    jq -e --arg s "${session}" '[.sessions[]?.name] | index($s) != null' >/dev/null 2>&1; do
+    ((SECONDS < deadline)) || {
+      staging_err "session ${session} never reached ${server}-gateway-policy"
+      return 1
+    }
+    sleep 2
+  done
+  staging_log "gateway policy for ${server} binds session ${session}"
+
+  local url="${MCP_URL}/${server}/mcp" body="${WORK_DIR}/adapter-mcp-body.json" code
+  local init='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"staging-e2e","version":"1"}}}'
+  # The mounted policy is projected and reloaded after the ConfigMap changes,
+  # and Traefik picks up new routes asynchronously. Retry only initialize.
+  deadline=$((SECONDS + ${STAGING_ADAPTER_POLICY_WAIT_SECONDS:-240}))
+  while true; do
+    code="$(staging_adapter_mcp_post "${certs}" "${url}" "${init}" "${body}")"
+    [[ "${code}" == "200" ]] && break
+    if ((SECONDS >= deadline)); then
+      staging_err "certificate-authenticated initialize via ${url}: HTTP ${code}: $(head -c 400 "${body}" 2>/dev/null)"
+      return 1
+    fi
+    sleep 3
+  done
+  staging_log "certificate-authenticated initialize via ${url}: HTTP 200"
+  local failed=0
+  code="$(staging_adapter_mcp_post "${certs}" "${url}" \
+    '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"aaa-ping","arguments":{}}}' "${body}")"
+  if [[ "${code}" == "200" ]]; then
+    staging_log "granted tool aaa-ping with the adapter certificate: HTTP 200"
+  else
+    staging_err "granted tool aaa-ping with the adapter certificate: HTTP ${code}: $(head -c 400 "${body}")"
+    failed=1
+  fi
+  code="$(staging_adapter_mcp_post "${certs}" "${url}" \
+    '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"upper","arguments":{"text":"x"}}}' "${body}")"
+  if [[ "${code}" == "403" ]]; then
+    staging_log "ungranted tool upper with the adapter certificate denied: HTTP 403 ($(jq -r '.error // .reason // empty' "${body}" 2>/dev/null))"
+  else
+    staging_err "ungranted tool upper with the adapter certificate: HTTP ${code}, want 403: $(head -c 400 "${body}")"
+    failed=1
+  fi
+  code="$(staging_adapter_mcp_post "" "${url}" "${init}" "${body}")"
+  if [[ "${code}" == "401" ]]; then
+    staging_log "initialize without a certificate or token denied: HTTP 401"
+  else
+    staging_err "initialize without a certificate or token: HTTP ${code}, want 401: $(head -c 400 "${body}")"
+    failed=1
+  fi
+  # Retry only while the other server's route is still being loaded.
+  deadline=$((SECONDS + 60))
+  while true; do
+    code="$(staging_adapter_mcp_post "${certs}" "${MCP_URL}/${wrong}/mcp" "${init}" "${body}")"
+    if [[ " 000 404 502 503 " != *" ${code} "* ]] || ((SECONDS >= deadline)); then
+      break
+    fi
+    sleep 3
+  done
+  if [[ "${code}" == "401" ]] && grep -q session_not_found "${body}"; then
+    staging_log "adapter certificate for ${server} refused by ${wrong}: HTTP 401 session_not_found"
+  else
+    staging_err "adapter certificate for ${server} on ${wrong}: HTTP ${code}, want 401 session_not_found: $(head -c 400 "${body}")"
+    failed=1
+  fi
+
   # Deny path: an agent without a grant is refused a session.
-  local code
   code="$(staging_http_code -X POST -H "authorization: Bearer ${human_token}" \
     -H 'content-type: application/json' \
     --data "{\"serverName\":\"${server}\",\"namespace\":\"${ns}\",\"agentID\":\"staging-e2e-ungranted\"}" \
     "${PLATFORM_URL}/api/v1/runtime/adapter/sessions")"
-  [[ "${code}" == "403" ]] || {
+  if [[ "${code}" == "403" ]]; then
+    staging_log "ungranted agent refused an adapter session: HTTP 403"
+  else
     staging_err "adapter session for an ungranted agent returned HTTP ${code}, want 403"
-    return 1
-  }
-  staging_log "ungranted agent refused an adapter session: HTTP 403"
-  rm -rf "${certs}"
+    failed=1
+  fi
+  rm -f "${body}"
+  [[ "${failed}" == "0" ]]
 }
 
 # Names the multitenancy suite derives from its RUN_ID.
@@ -1512,7 +1776,7 @@ staging_run_platform_stages() {
   staging_run_stage image-pulls soft "a workload lacks mcp-runtime-registry-pull, or the node cannot pull from the public registry (x509/auth)" staging_check_image_pulls
   staging_run_stage ui soft "the platform UI ingress or mcp-sentinel-ui is down" staging_check_ui
   staging_run_stage oidc soft "mcp-auth discovery/JWKS or the Keycloak issuer is unreachable" staging_check_oidc
-  staging_run_stage adapter-enrollment soft "adapter certificate issuance failed (workload issuer, CertificateRequest approval, or session ownership); see mcp-sentinel-mcp-runtime-api.log" staging_check_adapter_enrollment
+  staging_run_stage adapter-enrollment soft "adapter certificates on the OAuth route failed: setup did not pass MCP_ADAPTER_CERTIFICATES/MCP_TRUST_DOMAIN/MCP_DEFAULT_INGRESS_TLS_SECRET_NAMESPACE to the operator, the OAuth server's IngressRoute/TLSOption/gateway certificate never converged (adapter-enrollment/operator.log, traefik-crs.yaml, certificates-describe.txt), the CertificateRequest was not signed or the session not owned (adapter-enrollment/runtime-api.log), or the gateway rejected the SPIFFE identity (adapter-enrollment/staging-e2e-adapter.log)" staging_check_adapter_enrollment
   staging_run_stage multitenancy soft "a tenant build/push/deploy, grant, adapter call, or event check failed; read multitenancy.log from the bottom" staging_check_multitenancy
   staging_run_stage governance soft "a grant/session deny path allowed traffic, or a granted agent was refused" staging_check_governance
   staging_run_stage analytics soft "events did not reach the analytics API/ClickHouse (ingest -> kafka -> processor path)" staging_check_analytics

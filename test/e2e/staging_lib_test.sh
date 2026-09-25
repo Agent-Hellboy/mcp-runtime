@@ -160,6 +160,27 @@ expect_ok "errexit stops a stage body" bash -c "! grep -q 'not reached' '${STAGE
 expect_ok "summary.md names the failure and hint" grep -q 'critical.*setup broke' "${STAGE_DIR}/summary.md"
 expect_ok "failure summary printed" grep -q 'FAILED critical -- likely cause: setup broke' "${STAGE_DIR}/finish.out"
 
+# --- adapter-certificate setup environment ---------------------------------------
+adapter_env() {
+  (
+    unset MCP_ADAPTER_CERTIFICATES MCP_TRUST_DOMAIN MCP_DEFAULT_INGRESS_TLS_SECRET_NAMESPACE \
+      E2E_ADAPTER_TRUST_DOMAIN E2E_MTLS_TRUST_DOMAIN E2E_DISPOSABLE_DOMAIN_SUFFIX
+    # shellcheck disable=SC2163 # NAME=VALUE pairs
+    export "$@"
+    staging_configure_adapter_certificates
+    printf '%s|%s|%s' "${MCP_ADAPTER_CERTIFICATES:-}" "${MCP_TRUST_DOMAIN:-}" "${MCP_DEFAULT_INGRESS_TLS_SECRET_NAMESPACE:-}"
+  )
+}
+expect_eq "adapter certificates enabled with the workload issuer" \
+  "$(adapter_env E2E_MTLS_CLUSTER_ISSUER=mcp-runtime-ca)" "true|e2e.mcpruntime.org|mcp-servers"
+expect_eq "adapter certificates honor an explicit trust domain" \
+  "$(adapter_env E2E_MTLS_CLUSTER_ISSUER=mcp-runtime-ca E2E_ADAPTER_TRUST_DOMAIN=staging.example.test)" \
+  "true|staging.example.test|mcp-servers"
+expect_eq "adapter certificates off without a workload issuer" \
+  "$(adapter_env E2E_MTLS_CLUSTER_ISSUER= MCP_ADAPTER_CERTIFICATES=true)" "||"
+expect_eq "adapter certificates opt-out" \
+  "$(adapter_env E2E_MTLS_CLUSTER_ISSUER=mcp-runtime-ca E2E_ADAPTER_CERTIFICATES=false)" "||"
+
 # --- diagnostics failed-check parsing -------------------------------------------
 printf '\033[30;42m SUCCESS \033[0m ok check — fine\n\033[30;101m  ERROR  \033[0m \033[91msentinel OIDC configuration — tenant mode\033[0m\n\033[30;101m         \033[0m continuation line\n  ERROR   MCPServer reconcile smoke — timed out\n' >"${TMP}/diag.log"
 expect_eq "failed checks parsed" "$(staging_failed_checks "${TMP}/diag.log" | paste -sd'|' -)" \
