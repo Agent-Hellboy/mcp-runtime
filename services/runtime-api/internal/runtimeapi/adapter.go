@@ -145,6 +145,10 @@ func (s *AccessService) HandleAdapterSession(w http.ResponseWriter, r *http.Requ
 		writeAPIError(w, http.StatusForbidden, err.Error())
 		return
 	}
+	if err := requireActiveAgent(ctx, s.identity, req.AgentID, teamID); err != nil {
+		writeAgentDirectoryError(w, err)
+		return
+	}
 
 	consentedTrust := capTrust(requestedTrust, grant.Spec.MaxTrust)
 	policyVersion := runtimeaccess.DefaultPolicyVersion(grant.Spec.PolicyVersion)
@@ -198,6 +202,15 @@ func (s *AccessService) HandleAdapterSession(w http.ResponseWriter, r *http.Requ
 	if err != nil {
 		log.Printf("adapter session apply %s/%s failed: %v", session.Namespace, session.Name, err)
 		writeK8sApplyError(w, "adapter session", session.Namespace, session.Name, err)
+		return
+	}
+	// Close the race where deactivation finishes its session scan after this
+	// handler's first lookup but before the session is persisted.
+	if err := requireActiveAgent(ctx, s.identity, req.AgentID, teamID); err != nil {
+		if revokeErr := s.accessMgr.RevokeSession(ctx, applied.Name, applied.Namespace); revokeErr != nil {
+			log.Printf("revoke session for inactive agent %s/%s failed: %v", applied.Namespace, applied.Name, revokeErr)
+		}
+		writeAgentDirectoryError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, adapterSessionResponse{
