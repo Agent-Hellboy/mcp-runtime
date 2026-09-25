@@ -100,7 +100,7 @@ SELECT a.id, COALESCE(a.user_id::text, ''), COALESCE(u.email, ''), a.action, a.r
        COALESCE(a.actor_ip, ''), COALESCE(a.request_id, ''),
        COALESCE(a.source, ''), COALESCE(a.auth_identity, ''),
        COALESCE(a.image_ref, ''), COALESCE(a.server_name, ''),
-       COALESCE(a.deployment_target, ''), a.created_at
+       COALESCE(a.deployment_target, ''), COALESCE(a.agent_id, ''), COALESCE(a.team_id::text, ''), a.created_at
 FROM audit_logs a
 LEFT JOIN users u ON u.id = a.user_id
 ` + where + `
@@ -131,6 +131,8 @@ LIMIT $` + strconv.Itoa(limitArg)
 			&item.ImageRef,
 			&item.ServerName,
 			&item.DeploymentTarget,
+			&item.AgentID,
+			&item.TeamID,
 			&item.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -198,8 +200,8 @@ func (s *Store) WriteAudit(ctx context.Context, ev AuditEvent) {
 	if s == nil || s.db == nil {
 		return
 	}
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO audit_logs (user_id,action,resource,namespace,status,message,actor_ip,request_id,source,auth_identity,image_ref,server_name,deployment_target) VALUES (NULLIF($1,'')::uuid,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
-		ev.UserID, ev.Action, ev.Resource, ev.Namespace, ev.Status, ev.Message, ev.ActorIP, ev.RequestID, ev.Source, ev.AuthIdentity, ev.ImageRef, ev.ServerName, ev.DeploymentTarget); err != nil {
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO audit_logs (user_id,action,resource,namespace,status,message,actor_ip,request_id,source,auth_identity,image_ref,server_name,deployment_target,agent_id,team_id) VALUES (NULLIF($1,'')::uuid,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,NULLIF($14,''),NULLIF($15,'')::uuid)`,
+		ev.UserID, ev.Action, ev.Resource, ev.Namespace, ev.Status, ev.Message, ev.ActorIP, ev.RequestID, ev.Source, ev.AuthIdentity, ev.ImageRef, ev.ServerName, ev.DeploymentTarget, ev.AgentID, ev.TeamID); err != nil {
 		log.Printf("ERROR: failed to write audit log: %v", err)
 	}
 }

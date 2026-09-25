@@ -66,6 +66,133 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/runtime/teams/{team}/agents:
+    get:
+      summary: List agents owned by a team
+      parameters:
+        - in: path
+          name: team
+          required: true
+          schema: { type: string }
+        - in: query
+          name: status
+          schema: { type: string, enum: [active, inactive] }
+        - in: query
+          name: q
+          schema: { type: string }
+        - in: query
+          name: cursor
+          schema: { type: string }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        "200":
+          description: Bounded page of team agents
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentPage" }
+        "401":
+          description: unauthorized
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    post:
+      summary: Create an agent for a team
+      parameters:
+        - in: path
+          name: team
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 64 }
+      responses:
+        "201":
+          description: Created agent
+          content:
+            application/json:
+              schema: { type: object, properties: { agent: { $ref: "#/components/schemas/Agent" } } }
+        "403":
+          description: admin or team owner required
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+  /api/v1/runtime/agents/{id}:
+    get:
+      summary: Get a team agent
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Agent record
+          content:
+            application/json:
+              schema: { type: object, properties: { agent: { $ref: "#/components/schemas/Agent" } } }
+        "404":
+          description: agent not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    patch:
+      summary: Rename a team agent
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 64 }
+      responses:
+        "200":
+          description: Renamed agent
+          content:
+            application/json:
+              schema: { type: object, properties: { agent: { $ref: "#/components/schemas/Agent" } } }
+  /api/v1/runtime/agents/{id}/deactivate:
+    post:
+      summary: Deactivate an agent
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Inactive agent
+          content:
+            application/json:
+              schema: { type: object, properties: { agent: { $ref: "#/components/schemas/Agent" } } }
+  /api/v1/runtime/agents/{id}/reactivate:
+    post:
+      summary: Reactivate an agent
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Active agent
+          content:
+            application/json:
+              schema: { type: object, properties: { agent: { $ref: "#/components/schemas/Agent" } } }
   /internal/auth/resolve:
     post:
       requestBody:
@@ -111,3 +238,25 @@ components:
       properties:
         ok:
           type: boolean
+    Agent:
+      type: object
+      required: [id, team_id, team_slug, name, status, created_at, updated_at]
+      properties:
+        id: { type: string, pattern: '^agt_[0-9a-hjkmnp-tv-z]{26}$' }
+        team_id: { type: string }
+        team_slug: { type: string }
+        name: { type: string, minLength: 1, maxLength: 64 }
+        status: { type: string, enum: [active, inactive] }
+        created_by: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        deactivated_at: { type: string, format: date-time }
+        deactivated_by: { type: string }
+    AgentPage:
+      type: object
+      required: [agents]
+      properties:
+        agents:
+          type: array
+          items: { $ref: "#/components/schemas/Agent" }
+        next_cursor: { type: string }

@@ -428,12 +428,26 @@ GET  /api/v1/runtime/teams/{team}         # Team metadata (admin/member)
 GET  /api/v1/runtime/teams/{team}/members # List team memberships (admin/member)
 PUT  /api/v1/runtime/teams/{team}/members/{userID} # Admin/team-owner membership upsert
 DELETE /api/v1/runtime/teams/{team}/members/{userID}
+GET  /api/v1/runtime/teams/{team}/agents # List/search team agents (admin/member)
+POST /api/v1/runtime/teams/{team}/agents # Create agent (admin/team owner)
+GET  /api/v1/runtime/agents/{id} # Read agent (admin/team member)
+PATCH /api/v1/runtime/agents/{id} # Rename agent (admin/team owner)
+POST /api/v1/runtime/agents/{id}/deactivate # Deactivate agent (admin/team owner)
+POST /api/v1/runtime/agents/{id}/reactivate # Reactivate agent (admin/team owner)
 POST /api/v1/runtime/registry/push        # Multipart docker-save upload; in-cluster skopeo push to platform registry
 GET  /api/v1/runtime/namespaces           # Allowed namespaces + org catalog metadata
 GET  /api/v1/runtime/namespaces/{namespace}
 GET  /api/v1/runtime/components           # Admin-only Sentinel component health status
 GET  /api/v1/runtime/policy?namespace=&server=   # Get rendered policy for an administered server
 ```
+
+Agent list accepts `status=active|inactive`, a name substring in `q`, an opaque
+`cursor`, and `limit` from 1 to 200 (default 50). New records receive immutable
+IDs in the `agt_<26-character lowercase ULID>` format. Names are trimmed,
+internal whitespace is collapsed, and names are unique case-insensitively per
+team, including inactive records. This directory records governance identity;
+it does not authenticate an agent runtime. Deactivation changes the directory
+status; session revocation is delivered in a follow-up stage of #467.
 
 For non-admin users, runtime scope depends on `PLATFORM_MODE` / setup
 `--platform-mode`. In `tenant` mode, `GET /api/v1/runtime/servers` without a

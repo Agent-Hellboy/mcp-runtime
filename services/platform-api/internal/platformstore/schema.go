@@ -88,6 +88,21 @@ CREATE TABLE IF NOT EXISTS team_memberships (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uq_team_memberships_active ON team_memberships(team_id, user_id) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_team_memberships_user_id ON team_memberships(user_id);
+CREATE TABLE IF NOT EXISTS agents (
+  id text primary key,
+  team_id uuid not null references teams(id),
+  name text not null,
+  name_normalized text not null,
+  status text not null check (status in ('active', 'inactive')),
+  created_by uuid references users(id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  deactivated_at timestamptz,
+  deactivated_by uuid references users(id)
+);
+ALTER TABLE agents DROP COLUMN IF EXISTS legacy;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_agents_team_name ON agents(team_id, name_normalized);
+CREATE INDEX IF NOT EXISTS idx_agents_team_status_created ON agents(team_id, status, created_at DESC, id);
 CREATE TABLE IF NOT EXISTS refresh_tokens (
   id uuid primary key,
   user_id uuid not null references users(id) on delete cascade,
@@ -113,6 +128,8 @@ CREATE TABLE IF NOT EXISTS audit_logs (
   image_ref text,
   server_name text,
   deployment_target text,
+  agent_id text,
+  team_id uuid,
   created_at timestamptz not null default now()
 );
 DO $$
@@ -138,8 +155,11 @@ ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS auth_identity text;
 ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS image_ref text;
 ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS server_name text;
 ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS deployment_target text;
+ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS agent_id text;
+ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS team_id uuid;
 CREATE INDEX IF NOT EXISTS idx_audit_logs_user_id ON audit_logs(user_id);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_image_ref ON audit_logs(image_ref);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_agent_id ON audit_logs(agent_id);
 `

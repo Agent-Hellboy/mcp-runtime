@@ -41,6 +41,11 @@ type userAPIKeySummary = platformclient.APIKeySummary
 type identityStore interface {
 	ListTeams(ctx context.Context) ([]teamRecord, error)
 	GetTeamBySlug(ctx context.Context, slug string) (teamRecord, bool, error)
+	CreateAgent(ctx context.Context, teamSlug, name, createdBy string) (platformclient.Agent, error)
+	ListAgents(ctx context.Context, teamSlug, status, q, cursor string, limit int) (platformclient.AgentPage, error)
+	GetAgent(ctx context.Context, id string) (platformclient.Agent, bool, error)
+	RenameAgent(ctx context.Context, id, name string) (platformclient.Agent, error)
+	SetAgentStatus(ctx context.Context, id, status, actorID string) (platformclient.Agent, error)
 	CreateTeam(ctx context.Context, slug, name, createdByUserID string) (teamRecord, error)
 	DeleteTeamBySlug(ctx context.Context, slug string) error
 	ListNamespaces(ctx context.Context) ([]map[string]any, error)

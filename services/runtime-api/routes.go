@@ -100,6 +100,9 @@ func (rr runtimeRoutes) registerRoutes(mux *http.ServeMux) {
 	rr.mount("/runtime/teams/", rr.auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		runtimehandlers.HandleRuntimeTeamItemPath(runtimeServer, w, r)
 	})))
+	rr.mount("/runtime/agents/", rr.auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		runtimeServer.HandleRuntimeAgentPath(w, r)
+	})))
 	rr.mount("/runtime/namespaces", rr.auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		runtimehandlers.HandleRuntimeNamespaces(runtimeServer, w, r)
 	})))
