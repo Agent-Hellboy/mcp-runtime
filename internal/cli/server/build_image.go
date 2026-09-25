@@ -36,12 +36,12 @@ func buildImage(ctx context.Context, logger *zap.Logger, serverName, dockerfile,
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	// Get registry URL
+	// Get registry URL. Use the same resolution as `server push` (saved
+	// platform login first, then env/cluster discovery) so the tag written
+	// here is the ref the user pushes and deploys. Without it a laptop user
+	// with no MCP_* env and no kubeconfig got the in-cluster registry DNS name.
 	if registryURL == "" {
-		kubectl := core.DefaultKubectlClient()
-		registryURL = resolve.PlatformURL(logger, func(args []string) (resolve.OutputCommand, error) {
-			return kubectl.CommandArgs(args)
-		}, registryResolveConfig())
+		registryURL = registry.ResolvePlatformRegistryURL(logger)
 	}
 
 	// Get tag
@@ -98,7 +98,26 @@ func buildImage(ctx context.Context, logger *zap.Logger, serverName, dockerfile,
 		return err
 	}
 
+	core.Success(fmt.Sprintf("Built image %s", fullImage))
+	pushHint := fmt.Sprintf("mcp-runtime server push --image %s", fullImage)
+	if scope, ok := metadataScopeForBuild(serverName, metadataFile, metadataDir); ok {
+		pushHint += " --scope " + scope
+	}
+	core.Info("Push it with: " + pushHint)
+
 	return nil
+}
+
+func metadataScopeForBuild(serverName, metadataFile, metadataDir string) (string, bool) {
+	server, ok, err := findMetadataServer(serverName, metadataFile, metadataDir)
+	if err != nil || !ok {
+		return "", false
+	}
+	scope, err := publishscope.Normalize(string(server.Scope))
+	if err != nil || scope == "" {
+		return "", false
+	}
+	return string(scope), true
 }
 
 func scopedRepositoryNameForBuild(ctx context.Context, serverName, metadataFile, metadataDir string) (string, error) {
@@ -168,16 +187,6 @@ func normalizeDockerBuildPlatform(platform string) string {
 	return defaultDockerBuildPlatform
 }
 
-func registryResolveConfig() resolve.Config {
-	return resolve.Config{
-		RegistryEndpoint:        core.DefaultCLIConfig.RegistryEndpoint,
-		DefaultRegistryEndpoint: core.DefaultRegistryEndpoint,
-		RegistryIngressHost:     core.DefaultCLIConfig.RegistryIngressHost,
-		DefaultRegistryHost:     core.DefaultRegistryIngressHost,
-		RegistryPort:            core.DefaultCLIConfig.RegistryPort,
-	}
-}
-
 func updateMetadataImage(serverName, imageName, tag, metadataFile, metadataDir string) error {
 	// Find the metadata file containing this server
 	var targetFile string
@@ -214,8 +223,8 @@ func updateMetadataImage(serverName, imageName, tag, metadataFile, metadataDir s
 		return err
 	}
 
-	// Load and update
-	registry, err := metadata.LoadFromFile(targetFile)
+	// Load and update the entries as written, without persisting loader defaults.
+	registry, err := loadMetadataForRewrite(targetFile)
 	if err != nil {
 		wrappedErr := core.WrapWithSentinel(core.ErrLoadMetadataFailed, err, fmt.Sprintf("failed to load metadata: %v", err))
 		core.Error("Failed to load metadata")

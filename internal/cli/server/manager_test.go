@@ -142,6 +142,47 @@ func TestInitServerAppendsAndRejectsDuplicate(t *testing.T) {
 	}
 }
 
+// The quickstart runs `server init` inside examples/workspace-assistant-mcp,
+// whose .mcp/servers.yaml already lists a server without an image. Merging the
+// new entry must not persist the loader's registry.local placeholder into that
+// sibling entry.
+func TestInitServerDoesNotPersistLoaderDefaultsIntoExistingEntries(t *testing.T) {
+	for _, key := range []string{"MCP_REGISTRY_INGRESS_HOST", "MCP_REGISTRY_HOST", "MCP_PLATFORM_DOMAIN"} {
+		t.Setenv(key, "")
+	}
+	dir := filepath.Join(t.TempDir(), ".mcp")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	path := filepath.Join(dir, "servers.yaml")
+	if err := os.WriteFile(path, []byte(`version: v1
+servers:
+  - name: workspace-assistant-mcp
+    route: /workspace-assistant-mcp/mcp
+    port: 8088
+`), 0o600); err != nil {
+		t.Fatalf("write metadata: %v", err)
+	}
+	mgr := NewServerManager(core.NewTestKubectlClient(&core.MockExecutor{}), zap.NewNop())
+	if err := mgr.InitServer("workspace-demo", dir, "", "latest", "tenant", "allow-list", "deny", true, 8088, []string{"echo"}, nil, "", false); err != nil {
+		t.Fatalf("InitServer() error = %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read metadata: %v", err)
+	}
+	if strings.Contains(string(data), metadata.DefaultRegistryHost) {
+		t.Fatalf("init persisted the %s placeholder:\n%s", metadata.DefaultRegistryHost, data)
+	}
+	registry, err := metadata.LoadFromFile(path)
+	if err != nil {
+		t.Fatalf("LoadFromFile() error = %v", err)
+	}
+	if len(registry.Servers) != 2 || registry.Servers[1].Image != "workspace-demo" {
+		t.Fatalf("servers = %#v, want sibling kept and workspace-demo appended with a short image", registry.Servers)
+	}
+}
+
 func TestInitServerUsesGovernanceFlags(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), ".mcp")
 	mgr := NewServerManager(core.NewTestKubectlClient(&core.MockExecutor{}), zap.NewNop())
@@ -1192,6 +1233,94 @@ servers:
 	}
 	if appliedNamespace != "mcp-team-core" {
 		t.Fatalf("applied namespace = %q, want mcp-team-core", appliedNamespace)
+	}
+}
+
+// A quickstart user whose .mcp metadata names the in-cluster registry DNS name
+// (written by an older CLI without MCP_* env) must deploy the ref from the
+// saved login's public registry; a login without a saved registry (Kind
+// test-mode against localhost) must keep the ref unchanged.
+func TestDeployServerRewritesClusterOnlyRegistryToSavedLoginRegistry(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		registryHost string
+		metaImage    string
+		wantImage    string
+	}{
+		{name: "public platform login", registryHost: "registry.example.org", metaImage: "registry.registry.svc.cluster.local:5000/core/data-utility", wantImage: "registry.example.org/core/data-utility"},
+		{name: "placeholder registry", registryHost: "registry.example.org", metaImage: "registry.local/core/data-utility", wantImage: "registry.example.org/core/data-utility"},
+		{name: "external registry kept", registryHost: "registry.example.org", metaImage: "ghcr.io/core/data-utility", wantImage: "ghcr.io/core/data-utility"},
+		{name: "local login keeps cluster registry", registryHost: "", metaImage: "registry.registry.svc.cluster.local:5000/core/data-utility", wantImage: "registry.registry.svc.cluster.local:5000/core/data-utility"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, key := range []string{"MCP_REGISTRY_INGRESS_HOST", "MCP_REGISTRY_HOST", "MCP_REGISTRY_ENDPOINT", "MCP_PLATFORM_DOMAIN", authfile.EnvAPIToken, authfile.EnvAPIURL} {
+				t.Setenv(key, "")
+			}
+			tmp := t.TempDir()
+			if err := os.Mkdir(filepath.Join(tmp, ".mcp"), 0o750); err != nil {
+				t.Fatalf("mkdir metadata: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(tmp, ".mcp", "servers.yaml"), []byte(`version: v1
+servers:
+  - name: data-utility
+    scope: tenant
+    image: `+tc.metaImage+`
+    imageTag: v1
+`), 0o600); err != nil {
+				t.Fatalf("write metadata: %v", err)
+			}
+			var appliedImage string
+			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/auth/me":
+					w.Header().Set("content-type", "application/json")
+					_, _ = w.Write([]byte(`{"authenticated":true,"principal":{"role":"user","teams":[{"slug":"core","namespace":"mcp-team-core"}]}}`))
+				case r.Method == http.MethodPost && r.URL.Path == "/api/v1/runtime/servers":
+					var payload struct {
+						Spec struct {
+							Image string `json:"image"`
+						} `json:"spec"`
+					}
+					if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+						t.Fatalf("decode payload: %v", err)
+					}
+					appliedImage = payload.Spec.Image
+					w.Header().Set("content-type", "application/json")
+					_, _ = w.Write([]byte(`{"server":{"name":"data-utility","namespace":"mcp-team-core","ready":"True","status":"Ready","age":"0s"}}`))
+				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/runtime/servers":
+					w.Header().Set("content-type", "application/json")
+					_, _ = w.Write([]byte(`{"servers":[{"name":"data-utility","namespace":"mcp-team-core","ready":"True","status":"Ready","age":"1s"}]}`))
+				default:
+					t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+				}
+			}))
+			defer api.Close()
+			configDir := t.TempDir()
+			t.Setenv("MCP_RUNTIME_CONFIG_DIR", configDir)
+			if err := authfile.SaveProfile(filepath.Join(configDir, "config.json"), "me", authfile.CredentialAccount{
+				APIBaseURL:   api.URL,
+				Token:        "token-1",
+				RegistryHost: tc.registryHost,
+			}); err != nil {
+				t.Fatalf("save profile: %v", err)
+			}
+			origCfg := core.DefaultCLIConfig
+			origPoll := serverDeployPollInterval
+			core.DefaultCLIConfig = &core.CLIConfig{DeploymentTimeout: 2 * time.Second}
+			serverDeployPollInterval = 5 * time.Millisecond
+			t.Cleanup(func() {
+				core.DefaultCLIConfig = origCfg
+				serverDeployPollInterval = origPoll
+			})
+
+			mgr := NewServerManager(core.NewTestKubectlClient(&core.MockExecutor{}), zap.NewNop())
+			if err := mgr.DeployServer("data-utility", "", "", "", "", "latest", 1, 8088, 80, "", filepath.Join(tmp, ".mcp"), false); err != nil {
+				t.Fatalf("DeployServer() error = %v", err)
+			}
+			if appliedImage != tc.wantImage {
+				t.Fatalf("applied image = %q, want %q", appliedImage, tc.wantImage)
+			}
+		})
 	}
 }
 

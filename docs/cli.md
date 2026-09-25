@@ -241,11 +241,16 @@ cd examples/workspace-assistant-mcp
 mcp-runtime server build image workspace-demo --tag v1
 ```
 
-The command prints the exact image ref to use in the push step:
+The command prints the exact image ref and the matching push command:
 
 ```
-registry.example.com/acme/workspace-demo:v1
+Built image registry.example.com/acme/workspace-demo:v1
+Push it with: mcp-runtime server push --image registry.example.com/acme/workspace-demo:v1 --scope tenant
 ```
+
+Without `--registry`, the registry host comes from the active `auth login`
+profile (the registry host saved at login), then `MCP_REGISTRY_INGRESS_HOST`,
+`MCP_REGISTRY_HOST`, or `MCP_PLATFORM_DOMAIN`, then cluster discovery.
 
 Use `--platform linux/amd64` when building on Apple Silicon for k3s or EKS nodes.
 

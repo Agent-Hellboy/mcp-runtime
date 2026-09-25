@@ -13,6 +13,7 @@ import (
 	"go.uber.org/zap"
 
 	"mcp-runtime/internal/cli/core"
+	"mcp-runtime/pkg/authfile"
 )
 
 func TestBuildImage(t *testing.T) {
@@ -248,7 +249,80 @@ servers:
 		}
 	})
 
+	// Quickstart laptop user: saved auth login profile, no MCP_* env, no
+	// reachable kubeconfig. The tag and metadata must name the profile's
+	// public registry, not the in-cluster registry DNS name.
+	t.Run("uses_saved_login_registry_host_without_env", func(t *testing.T) {
+		for _, key := range []string{"MCP_REGISTRY_INGRESS_HOST", "MCP_REGISTRY_HOST", "MCP_REGISTRY_ENDPOINT", "MCP_PLATFORM_DOMAIN", "MCP_PLATFORM_API_URL", "MCP_PLATFORM_API_TOKEN", "MCP_RUNTIME_TEST_MODE"} {
+			t.Setenv(key, "")
+		}
+		origConfig := core.DefaultCLIConfig
+		defer func() { core.DefaultCLIConfig = origConfig }()
+		core.DefaultCLIConfig = &core.CLIConfig{RegistryEndpoint: core.DefaultRegistryEndpoint, RegistryIngressHost: core.DefaultRegistryIngressHost, RegistryPort: 5000}
+		kubectlMock := &core.MockExecutor{
+			CommandFunc: func(core.ExecSpec) *core.MockCommand {
+				return &core.MockCommand{OutputErr: errors.New("no kubeconfig")}
+			},
+		}
+		defer core.SwapDefaultKubectlClient(core.NewTestKubectlClient(kubectlMock))()
+		mock := &core.MockExecutor{}
+		defer core.SwapExecExecutor(mock)()
+
+		api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("content-type", "application/json")
+			_, _ = w.Write([]byte(`{"authenticated":true,"principal":{"role":"user","namespace":"mcp-team-acme","teams":[{"slug":"acme","namespace":"mcp-team-acme"}]}}`))
+		}))
+		defer api.Close()
+		configDir := t.TempDir()
+		t.Setenv("MCP_RUNTIME_CONFIG_DIR", configDir)
+		if err := authfile.SaveProfile(filepath.Join(configDir, "config.json"), "me", authfile.CredentialAccount{
+			APIBaseURL:   api.URL,
+			Token:        "token-1",
+			RegistryHost: "registry.example.org",
+		}); err != nil {
+			t.Fatalf("save profile: %v", err)
+		}
+
+		tmp := t.TempDir()
+		metadataFile := filepath.Join(tmp, "servers.yaml")
+		if err := os.WriteFile(metadataFile, []byte(`version: v1
+servers:
+  - name: workspace-assistant-mcp
+    route: /workspace-assistant-mcp/mcp
+  - name: workspace-demo
+    image: workspace-demo
+    scope: tenant
+`), 0o600); err != nil {
+			t.Fatalf("write metadata: %v", err)
+		}
+
+		if err := buildImage(context.Background(), logger, "workspace-demo", "Dockerfile", metadataFile, ".", "", "v1", "", "."); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		const want = "registry.example.org/acme/workspace-demo:v1"
+		var dockerArgs []string
+		for _, cmd := range mock.Commands {
+			if cmd.Name == "docker" {
+				dockerArgs = cmd.Args
+			}
+		}
+		if !contains(dockerArgs, want) {
+			t.Fatalf("docker args = %v, want tag %s", dockerArgs, want)
+		}
+		data, err := os.ReadFile(metadataFile)
+		if err != nil {
+			t.Fatalf("read metadata: %v", err)
+		}
+		if !strings.Contains(string(data), "image: registry.example.org/acme/workspace-demo") {
+			t.Fatalf("metadata image not updated to the saved registry host:\n%s", data)
+		}
+		if strings.Contains(string(data), "registry.registry.svc.cluster.local") || strings.Contains(string(data), "registry.local/") {
+			t.Fatalf("metadata leaked an in-cluster or placeholder registry host:\n%s", data)
+		}
+	})
+
 	t.Run("uses_platform_registry_when_registry_empty", func(t *testing.T) {
+		t.Setenv("MCP_RUNTIME_CONFIG_DIR", t.TempDir())
 		origConfig := core.DefaultCLIConfig
 		defer func() { core.DefaultCLIConfig = origConfig }()
 		core.DefaultCLIConfig = &core.CLIConfig{RegistryEndpoint: "", RegistryIngressHost: "", RegistryPort: 5000}
