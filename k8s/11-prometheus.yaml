@@ -127,6 +127,7 @@ spec:
           image: prom/prometheus:v2.49.1
           securityContext:
             allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
             capabilities:
               drop:
                 - ALL
@@ -140,7 +141,13 @@ spec:
           volumeMounts:
             - name: config
               mountPath: /etc/prometheus
+            # TSDB path; the image declares it as a VOLUME, which is not
+            # writable under readOnlyRootFilesystem unless mounted explicitly.
+            - name: data
+              mountPath: /prometheus
       volumes:
         - name: config
           configMap:
             name: prometheus-config
+        - name: data
+          emptyDir: {}

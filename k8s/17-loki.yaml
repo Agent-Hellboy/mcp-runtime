@@ -85,6 +85,7 @@ spec:
             runAsNonRoot: true
             runAsUser: 10001
             runAsGroup: 10001
+            readOnlyRootFilesystem: true
             capabilities:
               drop:
                 - ALL
@@ -96,7 +97,11 @@ spec:
               mountPath: /etc/loki
             - name: data
               mountPath: /var/loki
+            - name: tmp
+              mountPath: /tmp
       volumes:
+        - name: tmp
+          emptyDir: {}
         - name: config
           configMap:
             name: loki-config

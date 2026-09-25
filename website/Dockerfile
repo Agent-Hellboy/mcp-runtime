@@ -16,7 +16,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
+RUN useradd --system --uid 10001 --gid nogroup --no-create-home --shell /usr/sbin/nologin app
+
 COPY . .
+
+# Run unprivileged; gunicorn binds 8080 (>1024), so no extra capabilities.
+USER 10001
 
 EXPOSE 8080
 

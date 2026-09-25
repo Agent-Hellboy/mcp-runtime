@@ -42,6 +42,7 @@ spec:
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
             runAsNonRoot: true
             seccompProfile:
               type: RuntimeDefault
@@ -71,6 +72,12 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql/data
+            # Writable scratch paths for readOnlyRootFilesystem: the Unix
+            # socket/lock dir and temp files used by initdb and the server.
+            - name: run
+              mountPath: /var/run/postgresql
+            - name: tmp
+              mountPath: /tmp
           readinessProbe:
             exec:
               command:
@@ -94,6 +101,11 @@ spec:
             limits:
               cpu: 500m
               memory: 512Mi
+      volumes:
+        - name: run
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
   volumeClaimTemplates:
     - metadata:
         name: data

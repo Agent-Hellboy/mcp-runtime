@@ -20,4 +20,9 @@ LABEL org.opencontainers.image.source="https://github.com/mcp-runtime/mcp-runtim
 COPY nginx.conf /etc/nginx/nginx.conf
 COPY --from=build /workspace/site /usr/share/nginx/html
 
-EXPOSE 80
+# Run as the image's unprivileged nginx user (uid 101). nginx.conf listens on
+# 8080 and writes its pid to /tmp; temp dirs live under /var/cache/nginx.
+RUN chown -R 101:101 /var/cache/nginx
+USER 101
+
+EXPOSE 8080

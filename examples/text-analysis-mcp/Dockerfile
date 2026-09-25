@@ -9,8 +9,12 @@ RUN cargo build --release
 
 FROM alpine:3.20
 
+RUN adduser -D -H -u 10001 app
+
 WORKDIR /app
 COPY --from=build /src/target/release/text-analysis-mcp /app/text-analysis-mcp
+
+USER 10001
 
 EXPOSE 8088
 
