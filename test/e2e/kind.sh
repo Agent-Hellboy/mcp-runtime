@@ -4796,6 +4796,14 @@ EOF
       echo "adapter enroll did not return a session-bound SPIFFE ID" >&2
       exit 1
     fi
+    if ! kubectl get mcpagentsession "${ADAPTER_CERT_SESSION}" -n mcp-servers >/dev/null 2>&1; then
+      echo "expected MCPAgentSession ${ADAPTER_CERT_SESSION} in mcp-servers after adapter enrollment" >&2
+      exit 1
+    fi
+    # The gateway authenticates the SPIFFE ID against its rendered policy.
+    # Session creation is asynchronous with policy reconciliation, so wait for
+    # this exact binding before sending the first certificate-authenticated call.
+    wait_for_policy_text "\"name\": \"${ADAPTER_CERT_SESSION}\"" "${OAUTH_SERVER_NAME}"
 
     ensure_traefik_tls_port_forward
     ADAPTER_CERT_URL="https://127.0.0.1:${TRAEFIK_TLS_PORT}${OAUTH_INGRESS_PATH}"
