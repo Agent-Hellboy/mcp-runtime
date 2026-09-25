@@ -25,85 +25,93 @@ data:
     package spiffe_identity
 
     import (
-    	"context"
-    	"errors"
-    	"net/http"
-    	"strings"
+        "context"
+        "errors"
+        "net/http"
+        "strings"
     )
 
     // Config holds the middleware configuration.
     type Config struct {
-    	VerifiedHeader string   `json:"verifiedHeader,omitempty"`
-    	TrustDomain    string   `json:"trustDomain,omitempty"`
-    	StripHeaders   []string `json:"stripHeaders,omitempty"`
+        VerifiedHeader string   `json:"verifiedHeader,omitempty"`
+        TrustDomain    string   `json:"trustDomain,omitempty"`
+        StripHeaders   []string `json:"stripHeaders,omitempty"`
+        RejectInvalidCertificate bool `json:"rejectInvalidCertificate,omitempty"`
     }
 
     // CreateConfig returns the default plugin configuration.
     func CreateConfig() *Config {
-    	return &Config{
-    		VerifiedHeader: "X-MCP-Verified-SPIFFE-ID",
-    		StripHeaders: []string{
-    			"X-MCP-Human-ID",
-    			"X-MCP-Agent-ID",
-    			"X-MCP-Team-ID",
-    			"X-MCP-Agent-Session",
-    		},
-    	}
+        return &Config{
+            VerifiedHeader: "X-MCP-Verified-SPIFFE-ID",
+            StripHeaders: []string{
+                "X-MCP-Human-ID",
+                "X-MCP-Agent-ID",
+                "X-MCP-Team-ID",
+                "X-MCP-Agent-Session",
+            },
+        }
     }
 
     // New creates the middleware.
     func New(_ context.Context, next http.Handler, cfg *Config, _ string) (http.Handler, error) {
-    	if next == nil {
-    		return nil, errors.New("next handler is required")
-    	}
-    	if cfg == nil {
-    		cfg = CreateConfig()
-    	}
-    	verified := strings.TrimSpace(cfg.VerifiedHeader)
-    	if verified == "" {
-    		verified = "X-MCP-Verified-SPIFFE-ID"
-    	}
-    	strip := append([]string{}, cfg.StripHeaders...)
-    	strip = append(strip, verified)
-    	return &Middleware{
-    		next:         next,
-    		verified:     verified,
-    		trustDomain:  strings.TrimSpace(cfg.TrustDomain),
-    		stripHeaders: strip,
-    	}, nil
+        if next == nil {
+            return nil, errors.New("next handler is required")
+        }
+        if cfg == nil {
+            cfg = CreateConfig()
+        }
+        verified := strings.TrimSpace(cfg.VerifiedHeader)
+        if verified == "" {
+            verified = "X-MCP-Verified-SPIFFE-ID"
+        }
+        strip := append([]string{}, cfg.StripHeaders...)
+        strip = append(strip, verified)
+        return &Middleware{
+            next:         next,
+            verified:     verified,
+            trustDomain:  strings.TrimSpace(cfg.TrustDomain),
+            stripHeaders: strip,
+            rejectInvalidCertificate: cfg.RejectInvalidCertificate,
+        }, nil
     }
 
     // Middleware implements http.Handler.
     type Middleware struct {
-    	next         http.Handler
-    	verified     string
-    	trustDomain  string
-    	stripHeaders []string
+        next         http.Handler
+        verified     string
+        trustDomain  string
+        stripHeaders []string
+        rejectInvalidCertificate bool
     }
 
     func (m *Middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
-    	// Strip client-supplied identity headers BEFORE injecting.
-    	for _, h := range m.stripHeaders {
-    		req.Header.Del(h)
-    	}
-    	if id := verifiedSPIFFEID(req, m.trustDomain); id != "" {
-    		req.Header.Set(m.verified, id)
-    	}
-    	m.next.ServeHTTP(rw, req)
+        // Always remove the internal assertion. Strip governance headers only
+        // when a verified adapter certificate supplies their session identity.
+        req.Header.Del(m.verified)
+        if id := verifiedSPIFFEID(req, m.trustDomain); id != "" {
+            for _, h := range m.stripHeaders {
+                req.Header.Del(h)
+            }
+            req.Header.Set(m.verified, id)
+        } else if m.rejectInvalidCertificate && req.TLS != nil && len(req.TLS.PeerCertificates) > 0 {
+            http.Error(rw, "client certificate has no trusted SPIFFE identity", http.StatusUnauthorized)
+            return
+        }
+        m.next.ServeHTTP(rw, req)
     }
 
     func verifiedSPIFFEID(req *http.Request, trustDomain string) string {
-    	if req == nil || req.TLS == nil || len(req.TLS.VerifiedChains) == 0 || len(req.TLS.PeerCertificates) == 0 {
-    		return ""
-    	}
-    	for _, uri := range req.TLS.PeerCertificates[0].URIs {
-    		if uri == nil || !strings.EqualFold(uri.Scheme, "spiffe") {
-    			continue
-    		}
-    		if trustDomain != "" && !strings.EqualFold(uri.Host, trustDomain) {
-    			continue
-    		}
-    		return uri.String()
-    	}
-    	return ""
+        if req == nil || req.TLS == nil || len(req.TLS.VerifiedChains) == 0 || len(req.TLS.PeerCertificates) == 0 {
+            return ""
+        }
+        for _, uri := range req.TLS.PeerCertificates[0].URIs {
+            if uri == nil || !strings.EqualFold(uri.Scheme, "spiffe") {
+                continue
+            }
+            if trustDomain != "" && !strings.EqualFold(uri.Host, trustDomain) {
+                continue
+            }
+            return uri.String()
+        }
+        return ""
     }

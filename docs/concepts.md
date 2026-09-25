@@ -168,8 +168,8 @@ reaches your server.
 On each tool call the gateway:
 
 1. Reads the `X-MCP-Human-ID`, `X-MCP-Agent-ID`, `X-MCP-Team-ID`, and
-   `X-MCP-Agent-Session` headers (in `auth.mode: mtls` it instead uses the
-   ingress-verified SPIFFE identity, and in `oauth` mode the validated token)
+   `X-MCP-Agent-Session` headers (in `oauth` mode it uses the validated token;
+   an optional verified adapter certificate additionally supplies session identity)
 2. Looks up the active `MCPAgentSession` and `MCPAccessGrant` for that agent+server pair
 3. Checks trust level, side-effect class, and per-tool allow/deny rules
 4. Either forwards the call to your server or returns a denial with a reason code

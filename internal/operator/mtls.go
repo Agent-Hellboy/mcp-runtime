@@ -19,12 +19,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
+	"mcp-runtime/pkg/oauthresource"
 )
 
 const (
-	// traefikNamespace is where the ingress controller runs; the gateway only
-	// honors the injected verified-identity header on connections from it.
-	traefikNamespace = "traefik"
+	defaultIngressControllerNamespace      = "traefik"
+	defaultIngressControllerServiceAccount = "traefik"
 	// operatorFieldManager is the Server-Side Apply field owner for operator-
 	// managed cert-manager and Traefik resources.
 	operatorFieldManager = "mcp-runtime-operator"
@@ -61,8 +61,21 @@ const spiffeIdentityPluginName = "spiffe-identity"
 // the gateway reads. It must match the gateway's defaultVerifiedSPIFFEHeader.
 const verifiedSPIFFEHeader = "X-MCP-Verified-SPIFFE-ID"
 
-func serverUsesMTLS(mcpServer *mcpv1alpha1.MCPServer) bool {
-	return mcpServer != nil && mcpServer.Spec.Auth != nil && mcpServer.Spec.Auth.Mode == mcpv1alpha1.AuthModeMTLS
+// usesAdapterCertificates enables optional adapter client-certificate
+// validation on an OAuth server's route. It moves the route from a plain
+// Ingress to a Traefik IngressRoute and puts the gateway behind an mTLS hop,
+// so it must be switched on explicitly (MCP_ADAPTER_CERTIFICATES) rather than
+// implied by workload PKI being present, and it only applies to servers that
+// route through Traefik and have a gateway to validate the hop.
+func (r *MCPServerReconciler) usesAdapterCertificates(mcpServer *mcpv1alpha1.MCPServer) bool {
+	if !r.AdapterCertificatesEnabled || !serverUsesOAuth(mcpServer) || !gatewayEnabled(mcpServer) {
+		return false
+	}
+	ingressClass := strings.TrimSpace(mcpServer.Spec.IngressClass)
+	if ingressClass != "" && ingressClass != DefaultIngressClass {
+		return false
+	}
+	return strings.TrimSpace(r.AdapterTrustDomain) != "" && strings.TrimSpace(r.MTLSClusterIssuer) != ""
 }
 
 func gatewayTLSSecretName(mcpServer *mcpv1alpha1.MCPServer) string {
@@ -80,15 +93,33 @@ func mtlsTrustBundleSecretName(mcpServer *mcpv1alpha1.MCPServer) string {
 // traefikProxySPIFFEID is the identity the ingress presents to the gateway over
 // the re-encrypted hop. The gateway pins this via TRUSTED_PROXY_SPIFFE_ID so a
 // non-ingress holder of an identity-CA cert cannot impersonate the ingress.
-func traefikProxySPIFFEID(mcpServer *mcpv1alpha1.MCPServer) string {
-	trustDomain := ""
-	if mcpServer.Spec.Auth != nil {
-		trustDomain = strings.TrimSpace(mcpServer.Spec.Auth.TrustDomain)
-	}
+func (r *MCPServerReconciler) traefikProxySPIFFEID(mcpServer *mcpv1alpha1.MCPServer) string {
+	trustDomain := strings.TrimSpace(r.AdapterTrustDomain)
 	if trustDomain == "" {
 		return ""
 	}
-	return fmt.Sprintf("spiffe://%s/ns/%s/sa/traefik", trustDomain, traefikNamespace)
+	return fmt.Sprintf("spiffe://%s/ns/%s/sa/%s", trustDomain, r.ingressControllerNamespace(), r.ingressControllerServiceAccount())
+}
+
+func (r *MCPServerReconciler) ingressControllerNamespace() string {
+	if namespace := strings.TrimSpace(r.IngressControllerNamespace); namespace != "" {
+		return namespace
+	}
+	return defaultIngressControllerNamespace
+}
+
+func (r *MCPServerReconciler) ingressControllerServiceAccount() string {
+	if account := strings.TrimSpace(r.IngressControllerServiceAccount); account != "" {
+		return account
+	}
+	return defaultIngressControllerServiceAccount
+}
+
+func (r *MCPServerReconciler) ingressControllerPodLabels() map[string]string {
+	if len(r.IngressControllerPodLabels) > 0 {
+		return r.IngressControllerPodLabels
+	}
+	return map[string]string{"app": "traefik"}
 }
 
 func (r *MCPServerReconciler) reconcileGatewayCertificate(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer) error {
@@ -97,15 +128,18 @@ func (r *MCPServerReconciler) reconcileGatewayCertificate(ctx context.Context, m
 	certificate.SetName(gatewayTLSSecretName(mcpServer))
 	certificate.SetNamespace(mcpServer.Namespace)
 
-	if !serverUsesMTLS(mcpServer) {
+	if !r.usesAdapterCertificates(mcpServer) {
 		if err := r.Delete(ctx, certificate); err != nil && !apierrors.IsNotFound(err) && !meta.IsNoMatchError(err) {
+			return err
+		}
+		if err := r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: gatewayTLSSecretName(mcpServer), Namespace: mcpServer.Namespace}}); err != nil && !apierrors.IsNotFound(err) {
 			return err
 		}
 		return nil
 	}
 	issuer := strings.TrimSpace(r.MTLSClusterIssuer)
 	if issuer == "" {
-		return fmt.Errorf("auth.mode mtls requires MCP_MTLS_CLUSTER_ISSUER on the operator")
+		return fmt.Errorf("adapter certificate validation requires MCP_MTLS_CLUSTER_ISSUER on the operator")
 	}
 
 	dnsNames := []any{
@@ -174,19 +208,22 @@ func (r *MCPServerReconciler) reconcileTraefikClientCertificate(ctx context.Cont
 	cert.SetGroupVersionKind(certificateGVK)
 	cert.SetName(traefikClientCertSecretName(mcpServer))
 	cert.SetNamespace(mcpServer.Namespace)
-	if !serverUsesMTLS(mcpServer) {
+	if !r.usesAdapterCertificates(mcpServer) {
 		if err := r.Delete(ctx, cert); err != nil && !apierrors.IsNotFound(err) && !meta.IsNoMatchError(err) {
+			return err
+		}
+		if err := r.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: traefikClientCertSecretName(mcpServer), Namespace: mcpServer.Namespace}}); err != nil && !apierrors.IsNotFound(err) {
 			return err
 		}
 		return nil
 	}
 	issuer := strings.TrimSpace(r.MTLSClusterIssuer)
 	if issuer == "" {
-		return fmt.Errorf("auth.mode mtls requires MCP_MTLS_CLUSTER_ISSUER on the operator")
+		return fmt.Errorf("adapter certificate validation requires MCP_MTLS_CLUSTER_ISSUER on the operator")
 	}
-	spiffeID := traefikProxySPIFFEID(mcpServer)
+	spiffeID := r.traefikProxySPIFFEID(mcpServer)
 	if spiffeID == "" {
-		return fmt.Errorf("auth.mode mtls requires auth.trustDomain to derive the ingress identity")
+		return fmt.Errorf("adapter certificate validation requires MCP_TRUST_DOMAIN on the operator")
 	}
 	cert.Object["spec"] = map[string]any{
 		"secretName":  traefikClientCertSecretName(mcpServer),
@@ -225,7 +262,7 @@ func (r *MCPServerReconciler) reconcileMTLSTrustBundle(ctx context.Context, mcpS
 			Namespace: mcpServer.Namespace,
 		},
 	}
-	if !serverUsesMTLS(mcpServer) {
+	if !r.usesAdapterCertificates(mcpServer) {
 		if err := r.Delete(ctx, secret); err != nil && !apierrors.IsNotFound(err) {
 			return err
 		}
@@ -258,7 +295,10 @@ func (r *MCPServerReconciler) reconcileMTLSTrustBundle(ctx context.Context, mcpS
 		secret.Labels["mcpruntime.org/server"] = mcpServer.Name
 		return ctrl.SetControllerReference(mcpServer, secret, r.Scheme)
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	return r.reconcilePlatformClientAuthCA(ctx, ca)
 }
 
 func mtlsNetworkPolicyName(mcpServer *mcpv1alpha1.MCPServer) string {
@@ -278,7 +318,7 @@ func (r *MCPServerReconciler) reconcileMTLSNetworkPolicy(ctx context.Context, mc
 			Namespace: mcpServer.Namespace,
 		},
 	}
-	if !serverUsesMTLS(mcpServer) {
+	if !r.usesAdapterCertificates(mcpServer) {
 		if err := r.Delete(ctx, policy); err != nil && !apierrors.IsNotFound(err) {
 			return err
 		}
@@ -302,10 +342,10 @@ func (r *MCPServerReconciler) reconcileMTLSNetworkPolicy(ctx context.Context, mc
 					// Only the ingress controller may reach the gateway port.
 					From: []networkingv1.NetworkPolicyPeer{{
 						NamespaceSelector: &metav1.LabelSelector{
-							MatchLabels: map[string]string{"kubernetes.io/metadata.name": traefikNamespace},
+							MatchLabels: map[string]string{"kubernetes.io/metadata.name": r.ingressControllerNamespace()},
 						},
 						PodSelector: &metav1.LabelSelector{
-							MatchLabels: map[string]string{"app": "traefik"},
+							MatchLabels: r.ingressControllerPodLabels(),
 						},
 					}},
 					Ports: []networkingv1.NetworkPolicyPort{{Protocol: &tcp, Port: &gatewayTarget}},
@@ -360,35 +400,63 @@ func (r *MCPServerReconciler) deleteMTLSIngress(ctx context.Context, mcpServer *
 	return nil
 }
 
-// reconcileMTLSIngress generates the Traefik resources for the terminate-and-
-// re-encrypt model: a TLSOption that requires+verifies the caller's client
-// certificate, the spiffe-identity Middleware that injects the verified header,
-// a ServersTransport that re-encrypts to the gateway with the Traefik client
-// certificate, and a path-based IngressRoute tying them together. The legacy
-// passthrough IngressRouteTCP is removed.
+// cleanupRemovedMTLSResources removes resources owned by the deleted
+// per-server auth.mode=mtls implementation before validation reports the
+// migration error. This prevents an old public route from remaining active.
+func (r *MCPServerReconciler) cleanupRemovedMTLSResources(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer) error {
+	if err := r.deleteMTLSIngress(ctx, mcpServer); err != nil {
+		return err
+	}
+	// The mtls NetworkPolicy is kept: the old gateway pods keep running until
+	// the server is migrated, and the policy is what keeps other pods from
+	// reaching them. The normal reconcile removes it once the server is no
+	// longer on the adapter-certificate path.
+	for _, obj := range []client.Object{
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: mtlsTrustBundleSecretName(mcpServer), Namespace: mcpServer.Namespace}},
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: gatewayTLSSecretName(mcpServer), Namespace: mcpServer.Namespace}},
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: traefikClientCertSecretName(mcpServer), Namespace: mcpServer.Namespace}},
+	} {
+		if err := r.Delete(ctx, obj); err != nil && !apierrors.IsNotFound(err) {
+			return err
+		}
+	}
+	for _, name := range []string{gatewayTLSSecretName(mcpServer), traefikClientCertSecretName(mcpServer)} {
+		cert := &unstructured.Unstructured{}
+		cert.SetGroupVersionKind(certificateGVK)
+		cert.SetName(name)
+		cert.SetNamespace(mcpServer.Namespace)
+		if err := r.Delete(ctx, cert); err != nil && !apierrors.IsNotFound(err) && !meta.IsNoMatchError(err) {
+			return err
+		}
+	}
+	return nil
+}
+
+// reconcileMTLSIngress generates the Traefik resources for OAuth routes with
+// optional adapter client certificates. Traefik validates a certificate when
+// presented. The middleware preserves governance headers on ordinary OAuth
+// requests and replaces them with the verified session identity when an
+// adapter certificate is present.
 func (r *MCPServerReconciler) reconcileMTLSIngress(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer) error {
 	// Drop the legacy passthrough route from the previous (gateway-terminates) model.
 	if err := r.deleteUnstructured(ctx, ingressRouteTCPGVK, mcpServer.Name, mcpServer.Namespace); err != nil {
 		return err
 	}
 
-	trustDomain := ""
-	if mcpServer.Spec.Auth != nil {
-		trustDomain = strings.TrimSpace(mcpServer.Spec.Auth.TrustDomain)
-	}
-
+	clientAuthType := "VerifyClientCertIfGiven"
 	tlsOption := r.traefikResource(mcpServer, tlsOptionGVK, mtlsTLSOptionName(mcpServer), map[string]any{
 		"minVersion": "VersionTLS12",
 		"clientAuth": map[string]any{
 			"secretNames":    []any{mtlsTrustBundleSecretName(mcpServer)},
-			"clientAuthType": "RequireAndVerifyClientCert",
+			"clientAuthType": clientAuthType,
 		},
 	})
 	middleware := r.traefikResource(mcpServer, middlewareGVK, mtlsMiddlewareName(mcpServer), map[string]any{
 		"plugin": map[string]any{
 			spiffeIdentityPluginName: map[string]any{
-				"verifiedHeader": verifiedSPIFFEHeader,
-				"trustDomain":    trustDomain,
+				"verifiedHeader":           verifiedSPIFFEHeader,
+				"trustDomain":              strings.TrimSpace(r.AdapterTrustDomain),
+				"rejectInvalidCertificate": true,
 			},
 		},
 	})
@@ -408,43 +476,137 @@ func (r *MCPServerReconciler) reconcileMTLSIngress(ctx context.Context, mcpServe
 	// per-IngressRoute secretName — Traefik resolves secretName only in the
 	// IngressRoute's own (tenant) namespace, where the shared platform host
 	// certificate does not exist.
-	ingressRoute := r.traefikResource(mcpServer, ingressRouteGVK, mcpServer.Name, map[string]any{
-		"entryPoints": []any{"websecure"},
-		"routes": []any{map[string]any{
-			"match":       match,
+	service := map[string]any{
+		"name":             mcpServer.Name,
+		"port":             int64(mcpServer.Spec.ServicePort),
+		"scheme":           "https",
+		"serversTransport": mtlsServersTransportName(mcpServer),
+	}
+	route := map[string]any{
+		"match":       match,
+		"kind":        "Rule",
+		"middlewares": []any{map[string]any{"name": mtlsMiddlewareName(mcpServer)}},
+		"services":    []any{service},
+	}
+	routes := []any{route}
+	if serverUsesOAuth(mcpServer) {
+		metadataMatch := fmt.Sprintf("Path(`%s`)", oauthresource.ProtectedResourceMetadataPath(effectiveIngressPath(mcpServer)))
+		if host := effectiveIngressHost(mcpServer); host != "" {
+			metadataMatch = fmt.Sprintf("Host(`%s`) && %s", host, metadataMatch)
+		}
+		routes = append(routes, map[string]any{
+			"match":       metadataMatch,
 			"kind":        "Rule",
 			"middlewares": []any{map[string]any{"name": mtlsMiddlewareName(mcpServer)}},
-			// The IngressRoute references the Kubernetes Service port (ServicePort,
-			// typically 80), not the gateway container port. Traefik resolves
-			// endpoints via the Service and connects to each pod at the targetPort
-			// (Gateway.Port, e.g. 8091) automatically. Using the container port
-			// directly causes "service port not found" because that port number does
-			// not appear in the Service's spec.ports.
-			"services": []any{map[string]any{
-				"name": mcpServer.Name,
-				"port": int64(mcpServer.Spec.ServicePort),
-				// scheme: https tells Traefik to connect to the backend over TLS.
-				// Without it, Traefik defaults to HTTP (port 80 is not 443), and
-				// the ServersTransport TLS config is ignored, causing the gateway to
-				// return 400 "Client sent an HTTP request to an HTTPS server".
-				"scheme":           "https",
-				"serversTransport": mtlsServersTransportName(mcpServer),
-			}},
-		}},
-		"tls": map[string]any{
-			"options": map[string]any{"name": mtlsTLSOptionName(mcpServer)},
-		},
+			"services":    []any{service},
+		})
+	}
+	// Path-based servers share one host, and Traefik falls back to its default
+	// TLS options when routers on the same host name different ones, so
+	// per-server options would never ask for a client certificate. With a
+	// platform TLS namespace every route uses the single platform "default"
+	// TLSOption (see reconcileDefaultClientAuthTLSOption); the per-server
+	// option remains only as a fallback when no platform namespace is set.
+	tls := map[string]any{}
+	objects := []*unstructured.Unstructured{middleware, serversTransport}
+	if r.platformClientAuthNamespace() == "" {
+		tls["options"] = map[string]any{"name": mtlsTLSOptionName(mcpServer)}
+		objects = append(objects, tlsOption)
+	} else if err := r.deleteUnstructured(ctx, tlsOptionGVK, mtlsTLSOptionName(mcpServer), mcpServer.Namespace); err != nil {
+		return err
+	}
+	ingressRoute := r.traefikResource(mcpServer, ingressRouteGVK, mcpServer.Name, map[string]any{
+		"entryPoints": r.adapterCertificateEntryPoints(),
+		"routes":      routes,
+		"tls":         tls,
 	})
+	objects = append(objects, ingressRoute)
 
 	if err := r.reconcileDefaultTLSStore(ctx); err != nil {
 		return err
 	}
-	for _, obj := range []*unstructured.Unstructured{tlsOption, middleware, serversTransport, ingressRoute} {
+	if err := r.reconcileDefaultClientAuthTLSOption(ctx); err != nil {
+		return err
+	}
+	for _, obj := range objects {
 		if err := r.applyUnstructured(ctx, obj); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// platformClientAuthCASecret holds the workload CA in the platform TLS
+// namespace. Every gateway certificate is issued by MTLSClusterIssuer, so any
+// server's CA is the platform's.
+// #nosec G101 -- This is a Kubernetes Secret resource name, not a credential.
+const platformClientAuthCASecret = "mcp-adapter-client-ca"
+
+func (r *MCPServerReconciler) platformClientAuthNamespace() string {
+	return strings.TrimSpace(r.DefaultIngressTLSSecretNamespace)
+}
+
+// reconcilePlatformClientAuthCA copies the workload CA into the platform TLS
+// namespace for the default TLSOption. It carries no owner reference: it is
+// shared by every adapter-certificate server.
+func (r *MCPServerReconciler) reconcilePlatformClientAuthCA(ctx context.Context, ca []byte) error {
+	namespace := r.platformClientAuthNamespace()
+	if namespace == "" || len(ca) == 0 {
+		return nil
+	}
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: platformClientAuthCASecret, Namespace: namespace}}
+	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, secret, func() error {
+		secret.Type = corev1.SecretTypeOpaque
+		secret.Data = map[string][]byte{"tls.ca": ca, "ca.crt": ca}
+		if secret.Labels == nil {
+			secret.Labels = map[string]string{}
+		}
+		secret.Labels["app.kubernetes.io/managed-by"] = "mcp-runtime"
+		return nil
+	})
+	return err
+}
+
+// reconcileDefaultClientAuthTLSOption makes Traefik's global default TLS
+// options request (never require) a client certificate verified against the
+// workload CA, so adapter certificates are seen on every shared host while
+// clients without one are unaffected. A "default" TLSOption the operator did
+// not create is left alone and reported, since it is the cluster's own TLS
+// policy.
+func (r *MCPServerReconciler) reconcileDefaultClientAuthTLSOption(ctx context.Context) error {
+	namespace := r.platformClientAuthNamespace()
+	if namespace == "" {
+		return nil
+	}
+	var ca corev1.Secret
+	if err := r.Get(ctx, types.NamespacedName{Name: platformClientAuthCASecret, Namespace: namespace}, &ca); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil // the CA is copied once a gateway certificate is issued
+		}
+		return err
+	}
+	existing := &unstructured.Unstructured{}
+	existing.SetGroupVersionKind(tlsOptionGVK)
+	err := r.Get(ctx, types.NamespacedName{Name: "default", Namespace: namespace}, existing)
+	switch {
+	case err == nil && existing.GetLabels()["app.kubernetes.io/managed-by"] != "mcp-runtime":
+		return fmt.Errorf("TLSOption %s/default exists and is not managed by mcp-runtime; add clientAuth (VerifyClientCertIfGiven, secret %s) to it or remove it to enable adapter certificates", namespace, platformClientAuthCASecret)
+	case err != nil && !apierrors.IsNotFound(err) && !meta.IsNoMatchError(err):
+		return err
+	}
+	option := &unstructured.Unstructured{}
+	option.SetGroupVersionKind(tlsOptionGVK)
+	option.SetName("default")
+	option.SetNamespace(namespace)
+	option.SetLabels(map[string]string{"app.kubernetes.io/managed-by": "mcp-runtime"})
+	option.Object["spec"] = map[string]any{
+		"minVersion": "VersionTLS12",
+		"clientAuth": map[string]any{
+			"secretNames":    []any{platformClientAuthCASecret},
+			"clientAuthType": "VerifyClientCertIfGiven",
+		},
+	}
+	return r.applyUnstructured(ctx, option)
 }
 
 // reconcileDefaultTLSStore provisions the cluster-wide caller-facing server
@@ -488,4 +650,20 @@ func (r *MCPServerReconciler) traefikResource(mcpServer *mcpv1alpha1.MCPServer, 
 	})
 	obj.SetOwnerReferences([]metav1.OwnerReference{*metav1.NewControllerRef(mcpServer, mcpv1alpha1.GroupVersion.WithKind("MCPServer"))})
 	return obj
+}
+
+// adapterCertificateEntryPoints follows the operator's configured ingress
+// entrypoints, so the IngressRoute is served where the plain Ingress was.
+// Client certificates need TLS, so the fallback is websecure.
+func (r *MCPServerReconciler) adapterCertificateEntryPoints() []any {
+	var entryPoints []any
+	for _, entryPoint := range strings.Split(r.DefaultIngressEntryPoints, ",") {
+		if trimmed := strings.TrimSpace(entryPoint); trimmed != "" {
+			entryPoints = append(entryPoints, trimmed)
+		}
+	}
+	if len(entryPoints) == 0 {
+		return []any{"websecure"}
+	}
+	return entryPoints
 }

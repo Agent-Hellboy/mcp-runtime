@@ -946,6 +946,17 @@ func operatorEnvOverrides(gatewayProxyImage, existingGatewayOTLPEndpoint string)
 	if issuer := strings.TrimSpace(os.Getenv("MCP_MTLS_CLUSTER_ISSUER")); issuer != "" {
 		envVars = append(envVars, operatorEnvVar{Name: "MCP_MTLS_CLUSTER_ISSUER", Value: issuer})
 	}
+	// Adapter certificates on OAuth routes are opt-in: enabling them moves
+	// every OAuth server to a Traefik IngressRoute behind an mTLS gateway hop.
+	if enabled := strings.TrimSpace(os.Getenv("MCP_ADAPTER_CERTIFICATES")); enabled != "" {
+		envVars = append(envVars, operatorEnvVar{Name: "MCP_ADAPTER_CERTIFICATES", Value: enabled})
+	}
+	if tlsNamespace := strings.TrimSpace(os.Getenv("MCP_DEFAULT_INGRESS_TLS_SECRET_NAMESPACE")); tlsNamespace != "" {
+		envVars = append(envVars, operatorEnvVar{Name: "MCP_DEFAULT_INGRESS_TLS_SECRET_NAMESPACE", Value: tlsNamespace})
+	}
+	if trustDomain := strings.TrimSpace(os.Getenv("MCP_TRUST_DOMAIN")); trustDomain != "" {
+		envVars = append(envVars, operatorEnvVar{Name: "MCP_TRUST_DOMAIN", Value: trustDomain})
+	}
 	registryEndpoint := strings.TrimSpace(resolveInternalPlatformRegistryURLClientGo(nil))
 	if registryEndpoint != "" {
 		envVars = append(envVars, operatorEnvVar{Name: "MCP_REGISTRY_ENDPOINT", Value: registryEndpoint})
@@ -967,6 +978,7 @@ func operatorEnvOverrides(gatewayProxyImage, existingGatewayOTLPEndpoint string)
 	if clusterName != "" {
 		envVars = append(envVars, operatorEnvVar{Name: "MCP_CLUSTER_NAME", Value: clusterName})
 	}
+	envVars = append(envVars, ingressControllerOperatorEnv(detectIngressControllerIdentity())...)
 	return envVars
 }
 

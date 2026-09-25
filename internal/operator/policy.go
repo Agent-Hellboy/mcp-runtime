@@ -111,7 +111,7 @@ func (r *MCPServerReconciler) renderGatewayPolicy(ctx context.Context, mcpServer
 			TokenHeader:     mcpServer.Spec.Auth.TokenHeader,
 			IssuerURL:       mcpServer.Spec.Auth.IssuerURL,
 			Audience:        mcpServer.Spec.Auth.Audience,
-			TrustDomain:     mcpServer.Spec.Auth.TrustDomain,
+			TrustDomain:     strings.TrimSpace(r.AdapterTrustDomain),
 		}
 	}
 	if mcpServer.Spec.Policy != nil {

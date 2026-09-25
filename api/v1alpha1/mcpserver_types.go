@@ -6,14 +6,13 @@ import (
 	"mcp-runtime/pkg/mcpdefaults"
 )
 
-// +kubebuilder:validation:Enum=none;header;oauth;mtls
+// +kubebuilder:validation:Enum=none;header;oauth
 type AuthMode string
 
 const (
 	AuthModeNone   AuthMode = "none"
 	AuthModeHeader AuthMode = "header"
 	AuthModeOAuth  AuthMode = "oauth"
-	AuthModeMTLS   AuthMode = "mtls"
 )
 
 // +kubebuilder:validation:Enum=allow-list;observe
@@ -223,9 +222,6 @@ type AuthConfig struct {
 	// this is unset, it defaults to the public MCP URL built from the ingress
 	// host (or MCP_DEFAULT_INGRESS_HOST on the operator), TLS setting, and path.
 	Audience string `json:"audience,omitempty"`
-	// TrustDomain is the SPIFFE trust domain accepted from verified client
-	// certificate URI SANs when mode is mtls.
-	TrustDomain string `json:"trustDomain,omitempty"`
 }
 
 // PolicyConfig configures authorization behavior at the gateway.

@@ -97,11 +97,7 @@ func (s *InventoryService) liveInventory() *liveInventoryCache {
 	s.liveInventoryOnce.Do(func() {
 		prober := s.liveInventoryProbe
 		if prober == nil {
-			prober = &mcpLiveInventoryProber{
-				client:      &http.Client{Timeout: liveInventoryProbeTimeout},
-				access:      s.access,
-				mtlsClients: make(map[string]*cachedMTLSClient),
-			}
+			prober = &mcpLiveInventoryProber{client: &http.Client{Timeout: liveInventoryProbeTimeout}, access: s.access}
 		}
 		s.liveInventoryCache = newLiveInventoryCache(liveInventoryTTL, prober)
 	})
@@ -250,9 +246,6 @@ type mcpLiveInventoryProber struct {
 	baseURLForServer func(controlplane.ServerInfo) string
 	now              func() time.Time
 	access           *AccessService
-
-	mu          sync.Mutex
-	mtlsClients map[string]*cachedMTLSClient
 }
 
 // liveInventoryDefaultHumanIDHeader and liveInventoryDefaultAgentIDHeader
@@ -272,13 +265,10 @@ func firstNonEmptyHeader(values ...string) string {
 }
 
 func (p *mcpLiveInventoryProber) probe(ctx context.Context, server controlplane.ServerInfo) (*liveInventory, error) {
-	humanIDHeader, agentIDHeader := "", ""
-	if !serverUsesMTLSAuth(server) {
-		// Use the server's configured header names; an unset spec (the
-		// defaulting webhook is optional) means the platform defaults.
-		humanIDHeader = firstNonEmptyHeader(server.HumanIDHeader, liveInventoryDefaultHumanIDHeader)
-		agentIDHeader = firstNonEmptyHeader(server.AgentIDHeader, liveInventoryDefaultAgentIDHeader)
-	}
+	// Use the server's configured header names; an unset spec (the defaulting
+	// webhook is optional) means the platform defaults.
+	humanIDHeader := firstNonEmptyHeader(server.HumanIDHeader, liveInventoryDefaultHumanIDHeader)
+	agentIDHeader := firstNonEmptyHeader(server.AgentIDHeader, liveInventoryDefaultAgentIDHeader)
 	endpoint, err := p.endpoint(server)
 	if err != nil {
 		return nil, err
@@ -287,17 +277,6 @@ func (p *mcpLiveInventoryProber) probe(ctx context.Context, server controlplane.
 	if client == nil {
 		client = &http.Client{Timeout: liveInventoryProbeTimeout}
 	}
-	if serverUsesMTLSAuth(server) {
-		endpoint, err = mtlsLiveInventoryEndpoint(server)
-		if err != nil {
-			return nil, err
-		}
-		client, err = p.mtlsProbeClient(ctx, server)
-		if err != nil {
-			return nil, err
-		}
-	}
-
 	session := ""
 	protocol := liveInventoryProtocolVersion
 	initResult, initSession, err := p.call(ctx, client, endpoint, protocol, session, humanIDHeader, agentIDHeader, 1, "initialize", map[string]any{

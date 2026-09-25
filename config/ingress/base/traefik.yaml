@@ -9,7 +9,7 @@ metadata:
 ---
 # Traefik CRDs (IngressRoute, IngressRouteTCP, Middleware, TLSOption,
 # ServersTransport, ...) are vendored from the official v2.10 bundle in
-# traefik-crds.yaml so the mtls terminate+re-encrypt path has the kinds the
+# traefik-crds.yaml so optional adapter-certificate routes have the kinds the
 # operator generates.
 ---
 apiVersion: v1
@@ -77,7 +77,7 @@ rules:
   # Traefik v2.10 starts informers for every CRD kind in BOTH the traefik.io and
   # legacy traefik.containo.us groups when those CRDs are installed. A forbidden
   # list/watch on any one of them stalls the CRD provider so no IngressRoute is
-  # loaded and mtls hosts 404. Grant the full kind set in both groups.
+  # loaded and optional certificate routes 404. Grant the full kind set in both groups.
   - apiGroups: ["traefik.io", "traefik.containo.us"]
     resources:
       [
@@ -307,7 +307,7 @@ spec:
           - --ping.entryPoint=traefik
           - --providers.file.filename=/etc/traefik/dynamic/dynamic.yml
           - --providers.file.watch=true
-          # Local middleware that injects the verified SPIFFE identity for mtls servers.
+          # Local middleware that injects verified adapter SPIFFE identity.
           - --experimental.localPlugins.spiffe-identity.moduleName=github.com/Agent-Hellboy/mcp-runtime/traefik-plugins/spiffe-identity
         ports:
           - name: web

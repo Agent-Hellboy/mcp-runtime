@@ -923,6 +923,7 @@ func renderAnalyticsConfigManifestWithReaders(content, platformMode string, imag
 		"PLATFORM_TRAEFIK_NAMESPACE",
 		"PLATFORM_TEAM_TRAEFIK_WATCH",
 		"MCP_MTLS_CLUSTER_ISSUER",
+		"MCP_TRUST_DOMAIN",
 	} {
 		if envValue := setupAnalyticsConfigEnvValue(key); envValue != "" {
 			manifest.Data[key] = envValue

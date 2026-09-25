@@ -1115,7 +1115,7 @@ func TestCheckIngressReady(t *testing.T) {
 		server := mtlsServer()
 		route := crFixture(ingressRouteGVK, server.Name, server.Namespace)
 		client := fake.NewClientBuilder().WithScheme(mtlsScheme).WithObjects(server, route).Build()
-		r := MCPServerReconciler{Client: client, Scheme: mtlsScheme}
+		r := MCPServerReconciler{Client: client, Scheme: mtlsScheme, AdapterCertificatesEnabled: true, AdapterTrustDomain: "example.org", MTLSClusterIssuer: "mcp-runtime-ca"}
 		ready, err := r.checkIngressReady(context.Background(), server)
 		if err != nil {
 			t.Fatalf("failed to check ingress readiness: %v", err)
@@ -1130,7 +1130,7 @@ func TestCheckIngressReady(t *testing.T) {
 		// re-encrypt model no longer uses it, so the server must not read ready.
 		legacy := crFixture(ingressRouteTCPGVK, server.Name, server.Namespace)
 		client := fake.NewClientBuilder().WithScheme(mtlsScheme).WithObjects(server, legacy).Build()
-		r := MCPServerReconciler{Client: client, Scheme: mtlsScheme}
+		r := MCPServerReconciler{Client: client, Scheme: mtlsScheme, AdapterCertificatesEnabled: true, AdapterTrustDomain: "example.org", MTLSClusterIssuer: "mcp-runtime-ca"}
 		ready, err := r.checkIngressReady(context.Background(), server)
 		if err != nil {
 			t.Fatalf("failed to check ingress readiness: %v", err)

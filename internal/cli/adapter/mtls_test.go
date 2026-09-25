@@ -59,13 +59,14 @@ func fakeMTLSServer(t *testing.T, expiresAt time.Time, certCalls *int32) (*httpt
 			var req platformapi.AdapterSessionRequest
 			_ = json.NewDecoder(r.Body).Decode(&req)
 			_ = json.NewEncoder(w).Encode(platformapi.AdapterSession{
-				Name:       "adapter-fake",
-				Namespace:  "mcp-team-acme",
-				HumanID:    "user-123",
-				AgentID:    req.AgentID,
-				TeamID:     "team-acme",
-				ServerName: req.ServerName,
-				ExpiresAt:  expiresAt,
+				Name:        "adapter-fake",
+				Namespace:   "mcp-team-acme",
+				HumanID:     "user-123",
+				AgentID:     req.AgentID,
+				TeamID:      "team-acme",
+				ServerName:  req.ServerName,
+				TrustDomain: "mcpruntime.org",
+				ExpiresAt:   expiresAt,
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/runtime/adapter/certificates":
 			atomic.AddInt32(certCalls, 1)
@@ -162,12 +163,6 @@ func TestResolveAuthMTLSValidation(t *testing.T) {
 			session: platformSessionFlags{server: "demo"},
 			wantErr: "--agent",
 		},
-		{
-			name:    "trust domain required",
-			idFlags: identityFlags{authMode: "mtls"},
-			session: platformSessionFlags{server: "demo", agent: "ops"},
-			wantErr: "--trust-domain",
-		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -179,6 +174,31 @@ func TestResolveAuthMTLSValidation(t *testing.T) {
 				t.Fatalf("err = %v, want substring %q", err, tc.wantErr)
 			}
 		})
+	}
+}
+
+// The trust domain is a platform setting returned with the adapter session,
+// so the adapter needs no flag and rejects an override that disagrees.
+func TestResolveAuthMTLSUsesPlatformTrustDomain(t *testing.T) {
+	var certCalls int32
+	fakeMTLSServer(t, time.Now().Add(time.Hour), &certCalls)
+	session := platformSessionFlags{server: "demo", agent: "ops-agent"}
+
+	_, _, _, stop, err := resolveAuth(context.Background(), identityFlags{authMode: "mtls"}, &session, agentadapter.Identity{}, nil, nil)
+	if err != nil {
+		t.Fatalf("resolveAuth without --trust-domain: %v", err)
+	}
+	stop()
+	if atomic.LoadInt32(&certCalls) != 1 {
+		t.Fatalf("certCalls = %d, want 1 enrollment using the platform trust domain", atomic.LoadInt32(&certCalls))
+	}
+
+	_, _, _, stop, err = resolveAuth(context.Background(), identityFlags{authMode: "mtls", trustDomain: "other.example"}, &session, agentadapter.Identity{}, nil, nil)
+	if stop != nil {
+		stop()
+	}
+	if err == nil || !strings.Contains(err.Error(), "does not match platform trust domain") {
+		t.Fatalf("err = %v, want a trust domain mismatch error", err)
 	}
 }
 

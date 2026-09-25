@@ -409,6 +409,11 @@ func setupPlatformWithDeps(logger *zap.Logger, plan setupplan.Plan, deps SetupDe
 		if err := os.Setenv("MCP_RUNTIME_TEST_MODE", "1"); err != nil {
 			return core.WrapWithSentinel(core.ErrSetupSetRuntimeTestModeFailed, err, fmt.Sprintf("set MCP_RUNTIME_TEST_MODE: %v", err))
 		}
+		if strings.TrimSpace(os.Getenv("MCP_TRUST_DOMAIN")) == "" {
+			if err := os.Setenv("MCP_TRUST_DOMAIN", "cluster.local"); err != nil {
+				return fmt.Errorf("set test-mode MCP_TRUST_DOMAIN: %w", err)
+			}
+		}
 	} else {
 		if err := os.Unsetenv("MCP_RUNTIME_TEST_MODE"); err != nil {
 			return core.WrapWithSentinel(core.ErrSetupUnsetRuntimeTestModeFailed, err, fmt.Sprintf("unset MCP_RUNTIME_TEST_MODE: %v", err))

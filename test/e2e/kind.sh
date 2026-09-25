@@ -10,8 +10,8 @@ set -euo pipefail
 #
 # Set E2E_SCENARIOS to a comma-separated subset for local debugging.
 # Supported values: all, smoke-auth, governance, trust, oauth, observability,
-# multitenancy, api-platform, ui-auth, adapter-proxy, cli-platform, mtls,
-# platform-update.
+# multitenancy, api-platform, ui-auth, adapter-proxy, adapter-certificates,
+# cli-platform, platform-update.
 # observability requires the full traffic suite: smoke-auth, governance, trust, oauth.
 #
 # Set E2E_DEEP_REQUEST_FLOWS=1 for pre-release runs that should exercise
@@ -106,6 +106,8 @@ PLATFORM_HOST="${PLATFORM_HOST:-localhost}"
 SERVER_NAME="${SERVER_NAME:-policy-mcp-server}"
 SERVER_HOST="${SERVER_HOST:-${PLATFORM_HOST}}"
 OAUTH_SERVER_NAME="${OAUTH_SERVER_NAME:-oauth-mcp-server}"
+ADAPTER_CERT_WRONG_SERVER_NAME="${OAUTH_SERVER_NAME}-wrong-server"
+ADAPTER_CERT_SESSION=""
 OAUTH_SERVER_HOST="${OAUTH_SERVER_HOST:-${PLATFORM_HOST}}"
 PYTHON_EXAMPLE_SERVER_NAME="${PYTHON_EXAMPLE_SERVER_NAME:-data-utility-mcp}"
 PYTHON_EXAMPLE_SERVER_HOST="${PYTHON_EXAMPLE_SERVER_HOST:-${PLATFORM_HOST}}"
@@ -133,6 +135,8 @@ OAUTH_SESSION_ID="${OAUTH_SESSION_ID:-oauth-session-1}"
 OAUTH_ISSUER_NAME="${OAUTH_ISSUER_NAME:-oauth-issuer}"
 OAUTH_ISSUER_URL="${OAUTH_ISSUER_URL:-}"
 TRAEFIK_PORT="${TRAEFIK_PORT:-18080}"
+TRAEFIK_TLS_PORT="${TRAEFIK_TLS_PORT:-18443}"
+OAUTH_AUDIENCE_CONFIGURED="${OAUTH_AUDIENCE:+1}"
 # auth.audience doubles as the RFC 8707 resource identifier: the gateway
 # advertises it in protected resource metadata and validates the token audience
 # against it, so it must be the absolute URL clients connect to.
@@ -305,6 +309,11 @@ scenario_requested() {
   return 1
 }
 
+if scenario_requested "adapter-certificates"; then
+  scenario_requested "oauth" || E2E_SCENARIO_LIST+=("oauth")
+  scenario_requested "adapter-proxy" || E2E_SCENARIO_LIST+=("adapter-proxy")
+fi
+
 scenario_selected() {
   local wanted="$1"
   if scenario_requested "all"; then
@@ -330,8 +339,12 @@ server_proxy_paths_selected() {
 }
 
 oauth_proxy_paths_selected() {
-  scenario_selected "oauth" || scenario_selected "observability"
+  (scenario_selected "oauth" || scenario_selected "observability") && ! scenario_selected "adapter-certificates"
 }
+
+if scenario_selected "adapter-certificates" && [[ -z "${OAUTH_AUDIENCE_CONFIGURED}" ]]; then
+  OAUTH_AUDIENCE="https://${OAUTH_SERVER_HOST}:${TRAEFIK_TLS_PORT}/${OAUTH_SERVER_NAME}/mcp"
+fi
 
 e2e_mcp_server_budget() {
   if [[ "${E2E_MAX_MCP_SERVERS}" == "0" ]]; then
@@ -370,11 +383,11 @@ validate_scenarios() {
   local scenario
   for scenario in "${E2E_SCENARIO_LIST[@]}"; do
     case "${scenario}" in
-      all|smoke-auth|governance|trust|oauth|observability|multitenancy|api-platform|ui-auth|adapter-proxy|cli-platform|mtls|platform-update)
-        ;;
+      all|smoke-auth|governance|trust|oauth|observability|multitenancy|api-platform|ui-auth|adapter-proxy|adapter-certificates|cli-platform|platform-update)
+         ;;
       *)
-        echo "unsupported E2E scenario: ${scenario}" >&2
-        echo "supported values: all, smoke-auth, governance, trust, oauth, observability, multitenancy, api-platform, ui-auth, adapter-proxy, cli-platform, mtls, platform-update" >&2
+         echo "unsupported E2E scenario: ${scenario}" >&2
+         echo "supported values: all, smoke-auth, governance, trust, oauth, observability, multitenancy, api-platform, ui-auth, adapter-proxy, adapter-certificates, cli-platform, platform-update" >&2
         exit 1
         ;;
     esac
@@ -392,7 +405,7 @@ validate_scenarios() {
 
   if deep_request_flows_enabled; then
     local required
-    for required in smoke-auth governance trust oauth observability multitenancy api-platform ui-auth adapter-proxy cli-platform mtls; do
+    for required in smoke-auth governance trust oauth observability multitenancy api-platform ui-auth adapter-proxy cli-platform; do
       if ! scenario_selected "${required}"; then
         echo "E2E_DEEP_REQUEST_FLOWS=1 requires all E2E scenarios" >&2
         echo "set E2E_SCENARIOS=all or include every supported scenario" >&2
@@ -469,6 +482,8 @@ KIND_CONFIG="$(mktemp)"
 KUBECONFIG_FILE="$(mktemp)"
 KUBECONFIG_BACKUP_FILE="$(mktemp)"
 PIDS=()
+TRAEFIK_TLS_PORT_FORWARD_PID=""
+TRAEFIK_TLS_PORT_FORWARD_RESTARTS=0
 PARALLEL_PIDS=()
 PARALLEL_LABELS=()
 PARALLEL_LOGS=()
@@ -498,6 +513,16 @@ cleanup() {
     kill "${pid}" >/dev/null 2>&1 || true
     wait "${pid}" 2>/dev/null || true
   done
+  if scenario_selected "adapter-certificates" && [[ -n "${KUBECONFIG_FILE:-}" && -f "${KUBECONFIG_FILE}" ]]; then
+    KUBECONFIG="${KUBECONFIG_FILE}" kubectl delete mcpagentsession "${ADAPTER_CERT_SESSION}" \
+      -n mcp-servers --ignore-not-found --wait=false >/dev/null 2>&1 || true
+    KUBECONFIG="${KUBECONFIG_FILE}" kubectl delete mcpaccessgrant "${OAUTH_SERVER_NAME}-adapter-cert-grant" \
+      -n mcp-servers --ignore-not-found --wait=false >/dev/null 2>&1 || true
+    KUBECONFIG="${KUBECONFIG_FILE}" kubectl delete mcpserver "${ADAPTER_CERT_WRONG_SERVER_NAME}" \
+      -n mcp-servers --ignore-not-found --wait=false >/dev/null 2>&1 || true
+    KUBECONFIG="${KUBECONFIG_FILE}" kubectl set env deployment/mcp-runtime-operator-controller-manager \
+      -n mcp-runtime MCP_ADAPTER_CERTIFICATES- >/dev/null 2>&1 || true
+  fi
   if [[ "${E2E_KEEP_CLUSTER}" == "1" ]]; then
     echo "[info] leaving cluster ${CLUSTER_NAME}, registry ${LOCAL_REGISTRY_NAME}, and workdir ${WORKDIR} because E2E_KEEP_CLUSTER=1" >&2
     echo "[info] kind config preserved at ${KIND_CONFIG}" >&2
@@ -869,35 +894,17 @@ recover_traefik_tls_port_forward_if_needed() {
   wait_port "${TRAEFIK_TLS_PORT}" 30
 }
 
-# wait_for_mtls_traefik_stable polls Traefik pod logs until the mTLS server's
-# router and transport config have been applied error-free for a stable window.
-# Traefik retries loading missing secrets with exponential backoff, emitting
-# level=error lines for each failed attempt. This function waits until no such
-# errors appear in a 6s window, proving that TLSOption (RequireAndVerifyClientCert
-# + CA) and ServersTransport (TLS to gateway) are both fully loaded.
-#
-# This log-based approach is used instead of probing the websecure port because
-# in Kind clusters kubectl port-forward exits on any TCP error from the upstream
-# pod (broken pipe, connection reset), including the RST Traefik sends after a
-# TLS certificate_required alert. Probing via curl therefore creates an infinite
-# port-forward restart loop and never produces a usable readiness signal.
-wait_for_mtls_traefik_stable() {
-  local server_name="$1"
-  local traefik_ns="${TRAEFIK_NAMESPACE:-traefik}"
-  local deadline=$((SECONDS + 60))
-  echo "[mtls] waiting for Traefik to apply ${server_name} mTLS config without errors" >&2
-  while [[ $SECONDS -lt $deadline ]]; do
-    sleep 3
-    local recent
-    recent="$(kubectl logs -n "${traefik_ns}" deploy/traefik --since=6s 2>/dev/null \
-      | grep "level=error.*${server_name}" || true)"
-    if [[ -z "${recent}" ]]; then
-      echo "[mtls] Traefik mTLS config stable (no ${server_name} errors in last 6s)" >&2
-      return 0
-    fi
-  done
-  echo "[mtls] WARNING: Traefik mTLS config may not be fully stable, proceeding" >&2
-  return 0
+ensure_traefik_tls_port_forward() {
+  if [[ -n "${TRAEFIK_TLS_PORT_FORWARD_PID:-}" ]] && ! port_is_listening "${TRAEFIK_TLS_PORT}"; then
+    recover_traefik_tls_port_forward_if_needed
+    return
+  fi
+  if [[ -z "${TRAEFIK_TLS_PORT_FORWARD_PID:-}" ]]; then
+    port_forward_bg traefik traefik "${TRAEFIK_TLS_PORT}" 8443 "${WORKDIR}/traefik-tls-port-forward.log"
+    TRAEFIK_TLS_PORT_FORWARD_PID="${LAST_MANAGED_PID}"
+    TRAEFIK_TLS_PORT_FORWARD_RESTARTS=0
+  fi
+  wait_port "${TRAEFIK_TLS_PORT}"
 }
 
 ensure_traefik_port_forward() {
@@ -1018,8 +1025,8 @@ ensure_gateway_port_forward() {
   wait_port "${SENTINEL_PORT}"
 }
 
-# shellcheck source=scenarios/mtls.sh
-source "${PROJECT_ROOT}/test/e2e/scenarios/mtls.sh"
+# shellcheck source=lib/adapter-certificates.sh
+source "${PROJECT_ROOT}/test/e2e/lib/adapter-certificates.sh"
 # shellcheck source=scenarios/platform-update.sh
 source "${PROJECT_ROOT}/test/e2e/scenarios/platform-update.sh"
 
@@ -3335,11 +3342,33 @@ if deep_request_flows_enabled || scenario_selected "cli-platform"; then
 fi
 run_logged_stage "server init governed defaults" verify_server_init_governed_defaults
 
+if scenario_selected "adapter-certificates"; then
+  export MCP_ADAPTER_CERTIFICATES=true
+  export MCP_SETUP_MTLS_CLUSTER_ISSUER="${MCP_SETUP_MTLS_CLUSTER_ISSUER:-mcp-runtime-ca}"
+  export MCP_TRUST_DOMAIN="${MCP_TRUST_DOMAIN:-cluster.local}"
+  # All path-based routes on a shared host must use the same TLSOption. The
+  # operator stores its managed default in this Traefik-watched namespace.
+  export MCP_DEFAULT_INGRESS_TLS_SECRET_NAMESPACE="${MCP_DEFAULT_INGRESS_TLS_SECRET_NAMESPACE:-mcp-servers}"
+fi
+
 PLATFORM_CACHE_READY=0
 if platform_cache_ready; then
   PLATFORM_CACHE_READY=1
   echo "[cache] reusing ready platform in cluster ${CLUSTER_NAME}"
-else
+  if scenario_selected "adapter-certificates" && ! kubectl -n mcp-runtime get deployment mcp-runtime-operator-controller-manager \
+    -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="MCP_ADAPTER_CERTIFICATES")].value}' \
+    | grep -qx true; then
+    echo "[cache] adapter certificate feature is not enabled; setup will reconfigure the platform"
+    PLATFORM_CACHE_READY=0
+  fi
+  if scenario_selected "adapter-certificates" && ! kubectl -n mcp-runtime get deployment mcp-runtime-operator-controller-manager \
+    -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="MCP_DEFAULT_INGRESS_TLS_SECRET_NAMESPACE")].value}' \
+    | grep -qx "${MCP_DEFAULT_INGRESS_TLS_SECRET_NAMESPACE}"; then
+    echo "[cache] adapter certificate TLS namespace is not configured; setup will reconfigure the platform"
+    PLATFORM_CACHE_READY=0
+  fi
+fi
+if [[ "${PLATFORM_CACHE_READY}" != "1" ]]; then
   mirror_upstream_images_parallel \
     "registry:2.8.3" \
     "traefik:v2.10" \
@@ -4526,7 +4555,11 @@ EOF
 
   OAUTH_PROXY_UPSTREAM_ORIGIN="http://127.0.0.1:${TRAEFIK_PORT}"
   OAUTH_HEADER_PROXY_ARGS=(--host-header "${OAUTH_SERVER_HOST}")
-  if oauth_proxy_paths_selected; then
+  if scenario_selected "adapter-certificates"; then
+    ensure_traefik_tls_port_forward
+    OAUTH_PROXY_UPSTREAM_ORIGIN="https://127.0.0.1:${TRAEFIK_TLS_PORT}"
+    OAUTH_HEADER_PROXY_ARGS+=(--insecure-upstream)
+  elif oauth_proxy_paths_selected; then
     port_forward_bg mcp-servers "${OAUTH_SERVER_NAME}" "${OAUTH_PROXY_PORT}" 80 "${WORKDIR}/oauth-proxy-port-forward.log"
     wait_port "${OAUTH_PROXY_PORT}"
     OAUTH_PROXY_UPSTREAM_ORIGIN="http://127.0.0.1:${OAUTH_PROXY_PORT}"
@@ -4564,7 +4597,11 @@ EOF
 
   OAUTH_INGRESS_PATH="/${OAUTH_SERVER_NAME}/mcp"
   MCP_OAUTH_DIRECT_ORIGIN="http://127.0.0.1:${TRAEFIK_PORT}"
-  if oauth_proxy_paths_selected; then
+  if scenario_selected "adapter-certificates"; then
+    # The anonymous relay preserves per-request Authorization headers; the
+    # valid-token relay would override missing-token challenge probes.
+    MCP_OAUTH_DIRECT_ORIGIN="http://127.0.0.1:${MCP_CURL_OAUTH_ANON_PORT}"
+  elif oauth_proxy_paths_selected; then
     MCP_OAUTH_DIRECT_ORIGIN="http://127.0.0.1:${OAUTH_PROXY_PORT}"
   fi
   MCP_OAUTH_DIRECT_URL="${MCP_OAUTH_DIRECT_ORIGIN}${OAUTH_INGRESS_PATH}"
@@ -4713,6 +4750,162 @@ PY
     '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
     200
   run_mcp_curl_expect "mcp-curl-oauth-valid" "${MCP_OAUTH_VALID_URL}" true
+  if scenario_selected "adapter-certificates"; then
+    log_line oauth "testing adapter certificate enrollment and OAuth-route authentication over Traefik TLS"
+    ADAPTER_CERT_AGENT_ID="e2e-adapter-cert-$(date +%s)"
+    ADAPTER_CERT_DIR="${WORKDIR}/adapter-certificate"
+    ADAPTER_CERT_GRANT="${OAUTH_SERVER_NAME}-adapter-cert-grant"
+    WRONG_SERVER_NAME="${ADAPTER_CERT_WRONG_SERVER_NAME}"
+    ADAPTER_CERT_DIRECT_PORT=18444
+    mkdir -p "${ADAPTER_CERT_DIR}"
+    cat >"${WORKDIR}/adapter-cert-grant.yaml" <<EOF
+apiVersion: mcpruntime.org/v1alpha1
+kind: MCPAccessGrant
+metadata:
+  name: ${ADAPTER_CERT_GRANT}
+  namespace: mcp-servers
+spec:
+  serverRef:
+    name: ${OAUTH_SERVER_NAME}
+  subject:
+    agentID: ${ADAPTER_CERT_AGENT_ID}
+  maxTrust: low
+  allowedSideEffects: [read]
+  policyVersion: v1
+  toolRules:
+    - name: add
+      decision: allow
+EOF
+    kubectl apply -f "${WORKDIR}/adapter-cert-grant.yaml"
+
+    sed "s/${OAUTH_SERVER_NAME}/${WRONG_SERVER_NAME}/g" "${OAUTH_METADATA_FILE}" >"${WORKDIR}/adapter-cert-wrong-server.yaml"
+    WRONG_SERVER_MANIFEST_DIR="${WORKDIR}/adapter-cert-wrong-server-manifests"
+    MCP_RUNTIME_CONFIG_DIR="${E2E_PIPELINE_CONFIG_DIR}" ./bin/mcp-runtime server generate \
+      --metadata-file "${WORKDIR}/adapter-cert-wrong-server.yaml" \
+      --output "${WRONG_SERVER_MANIFEST_DIR}"
+    ./bin/mcp-runtime server --use-kube apply \
+      --file "${WRONG_SERVER_MANIFEST_DIR}/${WRONG_SERVER_NAME}.yaml"
+    wait_for_named_server_ready "${WRONG_SERVER_NAME}"
+
+    ADAPTER_CERT_ENROLL_OUTPUT="$(MCP_PLATFORM_API_URL="http://127.0.0.1:${SENTINEL_PORT}" \
+      MCP_PLATFORM_API_TOKEN="${ADAPTER_PLATFORM_TOKEN}" \
+      ./bin/mcp-runtime adapter enroll \
+        --platform-url "http://127.0.0.1:${SENTINEL_PORT}" \
+        --server "${OAUTH_SERVER_NAME}" \
+        --namespace mcp-servers \
+        --agent "${ADAPTER_CERT_AGENT_ID}" \
+        --output-dir "${ADAPTER_CERT_DIR}")"
+    echo "${ADAPTER_CERT_ENROLL_OUTPUT}"
+    ADAPTER_CERT_SPIFFE_ID="$(echo "${ADAPTER_CERT_ENROLL_OUTPUT}" | sed -n 's#.*issued \(spiffe://[^ ]*\).*#\1#p')"
+    ADAPTER_CERT_SESSION="${ADAPTER_CERT_SPIFFE_ID##*/session/}"
+    if [[ -z "${ADAPTER_CERT_SESSION}" || "${ADAPTER_CERT_SESSION}" == "${ADAPTER_CERT_SPIFFE_ID}" ]]; then
+      echo "adapter enroll did not return a session-bound SPIFFE ID" >&2
+      exit 1
+    fi
+    if ! kubectl get mcpagentsession "${ADAPTER_CERT_SESSION}" -n mcp-servers >/dev/null 2>&1; then
+      echo "expected MCPAgentSession ${ADAPTER_CERT_SESSION} in mcp-servers after adapter enrollment" >&2
+      exit 1
+    fi
+    # The gateway authenticates the SPIFFE ID against its rendered policy.
+    # Session creation is asynchronous with policy reconciliation, so wait for
+    # this exact binding before sending the first certificate-authenticated call.
+    wait_for_policy_text "\"name\": \"${ADAPTER_CERT_SESSION}\"" "${OAUTH_SERVER_NAME}"
+
+    ensure_traefik_tls_port_forward
+    ADAPTER_CERT_URL="https://127.0.0.1:${TRAEFIK_TLS_PORT}${OAUTH_INGRESS_PATH}"
+    ADAPTER_CERT_HEADERS="${WORKDIR}/adapter-cert-headers.txt"
+    ADAPTER_CERT_BODY="${WORKDIR}/adapter-cert-body.json"
+    # ConfigMap reconciliation precedes volume projection and gateway reload.
+    # Prove the new identity is active through the actual Traefik route.
+    wait_for_adapter_certificate_initialize "${ADAPTER_CERT_URL}" 200 "" \
+      "${ADAPTER_CERT_HEADERS}" "${ADAPTER_CERT_BODY}"
+    ADAPTER_MCP_SESSION="$(awk 'tolower($1)=="mcp-session-id:" {gsub("\r", "", $2); print $2}' "${ADAPTER_CERT_HEADERS}")"
+    if [[ -z "${ADAPTER_MCP_SESSION}" ]]; then
+      echo "adapter certificate initialize returned no MCP session id" >&2
+      exit 1
+    fi
+    curl -ksS --cert "${ADAPTER_CERT_DIR}/client.crt" --key "${ADAPTER_CERT_DIR}/client.key" \
+      -o /dev/null -H "Host: ${OAUTH_SERVER_HOST}" -H 'content-type: application/json' \
+      -H 'accept: application/json, text/event-stream' -H "Mcp-Protocol-Version: ${MCP_PROTOCOL_VERSION}" \
+      -H "Mcp-Session-Id: ${ADAPTER_MCP_SESSION}" \
+      --data '{"jsonrpc":"2.0","method":"notifications/initialized"}' "${ADAPTER_CERT_URL}"
+    ADAPTER_CERT_CALL="$(curl -ksS --cert "${ADAPTER_CERT_DIR}/client.crt" --key "${ADAPTER_CERT_DIR}/client.key" \
+      -H "Host: ${OAUTH_SERVER_HOST}" -H 'content-type: application/json' \
+      -H 'accept: application/json, text/event-stream' -H "Mcp-Protocol-Version: ${MCP_PROTOCOL_VERSION}" \
+      -H "Mcp-Session-Id: ${ADAPTER_MCP_SESSION}" \
+      --data '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"add","arguments":{"a":7,"b":5}}}' "${ADAPTER_CERT_URL}")"
+    echo "${ADAPTER_CERT_CALL}" | grep -q '12' || { echo "adapter certificate tool call failed: ${ADAPTER_CERT_CALL}" >&2; exit 1; }
+
+    log_line oauth "a forged identity header with a valid OAuth token must use OAuth identity"
+    FORGED_HEADER_HEADERS="${WORKDIR}/adapter-forged-header-headers.txt"
+    FORGED_HEADER_STATUS="$(curl -ksS -D "${FORGED_HEADER_HEADERS}" -o "${WORKDIR}/adapter-forged-header.json" -w '%{http_code}' \
+      -H "Host: ${OAUTH_SERVER_HOST}" -H 'content-type: application/json' \
+      -H 'accept: application/json, text/event-stream' -H "Mcp-Protocol-Version: ${MCP_PROTOCOL_VERSION}" \
+      -H "Authorization: Bearer ${OAUTH_VALID_TOKEN}" \
+      -H 'X-MCP-Verified-SPIFFE-ID: spiffe://cluster.local/ns/mcp-servers/session/forged-session' \
+      --data '{"jsonrpc":"2.0","id":3,"method":"initialize","params":{}}' \
+      "${ADAPTER_CERT_URL}")"
+    FORGED_MCP_SESSION="$(awk 'tolower($1)=="mcp-session-id:" {gsub("\r", "", $2); print $2}' "${FORGED_HEADER_HEADERS}")"
+    if [[ "${FORGED_HEADER_STATUS}" != "200" || -z "${FORGED_MCP_SESSION}" ]]; then
+      echo "forged identity header disrupted valid OAuth initialize (${FORGED_HEADER_STATUS}): $(cat "${WORKDIR}/adapter-forged-header.json")" >&2
+      exit 1
+    fi
+    curl -ksS -o /dev/null -H "Host: ${OAUTH_SERVER_HOST}" -H 'content-type: application/json' \
+      -H 'accept: application/json, text/event-stream' -H "Mcp-Protocol-Version: ${MCP_PROTOCOL_VERSION}" \
+      -H "Authorization: Bearer ${OAUTH_VALID_TOKEN}" -H "Mcp-Session-Id: ${FORGED_MCP_SESSION}" \
+      -H 'X-MCP-Verified-SPIFFE-ID: spiffe://cluster.local/ns/mcp-servers/session/forged-session' \
+      --data '{"jsonrpc":"2.0","method":"notifications/initialized"}' "${ADAPTER_CERT_URL}"
+    FORGED_CALL_STATUS="$(curl -ksS -o "${WORKDIR}/adapter-forged-header-call.json" -w '%{http_code}' \
+      -H "Host: ${OAUTH_SERVER_HOST}" -H 'content-type: application/json' \
+      -H 'accept: application/json, text/event-stream' -H "Mcp-Protocol-Version: ${MCP_PROTOCOL_VERSION}" \
+      -H "Authorization: Bearer ${OAUTH_VALID_TOKEN}" -H "Mcp-Session-Id: ${FORGED_MCP_SESSION}" \
+      -H 'X-MCP-Verified-SPIFFE-ID: spiffe://cluster.local/ns/mcp-servers/session/forged-session' \
+      --data '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"add","arguments":{"a":7,"b":5}}}' \
+      "${ADAPTER_CERT_URL}")"
+    if [[ "${FORGED_CALL_STATUS}" != "200" ]] || ! grep -q '12' "${WORKDIR}/adapter-forged-header-call.json"; then
+      echo "forged identity header disrupted valid OAuth call (${FORGED_CALL_STATUS}): $(cat "${WORKDIR}/adapter-forged-header-call.json")" >&2
+      exit 1
+    fi
+
+    log_line oauth "a session certificate must not authorize a different OAuth server"
+    WRONG_SERVER_STATUS="$(curl -ksS --cert "${ADAPTER_CERT_DIR}/client.crt" --key "${ADAPTER_CERT_DIR}/client.key" \
+      -o "${WORKDIR}/adapter-wrong-server.json" -w '%{http_code}' \
+      -H "Host: ${OAUTH_SERVER_HOST}" -H 'content-type: application/json' \
+      -H 'accept: application/json, text/event-stream' -H "Mcp-Protocol-Version: ${MCP_PROTOCOL_VERSION}" \
+      --data '{"jsonrpc":"2.0","id":4,"method":"initialize","params":{}}' \
+      "https://127.0.0.1:${TRAEFIK_TLS_PORT}/${WRONG_SERVER_NAME}/mcp")"
+    if [[ "${WRONG_SERVER_STATUS}" != "401" ]] || ! grep -q 'session_not_found' "${WORKDIR}/adapter-wrong-server.json"; then
+      echo "wrong-server certificate was not rejected (${WRONG_SERVER_STATUS}): $(cat "${WORKDIR}/adapter-wrong-server.json")" >&2
+      exit 1
+    fi
+
+    log_line oauth "a revoked session must stop a live adapter certificate"
+    kubectl patch mcpagentsession "${ADAPTER_CERT_SESSION}" -n mcp-servers --type=merge -p '{"spec":{"revoked":true}}'
+    # Observe revocation for this certificate on its OAuth server; the generic
+    # policy-text helper defaults to SERVER_NAME, which is a different server.
+    wait_for_adapter_certificate_initialize "${ADAPTER_CERT_URL}" 401 session_revoked \
+      "${WORKDIR}/adapter-revoked-headers.txt" "${WORKDIR}/adapter-revoked-session.json"
+    kubectl patch mcpagentsession "${ADAPTER_CERT_SESSION}" -n mcp-servers --type=merge -p '{"spec":{"revoked":false}}'
+
+    log_line oauth "direct gateway access with an adapter certificate must be rejected as untrusted_proxy"
+    port_forward_bg mcp-servers "${OAUTH_SERVER_NAME}" "${ADAPTER_CERT_DIRECT_PORT}" 80 "${WORKDIR}/adapter-cert-direct-port-forward.log"
+    wait_port "${ADAPTER_CERT_DIRECT_PORT}"
+    DIRECT_CERT_STATUS="$(curl -ksS --cert "${ADAPTER_CERT_DIR}/client.crt" --key "${ADAPTER_CERT_DIR}/client.key" \
+      -o "${WORKDIR}/adapter-direct-gateway.json" -w '%{http_code}' \
+      -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' \
+      -H "Mcp-Protocol-Version: ${MCP_PROTOCOL_VERSION}" \
+      -H "X-MCP-Verified-SPIFFE-ID: ${ADAPTER_CERT_SPIFFE_ID}" \
+      --data '{"jsonrpc":"2.0","id":6,"method":"initialize","params":{}}' \
+      "https://127.0.0.1:${ADAPTER_CERT_DIRECT_PORT}${OAUTH_INGRESS_PATH}")"
+    if [[ "${DIRECT_CERT_STATUS}" != "401" ]] || ! grep -q 'untrusted_proxy' "${WORKDIR}/adapter-direct-gateway.json"; then
+      echo "direct gateway access was not rejected (${DIRECT_CERT_STATUS}): $(cat "${WORKDIR}/adapter-direct-gateway.json")" >&2
+      exit 1
+    fi
+
+    kubectl delete mcpagentsession "${ADAPTER_CERT_SESSION}" -n mcp-servers --ignore-not-found --wait=true
+    kubectl delete mcpaccessgrant "${ADAPTER_CERT_GRANT}" -n mcp-servers --ignore-not-found --wait=true
+    cleanup_mcp_server_and_wait "${WRONG_SERVER_NAME}" mcp-servers 120s
+  fi
   fi
 
 if scenario_selected "governance"; then
@@ -6155,11 +6348,6 @@ fi
 
 fi
 
-fi
-
-if scenario_selected "mtls"; then
-  run_e2e_mtls_scenario
-  cleanup_mcp_server_and_wait "${MTLS_SERVER_NAME}" mcp-servers 120s
 fi
 
 if scenario_selected "platform-update"; then

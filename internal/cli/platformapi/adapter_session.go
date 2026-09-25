@@ -35,6 +35,7 @@ type AdapterSession struct {
 	PolicyVersion  string    `json:"policyVersion"`
 	ExpiresAt      time.Time `json:"expiresAt"`
 	Reused         bool      `json:"reused"`
+	TrustDomain    string    `json:"trustDomain,omitempty"`
 }
 
 type AdapterCertificateRequest struct {

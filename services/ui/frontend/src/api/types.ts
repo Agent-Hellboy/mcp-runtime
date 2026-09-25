@@ -71,7 +71,7 @@ export type ServerSummary = {
   status: string;
   age?: string;
   endpoint?: string;
-  // spec.auth.mode: "oauth" | "mtls" | "header" | "none". Omitted by runtime-api
+  // spec.auth.mode: "oauth" | "header" | "none". Omitted by runtime-api
   // builds older than the ServerInfoFromMCPServer projection.
   authMode?: string;
   // The server's declared tools, with the governance metadata the gateway
@@ -168,14 +168,7 @@ export function authModeInfo(mode: string | undefined): AuthModeInfo {
         label: "OAuth",
         tone: "info",
         detail:
-          "Callers must present a bearer token from the server's configured issuer. An MCP client needs to complete the OAuth flow first.",
-      };
-    case "mtls":
-      return {
-        label: "mTLS",
-        tone: "info",
-        detail:
-          "Callers must present a client certificate from the workload trust domain. Use `mcp-runtime adapter enroll` to obtain one.",
+          "Clients use a bearer token from the server's configured issuer. Adapters may authenticate with a session-bound workload certificate.",
       };
     case "header":
       return {

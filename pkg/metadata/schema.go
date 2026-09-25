@@ -9,7 +9,6 @@ const (
 	AuthModeNone   AuthMode = "none"
 	AuthModeHeader AuthMode = "header"
 	AuthModeOAuth  AuthMode = "oauth"
-	AuthModeMTLS   AuthMode = "mtls"
 )
 
 // +kubebuilder:validation:Enum=allow-list;observe
@@ -201,7 +200,6 @@ type AuthConfig struct {
 	TokenHeader     string   `yaml:"tokenHeader,omitempty" json:"tokenHeader,omitempty"`
 	IssuerURL       string   `yaml:"issuerURL,omitempty" json:"issuerURL,omitempty"`
 	Audience        string   `yaml:"audience,omitempty" json:"audience,omitempty"`
-	TrustDomain     string   `yaml:"trustDomain,omitempty" json:"trustDomain,omitempty"`
 }
 
 // PolicyConfig configures authorization behavior at the gateway.

@@ -24,11 +24,16 @@ func (r *MCPServerReconciler) reconcileIngress(ctx context.Context, mcpServer *m
 			Namespace: mcpServer.Namespace,
 		},
 	}
-	if serverUsesMTLS(mcpServer) {
+	if r.usesAdapterCertificates(mcpServer) {
+		// The adapter-certificate path places the gateway behind TLS, so create
+		// its IngressRoute before removing the plain HTTP Ingress.
+		if err := r.reconcileMTLSIngress(ctx, mcpServer); err != nil {
+			return err
+		}
 		if err := r.Delete(ctx, ingress); err != nil && !apierrors.IsNotFound(err) {
 			return err
 		}
-		return r.reconcileMTLSIngress(ctx, mcpServer)
+		return nil
 	}
 	if err := r.deleteMTLSIngress(ctx, mcpServer); err != nil {
 		return err

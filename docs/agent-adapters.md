@@ -387,9 +387,9 @@ Requests without a `_meta` version keep the legacy behavior described above.
 
 ## Enterprise mTLS and SPIFFE
 
-For mTLS-authenticated adapters, install cert-manager and an internal
-`ClusterIssuer` backed by your company CA, Vault, ADCS, or another workload
-PKI. Do not use Let's Encrypt for client certificates.
+To authenticate adapters with session-bound client certificates, install
+cert-manager and an internal `ClusterIssuer` backed by your company CA, Vault,
+ADCS, or another workload PKI. Do not use Let's Encrypt for client certificates.
 
 Local `setup --test-mode` installs cert-manager and provisions the bundled
 `mcp-runtime-ca` ClusterIssuer automatically so this flow can be validated on
@@ -402,18 +402,24 @@ mcp-runtime setup \
   --mtls-cluster-issuer company-workload-ca
 ```
 
-`--mtls-cluster-issuer` is the single switch for the mTLS auth path outside test
-mode: naming a workload issuer enables it. It requires `--with-tls` because
-Traefik terminates the caller's mTLS on the websecure entrypoint. Name your
-enterprise issuer, or name the bundled `mcp-runtime-ca` to have setup provision
-a managed CA for you. `--tls-cluster-issuer` controls public ingress and
-registry certificates and is separate from `--mtls-cluster-issuer` (which
-controls gateway and adapter workload certificates). Environment equivalent:
-`MCP_SETUP_MTLS_CLUSTER_ISSUER=company-workload-ca`. Test mode
-(`setup --test-mode`) defaults the issuer to `mcp-runtime-ca`, so no mTLS flag
-is needed.
+Adapter certificate authentication on OAuth-configured server routes is
+opt-in: set `MCP_ADAPTER_CERTIFICATES=true` for setup (it passes it to the
+operator) in addition to naming a workload issuer with `--mtls-cluster-issuer`.
+Enabling it moves every OAuth server that uses the Traefik ingress class and
+the gateway from a plain Ingress to a Traefik IngressRoute, and puts the
+gateway behind an mTLS hop that only Traefik can reach; servers are then no
+longer reachable directly on their Service. It requires `--with-tls` because
+Traefik terminates client TLS; the IngressRoute uses the operator's configured
+ingress entrypoints (`websecure` when none are set).
+`--tls-cluster-issuer` controls public ingress and registry certificates and is
+separate from the workload issuer. Set `MCP_TRUST_DOMAIN` to the platform's
+SPIFFE trust domain. Production must configure both `MCP_TRUST_DOMAIN` and
+`MCP_SETUP_MTLS_CLUSTER_ISSUER`; test mode defaults the issuer to
+`mcp-runtime-ca`.
 
-Configure the MCPServer for path-based routing under mtls:
+Keep the MCPServer in OAuth mode. Ordinary OAuth clients use the normal URL
+without a client certificate; adapters can enroll a session-bound certificate
+for certificate-based identity on that same URL.
 
 ```yaml
 spec:
@@ -423,24 +429,25 @@ spec:
   gateway:
     enabled: true
   auth:
-    mode: mtls
-    trustDomain: mcpruntime.org
+    mode: oauth
+    issuerURL: https://auth.example.com
+    audience: https://mcp.example.com/workspace-assistant/mcp
 ```
 
-**How termination works.** Traefik terminates the caller's mTLS, verifies the
-client certificate against the identity CA, injects the verified SPIFFE identity
-as a trusted header (`X-MCP-Verified-SPIFFE-ID`), and re-encrypts to the gateway
-over a second mTLS hop. Terminating at Traefik enables **path-based routing**; a
-passthrough ingress can only route on SNI/host. The operator generates the Traefik
-`TLSOption` (`RequireAndVerifyClientCert`), the `spiffe-identity` middleware
-(strips client-supplied identity headers, then injects the verified one), a
+**How termination works.** Traefik optionally verifies a presented client
+certificate against the platform workload CA, injects the verified SPIFFE
+identity as a trusted header (`X-MCP-Verified-SPIFFE-ID`), and re-encrypts to
+the gateway over a second mTLS hop. Without a client certificate, OAuth clients
+continue through the normal route. The operator generates the Traefik
+`TLSOption` (`VerifyClientCertIfGiven`), the `spiffe-identity` middleware
+(preserves governance headers for OAuth requests without a certificate; strips
+them and injects verified session identity for adapter certificates), a
 `ServersTransport` (the re-encrypted hop with a pinned ingress certificate), and
 a path-based `IngressRoute`. A `NetworkPolicy` restricts the gateway port to the
 ingress so the trusted header cannot be forged by another pod, and the gateway
-additionally requires the connection to be a verified mTLS hop before trusting
-the header.
+requires the connection to be a verified mTLS hop before trusting the header.
 
-The caller-facing (user→Traefik) server certificate for the shared mtls host is
+The caller-facing server certificate for the OAuth route is
 published as Traefik's **default certificate** via a single `TLSStore` named
 `default`, not a per-IngressRoute `secretName` (Traefik resolves `secretName`
 only in the IngressRoute's own tenant namespace, where the shared platform host
@@ -504,21 +511,16 @@ keep working without restarts. Governance identity headers are suppressed in
 this mode. To reuse `enroll` output instead of in-memory enrollment, pass
 `--auth mtls` together with the `--tls-client-cert`/`-key`/`-ca-bundle` files.
 
-### Migrating a server from `header` to `mtls`
+Clients without an adapter certificate use OAuth. An adapter can authenticate
+with its session-bound certificate; grant and session policy then authorize its
+identity. Existing MCPServer resources using the removed `auth.mode: mtls` must
+be changed to `auth.mode: oauth` and configured with `issuerURL` and `audience`.
+The operator rejects old stored values and removes their obsolete per-server
+certificate and ingress resources. Set platform-wide `MCP_TRUST_DOMAIN` and
+`MCP_MTLS_CLUSTER_ISSUER` to enable adapter enrollment; test-mode defaults the
+issuer to `mcp-runtime-ca`.
 
-`auth.mode` is per-MCPServer, so migrate one server at a time:
-
-1. Ensure the operator has `MCP_MTLS_CLUSTER_ISSUER` set and cert-manager is
-   installed (test-mode provisions `mcp-runtime-ca` automatically).
-2. Flip the MCPServer to `auth.mode: mtls` with a `trustDomain` (see the spec
-   above). The operator swaps the ingress to the terminate+re-encrypt path,
-   issues the gateway and Traefik certificates, writes the trust bundle, and
-   applies the gateway NetworkPolicy.
-3. Switch each adapter to `--auth mtls` (or distribute `enroll` output). In mtls
-   mode the gateway **ignores** `X-MCP-*` identity headers entirely. It derives
-   human, agent, team, and session identity from the verified SPIFFE URI mapped
-   to the operator-rendered session binding. Header-mode and mtls-mode callers
-   cannot be mixed against the same server.
-
-Grants and sessions are unchanged: the same `MCPAccessGrant`/`MCPAgentSession`
-model applies; only how the caller's identity reaches the gateway changes.
+For adapter-certificate requests, the gateway ignores caller-supplied `X-MCP-*`
+identity headers and derives identity from the verified SPIFFE URI and the
+operator-rendered session binding. OAuth clients without a certificate retain
+the normal OAuth and session-header flow.

@@ -3,7 +3,8 @@
 // gateway, and strips any client-supplied identity headers so they can never be
 // spoofed.
 //
-// It runs at the TLS-terminating ingress in auth.mode mtls. Because Traefik
+// It runs at the TLS-terminating ingress for optional adapter certificates.
+// Because Traefik
 // terminates the caller's mTLS, this middleware is the only component that sees
 // the caller's certificate; it extracts the SPIFFE URI SAN and injects it as
 // the verified-identity header, then re-encrypts onward to the gateway. The
@@ -30,6 +31,9 @@ type Config struct {
 	// the verified header is injected. The VerifiedHeader is always stripped in
 	// addition to this list.
 	StripHeaders []string `json:"stripHeaders,omitempty"`
+	// RejectInvalidCertificate rejects a presented client certificate without a
+	// SPIFFE URI SAN matching TrustDomain. Requests without a certificate pass.
+	RejectInvalidCertificate bool `json:"rejectInvalidCertificate,omitempty"`
 }
 
 // CreateConfig returns the default plugin configuration.
@@ -61,32 +65,37 @@ func New(_ context.Context, next http.Handler, cfg *Config, _ string) (http.Hand
 	strip := append([]string{}, cfg.StripHeaders...)
 	strip = append(strip, verified)
 	return &Middleware{
-		next:         next,
-		verified:     verified,
-		trustDomain:  strings.TrimSpace(cfg.TrustDomain),
-		stripHeaders: strip,
+		next:                     next,
+		verified:                 verified,
+		trustDomain:              strings.TrimSpace(cfg.TrustDomain),
+		stripHeaders:             strip,
+		rejectInvalidCertificate: cfg.RejectInvalidCertificate,
 	}, nil
 }
 
 // Middleware implements http.Handler.
 type Middleware struct {
-	next         http.Handler
-	verified     string
-	trustDomain  string
-	stripHeaders []string
+	next                     http.Handler
+	verified                 string
+	trustDomain              string
+	stripHeaders             []string
+	rejectInvalidCertificate bool
 }
 
 func (m *Middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
-	// 1. Strip any client-supplied identity headers BEFORE injecting, so a
-	//    forged value can never reach the gateway.
-	for _, h := range m.stripHeaders {
-		req.Header.Del(h)
-	}
-	// 2. Inject the verified identity derived from the terminated mTLS client
-	//    certificate. When there is no verified certificate, no header is set
-	//    and the gateway rejects the request.
+	// Always remove the internal assertion header. For a verified adapter
+	// certificate, also remove caller-supplied governance identity before
+	// injecting the session-bound SPIFFE identity. No-certificate OAuth
+	// requests retain their normal governance headers.
+	req.Header.Del(m.verified)
 	if id := verifiedSPIFFEID(req, m.trustDomain); id != "" {
+		for _, h := range m.stripHeaders {
+			req.Header.Del(h)
+		}
 		req.Header.Set(m.verified, id)
+	} else if m.rejectInvalidCertificate && req.TLS != nil && len(req.TLS.PeerCertificates) > 0 {
+		http.Error(rw, "client certificate has no trusted SPIFFE identity", http.StatusUnauthorized)
+		return
 	}
 	m.next.ServeHTTP(rw, req)
 }

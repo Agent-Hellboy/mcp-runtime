@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import http.client
 import http.server
+import ssl
 import socketserver
 import sys
 import urllib.parse
@@ -36,6 +37,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--listen-port", type=int, required=True)
     parser.add_argument("--upstream-origin", required=True)
     parser.add_argument("--host-header", default="")
+    parser.add_argument("--insecure-upstream", action="store_true", help="skip upstream TLS verification for local E2E certificates")
     parser.add_argument("--header", action="append", default=[], type=parse_header)
     return parser.parse_args()
 
@@ -55,11 +57,38 @@ def build_upstream_path(base_path: str, request_path: str) -> str:
 class InjectingProxyHandler(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
+    def read_request_body(self) -> bytes | None:
+        transfer_encoding = self.headers.get("Transfer-Encoding", "").lower()
+        if "chunked" not in transfer_encoding:
+            content_length = int(self.headers.get("Content-Length", "0") or "0")
+            return self.rfile.read(content_length) if content_length > 0 else None
+
+        chunks: list[bytes] = []
+        while True:
+            size_line = self.rfile.readline().split(b";", 1)[0].strip()
+            try:
+                size = int(size_line, 16)
+            except ValueError as exc:
+                raise ValueError("invalid chunked request body") from exc
+            if size == 0:
+                # Consume optional trailer headers and the terminating blank line.
+                while self.rfile.readline() not in (b"\r\n", b"\n", b""):
+                    pass
+                break
+            chunk = self.rfile.read(size)
+            if len(chunk) != size or self.rfile.read(2) != b"\r\n":
+                raise ValueError("truncated chunked request body")
+            chunks.append(chunk)
+        return b"".join(chunks)
+
     def forward(self) -> None:
         config = self.server.proxy_config  # type: ignore[attr-defined]
 
-        content_length = int(self.headers.get("Content-Length", "0") or "0")
-        body = self.rfile.read(content_length) if content_length > 0 else None
+        try:
+            body = self.read_request_body()
+        except ValueError as exc:
+            self.send_error(400, str(exc))
+            return
 
         headers: dict[str, str] = {}
         for name, value in self.headers.items():
@@ -74,7 +103,10 @@ class InjectingProxyHandler(http.server.BaseHTTPRequestHandler):
             headers["Content-Length"] = str(len(body))
 
         conn_class = http.client.HTTPSConnection if config["scheme"] == "https" else http.client.HTTPConnection
-        conn = conn_class(config["host"], config["port"], timeout=30)
+        conn_kwargs = {"timeout": 30}
+        if config["scheme"] == "https" and config["insecure_upstream"]:
+            conn_kwargs["context"] = ssl._create_unverified_context()
+        conn = conn_class(config["host"], config["port"], **conn_kwargs)
         try:
             conn.request(
                 self.command,
@@ -142,6 +174,7 @@ def main() -> int:
         "base_path": parsed.path or "",
         "headers": dict(args.header),
         "host_header": args.host_header,
+        "insecure_upstream": args.insecure_upstream,
     }
 
     print(

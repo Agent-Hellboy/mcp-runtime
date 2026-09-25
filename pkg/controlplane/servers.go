@@ -268,14 +268,11 @@ func ServerInfoFromMCPServer(mcpServer mcpv1alpha1.MCPServer, deploymentStatus S
 		}
 	}
 	authMode := mcpv1alpha1.AuthModeHeader
-	trustDomain := ""
-	humanIDHeader := ""
-	agentIDHeader := ""
+	humanIDHeader, agentIDHeader := "", ""
 	if mcpServer.Spec.Auth != nil {
 		if mode := mcpServer.Spec.Auth.Mode; mode != "" {
 			authMode = mode
 		}
-		trustDomain = strings.TrimSpace(mcpServer.Spec.Auth.TrustDomain)
 		humanIDHeader = strings.TrimSpace(mcpServer.Spec.Auth.HumanIDHeader)
 		agentIDHeader = strings.TrimSpace(mcpServer.Spec.Auth.AgentIDHeader)
 	}
@@ -295,7 +292,6 @@ func ServerInfoFromMCPServer(mcpServer mcpv1alpha1.MCPServer, deploymentStatus S
 		AuthMode:      authMode,
 		HumanIDHeader: humanIDHeader,
 		AgentIDHeader: agentIDHeader,
-		TrustDomain:   trustDomain,
 		ServicePort:   mcpServer.Spec.ServicePort,
 		Generation:    mcpServer.Generation,
 		Tools:         mcpServer.Spec.Tools,

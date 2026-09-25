@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"k8s.io/apimachinery/pkg/labels"
 	"os"
 	"strconv"
 	"strings"
@@ -72,6 +73,11 @@ func main() {
 		OAuthInternalIssuerURL:           strings.TrimSpace(os.Getenv("OAUTH_INTERNAL_ISSUER_URL")),
 		OAuthIssuerURL:                   strings.TrimSpace(os.Getenv("MCP_AUTH_ISSUER_URL")),
 		MTLSClusterIssuer:                strings.TrimSpace(os.Getenv("MCP_MTLS_CLUSTER_ISSUER")),
+		AdapterTrustDomain:               strings.TrimSpace(os.Getenv("MCP_TRUST_DOMAIN")),
+		AdapterCertificatesEnabled:       boolFromEnv(os.Getenv("MCP_ADAPTER_CERTIFICATES")),
+		IngressControllerNamespace:       strings.TrimSpace(os.Getenv("MCP_INGRESS_CONTROLLER_NAMESPACE")),
+		IngressControllerServiceAccount:  strings.TrimSpace(os.Getenv("MCP_INGRESS_CONTROLLER_SERVICE_ACCOUNT")),
+		IngressControllerPodLabels:       ingressControllerPodLabelsFromEnv(os.Getenv),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "MCPServer")
 		os.Exit(1)
@@ -115,6 +121,21 @@ func main() {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}
+}
+
+func ingressControllerPodLabelsFromEnv(getenv func(string) string) map[string]string {
+	raw := strings.TrimSpace(getenv("MCP_INGRESS_CONTROLLER_POD_LABELS"))
+	if raw == "" {
+		return nil
+	}
+	parsed, err := labels.ConvertSelectorToLabelsMap(raw)
+	if err != nil {
+		// Falling back to app=traefik can lock Traefik out of adapter-
+		// certificate gateways, so make the misconfiguration visible.
+		setupLog.Error(err, "Invalid MCP_INGRESS_CONTROLLER_POD_LABELS; falling back to app=traefik, which may not match the running ingress controller", "value", raw)
+		return nil
+	}
+	return parsed
 }
 
 type operatorConfig struct {

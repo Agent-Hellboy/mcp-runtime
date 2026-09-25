@@ -61,7 +61,7 @@ func validateAuth(auth *Auth) error {
 	}
 	mode := strings.ToLower(strings.TrimSpace(auth.Mode))
 	switch mode {
-	case "", "none", "header", "oauth", "mtls":
+	case "", "none", "header", "oauth":
 	default:
 		return fmt.Errorf("policy: invalid auth mode %q", auth.Mode)
 	}
@@ -75,9 +75,6 @@ func validateAuth(auth *Auth) error {
 		if err := validateResourceURI(auth.Audience); err != nil {
 			return fmt.Errorf("policy: auth audience: %w", err)
 		}
-	}
-	if mode == "mtls" && strings.TrimSpace(auth.TrustDomain) == "" {
-		return fmt.Errorf("policy: auth mode %q requires trust_domain", auth.Mode)
 	}
 	return nil
 }

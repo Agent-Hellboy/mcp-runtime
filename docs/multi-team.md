@@ -18,7 +18,7 @@ The source-of-truth data plane is:
   sessions requested by an auto-refreshing adapter.
 - The gateway reads team identity from `spec.auth.teamIDHeader` in header mode,
   from OAuth `team_id`, `tenant_id`, or `tid` claims in OAuth mode, or from the
-  session that the verified SPIFFE identity resolves to in mtls mode.
+  session named by a verified adapter certificate.
 
 ## When to use this
 
@@ -165,10 +165,10 @@ Header mode defaults:
 
 Override the team header per server with `spec.auth.teamIDHeader`. In OAuth
 mode, the proxy validates the token and reads team identity from `team_id`,
-`tenant_id`, or `tid`, in that order. In `mtls` mode the gateway ignores these
-headers entirely and takes `humanID`, `agentID`, and `teamID` from the rendered
-session that the ingress-verified SPIFFE identity resolves to, inside
-`spec.auth.trustDomain`. First-party OAuth tokens with multiple
+`tenant_id`, or `tid`, in that order. Adapter-certificate requests ignore
+caller-supplied identity headers and take `humanID`, `agentID`, and `teamID`
+from the rendered session that the ingress-verified SPIFFE identity resolves
+to, inside the platform trust domain. First-party OAuth tokens with multiple
 memberships use `team_ids`; the gateway selects the policy server's team ID
 when present, or the sole team ID when there is only one.
 
