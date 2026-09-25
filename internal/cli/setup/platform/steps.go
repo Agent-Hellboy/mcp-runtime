@@ -206,6 +206,13 @@ func (s verifyStep) Run(logger *zap.Logger, deps SetupDeps, ctx *SetupContext) e
 		core.Error("Post-setup verification failed")
 		return err
 	}
+	if deps.StampPlatformVersion != nil {
+		// Best effort: version metadata helps `mcp-runtime update` report the
+		// installed version, but update falls back to image tags without it.
+		if err := deps.StampPlatformVersion(setupImageTag()); err != nil {
+			core.Warn(fmt.Sprintf("Could not record platform version metadata on Deployments: %v", err))
+		}
+	}
 	return nil
 }
 

@@ -88,6 +88,7 @@ mcp-runtime auth logout
 | `sentinel` | Operator | Inspect and operate the analytics stack | [Sentinel](sentinel.md) |
 | `bootstrap` | Operator | Pre-install cluster checks | [Cluster readiness](cluster-readiness.md) |
 | `setup` | Operator | Install the full platform stack | [setup](#setup) |
+| `update` | Operator | Update installed platform services to a release | [update](#update) |
 | `cluster` | Operator | Initialize clusters, run readiness and post-install checks, manage cert-manager | [Deployment targets](deployment-targets.md) |
 
 `server push` publishes an image through the authenticated platform API.
@@ -742,6 +743,83 @@ Key env vars for `--env-file` (see `config/deployments/mcpruntime-org.env.exampl
 Deeper guides: [Cluster readiness](cluster-readiness.md),
 [Deployment targets](deployment-targets.md), and
 [Getting started](getting-started.md#4-production-style-install).
+
+## update
+
+**[Operator]** Update an installed MCP Runtime platform to a release.
+
+```bash
+mcp-runtime update --to v0.5.0 --dry-run
+mcp-runtime update --release-manifest ./platform-manifest.json
+mcp-runtime update --to v0.5.0 --only ui,platform-api --yes
+mcp-runtime update --release-manifest ./platform-manifest.json --include-auth --output json
+```
+
+The target comes from a release component manifest (service -> image
+repository, tag, optional digest), selected with `--to` (fetches the manifest
+attached to that GitHub release) or `--release-manifest` (local path or https
+URL). update compares it with the images running in the cluster and patches
+only the Deployments whose images changed, one at a time, waiting for each
+rollout.
+
+update only patches container images (and the operator's
+`MCP_GATEWAY_PROXY_IMAGE` env var) plus version labels/annotations. It never
+modifies Secrets, PVCs, ConfigMaps, cert-manager Issuers/Certificates, CRDs,
+Services, or Ingresses, and never deletes or recreates workloads. mcp-auth and
+cert-manager are skipped unless selected with `--include-auth`,
+`--include-cert-manager`, or `--only`. Releases that change CRDs are refused; run
+setup from that release instead.
+
+The plan always shows the kube context and cluster ID. Without `--dry-run`,
+update asks for confirmation (or requires `--yes` when not interactive).
+Images must already be published to the registry the manifest resolves to;
+relative repositories resolve against the registry of the running image.
+
+| Flag | Default | Notes |
+|---|---|---|
+| `--to` | none | Target release version (for example v0.5.0); fetches that release's platform-manifest.json unless `--release-manifest` is set |
+| `--release-manifest` | none | Release component manifest path or https URL; its version must match `--to` when both are set |
+| `--dry-run` | `false` | Print the update plan and exit without changing the cluster |
+| `--yes` | `false` | Apply without the interactive confirmation prompt |
+| `--only` | all non-opt-in components | Comma-separated components to consider |
+| `--include-auth` | `false` | Include the mcp-auth authorization server |
+| `--include-cert-manager` | `false` | Include cert-manager images (patch releases only; CRDs are not upgraded) |
+| `--allow-downgrade` | `false` | Allow a target version lower than the installed version |
+| `--rollback-on-failure` | `true` | Restore previous images of workloads changed in this run if a rollout fails |
+| `--timeout` | `5m0s` | Rollout wait timeout per workload |
+| `--output` | `text` | Output format: text or json |
+| `--kubeconfig`, `--context` | current kubeconfig context | Target cluster |
+
+Components: `operator`, `gateway-proxy`, `platform-api`, `runtime-api`,
+`analytics-api`, `ingest`, `processor`, `ui`, `doctor-smoke` (image only, no
+workload), plus the opt-in `mcp-auth`, `cert-manager-controller`,
+`cert-manager-webhook`, and `cert-manager-cainjector`. Changing
+`gateway-proxy` makes the operator re-render MCPServer gateway sidecars, so
+tenant MCP server pods restart.
+
+Manifest shape (`platform-manifest.json`, attached to each GitHub release):
+
+```json
+{
+  "apiVersion": "mcpruntime.org/v1alpha1",
+  "kind": "PlatformRelease",
+  "version": "v0.5.0",
+  "registry": "",
+  "crdChange": false,
+  "components": [
+    {"name": "platform-api", "repository": "mcp-platform-api", "tag": "v0.5.0", "digest": "sha256:..."}
+  ]
+}
+```
+
+A component is updated when its repository or tag differs, or when the manifest
+digest differs from the digest in the spec or the digest the pods are running.
+A digest in the manifest pins the workload to `repo:tag@digest`, so reruns are
+exact no-ops. A downgrade is refused unless you pass `--allow-downgrade`. If a
+rollout fails, update stops, restores the previous images by default, and
+prints `kubectl rollout undo` / `kubectl set image` recovery commands. Required
+RBAC: `get`/`list` on namespaces, deployments, and pods, and `patch` on
+deployments.
 
 ## cluster
 

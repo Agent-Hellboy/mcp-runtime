@@ -22,6 +22,7 @@ Available Commands:
   setup       Setup the complete MCP platform
   status      Show platform status
   team        Manage internal platform teams
+  update      Update installed platform services to a release
 
 Flags:
       --debug     Enable debug mode with structured error logging

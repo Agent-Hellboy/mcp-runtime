@@ -33,6 +33,37 @@ jobs:
           path: dist
           merge-multiple: true
 
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          path: src
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: src/go.mod
+          cache: false
+
+      # platform-manifest.json is the authoritative component version list that
+      # `mcp-runtime update --to <tag>` fetches. It is generated from the CLI's
+      # component catalog; crdChange is set when config/crd/bases changed since
+      # the previous tag so update refuses and points operators to setup.
+      - name: Generate platform component manifest
+        shell: bash
+        working-directory: src
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          crd_flag=""
+          previous_tag="$(git describe --tags --abbrev=0 "${RELEASE_TAG}^" 2>/dev/null || true)"
+          if [[ -z "${previous_tag}" ]] || ! git diff --quiet "${previous_tag}" "${RELEASE_TAG}" -- config/crd/bases; then
+            crd_flag="-crd-change"
+          fi
+          go run ./hack/release/platformmanifest -version "${RELEASE_TAG}" ${crd_flag} > ../dist/platform-manifest.json
+          cat ../dist/platform-manifest.json
+
       - name: List release assets
         run: find dist -type f | sort
 
@@ -46,6 +77,7 @@ jobs:
             mcp-runtime-linux-arm64
             mcp-runtime-linux-amd64
             mcp-runtime-windows-amd64.exe
+            platform-manifest.json
           )
           for asset in "${expected[@]}"; do
             if [[ ! -s "dist/${asset}" ]]; then

@@ -202,6 +202,9 @@ type SetupDeps struct {
 	GetRegistryPort                 func() int
 	OperatorImageFor                func(ext *config.ExternalRegistryConfig) string
 	GatewayProxyImageFor            func(ext *config.ExternalRegistryConfig) string
+	// StampPlatformVersion records the installed platform version on platform
+	// Deployment metadata after a successful setup. Nil skips stamping (tests).
+	StampPlatformVersion func(version string) error
 }
 
 func (d SetupDeps) withDefaults(logger *zap.Logger) SetupDeps {
@@ -389,7 +392,7 @@ func publicAuthConfigValue(existingData map[string]string, key string) string {
 }
 
 func SetupPlatform(logger *zap.Logger, plan setupplan.Plan, clusterMgr ClusterManagerAPI) error {
-	return setupPlatformWithDeps(logger, plan, SetupDeps{ClusterManager: clusterMgr}.withDefaults(logger))
+	return setupPlatformWithDeps(logger, plan, SetupDeps{ClusterManager: clusterMgr, StampPlatformVersion: stampPlatformVersionClientGo}.withDefaults(logger))
 }
 
 func buildOperatorArgs(metricsAddr, probeAddr string, leaderElect, leaderElectChanged bool) []string {

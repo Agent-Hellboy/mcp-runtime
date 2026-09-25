@@ -26,6 +26,7 @@ func TestAddCommandsRegistersTopLevelCommands(t *testing.T) {
 		"status",
 		"sentinel",
 		"team",
+		"update",
 	}
 	got := root.Commands()
 	if len(got) != len(want) {
