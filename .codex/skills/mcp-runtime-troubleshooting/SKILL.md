@@ -73,7 +73,7 @@ Sidecar container name is `mcp-gateway`. Many images are distroless — use logs
 kubectl debug -it -n "$NS" "pod/$POD" --target="$CONTAINER" --image=busybox:1.36 -- sh
 ```
 
-Policy reload: the gateway sidecar polls its policy file; wait a few seconds after applying grants/sessions before concluding `session_not_found`.
+Policy reload: the gateway sidecar polls its mounted policy file every 5-7s, and the operator stamps `mcpruntime.org/gateway-policy-revision` on server pods so the kubelet re-projects the ConfigMap immediately. Expect grants/sessions to apply within ~10s; a persistent `session_not_found` with a correct ConfigMap usually means the pod stamp failed (see `reference.md`).
 
 ## Clean start (keep cluster, wipe workloads)
 

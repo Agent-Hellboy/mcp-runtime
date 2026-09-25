@@ -159,6 +159,11 @@ ADAPTER_PROXY_PORT="${ADAPTER_PROXY_PORT:-18104}"
 MCP_SERVICE_SESSION_PORT="${MCP_SERVICE_SESSION_PORT:-18105}"
 MT_TENANT_A_PORT="${MT_TENANT_A_PORT:-18106}"
 MT_TENANT_B_PORT="${MT_TENANT_B_PORT:-18107}"
+TENANT_ADAPTER_PROXY_PORT="${TENANT_ADAPTER_PROXY_PORT:-18108}"
+# The first granted call after the adapter issues a session must succeed
+# within this many tries (~2s apart). Keep it well under the kubelet's
+# ~60-90s ConfigMap volume resync so a lost policy-refresh nudge fails CI.
+TENANT_SESSION_PROPAGATION_TRIES="${TENANT_SESSION_PROPAGATION_TRIES:-12}"
 API_METRICS_PORT="${API_METRICS_PORT:-19090}"
 INGEST_METRICS_PORT="${INGEST_METRICS_PORT:-19091}"
 PROCESSOR_METRICS_PORT="${PROCESSOR_METRICS_PORT:-19092}"
@@ -1145,6 +1150,204 @@ start_e2e_adapter_proxy() {
   ADAPTER_PROXY_PID="$!"
   PIDS+=("${ADAPTER_PROXY_PID}")
   wait_managed_port "${ADAPTER_PROXY_PORT}" "${ADAPTER_PROXY_PID}" "${ADAPTER_PROXY_LOG}" "adapter proxy"
+}
+
+# tenant_owner_cli runs the CLI the way a docs/quickstart.md user does: only
+# the saved `auth login` profile, no MCP_* environment and no kubeconfig, so
+# every command goes through the platform API as that user.
+tenant_owner_cli() {
+  local -a unset_args=()
+  local name
+  while IFS= read -r name; do
+    unset_args+=(-u "${name}")
+  done < <(compgen -e | grep '^MCP_' || true)
+  env ${unset_args[@]+"${unset_args[@]}"} \
+    KUBECONFIG="${TENANT_QS_DIR}/no-kubeconfig" \
+    MCP_RUNTIME_CONFIG_DIR="${TENANT_QS_DIR}/owner-config" \
+    "${PROJECT_ROOT}/bin/mcp-runtime" "$@"
+}
+
+# assert_mcp_tools_list_contains initializes an MCP session at base_url and
+# fails unless tools/list returns every named tool.
+assert_mcp_tools_list_contains() {
+  local base_url="$1"
+  shift
+  MCP_BASE="${base_url}" MCP_PROTOCOL_VERSION="${MCP_PROTOCOL_VERSION}" \
+    MCP_HTTP_TIMEOUT="${MCP_HTTP_TIMEOUT}" python3 - "$@" <<'PY'
+import json
+import os
+import sys
+import urllib.request
+
+base = os.environ["MCP_BASE"]
+timeout = float(os.environ.get("MCP_HTTP_TIMEOUT", "30"))
+headers = {
+    "content-type": "application/json",
+    "accept": "application/json, text/event-stream",
+    "Mcp-Protocol-Version": os.environ["MCP_PROTOCOL_VERSION"],
+}
+
+
+def post(msg, session=None):
+    h = dict(headers)
+    if session:
+        h["Mcp-Session-Id"] = session
+    req = urllib.request.Request(base, data=json.dumps(msg).encode(), headers=h, method="POST")
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return resp.status, resp.headers.get("Mcp-Session-Id") or session, resp.read().decode()
+
+
+_, session, _ = post({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+    "protocolVersion": os.environ["MCP_PROTOCOL_VERSION"], "capabilities": {},
+    "clientInfo": {"name": "mcp-runtime-e2e", "version": "1.0.0"}}})
+post({"jsonrpc": "2.0", "method": "notifications/initialized"}, session)
+status, _, body = post({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}, session)
+names = [tool.get("name") for tool in (json.loads(body).get("result") or {}).get("tools") or []]
+missing = [name for name in sys.argv[1:] if name not in names]
+if status != 200 or missing:
+    raise SystemExit(f"tools/list via {base} returned status {status} tools {names}; missing {missing}")
+print(f"[mcp] tools/list returned {len(names)} tools including {', '.join(sys.argv[1:])}")
+PY
+}
+
+# run_tenant_owner_adapter_quickstart replays docs/quickstart.md as a team
+# owner: platform-API tenant push/deploy (then --update), an owner-applied
+# grant, and `adapter proxy --auto-refresh` through the Traefik ingress.
+#
+# Regression: the adapter used its freshly issued session immediately, but the
+# gateway only saw it after the kubelet's periodic ConfigMap volume resync, so
+# every call returned 401 session_not_found for a minute or more. The operator
+# now stamps the policy revision on the server pods to force an immediate
+# refresh; assert both the stamp and a short propagation budget.
+run_tenant_owner_adapter_quickstart() {
+  local stamp team namespace owner_email owner_password server image agent grant
+  local runtime_url proxy_url policy_revision pod_revisions
+  stamp="$(date +%s)"
+  team="e2e-tq-${stamp}"
+  namespace="mcp-team-${team}"
+  owner_email="${team}-owner@mcpruntime.org"
+  owner_password="e2e-owner-pass-${stamp}"
+  server="tq-${stamp}"
+  agent="cursor-${stamp}"
+  grant="${server}-cursor"
+  image="registry.registry.svc.cluster.local:5000/${team}/${server}"
+  TENANT_QS_DIR="${WORKDIR}/tenant-quickstart"
+  mkdir -p "${TENANT_QS_DIR}/.mcp"
+
+  log_line policy "tenant quickstart: admin creates team ${team} with an owner"
+  ensure_traefik_port_forward
+  env MCP_PLATFORM_API_URL="http://127.0.0.1:${SENTINEL_PORT}" MCP_PLATFORM_API_TOKEN="${ADAPTER_PLATFORM_TOKEN}" \
+    ./bin/mcp-runtime team create "${team}" --name "E2E tenant quickstart ${stamp}" >/dev/null
+  env MCP_PLATFORM_API_URL="http://127.0.0.1:${SENTINEL_PORT}" MCP_PLATFORM_API_TOKEN="${ADAPTER_PLATFORM_TOKEN}" \
+    ./bin/mcp-runtime team user create "${team}" \
+      --email "${owner_email}" --password "${owner_password}" --role owner >/dev/null
+
+  log_line policy "tenant quickstart: owner logs in and pushes/deploys ${server} with --scope tenant"
+  tenant_owner_cli auth login --api-url "http://127.0.0.1:${SENTINEL_PORT}" \
+    --email "${owner_email}" --password "${owner_password}" --profile e2e-owner >/dev/null
+  docker tag "${SERVER_IMAGE}" "${image}:${E2E_WORKLOAD_TAG}"
+  tenant_owner_cli server push --image "${image}:${E2E_WORKLOAD_TAG}" --scope tenant
+  cat >"${TENANT_QS_DIR}/.mcp/servers.yaml" <<EOF
+version: v1
+servers:
+  - name: ${server}
+    image: ${image}
+    imageTag: ${E2E_WORKLOAD_TAG}
+    route: /${server}/mcp
+    publicPathPrefix: ${server}
+    port: 8088
+    scope: tenant
+    resources:
+      requests:
+        cpu: 1m
+        memory: 32Mi
+    tools:
+      - {name: echo, requiredTrust: low, sideEffect: read}
+      - {name: add, requiredTrust: low, sideEffect: read}
+      - {name: upper, requiredTrust: low, sideEffect: read}
+    auth:
+      mode: header
+    policy:
+      mode: allow-list
+      defaultDecision: deny
+    session:
+      required: true
+    gateway:
+      enabled: true
+EOF
+  (cd "${TENANT_QS_DIR}" && tenant_owner_cli server deploy "${server}" --scope tenant --metadata-dir .mcp)
+  (cd "${TENANT_QS_DIR}" && tenant_owner_cli server deploy "${server}" --scope tenant --metadata-dir .mcp --update)
+  wait_for_deployment_exists "${namespace}" "${server}"
+  kubectl rollout status "deploy/${server}" -n "${namespace}" --timeout=180s
+  runtime_url="http://127.0.0.1:${TRAEFIK_PORT}/${server}/mcp"
+  # Wait for the ingress route before any session exists, so the short
+  # propagation budget below measures only grant/session delivery.
+  local route_status="" i
+  for i in $(seq 1 60); do
+    route_status="$(curl -sS -o /dev/null -w '%{http_code}' \
+      -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' \
+      -H "Mcp-Protocol-Version: ${MCP_PROTOCOL_VERSION}" \
+      --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"'"${MCP_PROTOCOL_VERSION}"'","capabilities":{},"clientInfo":{"name":"mcp-runtime-e2e","version":"1.0.0"}}}' \
+      "${runtime_url}" || true)"
+    [[ "${route_status}" == "200" ]] && break
+    recover_traefik_port_forward_if_needed || true
+    sleep 2
+  done
+  if [[ "${route_status}" != "200" ]]; then
+    echo "[tenant-quickstart] ingress route ${runtime_url} not ready (last status ${route_status})" >&2
+    exit 1
+  fi
+
+  log_line policy "tenant quickstart: owner grants ${agent} echo/add"
+  (cd "${TENANT_QS_DIR}" && tenant_owner_cli access grant init "${grant}" \
+    --server "${server}" --namespace "${namespace}" --agent-id "${agent}" \
+    --tool echo --tool add --output grant.yaml)
+  (cd "${TENANT_QS_DIR}" && tenant_owner_cli access grant apply --file grant.yaml)
+
+  log_line policy "tenant quickstart: adapter proxy --auto-refresh through Traefik"
+  proxy_url="http://127.0.0.1:${TENANT_ADAPTER_PROXY_PORT}/mcp"
+  stop_listener_on_port "${TENANT_ADAPTER_PROXY_PORT}"
+  require_port_available "${TENANT_ADAPTER_PROXY_PORT}" "tenant adapter proxy"
+  tenant_owner_cli adapter proxy \
+    --runtime-url "${runtime_url}" \
+    --server "${server}" \
+    --agent "${agent}" \
+    --agent-id "${agent}" \
+    --auto-refresh \
+    --listen "127.0.0.1:${TENANT_ADAPTER_PROXY_PORT}" \
+    --log-level info >"${TENANT_QS_DIR}/adapter-proxy.log" 2>&1 &
+  TENANT_ADAPTER_PROXY_PID="$!"
+  PIDS+=("${TENANT_ADAPTER_PROXY_PID}")
+  wait_managed_port "${TENANT_ADAPTER_PROXY_PORT}" "${TENANT_ADAPTER_PROXY_PID}" \
+    "${TENANT_QS_DIR}/adapter-proxy.log" "tenant adapter proxy"
+
+  assert_mcp_tools_list_contains "${proxy_url}" echo add upper
+  if ! wait_for_mcp_tool_result "${proxy_url}" "echo" '{"message":"tenant-quickstart"}' 200 "tenant-quickstart" \
+    "${TENANT_SESSION_PROPAGATION_TRIES}" "" "tenant-quickstart-echo"; then
+    echo "[tenant-quickstart] granted call did not succeed within ${TENANT_SESSION_PROPAGATION_TRIES} tries of session issuance" >&2
+    kubectl get mcpagentsession -n "${namespace}" -o yaml >&2 || true
+    kubectl get pods -n "${namespace}" -l "app=${server}" -o jsonpath='{range .items[*]}{.metadata.name} {.metadata.annotations}{"\n"}{end}' >&2 || true
+    cat "${TENANT_QS_DIR}/adapter-proxy.log" >&2 || true
+    exit 1
+  fi
+  wait_for_mcp_tool_result "${proxy_url}" "add" '{"a":2,"b":3}' 200 '"text":"5"' \
+    "${TENANT_SESSION_PROPAGATION_TRIES}" "" "tenant-quickstart-add"
+  wait_for_mcp_tool_result "${proxy_url}" "upper" '{"text":"x"}' 403 "tool_not_granted" \
+    "${TENANT_SESSION_PROPAGATION_TRIES}" "" "tenant-quickstart-upper"
+
+  policy_revision="$(kubectl get configmap "${server}-gateway-policy" -n "${namespace}" \
+    -o jsonpath='{.data.policy\.json}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["revision"])')"
+  pod_revisions="$(kubectl get pods -n "${namespace}" -l "app=${server}" \
+    -o jsonpath='{range .items[*]}{.metadata.annotations.mcpruntime\.org/gateway-policy-revision}{"\n"}{end}')"
+  if ! grep -qxF "${policy_revision}" <<<"${pod_revisions}"; then
+    echo "[tenant-quickstart] gateway pods were not stamped with policy revision ${policy_revision}: ${pod_revisions}" >&2
+    exit 1
+  fi
+  echo "[tenant-quickstart][pass] team owner tenant deploy + adapter --auto-refresh: tools listed, granted 200, ungranted 403"
+
+  kill "${TENANT_ADAPTER_PROXY_PID}" >/dev/null 2>&1 || true
+  wait "${TENANT_ADAPTER_PROXY_PID}" >/dev/null 2>&1 || true
+  cleanup_mcp_server_and_wait "${server}" "${namespace}" 120s
 }
 
 ensure_trust_session_proxy() {
@@ -5134,6 +5337,10 @@ print('adapter-session reused:', resp['name'])
     # short smoke retry after the ConfigMap has already been updated.
     wait_for_mcp_tool_result "http://127.0.0.1:${ADAPTER_PROXY_PORT}/mcp" "aaa-ping" '{}' 200 "pong"
     wait_for_mcp_tool_result "http://127.0.0.1:${ADAPTER_PROXY_PORT}/mcp" "add" '{"a":1,"b":2}' 403 "tool_not_granted"
+  fi
+
+  if scenario_selected "adapter-proxy"; then
+    run_tenant_owner_adapter_quickstart
   fi
 
 if deep_request_flows_enabled || scenario_selected "cli-platform"; then

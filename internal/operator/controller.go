@@ -35,6 +35,10 @@ type MCPServerReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 
+	// APIReader is an uncached reader for objects the operator does not watch
+	// (the server's pods). Nil falls back to Client.
+	APIReader client.Reader
+
 	// DefaultIngressHost is the default ingress host if not specified in the CR.
 	DefaultIngressHost string
 
@@ -111,12 +115,15 @@ const (
 )
 
 const (
-	gatewayPolicyVolumeName       = "gateway-policy"
-	gatewayPolicyMountDir         = "/var/run/mcp-runtime/policy"
-	gatewayPolicyFileName         = "policy.json"
-	gatewayPolicyFilePath         = gatewayPolicyMountDir + "/" + gatewayPolicyFileName
-	restrictedRunAsUser           = kubeworkload.RestrictedRunAsUser
-	defaultWorkloadServiceAccount = kubeworkload.DefaultServiceAccountName
+	gatewayPolicyVolumeName = "gateway-policy"
+	gatewayPolicyMountDir   = "/var/run/mcp-runtime/policy"
+	gatewayPolicyFileName   = "policy.json"
+	gatewayPolicyFilePath   = gatewayPolicyMountDir + "/" + gatewayPolicyFileName
+	// gatewayPolicyRevisionAnnotation is stamped on server pods when the
+	// rendered policy changes, forcing the kubelet to refresh the policy volume.
+	gatewayPolicyRevisionAnnotation = "mcpruntime.org/gateway-policy-revision"
+	restrictedRunAsUser             = kubeworkload.RestrictedRunAsUser
+	defaultWorkloadServiceAccount   = kubeworkload.DefaultServiceAccountName
 )
 
 // resourceReadiness tracks the readiness state of different resources.
@@ -127,6 +134,7 @@ type resourceReadiness = operatorutil.ResourceReadiness
 //+kubebuilder:rbac:groups=mcpruntime.org,resources=mcpservers/finalizers,verbs=update
 //+kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;delete
+//+kubebuilder:rbac:groups="",resources=pods,verbs=list;patch
 //+kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=get;list;watch;create;update;patch
 //+kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete

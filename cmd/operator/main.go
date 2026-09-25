@@ -58,6 +58,7 @@ func main() {
 
 	if err = (&operator.MCPServerReconciler{
 		Client:                           mgr.GetClient(),
+		APIReader:                        mgr.GetAPIReader(),
 		Scheme:                           mgr.GetScheme(),
 		DefaultIngressHost:               metadata.ResolveMcpIngressHost(),
 		DefaultIngressEntryPoints:        strings.TrimSpace(os.Getenv("MCP_DEFAULT_INGRESS_ENTRYPOINTS")),
