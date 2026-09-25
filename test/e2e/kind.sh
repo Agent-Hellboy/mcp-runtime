@@ -11,7 +11,7 @@ set -euo pipefail
 # Set E2E_SCENARIOS to a comma-separated subset for local debugging.
 # Supported values: all, smoke-auth, governance, trust, oauth, observability,
 # multitenancy, api-platform, ui-auth, adapter-proxy, adapter-certificates,
-# cli-platform, mtls, platform-update.
+# cli-platform, platform-update.
 # observability requires the full traffic suite: smoke-auth, governance, trust, oauth.
 #
 # Set E2E_DEEP_REQUEST_FLOWS=1 for pre-release runs that should exercise
@@ -383,11 +383,11 @@ validate_scenarios() {
   local scenario
   for scenario in "${E2E_SCENARIO_LIST[@]}"; do
     case "${scenario}" in
-      all|smoke-auth|governance|trust|oauth|observability|multitenancy|api-platform|ui-auth|adapter-proxy|adapter-certificates|cli-platform|mtls|platform-update)
+      all|smoke-auth|governance|trust|oauth|observability|multitenancy|api-platform|ui-auth|adapter-proxy|adapter-certificates|cli-platform|platform-update)
          ;;
       *)
          echo "unsupported E2E scenario: ${scenario}" >&2
-         echo "supported values: all, smoke-auth, governance, trust, oauth, observability, multitenancy, api-platform, ui-auth, adapter-proxy, adapter-certificates, cli-platform, mtls, platform-update" >&2
+         echo "supported values: all, smoke-auth, governance, trust, oauth, observability, multitenancy, api-platform, ui-auth, adapter-proxy, adapter-certificates, cli-platform, platform-update" >&2
         exit 1
         ;;
     esac
@@ -1025,8 +1025,8 @@ ensure_gateway_port_forward() {
   wait_port "${SENTINEL_PORT}"
 }
 
-# shellcheck source=scenarios/mtls.sh
-source "${PROJECT_ROOT}/test/e2e/scenarios/mtls.sh"
+# shellcheck source=lib/adapter-certificates.sh
+source "${PROJECT_ROOT}/test/e2e/lib/adapter-certificates.sh"
 # shellcheck source=scenarios/platform-update.sh
 source "${PROJECT_ROOT}/test/e2e/scenarios/platform-update.sh"
 
@@ -4815,15 +4815,10 @@ EOF
     ADAPTER_CERT_URL="https://127.0.0.1:${TRAEFIK_TLS_PORT}${OAUTH_INGRESS_PATH}"
     ADAPTER_CERT_HEADERS="${WORKDIR}/adapter-cert-headers.txt"
     ADAPTER_CERT_BODY="${WORKDIR}/adapter-cert-body.json"
-    ADAPTER_CERT_STATUS="$(curl -ksS --cert "${ADAPTER_CERT_DIR}/client.crt" --key "${ADAPTER_CERT_DIR}/client.key" \
-      -D "${ADAPTER_CERT_HEADERS}" -o "${ADAPTER_CERT_BODY}" -w '%{http_code}' \
-      -H "Host: ${OAUTH_SERVER_HOST}" -H 'content-type: application/json' \
-      -H 'accept: application/json, text/event-stream' -H "Mcp-Protocol-Version: ${MCP_PROTOCOL_VERSION}" \
-      --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' "${ADAPTER_CERT_URL}")"
-    if [[ "${ADAPTER_CERT_STATUS}" != "200" ]]; then
-      echo "adapter certificate initialize returned ${ADAPTER_CERT_STATUS}: $(cat "${ADAPTER_CERT_BODY}")" >&2
-      exit 1
-    fi
+    # ConfigMap reconciliation precedes volume projection and gateway reload.
+    # Prove the new identity is active through the actual Traefik route.
+    wait_for_adapter_certificate_initialize "${ADAPTER_CERT_URL}" 200 "" \
+      "${ADAPTER_CERT_HEADERS}" "${ADAPTER_CERT_BODY}"
     ADAPTER_MCP_SESSION="$(awk 'tolower($1)=="mcp-session-id:" {gsub("\r", "", $2); print $2}' "${ADAPTER_CERT_HEADERS}")"
     if [[ -z "${ADAPTER_MCP_SESSION}" ]]; then
       echo "adapter certificate initialize returned no MCP session id" >&2
@@ -4886,16 +4881,10 @@ EOF
 
     log_line oauth "a revoked session must stop a live adapter certificate"
     kubectl patch mcpagentsession "${ADAPTER_CERT_SESSION}" -n mcp-servers --type=merge -p '{"spec":{"revoked":true}}'
-    wait_for_policy_text '"revoked": true'
-    REVOKED_CERT_STATUS="$(curl -ksS --cert "${ADAPTER_CERT_DIR}/client.crt" --key "${ADAPTER_CERT_DIR}/client.key" \
-      -o "${WORKDIR}/adapter-revoked-session.json" -w '%{http_code}' \
-      -H "Host: ${OAUTH_SERVER_HOST}" -H 'content-type: application/json' \
-      -H 'accept: application/json, text/event-stream' -H "Mcp-Protocol-Version: ${MCP_PROTOCOL_VERSION}" \
-      --data '{"jsonrpc":"2.0","id":5,"method":"initialize","params":{}}' "${ADAPTER_CERT_URL}")"
-    if [[ "${REVOKED_CERT_STATUS}" != "401" ]] || ! grep -q 'session_revoked' "${WORKDIR}/adapter-revoked-session.json"; then
-      echo "revoked session certificate was not rejected (${REVOKED_CERT_STATUS}): $(cat "${WORKDIR}/adapter-revoked-session.json")" >&2
-      exit 1
-    fi
+    # Observe revocation for this certificate on its OAuth server; the generic
+    # policy-text helper defaults to SERVER_NAME, which is a different server.
+    wait_for_adapter_certificate_initialize "${ADAPTER_CERT_URL}" 401 session_revoked \
+      "${WORKDIR}/adapter-revoked-headers.txt" "${WORKDIR}/adapter-revoked-session.json"
     kubectl patch mcpagentsession "${ADAPTER_CERT_SESSION}" -n mcp-servers --type=merge -p '{"spec":{"revoked":false}}'
 
     log_line oauth "direct gateway access with an adapter certificate must be rejected as untrusted_proxy"
@@ -6359,11 +6348,6 @@ fi
 
 fi
 
-fi
-
-if scenario_selected "mtls"; then
-  run_e2e_mtls_scenario
-  cleanup_mcp_server_and_wait "${MTLS_SERVER_NAME}" mcp-servers 120s
 fi
 
 if scenario_selected "platform-update"; then

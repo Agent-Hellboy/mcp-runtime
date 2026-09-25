@@ -58,7 +58,7 @@ run_valid "ui-auth" "ui-auth" "ui-auth"
 run_valid "adapter-proxy" "adapter-proxy" "adapter-proxy"
 run_valid "adapter-certificates" "adapter-certificates" "adapter-certificates"
 run_valid "cli-platform" "cli-platform" "cli-platform"
-run_valid "mtls" "mtls" "mtls"
+run_invalid "removed-mtls" "mtls" "unsupported E2E scenario: mtls"
 run_valid "platform-update" "platform-update" "platform-update"
 run_valid "observability-with-deps" "smoke-auth,governance,trust,oauth,observability" "smoke-auth,governance,trust,oauth,observability"
 run_valid "whitespace-trimmed" " smoke-auth , governance " "smoke-auth,governance"
@@ -151,3 +151,14 @@ selector_expect "broad" "all" "api/v1alpha1/mcpserver_types.go"
 selector_expect "staging-e2e-only" "smoke-auth" "test/e2e/staging-vm.sh" "test/e2e/lib/staging.sh" ".github/workflows/staging-e2e.yaml"
 
 echo "[pass] scenario selector validation"
+
+# Validation-only exits before sourcing libraries, so also check that static
+# PROJECT_ROOT source targets exist (a merge can revive a removed scenario).
+python3 - "${KIND_SCRIPT}" "${PROJECT_ROOT}" <<'PY'
+import pathlib, re, sys
+script, root = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+for target in re.findall(r'^source "\$\{PROJECT_ROOT\}/([^"\n]+)"', script.read_text(), re.MULTILINE):
+    assert (root / target).is_file(), f"missing E2E library: {target}"
+print("[pass] E2E source targets exist")
+PY
+bash "${SCRIPT_DIR}/adapter_certificates_test.sh"
