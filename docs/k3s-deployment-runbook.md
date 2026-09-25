@@ -143,7 +143,7 @@ default. Override the path with `MCP_DEPLOY_ENV=/path/to/other.env`. See
 | `MCP_GOOGLE_CLIENT_ID` | optional | Alias for `GOOGLE_CLIENT_ID`. |
 | `OIDC_ISSUER` | optional | Non-Google provider; setup fills Google defaults when `GOOGLE_CLIENT_ID` is set. |
 | `OIDC_AUDIENCE` | optional | OIDC audience; defaults to Google client ID. |
-| `OIDC_JWKS_URL` | optional | JWKS URL for token validation. |
+| `OIDC_JWKS_URL` | optional | JWKS URL for token validation; discovered from `OIDC_ISSUER` when omitted and the provider publishes OIDC metadata. |
 
 #### MCP OAuth authorization server
 

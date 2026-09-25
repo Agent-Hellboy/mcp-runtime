@@ -305,15 +305,17 @@ GET  /api/v1/auth/me
 |---|---|
 | `POST /api/v1/auth/signup` | Body: `email`, `password`, optional `role`. Returns `201` with `access_token`, `token_type`, `expires_in`, and `user`. Admin signup requires an admin principal. |
 | `POST /api/v1/auth/login` | Body: `email`, `password`. Returns `200` with `access_token`, `token_type`, `expires_in`, and `user`. |
-| `POST /api/v1/auth/oidc` | Body: `id_token`. Requires configured issuer, audience, and JWKS. Returns `200` with `access_token`, `token_type`, `expires_in`, and `user`. |
+| `POST /api/v1/auth/oidc` | Body: `id_token`. Requires configured issuer and audience; JWKS is read from issuer discovery when `OIDC_JWKS_URL` is unset. Returns `200` with `access_token`, `token_type`, `expires_in`, and `user`. |
 | `GET /api/v1/auth/me` | Requires auth. Returns `authenticated=true` and the current principal. |
 
 `setup` writes OIDC settings through `mcp-sentinel-config`. For Google sign-in,
 set `GOOGLE_CLIENT_ID` before setup; when the issuer, audience, and JWKS URL are
 empty, setup derives the standard Google OIDC values from that client ID. For
-other OIDC providers, set `OIDC_ISSUER`, `OIDC_AUDIENCE`, and `OIDC_JWKS_URL`
-explicitly. Non-test public TLS setup fails fast unless one of those browser
-login configurations is present.
+other OIDC providers, set `OIDC_ISSUER` and `OIDC_AUDIENCE`; the services
+discover the JWKS URL from the issuer when `OIDC_JWKS_URL` is unset. Set
+`OIDC_JWKS_URL` explicitly for providers without OIDC discovery. Non-test
+public TLS setup fails fast unless one of those browser login configurations
+is present.
 
 ## Gateway flow and headers
 
@@ -457,7 +459,10 @@ Server list/get responses keep CRD `tools`, `prompts`, `resources`, and
 `tasks` as governance metadata and add `liveInventory` from the running MCP
 server when runtime-api's short-TTL gateway probe has completed. On a cold
 cache miss or probe failure, `liveInventory` is `null` and
-`liveInventoryError` contains a short reason. `DELETE /api/v1/runtime/servers/{namespace}/{name}` retires a server and frees one
+`liveInventoryError` contains a short reason. For HTTP identity-authenticated
+servers, probes use the server's configured `spec.auth.humanIDHeader` and
+`spec.auth.agentIDHeader`; mTLS probes authenticate with their client
+certificate. `DELETE /api/v1/runtime/servers/{namespace}/{name}` retires a server and frees one
 active-server slot for the owning publisher. The active-server limit is
 enforced by runtime-api before Kubernetes apply; strict serialization of
 concurrent publishes would require a shared reservation or admission-control
