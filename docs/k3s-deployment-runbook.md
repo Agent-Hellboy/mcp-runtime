@@ -75,7 +75,7 @@ Saved deployment profile (committed template + local override):
 
 ```bash
 cp config/deployments/mcpruntime-org.env.example config/deployments/mcpruntime-org.env
-# edit mcpruntime-org.env — see Environment variable reference below
+# edit mcpruntime-org.env, see the Environment variable reference below
 ```
 
 `config/deployments/mcpruntime-org.env` is gitignored. The `.example` file is the
@@ -363,7 +363,7 @@ local-path-provisioner cannot recover without an SSH restart.
 ```bash
 # 1. Back up TLS secrets (see Step 0)
 
-# 2. Delete only app namespaces — leave kube-system untouched
+# 2. Delete only app namespaces, and leave kube-system untouched
 kubectl get ns --no-headers \
   | awk '{print $1}' \
   | grep -Ev '^(kube-system|kube-public|kube-node-lease|default)$' \

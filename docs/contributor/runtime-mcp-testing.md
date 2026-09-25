@@ -173,7 +173,7 @@ Gateway policy requires both an access grant and an agent session when the
 server has `spec.session.required=true`.
 
 Use `init` to scaffold manifests. Apply the grant through the platform API
-after `auth login`. Platform API **session apply requires an admin role** — use
+after `auth login`. Platform API **session apply requires an admin role**, so use
 admin login (`admin@mcpruntime.org` in test mode), `--use-kube`, or `kubectl
 apply` for explicit curl sessions. For agent testing, prefer the adapter path
 documented below.

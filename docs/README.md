@@ -6,7 +6,7 @@ gateway sidecar, and records each decision for audit. It is open source and
 self-hosted.
 
 <div class="docs-home">
-<p class="docs-brand-banner"><img src="assets/brand/mcp-runtime-banner.png" alt="MCP Runtime — Deploy, govern, and broker MCP servers using a Kubernetes-native control plane" /></p>
+<p class="docs-brand-banner"><img src="assets/brand/mcp-runtime-banner.png" alt="MCP Runtime: deploy, govern, and broker MCP servers using a Kubernetes-native control plane" /></p>
 <section class="docs-hero">
   <div class="docs-hero-copy">
   <p class="docs-eyebrow">Kubernetes control plane for MCP servers</p>
@@ -66,9 +66,9 @@ at it. The adapter adds the identity and session headers the gateway checks.
 
 ## Why I built this
 
-I got introduced to MCP while building a Superset MCP server at work. While implementing it I started reading the spec, which led me to a similar platform-level project I was building internally — it never got approved. Along the way I noticed a real infrastructure problem: there is no good way for small teams to deploy and govern MCP servers without either buying an expensive gateway or wiring everything up manually. Everyone ends up running redundant copies of the same server — payments team has one, infra team has one, data team has one. Wasteful and impossible to govern. I thought everyone should have this, so here I am building it in the open.
+I got introduced to MCP while building a Superset MCP server at work. While implementing it I started reading the spec, which led me to a similar platform-level project I was building internally, but it never got approved. Along the way I noticed a real infrastructure problem: there is no good way for small teams to deploy and govern MCP servers without either buying an expensive gateway or wiring everything up manually. Everyone ends up running redundant copies of the same server. The payments team has one, the infra team has one, and the data team has one. That is wasteful and impossible to govern. I thought everyone should have this, so here I am building it in the open.
 
-I have been reading the MCP SEPs for gateway and identity management patterns. There are active proposals for exactly these problems. The gateway policy enforcement is a work in progress — I am following the spec and iterating. MCP still has a long way to go here and so do I.
+I have been reading the MCP SEPs for gateway and identity management patterns. There are active proposals for exactly these problems. The gateway policy enforcement is a work in progress, and I am following the spec and iterating. MCP still has a long way to go here, and so do I.
 
 ## What MCP Runtime installs
 
@@ -194,7 +194,7 @@ preparation.
 
 ## Project status
 
-MCP Runtime is **alpha**. The architecture is stable enough to evaluate as governed MCP infrastructure, but API and UX details are still evolving. Treat the `v1alpha1` types as the source of truth. A security audit is planned but has not been completed — do not use this in production without your own review.
+MCP Runtime is **alpha**. The architecture is stable enough to evaluate as governed MCP infrastructure, but API and UX details are still evolving. Treat the `v1alpha1` types as the source of truth. A security audit is planned but has not been completed, so do not use this in production without your own review.
 
 ## Community
 

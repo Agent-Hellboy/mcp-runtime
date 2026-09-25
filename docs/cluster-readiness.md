@@ -603,7 +603,7 @@ kubectl get svc -n registry registry
 # NodePort?
 kubectl get svc -n registry registry -o jsonpath='{.spec.ports[0].nodePort}'
 
-# From inside the cluster — should return a JSON repository list:
+# From inside the cluster, this should return a JSON repository list:
 kubectl run -n registry --rm -it registry-check --restart=Never \
   --image=curlimages/curl --command -- \
   curl -s http://registry.registry.svc.cluster.local:5000/v2/_catalog

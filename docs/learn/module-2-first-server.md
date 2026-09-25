@@ -65,7 +65,7 @@ Validation catches tool name mismatches before the build.
 mcp-runtime server build image my-server --tag v1
 # Prints: registry.example.com/myteam/my-server:v1
 
-# Push — use the exact ref printed above
+# Push using the exact ref printed above
 mcp-runtime server push \
   --image registry.example.com/myteam/my-server:v1 \
   --scope tenant

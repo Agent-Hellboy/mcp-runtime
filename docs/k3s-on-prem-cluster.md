@@ -295,7 +295,7 @@ Run setup:
 ```bash
 ./bin/mcp-runtime bootstrap --provider k3s
 
-# k3s ships Traefik in kube-system — use --ingress none to avoid a second stack.
+# k3s ships Traefik in kube-system, so use --ingress none to avoid a second stack.
 # Pass --kubeconfig explicitly when multiple kubeconfigs exist on the workstation.
 MCP_SETUP_WAIT_TIMEOUT=1200 ./bin/mcp-runtime setup \
   --kubeconfig "$KUBECONFIG" \

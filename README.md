@@ -1,7 +1,7 @@
 # MCP Runtime
 
 <p align="center">
-  <img src="website/static/brand/mcp-runtime-banner.png" alt="MCP Runtime — Deploy, govern, and broker MCP servers using a Kubernetes-native control plane" />
+  <img src="website/static/brand/mcp-runtime-banner.png" alt="MCP Runtime: deploy, govern, and broker MCP servers using a Kubernetes-native control plane" />
 </p>
 
 [![CI](https://github.com/mcp-runtime/mcp-runtime/actions/workflows/ci.yaml/badge.svg)](https://github.com/mcp-runtime/mcp-runtime/actions/workflows/ci.yaml)

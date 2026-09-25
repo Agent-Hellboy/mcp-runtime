@@ -97,7 +97,7 @@ Then make registry mode explicit:
 
 ```bash
 # Bundled registry with public TLS ingress (k3s on-prem, bundled-https).
-# Pod pulls must use the TLS-covered registry hostname — not the registry Service ClusterIP.
+# Pod pulls must use the TLS-covered registry hostname, not the registry Service ClusterIP.
 ./bin/mcp-runtime setup \
   --registry-mode bundled-https \
   --with-tls \

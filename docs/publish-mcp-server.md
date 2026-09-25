@@ -157,7 +157,7 @@ mcp-runtime auth login --api-url https://platform.example.com
   --grant-file grant.yaml --session-file session.yaml
 
 ./bin/mcp-runtime access grant apply --file grant.yaml
-# Platform API session apply is admin-only — use adapter for agents:
+# Platform API session apply is admin-only. Use the adapter for agents:
 # ./bin/mcp-runtime access session apply --file session.yaml
 ```
 

@@ -5,7 +5,7 @@ the mcp-auth **Python** client SDK against the same authorization server.
 
 It deliberately avoids FastMCP's `RemoteAuthProvider`. That adapter already
 builds the protected resource metadata for you, so it cannot exercise the plain
-SDK surface a server author reaches for when they are not on FastMCP — which is
+SDK surface a server author reaches for when they are not on FastMCP, which is
 where the metadata is easy to get wrong. Everything here comes from
 `mcp_auth_client`:
 
@@ -19,7 +19,7 @@ where the metadata is easy to get wrong. Everything here comes from
 `scopes_supported` is derived from the verifier rather than written by hand, so
 the advertised scope cannot drift from the enforced one. A server that gets this
 wrong returns `403` with an empty body to every client, and the client has
-nothing to retry with — Cursor reports it as
+nothing to retry with. Cursor reports it as
 `Server returned 403 after trying upscoping`.
 
 ## Run locally

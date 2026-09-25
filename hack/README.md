@@ -1,4 +1,4 @@
-# hack/ — repository automation scripts
+# hack/: repository automation scripts
 
 Scripts are grouped by purpose. See the layout below.
 

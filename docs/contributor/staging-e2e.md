@@ -1,8 +1,8 @@
 # Staging E2E on the disposable VM
 
-Staging E2E exercises the full production install path -- `setup --strict-prod`
-with public TLS, the bundled HTTPS registry, the platform API/UI, tenants,
-grants, adapters, and analytics -- on a dedicated **disposable** VM whose
+Staging E2E exercises the full production install path using
+`setup --strict-prod`, public TLS, the bundled HTTPS registry, the platform
+API/UI, tenants, grants, adapters, and analytics on a dedicated **disposable** VM whose
 hostnames live under `*.e2e.mcpruntime.org`. It is intentionally separate from
 the Kind suite. It was previously called "Production E2E"; the name changed
 because it never touches the production cluster.
@@ -18,9 +18,9 @@ Both share their assertions, the target guard, and the stage runner through
 `test/e2e/lib/staging.sh`, and both workflows share one concurrency group so
 they never drive the VM at the same time.
 
-The remote runner models how an operator actually installs MCP Runtime -- the
-CLI on a workstation or CI runner, the cluster reached through a kubeconfig --
-and avoids environment failures the on-VM runner is exposed to (no repository
+The remote runner models how an operator actually installs MCP Runtime, using the
+CLI on a workstation or CI runner and the cluster reached through a kubeconfig.
+It also avoids environment failures the on-VM runner is exposed to (no repository
 tarball, no login-shell working directory, the runner's own Go and Docker, and
 no dependence on one SSH session staying open through multi-minute image
 builds). The on-VM runner exercises the path where the CLI runs next to k3s.

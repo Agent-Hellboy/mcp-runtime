@@ -68,7 +68,7 @@ Required GitHub secrets:
 
 Optional GitHub secrets:
 
-- `WEBSITE_DEPLOY_HOST_KEY` — pinned SSH host key for `WEBSITE_DEPLOY_HOST`; use either a full known-hosts line such as `203.0.113.10 ssh-ed25519 AAAA...` or a bare host key such as `ssh-ed25519 AAAA...`. If omitted or malformed, CI falls back to `ssh-keyscan`.
+- `WEBSITE_DEPLOY_HOST_KEY`: pinned SSH host key for `WEBSITE_DEPLOY_HOST`. Use either a full known-hosts line such as `203.0.113.10 ssh-ed25519 AAAA...` or a bare host key such as `ssh-ed25519 AAAA...`. If omitted or malformed, CI falls back to `ssh-keyscan`.
 - `WEBSITE_DOCS_URL` (default: `https://docs.mcpruntime.org/`)
 - `WEBSITE_ARTICLES_URL` (default: `https://articles.mcpruntime.org/`)
 - `WEBSITE_BASE_URL` (default: `https://mcpruntime.org`)
@@ -81,10 +81,10 @@ Optional GitHub secrets:
 
 ## Files
 
-- `app.py` — Flask app (home, robots, sitemap, `/docs*` redirect).
-- `templates/base.html` — shared shell (header, footer, security headers).
-- `templates/index.html` — single landing page.
-- `static/style.css` — page styles.
-- `static/favicon.png` — transparent hexagon-and-cube mark, the same mark as the GitHub org avatar.
-- `static/brand/` — light/dark logo lockups and app icon cut from that mark, plus the website/social banner. The same files are copied into `docs/assets/`, `articles/static/`, and `services/ui/{frontend/public,static}/`.
-- `Dockerfile` — container build.
+- `app.py`: Flask app (home, robots, sitemap, `/docs*` redirect).
+- `templates/base.html`: shared shell (header, footer, security headers).
+- `templates/index.html`: single landing page.
+- `static/style.css`: page styles.
+- `static/favicon.png`: transparent hexagon-and-cube mark, the same mark as the GitHub org avatar.
+- `static/brand/`: light/dark logo lockups and app icon cut from that mark, plus the website/social banner. The same files are copied into `docs/assets/`, `articles/static/`, and `services/ui/{frontend/public,static}/`.
+- `Dockerfile`: container build.
