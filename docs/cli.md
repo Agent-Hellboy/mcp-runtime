@@ -521,7 +521,7 @@ mcp-runtime adapter enroll \
   --trust-domain mcpruntime.org \
   --output-dir ~/.config/mcp-runtime/workspace-demo
 
-# HTTP proxy — MCP clients connect to http://127.0.0.1:8099
+# HTTP proxy. MCP clients connect to http://127.0.0.1:8099
 mcp-runtime adapter proxy \
   --runtime-url https://mcp.example.com/workspace-demo/mcp \
   --server workspace-demo \
@@ -530,7 +530,7 @@ mcp-runtime adapter proxy \
   --auto-refresh \
   --listen 127.0.0.1:8099
 
-# stdio shim — for Claude Desktop or local agent processes
+# stdio shim for Claude Desktop or local agent processes
 mcp-runtime adapter stdio \
   --runtime-url https://mcp.example.com/workspace-demo/mcp \
   --server workspace-demo \
@@ -609,7 +609,7 @@ Note: `team init` is deprecated. Use `team create`.
 KUBECONFIG=~/.kube/config mcp-runtime sentinel status
 KUBECONFIG=~/.kube/config mcp-runtime sentinel events
 
-# Logs — supports --follow, --tail, --since, --previous
+# Logs support --follow, --tail, --since, and --previous
 KUBECONFIG=~/.kube/config mcp-runtime sentinel logs api --since 15m --follow
 KUBECONFIG=~/.kube/config mcp-runtime sentinel logs ingest --tail 200
 

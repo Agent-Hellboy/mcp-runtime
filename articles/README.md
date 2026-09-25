@@ -4,8 +4,8 @@ Standalone editorial site for `articles.mcpruntime.org`.
 
 This is separate from:
 
-- `website/` — product landing site for `mcpruntime.org`
-- `docs/` — product documentation for `docs.mcpruntime.org`
+- `website/`: product landing site for `mcpruntime.org`
+- `docs/`: product documentation for `docs.mcpruntime.org`
 
 ## Content
 

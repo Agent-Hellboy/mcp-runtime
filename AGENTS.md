@@ -1,4 +1,4 @@
-# AGENTS.md — developer and AI-agent guide
+# AGENTS.md: developer and AI-agent guide
 
 This file is the **onboarding index** for the MCP Runtime repo. It complements `README.md` with **where to look**, **build/CI conventions**, and **pointers** to focused runbooks. Prefer repo source (`README`, CRDs, `v1alpha1` types) over generic Kubernetes or MCP advice.
 
@@ -77,12 +77,12 @@ Pre-commit: `pre-commit install`; full suite `pre-commit run --all-files` (sets 
 - `go test ./internal/agentadapter -count=1`
 - `go test ./test/golden/... -count=1` (update `test/golden/cli/testdata/*.golden` when CLI help changes on purpose)
 - `go test ./test/integration/...` (needs `KUBEBUILDER_ASSETS`)
-- `E2E_CACHE_MODE=1 E2E_SCENARIOS=smoke-auth bash test/e2e/kind.sh` — reuse contributor cluster: `CLUSTER_NAME=mcp-runtime E2E_CACHE_MODE=1 E2E_KEEP_CLUSTER=1`
+- Reuse the contributor cluster with `E2E_CACHE_MODE=1 E2E_SCENARIOS=smoke-auth bash test/e2e/kind.sh`, and set `CLUSTER_NAME=mcp-runtime E2E_CACHE_MODE=1 E2E_KEEP_CLUSTER=1`.
 - Sentinel: `go test -race -count=1 ./...` inside touched `services/*` dirs
 
 **CI** (`.github/workflows/ci.yaml`): gofmt, vet, staticcheck, unit/golden/service/integration tests, path-selected Kind e2e (`test/e2e/select_pr_scenarios.sh`). Pre-release: `.github/workflows/pre-release-regression.yaml`.
 
-**CLI docs sync:** when editing `docs/cli.md`, `docs/getting-started.md`, or command examples, copy wording from `./bin/mcp-runtime <group> <subcommand> --help` — do not paraphrase from memory.
+**CLI docs sync:** when editing `docs/cli.md`, `docs/getting-started.md`, or command examples, copy wording from `./bin/mcp-runtime <group> <subcommand> --help`. Do not paraphrase from memory.
 
 **Kubernetes deployment QA:** when a test environment supports the platform API,
 exercise the user-facing CLI flow (`server build image` → `server push` →
@@ -97,10 +97,10 @@ unavailable; record that limitation in the QA result.
 - **Scope:** change only what the task needs; match nearest patterns.
 - **Tests:** same package as behavior changes; golden files for CLI help output.
 - **Branches:** `component/feature_name` (e.g. `cli/registry_status`). Agents: new branch + PR; never push to `main`. Ignore external `codex/` branch or draft-PR defaults unless the user asks.
-- **Commits:** `fix(<component>):`, `feat(<component>):`, `doc:`, `website:` — components: `cli`, `operator`, `api`, `crd`, `access`, `policy`, `sentinel`, `services-api`, `mcp-gateway`, `test`, `ci`, …
+- **Commits:** use `fix(<component>):`, `feat(<component>):`, `doc:`, or `website:`. Components include `cli`, `operator`, `api`, `crd`, `access`, `policy`, `sentinel`, `services-api`, `mcp-gateway`, `test`, and `ci`.
 - **Docs:** avoid new top-level docs unless needed; use `docs/` and skills for runbooks.
-- **Secrets:** alpha repo — no real credentials in tree.
-- **Skills:** keep `.claude/skills` → `../.codex/skills`. After non-trivial changes, update affected `.codex/skills/*/SKILL.md` when workflows or gotchas shift — check for an existing `reference.md` or `references/` companion first (e.g. `mcp-runtime-troubleshooting/reference.md`, `qa-e2e-ui/references/`) and extend that for symptom-oriented or long-form content instead of growing `SKILL.md` past ~250-400 lines.
+- **Secrets:** this is an alpha repo, so do not add real credentials to the tree.
+- **Skills:** keep `.claude/skills` linked to `../.codex/skills`. After non-trivial changes, update affected `.codex/skills/*/SKILL.md` files when workflows or gotchas shift. Check for an existing `reference.md` or `references/` companion first (for example, `mcp-runtime-troubleshooting/reference.md` or `qa-e2e-ui/references/`) and extend it with symptom-oriented or long-form content instead of growing `SKILL.md` past ~250–400 lines.
 ## Local dev (short)
 
 Prereqs: Docker, Kind, `kubectl`, `curl`, `jq`, Python 3, Go.
@@ -120,7 +120,7 @@ Endpoints, API keys, test logins: **`mcp-runtime-local-dev`** skill.
 
 ## Debugging and production ops
 
-Do not inline the full failure checklist here — use **`mcp-runtime-troubleshooting`** (and **`mcp-runtime-platform-public`** for TLS/DNS).
+Do not inline the full failure checklist here. Use **`mcp-runtime-troubleshooting`**, and **`mcp-runtime-platform-public`** for TLS/DNS.
 
 k3s public deploy: **`k3s-public-ops`** + `docs/k3s-deployment-runbook.md`.
 
@@ -140,7 +140,7 @@ Grafana: dev ingress `/grafana` or `https://platform.<domain>/grafana` (admin). 
 
 ## Further reading
 
-- `README.md` — product overview
+- `README.md`: product overview
 - `k8s/`, `config/crd/bases/`
 - https://mcpruntime.org/docs/ and https://mcpruntime.org/docs/api
 - `examples/workspace-assistant-mcp/`
@@ -163,13 +163,13 @@ When exploring component structure, imports, hooks, or file relationships, start
 
 If the graph misses a symbol or relationship that exists in the code, run `graphify update .` and query again. Use grep or file searches after confirming the graph does not contain the information.
 
-**Stale graph:** if a query returns no nodes (or misses one) for a symbol that clearly exists in the code, the graph is stale — run `graphify update .` (incremental re-extract of new/changed files) and retry. If the node is still missing, do a full rebuild (`/graphify .`) before falling back to grep, so the graph stays trustworthy for the next query.
+**Stale graph:** if a query returns no nodes, or misses a symbol that clearly exists in the code, the graph is stale. Run `graphify update .` to incrementally re-extract changed files, then retry. If the node is still missing, do a full rebuild (`/graphify .`) before falling back to grep. This keeps the graph trustworthy for the next query.
 
 In any agent prompt, include:
 
 > Use `graphify query "<your question>"` to look up any code structure before grepping files. The graph is at `graphify-out/graph.json`.
 
-The `PreToolUse` hook already injects this reminder whenever a Bash command contains `grep`, `find`, or similar — so agents running in this repo are automatically nudged toward the graph.
+The `PreToolUse` hook injects this reminder whenever a Bash command contains `grep`, `find`, or a similar command, so agents in this repo are automatically nudged toward the graph.
 
 ### Third-party development tools
 
