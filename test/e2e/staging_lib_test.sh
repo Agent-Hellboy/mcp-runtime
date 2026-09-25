@@ -160,6 +160,11 @@ expect_ok "errexit stops a stage body" bash -c "! grep -q 'not reached' '${STAGE
 expect_ok "summary.md names the failure and hint" grep -q 'critical.*setup broke' "${STAGE_DIR}/summary.md"
 expect_ok "failure summary printed" grep -q 'FAILED critical -- likely cause: setup broke' "${STAGE_DIR}/finish.out"
 
+# --- diagnostics failed-check parsing -------------------------------------------
+printf '\033[30;42m SUCCESS \033[0m ok check — fine\n\033[30;101m  ERROR  \033[0m \033[91msentinel OIDC configuration — tenant mode\033[0m\n\033[30;101m         \033[0m continuation line\n  ERROR   MCPServer reconcile smoke — timed out\n' >"${TMP}/diag.log"
+expect_eq "failed checks parsed" "$(staging_failed_checks "${TMP}/diag.log" | paste -sd'|' -)" \
+  "MCPServer reconcile smoke|sentinel OIDC configuration"
+
 if [[ "${FAILURES}" -ne 0 ]]; then
   echo "${FAILURES} staging lib test(s) failed" >&2
   exit 1

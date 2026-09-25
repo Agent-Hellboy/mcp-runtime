@@ -386,8 +386,19 @@ staging_state_set() {
 
 staging_skip() {
   printf '[%s] [stage] %s: SKIP %s\n' "${STAGING_LOG_PREFIX}" "${STAGING_CURRENT_STAGE:-?}" "$*"
-  printf '%s' "$*" >"${STAGING_ARTIFACT_DIR}/stages/.skip-reason"
+  printf '%s' "$*" >"${STAGING_ARTIFACT_DIR}/stages/.detail"
   exit "${STAGING_SKIP_RC}"
+}
+
+# staging_note TEXT -- attach a one-line detail to the current stage's row in
+# the summary (for example, accepted known findings on a passing stage).
+staging_note() {
+  local file="${STAGING_ARTIFACT_DIR}/stages/.detail"
+  if [[ -s "${file}" ]]; then
+    printf '; %s' "$*" >>"${file}"
+  else
+    printf '%s' "$*" >"${file}"
+  fi
 }
 
 staging_tsv_field() { printf '%s' "$1" | tr '\t\n\r' '   '; }
@@ -422,7 +433,7 @@ staging_run_stage() {
   local log rel start rc errexit=0
   rel="stages/$(printf '%02d' "${STAGING_STAGE_SEQ}")-${name}.log"
   log="${STAGING_ARTIFACT_DIR}/${rel}"
-  rm -f "${STAGING_ARTIFACT_DIR}/stages/.skip-reason"
+  rm -f "${STAGING_ARTIFACT_DIR}/stages/.detail"
   staging_log "[stage] ${name}: start"
   start=${SECONDS}
   [[ $- == *e* ]] && errexit=1
@@ -437,18 +448,18 @@ staging_run_stage() {
   local duration=$((SECONDS - start))
   # shellcheck disable=SC1090
   [[ -s "${STAGING_STATE_FILE}" ]] && source "${STAGING_STATE_FILE}"
+  local detail=""
+  [[ -f "${STAGING_ARTIFACT_DIR}/stages/.detail" ]] && detail="$(cat "${STAGING_ARTIFACT_DIR}/stages/.detail")"
+  rm -f "${STAGING_ARTIFACT_DIR}/stages/.detail"
   if [[ ${rc} -eq 0 ]]; then
-    staging_record "${name}" passed "${duration}" "${rel}" "" ""
-    staging_log "[stage] ${name}: passed (${duration}s)"
+    staging_record "${name}" passed "${duration}" "${rel}" "${detail}" ""
+    staging_log "[stage] ${name}: passed (${duration}s)${detail:+ -- ${detail}}"
   elif [[ ${rc} -eq ${STAGING_SKIP_RC} ]]; then
-    local reason=""
-    [[ -f "${STAGING_ARTIFACT_DIR}/stages/.skip-reason" ]] && reason="$(cat "${STAGING_ARTIFACT_DIR}/stages/.skip-reason")"
-    rm -f "${STAGING_ARTIFACT_DIR}/stages/.skip-reason"
-    staging_record "${name}" skipped "${duration}" "${rel}" "${reason}" ""
-    staging_log "[stage] ${name}: skipped (${reason})"
+    staging_record "${name}" skipped "${duration}" "${rel}" "${detail}" ""
+    staging_log "[stage] ${name}: skipped (${detail})"
   else
     STAGING_FAILED=1
-    staging_record "${name}" failed "${duration}" "${rel}" "exit ${rc}" "${hint}"
+    staging_record "${name}" failed "${duration}" "${rel}" "exit ${rc}${detail:+; ${detail}}" "${hint}"
     staging_err "[stage] ${name}: FAILED (exit ${rc}) after ${duration}s -- likely cause: ${hint}; open ${rel} in the artifacts"
     if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
       printf '::error title=Staging E2E stage %s failed::%s (artifact: %s)\n' "${name}" "${hint}" "${rel}"
@@ -607,10 +618,66 @@ staging_traefik_namespace() {
   return 1
 }
 
+# Check names from `cluster diagnostics`/`cluster doctor` that failed, one per
+# line ("ERROR  <check name> — <message>").
+staging_failed_checks() {
+  awk '{ gsub(/\033\[[0-9;]*m/, "") } /^ *ERROR +[^ ]/ { sub(/^ *ERROR +/, ""); sub(/ — .*$/, ""); print }' "$1" | sort -u
+}
+
+# Findings that fail on every fresh staging install for reasons outside the
+# suite, accepted by name so every other check stays a hard gate. Override with
+# E2E_DIAGNOSTICS_ACCEPTED (a |-separated list; empty = strict).
+#   - "sentinel OIDC configuration": tenant mode wants Google/OIDC login, and the
+#     staging VM has no identity provider unless E2E_WITH_MCP_AUTH/OIDC is set.
+#   - "mcp-servers image pull smoke" / "MCPServer reconcile smoke": the doctor
+#     smoke pod in mcp-servers pulls from the auth-protected public registry
+#     before any managed deploy has provisioned the mcp-workload pull secret, so
+#     the pull is refused (no basic auth credentials). Tracked as a product
+#     finding; tenant pulls are asserted by the image-pulls and multitenancy
+#     stages instead.
+staging_default_accepted_checks() {
+  local accepted="mcp-servers image pull smoke|MCPServer reconcile smoke"
+  if [[ -z "${OIDC_ISSUER:-}${GOOGLE_CLIENT_ID:-}${MCP_GOOGLE_CLIENT_ID:-}" ]] &&
+    ! staging_flag_enabled "${E2E_WITH_MCP_AUTH:-0}"; then
+    accepted+="|sentinel OIDC configuration"
+  fi
+  printf '%s' "${accepted}"
+}
+
 staging_check_diagnostics() {
-  "${BIN}" cluster diagnostics 2>&1 | tee "${STAGING_ARTIFACT_DIR}/diagnostics-after.log"
-  "${BIN}" cluster doctor 2>&1 | tee "${STAGING_ARTIFACT_DIR}/doctor-after.log"
-  "${BIN}" cluster status 2>&1 | tee "${STAGING_ARTIFACT_DIR}/cluster-status.log"
+  local dir="${STAGING_ARTIFACT_DIR}" rc_diag=0 rc_doctor=0 rc_status=0
+  "${BIN}" cluster diagnostics >"${dir}/diagnostics-after.log" 2>&1 || rc_diag=$?
+  cat "${dir}/diagnostics-after.log"
+  "${BIN}" cluster doctor >"${dir}/doctor-after.log" 2>&1 || rc_doctor=$?
+  cat "${dir}/doctor-after.log"
+  "${BIN}" cluster status >"${dir}/cluster-status.log" 2>&1 || rc_status=$?
+  cat "${dir}/cluster-status.log"
+  staging_log "exit codes: diagnostics=${rc_diag} doctor=${rc_doctor} status=${rc_status}"
+  [[ ${rc_status} -eq 0 ]] || {
+    staging_err "cluster status failed"
+    return 1
+  }
+  local accepted="${E2E_DIAGNOSTICS_ACCEPTED-$(staging_default_accepted_checks)}" failed_checks check unexpected="" known=""
+  failed_checks="$( (staging_failed_checks "${dir}/diagnostics-after.log"; staging_failed_checks "${dir}/doctor-after.log") | sort -u)"
+  while IFS= read -r check; do
+    [[ -n "${check}" ]] || continue
+    if [[ -n "${accepted}" && "|${accepted}|" == *"|${check}|"* ]]; then
+      known+="${known:+, }${check}"
+    else
+      unexpected+="${unexpected:+, }${check}"
+    fi
+  done <<<"${failed_checks}"
+  [[ -n "${known}" ]] && staging_note "accepted known findings: ${known}"
+  if [[ -n "${unexpected}" ]]; then
+    staging_note "failed checks: ${unexpected}"
+    staging_err "diagnostics/doctor failed checks: ${unexpected}"
+    return 1
+  fi
+  if [[ ${rc_diag} -ne 0 || ${rc_doctor} -ne 0 ]] && [[ -z "${known}" ]]; then
+    staging_err "diagnostics/doctor exited non-zero without a recognizable failed check"
+    return 1
+  fi
+  staging_log "diagnostics/doctor: no unexpected failed checks${known:+ (accepted: ${known})}"
 }
 
 staging_check_rollouts() {
@@ -1136,13 +1203,19 @@ staging_check_ui() {
   platform_host="$(staging_url_host "${PLATFORM_URL}")"
   code="$(staging_http_code "http://${platform_host}/")"
   staging_log "plain-HTTP request to ${platform_host}: HTTP ${code}"
-  local login_code
-  login_code="$(staging_http_code "${PLATFORM_URL}/login")"
-  staging_log "GET /login: HTTP ${login_code}"
-  [[ "${login_code}" =~ ^(200|30[0-9])$ ]] || {
-    staging_err "/login returned HTTP ${login_code}"
+  [[ "${code}" =~ ^30[0-9]$ ]] || staging_log "WARNING: plain HTTP is not redirected to HTTPS"
+  grep -qi '^strict-transport-security:' "${headers}" || {
+    staging_err "platform UI response has no Strict-Transport-Security header"
     return 1
   }
+  grep -qi '^content-security-policy:' "${headers}" || {
+    staging_err "platform UI response has no Content-Security-Policy header"
+    return 1
+  }
+  # The UI proxies the API under the same origin; an anonymous API call through
+  # it must be refused.
+  staging_expect_code "anonymous UI-origin GET /api/v1/dashboard/summary" "401 403" \
+    "${PLATFORM_URL}/api/v1/dashboard/summary"
 }
 
 staging_check_oidc() {
@@ -1228,7 +1301,7 @@ spec:
   imageTag: ${image##*:}
   replicas: 0
   port: 8088
-  route: /${server}/mcp
+  ingressPath: /${server}/mcp
   publicPathPrefix: ${server}
   tools:
     - name: aaa-ping
