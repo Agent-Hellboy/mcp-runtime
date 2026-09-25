@@ -5625,12 +5625,15 @@ oauth_allow_aaa_ping = wait_for_json(
     headers=headers,
     description="oauth allow audit event for aaa-ping",
 ).get("events", [])
-oauth_deny_events = wait_for_json(
-    f"{api_base}/events?server={oauth_server_name}&decision=deny&limit=50",
-    lambda doc: bool(doc.get("events", [])),
-    headers=headers,
-    description="oauth deny audit events",
-).get("events", [])
+oauth_deny_events = []
+for _oauth_deny_reason in ("missing_bearer_token", "invalid_token"):
+    _reason_events = wait_for_json(
+        f"{api_base}/events?server={oauth_server_name}&decision=deny&reason={_oauth_deny_reason}&limit=5",
+        lambda doc: bool(doc.get("events", [])),
+        headers=headers,
+        description=f"oauth deny audit event for reason {_oauth_deny_reason}",
+    ).get("events", [])
+    oauth_deny_events.extend(_reason_events)
 all_oauth_events = wait_for_json(
     f"{api_base}/events?server={oauth_server_name}&limit=1000",
     lambda doc: rpc_methods_from_events_doc(doc) >= expected_gateway_rpc_method_set,
