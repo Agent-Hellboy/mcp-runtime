@@ -84,6 +84,10 @@ if [[ -f "${BACKUP_DIR}/e2e.env" ]]; then
   set +a
 fi
 export E2E_MTLS_CLUSTER_ISSUER="${E2E_MTLS_CLUSTER_ISSUER-mcp-runtime-ca}"
+# Adapter certificates on OAuth routes are an opt-in platform feature; setup
+# reads MCP_ADAPTER_CERTIFICATES, MCP_TRUST_DOMAIN and
+# MCP_DEFAULT_INGRESS_TLS_SECRET_NAMESPACE from the environment.
+staging_configure_adapter_certificates
 
 export KUBECONFIG="${KUBECONFIG_FILE}"
 export MCP_PLATFORM_API_URL="${PLATFORM_URL}"
@@ -450,7 +454,7 @@ staging_record target-guard passed 0 "" "marker, suffix and production-address c
 trap cleanup EXIT
 
 : "${E2E_ACME_EMAIL:?set E2E_ACME_EMAIL in ${BACKUP_DIR}/e2e.env}"
-log "options: acme-staging=${E2E_ACME_STAGING:-1} fresh-certificate=${E2E_FRESH_CERTIFICATE:-0} multitenancy=${E2E_RUN_MULTITENANCY:-1} mcp-auth=${E2E_WITH_MCP_AUTH:-0} mtls-issuer=${E2E_MTLS_CLUSTER_ISSUER:-<none>}"
+log "options: acme-staging=${E2E_ACME_STAGING:-1} fresh-certificate=${E2E_FRESH_CERTIFICATE:-0} multitenancy=${E2E_RUN_MULTITENANCY:-1} mcp-auth=${E2E_WITH_MCP_AUTH:-0} mtls-issuer=${E2E_MTLS_CLUSTER_ISSUER:-<none>} adapter-certificates=${MCP_ADAPTER_CERTIFICATES:-false} trust-domain=${MCP_TRUST_DOMAIN:-<none>}"
 
 staging_run_stage dependencies critical "a VM package install failed (apt/dnf lock or network)" install_dependencies
 staging_run_stage staging-roots critical "could not fetch/install the Let's Encrypt staging roots; image pulls would fail x509 verification" stage_staging_roots
