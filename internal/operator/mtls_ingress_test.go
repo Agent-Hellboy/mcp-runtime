@@ -2,13 +2,13 @@ package operator
 
 import (
 	"context"
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"strings"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -40,22 +40,20 @@ func traefikScheme(t *testing.T) *runtime.Scheme {
 	return scheme
 }
 
-func TestReconcileIngressKeepsOAuthIngressAlongsideAdapterCertificateRoute(t *testing.T) {
+func TestReconcileIngressReplacesPlainIngressWithAdapterCertificateRoute(t *testing.T) {
 	scheme := traefikScheme(t)
 	server := mtlsServer()
 	server.Spec.PublicPathPrefix = "oauth-server"
-	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(server).Build()
+	plainIngress := &networkingv1.Ingress{ObjectMeta: metav1.ObjectMeta{Name: server.Name, Namespace: server.Namespace}}
+	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(server, plainIngress).Build()
 	r := MCPServerReconciler{Client: client, Scheme: scheme, AdapterCertificatesEnabled: true, AdapterTrustDomain: "example.org", MTLSClusterIssuer: "mcp-runtime-ca"}
 
 	if err := r.reconcileIngress(context.Background(), server); err != nil {
 		t.Fatalf("reconcileIngress: %v", err)
 	}
 	ingress := &networkingv1.Ingress{}
-	if err := client.Get(context.Background(), types.NamespacedName{Name: server.Name, Namespace: server.Namespace}, ingress); err != nil {
-		t.Fatalf("OAuth Ingress should remain available: %v", err)
-	}
-	if len(ingress.Spec.Rules) != 1 || len(ingress.Spec.Rules[0].HTTP.Paths) != 2 {
-		t.Fatalf("OAuth Ingress paths = %#v, want MCP and protected-resource metadata", ingress.Spec.Rules)
+	if err := client.Get(context.Background(), types.NamespacedName{Name: server.Name, Namespace: server.Namespace}, ingress); !apierrors.IsNotFound(err) {
+		t.Fatalf("plain HTTP Ingress should be removed for the TLS-only gateway, got %v", err)
 	}
 	getCR(t, client, ingressRouteGVK, server.Name, server.Namespace)
 }

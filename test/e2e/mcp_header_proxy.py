@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import http.client
 import http.server
+import ssl
 import socketserver
 import sys
 import urllib.parse
@@ -36,6 +37,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--listen-port", type=int, required=True)
     parser.add_argument("--upstream-origin", required=True)
     parser.add_argument("--host-header", default="")
+    parser.add_argument("--insecure-upstream", action="store_true", help="skip upstream TLS verification for local E2E certificates")
     parser.add_argument("--header", action="append", default=[], type=parse_header)
     return parser.parse_args()
 
@@ -74,7 +76,10 @@ class InjectingProxyHandler(http.server.BaseHTTPRequestHandler):
             headers["Content-Length"] = str(len(body))
 
         conn_class = http.client.HTTPSConnection if config["scheme"] == "https" else http.client.HTTPConnection
-        conn = conn_class(config["host"], config["port"], timeout=30)
+        conn_kwargs = {"timeout": 30}
+        if config["scheme"] == "https" and config["insecure_upstream"]:
+            conn_kwargs["context"] = ssl._create_unverified_context()
+        conn = conn_class(config["host"], config["port"], **conn_kwargs)
         try:
             conn.request(
                 self.command,
@@ -142,6 +147,7 @@ def main() -> int:
         "base_path": parsed.path or "",
         "headers": dict(args.header),
         "host_header": args.host_header,
+        "insecure_upstream": args.insecure_upstream,
     }
 
     print(

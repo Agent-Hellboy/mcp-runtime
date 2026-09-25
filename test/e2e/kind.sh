@@ -135,6 +135,7 @@ OAUTH_ISSUER_NAME="${OAUTH_ISSUER_NAME:-oauth-issuer}"
 OAUTH_ISSUER_URL="${OAUTH_ISSUER_URL:-}"
 TRAEFIK_PORT="${TRAEFIK_PORT:-18080}"
 TRAEFIK_TLS_PORT="${TRAEFIK_TLS_PORT:-18443}"
+OAUTH_AUDIENCE_CONFIGURED="${OAUTH_AUDIENCE:+1}"
 # auth.audience doubles as the RFC 8707 resource identifier: the gateway
 # advertises it in protected resource metadata and validates the token audience
 # against it, so it must be the absolute URL clients connect to.
@@ -339,6 +340,10 @@ server_proxy_paths_selected() {
 oauth_proxy_paths_selected() {
   (scenario_selected "oauth" || scenario_selected "observability") && ! scenario_selected "adapter-certificates"
 }
+
+if scenario_selected "adapter-certificates" && [[ -z "${OAUTH_AUDIENCE_CONFIGURED}" ]]; then
+  OAUTH_AUDIENCE="https://${OAUTH_SERVER_HOST}:${TRAEFIK_TLS_PORT}/${OAUTH_SERVER_NAME}/mcp"
+fi
 
 e2e_mcp_server_budget() {
   if [[ "${E2E_MAX_MCP_SERVERS}" == "0" ]]; then
@@ -4534,7 +4539,11 @@ EOF
 
   OAUTH_PROXY_UPSTREAM_ORIGIN="http://127.0.0.1:${TRAEFIK_PORT}"
   OAUTH_HEADER_PROXY_ARGS=(--host-header "${OAUTH_SERVER_HOST}")
-  if oauth_proxy_paths_selected; then
+  if scenario_selected "adapter-certificates"; then
+    ensure_traefik_tls_port_forward
+    OAUTH_PROXY_UPSTREAM_ORIGIN="https://127.0.0.1:${TRAEFIK_TLS_PORT}"
+    OAUTH_HEADER_PROXY_ARGS+=(--insecure-upstream)
+  elif oauth_proxy_paths_selected; then
     port_forward_bg mcp-servers "${OAUTH_SERVER_NAME}" "${OAUTH_PROXY_PORT}" 80 "${WORKDIR}/oauth-proxy-port-forward.log"
     wait_port "${OAUTH_PROXY_PORT}"
     OAUTH_PROXY_UPSTREAM_ORIGIN="http://127.0.0.1:${OAUTH_PROXY_PORT}"
@@ -4572,7 +4581,9 @@ EOF
 
   OAUTH_INGRESS_PATH="/${OAUTH_SERVER_NAME}/mcp"
   MCP_OAUTH_DIRECT_ORIGIN="http://127.0.0.1:${TRAEFIK_PORT}"
-  if oauth_proxy_paths_selected; then
+  if scenario_selected "adapter-certificates"; then
+    MCP_OAUTH_DIRECT_ORIGIN="http://127.0.0.1:${MCP_CURL_OAUTH_VALID_PORT}"
+  elif oauth_proxy_paths_selected; then
     MCP_OAUTH_DIRECT_ORIGIN="http://127.0.0.1:${OAUTH_PROXY_PORT}"
   fi
   MCP_OAUTH_DIRECT_URL="${MCP_OAUTH_DIRECT_ORIGIN}${OAUTH_INGRESS_PATH}"
