@@ -29,7 +29,7 @@ set -euo pipefail
 #   RESET=1 hack/deploy/mcpruntime-org/multitenancy-test.sh       # delete demo resources via platform API
 #   SKIP_SETUP=1 hack/deploy/mcpruntime-org/multitenancy-test.sh  # only run verification
 
-# The production E2E VM receives the repo as a tarball packaged with
+# The Staging E2E VM receives the repo as a tarball packaged with
 # `tar --exclude=.git`, so git metadata is absent there and `rev-parse` exits
 # 128. Prefer an explicitly supplied root, then git, then this script's own
 # location, which is always <root>/hack/deploy/mcpruntime-org.
@@ -223,7 +223,7 @@ team_id() {
   curl -fsS \
     -H "x-api-key: ${token}" \
     -H "authorization: Bearer ${token}" \
-    "${PLATFORM_URL}/api/runtime/teams/${slug}" | jq -er '.team.id'
+    "${PLATFORM_URL}/api/v1/runtime/teams/${slug}" | jq -er '.team.id'
 }
 
 team_exists() {
@@ -232,7 +232,7 @@ team_exists() {
   curl -fsS \
     -H "x-api-key: ${token}" \
     -H "authorization: Bearer ${token}" \
-    "${PLATFORM_URL}/api/runtime/teams/${slug}" >/dev/null 2>&1
+    "${PLATFORM_URL}/api/v1/runtime/teams/${slug}" >/dev/null 2>&1
 }
 
 team_user_exists() {
@@ -243,7 +243,7 @@ team_user_exists() {
   body="$(curl -fsS \
     -H "x-api-key: ${token}" \
     -H "authorization: Bearer ${token}" \
-    "${PLATFORM_URL}/api/runtime/teams/${slug}/members" 2>/dev/null || echo '{"members":[]}')"
+    "${PLATFORM_URL}/api/v1/runtime/teams/${slug}/members" 2>/dev/null || echo '{"members":[]}')"
   jq -e --arg email "$email" 'any(.members[]?; (.email // "") == $email)' <<<"$body" >/dev/null
 }
 
@@ -256,7 +256,7 @@ server_exists() {
   curl -fsS \
     -H "x-api-key: ${token}" \
     -H "authorization: Bearer ${token}" \
-    "${PLATFORM_URL}/api/runtime/servers/${namespace}/${server}" >/dev/null 2>&1
+    "${PLATFORM_URL}/api/v1/runtime/servers/${namespace}/${server}" >/dev/null 2>&1
 }
 
 create_or_update_team() {
@@ -454,7 +454,7 @@ wait_for_rollout() {
     body="$(curl -fsS \
       -H "x-api-key: ${token}" \
     -H "authorization: Bearer ${token}" \
-      "${PLATFORM_URL}/api/runtime/servers/${namespace}/${server}" 2>/dev/null || echo '{}')"
+      "${PLATFORM_URL}/api/v1/runtime/servers/${namespace}/${server}" 2>/dev/null || echo '{}')"
     local ready_str
     ready_str="$(echo "$body" | jq -r '.server.ready // "0/0"' 2>/dev/null || echo "0/0")"
     local ready_count total_count
@@ -482,7 +482,7 @@ delete_all_sessions() {
   sessions_body="$(curl -fsS \
     -H "x-api-key: ${token}" \
     -H "authorization: Bearer ${token}" \
-    "${PLATFORM_URL}/api/runtime/sessions?namespace=${ns}" 2>/dev/null || echo '{"sessions":[]}')"
+    "${PLATFORM_URL}/api/v1/runtime/sessions?namespace=${ns}" 2>/dev/null || echo '{"sessions":[]}')"
   local names
   names="$(echo "$sessions_body" | jq -r '(.sessions // .) | .[].name' 2>/dev/null || true)"
   for name in $names; do
@@ -490,7 +490,7 @@ delete_all_sessions() {
     curl -fsS -X DELETE \
       -H "x-api-key: ${token}" \
     -H "authorization: Bearer ${token}" \
-      "${PLATFORM_URL}/api/runtime/sessions/${ns}/${name}" >/dev/null 2>&1 || true
+      "${PLATFORM_URL}/api/v1/runtime/sessions/${ns}/${name}" >/dev/null 2>&1 || true
   done
 }
 
@@ -506,7 +506,7 @@ verify_grant_exists() {
     if curl -fsS \
       -H "x-api-key: ${token}" \
       -H "authorization: Bearer ${token}" \
-      "${PLATFORM_URL}/api/runtime/grants/${ns}/${name}" >/dev/null 2>&1; then
+      "${PLATFORM_URL}/api/v1/runtime/grants/${ns}/${name}" >/dev/null 2>&1; then
       echo "grant visible: ${ns}/${name}"
       return 0
     fi
@@ -532,11 +532,11 @@ setup_demo() {
     delete_all_sessions "$ADMIN_PROFILE" "$ACME_NS"
     for _ns_name in "${ACME_NS}/${ACME_SERVER}-${GLOBEX_SLUG}-${AGENT_ID}" "${ACME_NS}/${ACME_SERVER}-${TECHCORP_SLUG}-${AGENT_ID}"; do
       local _ns="${_ns_name%%/*}" _name="${_ns_name##*/}"
-      curl -fsS -X DELETE -H "x-api-key: ${_token}" -H "authorization: Bearer ${_token}" "${PLATFORM_URL}/api/runtime/grants/${_ns}/${_name}" >/dev/null 2>&1 || true
+      curl -fsS -X DELETE -H "x-api-key: ${_token}" -H "authorization: Bearer ${_token}" "${PLATFORM_URL}/api/v1/runtime/grants/${_ns}/${_name}" >/dev/null 2>&1 || true
     done
     for _ns_name in "${ACME_NS}/${ACME_SERVER}" "${GLOBEX_NS}/${GLOBEX_SERVER}" "${TECHCORP_NS}/${TECHCORP_SERVER}"; do
       local _ns="${_ns_name%%/*}" _name="${_ns_name##*/}"
-      curl -fsS -X DELETE -H "x-api-key: ${_token}" -H "authorization: Bearer ${_token}" "${PLATFORM_URL}/api/runtime/servers/${_ns}/${_name}" >/dev/null 2>&1 || true
+      curl -fsS -X DELETE -H "x-api-key: ${_token}" -H "authorization: Bearer ${_token}" "${PLATFORM_URL}/api/v1/runtime/servers/${_ns}/${_name}" >/dev/null 2>&1 || true
     done
   fi
 
@@ -630,7 +630,7 @@ precreate_adapter_session() {
     -H "authorization: Bearer ${token}" \
     -H "content-type: application/json" \
     --data "{\"serverName\":\"${ACME_SERVER}\",\"namespace\":\"${ACME_NS}\",\"agentID\":\"${AGENT_ID}\"}" \
-    "${PLATFORM_URL}/api/runtime/adapter/sessions")"
+    "${PLATFORM_URL}/api/v1/runtime/adapter/sessions")"
   jq -er '.name' <<<"$body" >/dev/null
 }
 
@@ -789,7 +789,7 @@ verify_events() {
     curl -fsS -o "$body" \
       -H "x-api-key: ${token}" \
     -H "authorization: Bearer ${token}" \
-      "${PLATFORM_URL}/api/runtime/server-events?namespace=${ACME_NS}&server=${ACME_SERVER}&limit=10"
+      "${PLATFORM_URL}/api/v1/runtime/server-events?namespace=${ACME_NS}&server=${ACME_SERVER}&limit=10"
     if jq -e --arg globex "$GLOBEX_TEAM_ID" '
       (.events // .) as $events
       | ($events | length) > 0

@@ -147,5 +147,6 @@ selector_expect "gateway" "smoke-auth,governance,trust,oauth,adapter-proxy,mtls"
 selector_expect "observability" "smoke-auth,governance,trust,oauth,observability" "services/ingest/main.go"
 selector_expect "platform-update" "smoke-auth,platform-update" "internal/cli/update/plan.go"
 selector_expect "broad" "all" "api/v1alpha1/mcpserver_types.go"
+selector_expect "staging-e2e-only" "smoke-auth" "test/e2e/staging-vm.sh" "test/e2e/lib/staging.sh" ".github/workflows/staging-e2e.yaml"
 
 echo "[pass] scenario selector validation"

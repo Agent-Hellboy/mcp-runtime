@@ -1,4 +1,9 @@
-name: Production E2E (Disposable VM)
+name: Staging E2E (Disposable VM)
+
+# Drives the full production install path (strict-prod setup, public TLS,
+# bundled HTTPS registry, platform API/UI, tenants) on the DISPOSABLE E2E VM.
+# test/e2e/staging-target.sh refuses to continue unless the target is provably
+# that VM; it never targets the live production cluster.
 
 on:
   workflow_dispatch:
@@ -7,6 +12,16 @@ on:
         description: Run the destructive multi-team CLI/API scenario suite.
         required: true
         default: true
+        type: boolean
+      fresh-certificate:
+        description: Also issue a brand-new staging certificate for a unique run-<id> host (routine runs reuse the TLS snapshot).
+        required: false
+        default: false
+        type: boolean
+      bootstrap-disposable-marker:
+        description: One-time only, for a freshly provisioned disposable VM. Writes the DISPOSABLE marker after the DNS guard passes.
+        required: false
+        default: false
         type: boolean
 
 concurrency:
@@ -17,19 +32,20 @@ permissions:
   contents: read
 
 jobs:
-  production-e2e:
+  staging-e2e:
     runs-on: ubuntu-24.04
     timeout-minutes: 90
+    env:
+      E2E_RUN_ID: gh-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
       - name: Build CLI for disposable VM
         run: go build -o bin/mcp-runtime ./cmd/mcp-runtime
-
-      - name: Package repository
-        run: |
-          tar --exclude=.git --exclude='*/node_modules' \
-            -czf /tmp/mcp-runtime-e2e.tgz .
 
       - name: Install SSH client
         run: sudo apt-get update && sudo apt-get install -y sshpass
@@ -43,6 +59,29 @@ jobs:
           chmod 700 ~/.ssh
           printf '%s\n' "${E2E_VM_KNOWN_HOSTS}" > ~/.ssh/mcp-runtime-e2e-known-hosts
           chmod 600 ~/.ssh/mcp-runtime-e2e-known-hosts
+
+      - name: Bootstrap disposable marker (explicit, one-time)
+        if: ${{ inputs.bootstrap-disposable-marker }}
+        env:
+          E2E_VM_HOST: ${{ secrets.E2E_VM_HOST }}
+          E2E_VM_USER: ${{ secrets.E2E_VM_USER }}
+          SSHPASS: ${{ secrets.E2E_VM_PASSWORD }}
+          E2E_VM_KNOWN_HOSTS: /home/runner/.ssh/mcp-runtime-e2e-known-hosts
+        run: E2E_CONFIRM_DISPOSABLE_VM="${E2E_VM_HOST}" bash test/e2e/staging-target.sh bootstrap
+
+      # Nothing is copied to, or run on, the VM before this passes.
+      - name: Verify disposable target
+        env:
+          E2E_VM_HOST: ${{ secrets.E2E_VM_HOST }}
+          E2E_VM_USER: ${{ secrets.E2E_VM_USER }}
+          SSHPASS: ${{ secrets.E2E_VM_PASSWORD }}
+          E2E_VM_KNOWN_HOSTS: /home/runner/.ssh/mcp-runtime-e2e-known-hosts
+        run: bash test/e2e/staging-target.sh check
+
+      - name: Package repository
+        run: |
+          tar --exclude=.git --exclude='*/node_modules' \
+            -czf /tmp/mcp-runtime-e2e.tgz .
 
       - name: Upload repository to disposable VM
         env:
@@ -65,10 +104,11 @@ jobs:
               "${{ secrets.E2E_VM_USER }}@${{ secrets.E2E_VM_HOST }}" \
               'set -eu; backup_dir=/var/lib/mcp-runtime-e2e-backup; env_file="$backup_dir/e2e.env"; install -d -m 700 "$backup_dir"; touch "$env_file"; chmod 600 "$env_file"; IFS= read -r line; tmp="${env_file}.tmp"; awk -F= -v replacement="$line" '\''$1 != "E2E_ACME_EMAIL" { print } END { print replacement }'\'' "$env_file" > "$tmp"; mv "$tmp" "$env_file"'
 
-      - name: Run production E2E
+      - name: Run staging E2E
         env:
           SSHPASS: ${{ secrets.E2E_VM_PASSWORD }}
           RUN_MULTITENANCY: ${{ inputs.run-multitenancy }}
+          FRESH_CERTIFICATE: ${{ inputs.fresh-certificate }}
         run: |
           # Setup has multi-minute silent stretches while it builds images, and
           # an idle SSH session that drops there fails the job with exit 255
@@ -78,7 +118,7 @@ jobs:
             -o UserKnownHostsFile="$HOME/.ssh/mcp-runtime-e2e-known-hosts" -o StrictHostKeyChecking=yes \
             -o ServerAliveInterval=30 -o ServerAliveCountMax=20 -o TCPKeepAlive=yes \
             "${{ secrets.E2E_VM_USER }}@${{ secrets.E2E_VM_HOST }}" \
-            "set -eu; rm -rf /opt/mcp-runtime-e2e; mkdir -p /opt/mcp-runtime-e2e; tar -xzf /tmp/mcp-runtime-e2e.tgz -C /opt/mcp-runtime-e2e; E2E_RUN_MULTITENANCY='${RUN_MULTITENANCY}' bash /opt/mcp-runtime-e2e/test/e2e/production-vm.sh"
+            "set -eu; rm -rf /opt/mcp-runtime-e2e; mkdir -p /opt/mcp-runtime-e2e; tar -xzf /tmp/mcp-runtime-e2e.tgz -C /opt/mcp-runtime-e2e; E2E_RUN_ID='${E2E_RUN_ID}' E2E_RUN_MULTITENANCY='${RUN_MULTITENANCY}' E2E_FRESH_CERTIFICATE='${FRESH_CERTIFICATE}' GITHUB_ACTIONS=true GITHUB_REF_NAME='${GITHUB_REF_NAME}' GITHUB_SHA='${GITHUB_SHA}' bash /opt/mcp-runtime-e2e/test/e2e/staging-vm.sh"
 
       - name: Collect E2E artifacts
         if: always()
@@ -88,12 +128,15 @@ jobs:
           mkdir -p e2e-artifacts
           sshpass -e scp -r \
             -o UserKnownHostsFile="$HOME/.ssh/mcp-runtime-e2e-known-hosts" -o StrictHostKeyChecking=yes \
-            "${{ secrets.E2E_VM_USER }}@${{ secrets.E2E_VM_HOST }}:/var/lib/mcp-runtime-e2e-backup/runs" \
+            "${{ secrets.E2E_VM_USER }}@${{ secrets.E2E_VM_HOST }}:/var/lib/mcp-runtime-e2e-backup/runs/${E2E_RUN_ID}" \
             e2e-artifacts/ || true
+          if [ -f "e2e-artifacts/${E2E_RUN_ID}/summary.md" ]; then
+            cat "e2e-artifacts/${E2E_RUN_ID}/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Upload E2E artifacts
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: production-e2e-artifacts
+          name: staging-e2e-artifacts
           path: e2e-artifacts

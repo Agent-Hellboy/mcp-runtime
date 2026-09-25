@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Shared cluster-convergence helpers for the production E2E runners.
+# Shared cluster-convergence helpers for the Staging E2E runners.
 #
 # A freshly installed k3s reports a Ready node well before it is usable: the
 # kubeconfig lands before the kubelet registers, and the bundled Traefik is
