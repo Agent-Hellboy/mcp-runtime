@@ -135,18 +135,32 @@ backup_platform_runtime() {
 install_dependencies() {
   if command -v apt-get >/dev/null 2>&1; then
     apt-get update
-    apt-get install -y ca-certificates curl git jq openssh-client openssl
+    apt-get install -y ca-certificates curl git jq make openssh-client openssl
+    # Setup builds the platform images with Docker (driven by make) on the
+    # machine running the CLI, which for this runner is the VM itself.
+    if ! command -v docker >/dev/null 2>&1; then
+      apt-get install -y docker.io
+    fi
+    if ! docker buildx version >/dev/null 2>&1; then
+      apt-get install -y docker-buildx || apt-get install -y docker-buildx-plugin || true
+    fi
   elif command -v dnf >/dev/null 2>&1; then
-    dnf install -y ca-certificates curl git jq openssh-clients openssl
+    dnf install -y ca-certificates curl git jq make openssh-clients openssl
   elif command -v apk >/dev/null 2>&1; then
-    apk add --no-cache ca-certificates curl git jq openssh-client openssl
+    apk add --no-cache ca-certificates curl git jq make openssh-client openssl
   else
-    log "no supported package manager found; assuming curl, git, jq, openssl and kubectl are preinstalled"
+    log "no supported package manager found; assuming curl, git, jq, make, openssl and docker are preinstalled"
   fi
-  require_command curl
-  require_command git
-  require_command jq
-  require_command openssl
+  if command -v systemctl >/dev/null 2>&1 && ! docker info >/dev/null 2>&1; then
+    systemctl enable --now docker || true
+  fi
+  local cmd
+  for cmd in curl git jq make openssl docker; do
+    require_command "${cmd}"
+  done
+  docker info >/dev/null 2>&1 || fail "the Docker daemon is not running"
+  docker version --format 'docker {{.Server.Version}}'
+  docker buildx version || log "docker buildx is unavailable; setup falls back to docker build"
 }
 
 # Rank a "goX.Y[.Z]" string as X*1000+Y so toolchains can be compared.
