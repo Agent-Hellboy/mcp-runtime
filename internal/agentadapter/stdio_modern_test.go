@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -307,5 +308,138 @@ func TestStdioShimSubscriptionsListenIgnoresRequestTimeout(t *testing.T) {
 	}
 	if line := h.read(); !strings.Contains(line, "notifications/tools/list_changed") {
 		t.Fatalf("second line = %q, want list_changed after the request timeout elapsed", line)
+	}
+}
+
+func newInflightTestShim() *stdioShim {
+	return &stdioShim{
+		inflight:     make(map[string]*inflightRequest),
+		recentModern: newRecentIDs(recentModernCapacity),
+	}
+}
+
+func modernCancelMeta(id string) rpcRequestMetadata {
+	return rpcRequestMetadata{ID: json.RawMessage(id), HasID: true, ProtocolVersion: ModernProtocolVersion}
+}
+
+func TestRegisterInflightDuplicateIDKeepsLaterEntry(t *testing.T) {
+	t.Parallel()
+
+	s := newInflightTestShim()
+	_, releaseFirst := s.registerInflight(context.Background(), modernCancelMeta("7"))
+	secondCtx, releaseSecond := s.registerInflight(context.Background(), modernCancelMeta("7"))
+	defer releaseSecond()
+
+	// The first request finishing must not remove the second's entry.
+	releaseFirst()
+	if !s.cancelInflight([]byte(`{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":7}}`)) {
+		t.Fatal("cancelInflight() = false, want true for the still in-flight duplicate")
+	}
+	if !errors.Is(context.Cause(secondCtx), errRequestCancelled) {
+		t.Fatalf("second request cause = %v, want errRequestCancelled", context.Cause(secondCtx))
+	}
+}
+
+func TestCancelInflightDropsLateModernCancellations(t *testing.T) {
+	t.Parallel()
+
+	s := newInflightTestShim()
+	_, release := s.registerInflight(context.Background(), modernCancelMeta("9"))
+	release()
+	if !s.cancelInflight([]byte(`{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":9}}`)) {
+		t.Fatal("cancel for a completed modern request was not dropped")
+	}
+	if !s.cancelInflight([]byte(`{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":99,` + modernMeta + `}}`)) {
+		t.Fatal("cancel declaring a modern protocol version was not dropped")
+	}
+	if s.cancelInflight([]byte(`{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":99}}`)) {
+		t.Fatal("legacy cancel for an unknown request was dropped, want forwarded")
+	}
+
+	// A legacy request reusing the ID must get its cancellation forwarded.
+	_, releaseLegacy := s.registerInflight(context.Background(), rpcRequestMetadata{ID: json.RawMessage("9"), HasID: true})
+	defer releaseLegacy()
+	if s.cancelInflight([]byte(`{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":9}}`)) {
+		t.Fatal("cancel for an in-flight legacy request was dropped, want forwarded")
+	}
+}
+
+func TestRecentIDsEvictsOldest(t *testing.T) {
+	t.Parallel()
+
+	r := newRecentIDs(2)
+	r.add("1")
+	r.add("2")
+	r.add("3")
+	if r.contains("1") || !r.contains("2") || !r.contains("3") {
+		t.Fatalf("recentIDs after overflow = %v, want 2 and 3", r.set)
+	}
+	r.remove("2")
+	r.add("4")
+	if r.contains("2") || !r.contains("3") || !r.contains("4") {
+		t.Fatalf("recentIDs after remove = %v, want 3 and 4", r.set)
+	}
+}
+
+func TestStdioShimDropsCancelForCompletedModernRequest(t *testing.T) {
+	t.Parallel()
+
+	forwarded := make(chan string, 1)
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if parseRPCRequestMetadata(body).Method == "notifications/cancelled" {
+			forwarded <- string(body)
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":` + rpcID(t, body) + `,"result":{}}`))
+	})
+	h := startStdioShim(t, handler, 0)
+
+	h.send(`{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"echo","arguments":{},` + modernMeta + `}}`)
+	if line := h.read(); !strings.Contains(line, `"id":9`) {
+		t.Fatalf("stdout = %q, want response for id 9", line)
+	}
+	h.send(`{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":9}}`)
+	h.send(`{"jsonrpc":"2.0","id":10,"method":"tools/list","params":{` + modernMeta + `}}`)
+	if line := h.read(); !strings.Contains(line, `"id":10`) {
+		t.Fatalf("stdout = %q, want response for id 10", line)
+	}
+	select {
+	case body := <-forwarded:
+		t.Fatalf("late cancellation for a modern request was forwarded: %s", body)
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+func TestStdioShimModernResponseSessionIDKeepsLegacySession(t *testing.T) {
+	t.Parallel()
+
+	legacySessions := make(chan string, 4)
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		meta := parseRPCRequestMetadata(body)
+		switch {
+		case meta.Method == "initialize":
+			w.Header().Set(MCPSessionHeader, "legacy-session")
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-11-25"}}`))
+			return
+		case isModernProtocolVersion(meta.ProtocolVersion):
+			w.Header().Set(MCPSessionHeader, "modern-stray")
+		default:
+			legacySessions <- r.Header.Get(MCPSessionHeader)
+		}
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":` + rpcID(t, body) + `,"result":{}}`))
+	})
+	h := startStdioShim(t, handler, 0)
+
+	h.send(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}`)
+	h.read()
+	h.send(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"echo","arguments":{},` + modernMeta + `}}`)
+	h.read()
+	h.send(`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"echo","arguments":{}}}`)
+	h.read()
+	if got := <-legacySessions; got != "legacy-session" {
+		t.Fatalf("legacy Mcp-Session-Id after modern response = %q, want legacy-session", got)
 	}
 }
