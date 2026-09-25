@@ -6,16 +6,33 @@ metadata:
 spec:
   template:
     spec:
+      # Mirrors config/registry/base/deployment.yaml so this patch is hardened
+      # on its own (scanners evaluate patch files standalone).
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       initContainers:
       - name: init-perms
         image: alpine:3.23
         imagePullPolicy: IfNotPresent
         command: ["sh", "-c", "chown -R 1000:1000 /var/lib/registry"]
+        # hostPath volumes ignore fsGroup, so a root init step chowns the
+        # storage dir for the uid-1000 registry. Only the capabilities chown
+        # needs are kept.
         securityContext:
           runAsUser: 0
           runAsGroup: 0
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+            add:
+            - CHOWN
+            - DAC_OVERRIDE
         volumeMounts:
         - name: registry-storage
           mountPath: /var/lib/registry

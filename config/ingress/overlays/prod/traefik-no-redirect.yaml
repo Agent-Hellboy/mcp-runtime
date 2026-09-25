@@ -8,8 +8,22 @@ metadata:
 spec:
   template:
     spec:
+      # Mirrors config/ingress/base/traefik.yaml so this patch is hardened on
+      # its own (scanners evaluate patch files standalone); the rendered
+      # result is unchanged.
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: traefik
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65534
+            capabilities:
+              drop:
+                - ALL
           args:
             - --providers.kubernetesingress=true
             - --providers.kubernetesingress.namespaces=registry,mcp-sentinel,mcp-servers,mcp-servers-org,mcp-servers-public

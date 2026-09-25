@@ -19,6 +19,7 @@ spec:
           image: clickhouse/clickhouse-server:23.8
           securityContext:
             allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
             runAsNonRoot: true
             capabilities:
               drop:
@@ -62,3 +63,9 @@ spec:
               clickhouse-client --host=clickhouse --query "ALTER TABLE ${CLICKHOUSE_DB}.events MATERIALIZE INDEX idx_events_trace_id";
               clickhouse-client --host=clickhouse --query "ALTER TABLE ${CLICKHOUSE_DB}.events MATERIALIZE INDEX idx_events_decision";
               clickhouse-client --host=clickhouse --query "ALTER TABLE ${CLICKHOUSE_DB}.events MATERIALIZE INDEX idx_events_tool_name";
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
