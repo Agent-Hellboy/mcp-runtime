@@ -248,8 +248,27 @@ type mcpLiveInventoryProber struct {
 	access           *AccessService
 }
 
+// liveInventoryDefaultHumanIDHeader and liveInventoryDefaultAgentIDHeader
+// match the MCPServer auth header defaults in api/v1alpha1.
+const (
+	liveInventoryDefaultHumanIDHeader = "X-MCP-Human-ID"
+	liveInventoryDefaultAgentIDHeader = "X-MCP-Agent-ID"
+)
+
+func firstNonEmptyHeader(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
 func (p *mcpLiveInventoryProber) probe(ctx context.Context, server controlplane.ServerInfo) (*liveInventory, error) {
-	humanIDHeader, agentIDHeader := server.HumanIDHeader, server.AgentIDHeader
+	// Use the server's configured header names; an unset spec (the defaulting
+	// webhook is optional) means the platform defaults.
+	humanIDHeader := firstNonEmptyHeader(server.HumanIDHeader, liveInventoryDefaultHumanIDHeader)
+	agentIDHeader := firstNonEmptyHeader(server.AgentIDHeader, liveInventoryDefaultAgentIDHeader)
 	endpoint, err := p.endpoint(server)
 	if err != nil {
 		return nil, err

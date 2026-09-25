@@ -18,8 +18,8 @@ type ServerInfo struct {
 	Age           string                      `json:"age"`
 	Endpoint      string                      `json:"endpoint,omitempty"`
 	AuthMode      mcpv1alpha1.AuthMode        `json:"authMode,omitempty"`
-	HumanIDHeader string                      `json:"humanIDHeader,omitempty"`
-	AgentIDHeader string                      `json:"agentIDHeader,omitempty"`
+	HumanIDHeader string                      `json:"-"`
+	AgentIDHeader string                      `json:"-"`
 	ServicePort   int32                       `json:"servicePort,omitempty"`
 	Generation    int64                       `json:"generation,omitempty"`
 	Tools         []mcpv1alpha1.ToolConfig    `json:"tools,omitempty"`
