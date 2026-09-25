@@ -23,7 +23,6 @@ const EMPTY_DRAFT: GrantDraft = {
   namespace: "mcp-servers",
   server: "demo",
   humanID: "",
-  agentID: "",
   teamID: "",
   maxTrust: "low",
   allowedSideEffects: ["read"],
@@ -115,7 +114,8 @@ describe("access subject pickers", () => {
     await user.selectOptions(await screen.findByTestId("grant-team-select"), "acme");
     await user.click(screen.getByTestId("grant-create-submit"));
 
-    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ teamID: "team-acme", humanID: "", agentID: "" }));
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ teamID: "team-acme", humanID: "" }));
+    expect(onSubmit.mock.calls[0][0]).not.toHaveProperty("agentID");
   });
 
   it("submits the stable user ID selected from the chosen team's member list", async () => {
@@ -128,44 +128,35 @@ describe("access subject pickers", () => {
     await user.selectOptions(await screen.findByTestId("grant-human-select"), "user-alice");
     await user.click(screen.getByTestId("grant-create-submit"));
 
-    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ humanID: "user-alice", agentID: "", teamID: "team-acme" }));
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ humanID: "user-alice", teamID: "team-acme" }));
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/runtime/teams/acme/members"))).toBe(true);
   });
 
-  it("clears the previous member and agent when the team changes", async () => {
+  it("clears the previous member when the team changes", async () => {
     const user = userEvent.setup();
-    const onSubmit = vi.fn();
     stubIdentityApi();
-    render(<FormHarness onSubmit={onSubmit} />);
+    render(<FormHarness />);
 
     await user.selectOptions(await screen.findByTestId("grant-team-select"), "acme");
     await user.selectOptions(await screen.findByTestId("grant-human-select"), "user-alice");
-    await user.selectOptions(screen.getByTestId("grant-subject-mode"), "human-agent");
-    await user.selectOptions(await screen.findByTestId("grant-team-select"), "acme");
-    await user.selectOptions(screen.getByTestId("grant-human-select"), "user-alice");
-    await user.type(screen.getByTestId("grant-agent-custom"), "agent-acme");
-    await user.click(screen.getByTestId("grant-create-submit"));
-    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ humanID: "user-alice", agentID: "agent-acme", teamID: "team-acme" }));
 
     await user.selectOptions(screen.getByTestId("grant-team-select"), "globex");
-    expect(screen.getByTestId("grant-agent-custom")).toHaveValue("");
     expect(await screen.findByTestId("grant-human-select")).toHaveValue("");
     expect(screen.queryByRole("option", { name: /alice@example.com/ })).not.toBeInTheDocument();
     expect(await screen.findByRole("option", { name: /bob@example.com/ })).toBeInTheDocument();
   });
 
-  it("keeps agent-only and human-plus-agent subjects available with a visible directory note", async () => {
-    const user = userEvent.setup();
-    const onSubmit = vi.fn();
+  it("does not expose agent subjects until the team-scoped directory is available", async () => {
     stubIdentityApi();
-    render(<FormHarness onSubmit={onSubmit} />);
+    render(<FormHarness />);
 
-    await user.selectOptions(await screen.findByTestId("grant-subject-mode"), "agent");
-    await user.selectOptions(await screen.findByTestId("grant-team-select"), "acme");
-    expect(screen.getByTestId("grant-agent-not-in-directory")).toHaveTextContent("Not in directory");
-    await user.type(screen.getByTestId("grant-agent-custom"), "agent-42");
-    await user.click(screen.getByTestId("grant-create-submit"));
-    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ humanID: "", agentID: "agent-42", teamID: "team-acme" }));
+    const subjectMode = await screen.findByTestId("grant-subject-mode");
+    expect(subjectMode).toHaveDisplayValue("Human");
+    expect(screen.getByRole("option", { name: "Team only" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Agent" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Human and agent" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Agent ID")).not.toBeInTheDocument();
+    expect(screen.getByText(/Agent subjects will be selectable/)).toBeInTheDocument();
   });
 
   it("shows loading, empty, and API error states and allows a marked custom ID", async () => {

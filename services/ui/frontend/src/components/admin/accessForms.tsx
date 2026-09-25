@@ -12,7 +12,6 @@ export type GrantDraft = {
   namespace: string;
   server: string;
   humanID: string;
-  agentID: string;
   teamID: string;
   maxTrust: string;
   allowedSideEffects: string[];
@@ -24,7 +23,6 @@ export type SessionDraft = {
   namespace: string;
   server: string;
   humanID: string;
-  agentID: string;
   teamID: string;
   consentedTrust: string;
   expiresAt: string;
@@ -38,13 +36,11 @@ const TRUST_OPTIONS = [
 ];
 export const SIDE_EFFECTS = ["read", "write", "destructive"];
 
-type SubjectMode = "team" | "human" | "agent" | "human-agent";
-type SubjectValues = { humanID: string; agentID: string; teamID: string };
+type SubjectMode = "team" | "human";
+type SubjectValues = { humanID: string; teamID: string };
 
 function subjectModeOf(subject: SubjectValues): SubjectMode {
-  if (subject.humanID && subject.agentID) return "human-agent";
   if (subject.humanID) return "human";
-  if (subject.agentID) return "agent";
   if (subject.teamID) return "team";
   return "human";
 }
@@ -72,7 +68,7 @@ function SubjectFields({
     setTeamSlug("");
     setCustomTeam(false);
     setCustomHuman(false);
-    onChange({ humanID: "", agentID: "", teamID: "" });
+    onChange({ humanID: "", teamID: "" });
   }
 
   function selectTeam(slug: string) {
@@ -80,7 +76,7 @@ function SubjectFields({
     setTeamSlug(slug);
     setCustomHuman(false);
     // Changing the team always drops IDs selected under the previous team.
-    onChange({ humanID: "", agentID: "", teamID: team?.id ?? "" });
+    onChange({ humanID: "", teamID: team?.id ?? "" });
   }
 
   return (
@@ -92,14 +88,12 @@ function SubjectFields({
         options={[
           { value: "team", label: "Team only" },
           { value: "human", label: "Human" },
-          { value: "agent", label: "Agent" },
-          { value: "human-agent", label: "Human and agent" },
         ]}
-        hint="Choose the subject combination for this grant or session."
+        hint="Agent subjects will be selectable after the team-scoped agent directory is available."
         onChange={(event) => selectMode(event.target.value as SubjectMode)}
       />
 
-      {mode === "team" || mode === "human" || mode === "agent" || mode === "human-agent" ? (
+      {mode === "team" || mode === "human" ? (
         <>
           {customTeam ? (
             <>
@@ -145,7 +139,7 @@ function SubjectFields({
           ) : (
             <>
               <SelectField
-                label={mode === "team" ? "Team" : mode === "agent" ? "Agent team" : "Subject team"}
+                label={mode === "team" ? "Team" : "Subject team"}
                 value={teamSlug}
                 data-testid={`${testPrefix}-team-select`}
                 options={[
@@ -154,7 +148,7 @@ function SubjectFields({
                 ]}
                 onChange={(event) => selectTeam(event.target.value)}
               />
-              <button type="button" className="link-button" onClick={() => { setCustomTeam(true); setTeamSlug(""); onChange({ humanID: "", agentID: "", teamID: "" }); }}>
+              <button type="button" className="link-button" onClick={() => { setCustomTeam(true); setTeamSlug(""); onChange({ humanID: "", teamID: "" }); }}>
                 Enter a custom team ID
               </button>
             </>
@@ -162,7 +156,7 @@ function SubjectFields({
         </>
       ) : null}
 
-      {mode === "human" || mode === "human-agent" ? (
+      {mode === "human" ? (
         customHuman ? (
           <>
             <TextField
@@ -235,20 +229,6 @@ function SubjectFields({
         )
       ) : null}
 
-      {mode === "agent" || mode === "human-agent" ? (
-        <>
-          <TextField
-            label="Agent ID"
-            value={subject.agentID}
-            data-testid={`${testPrefix}-agent-custom`}
-            onChange={(event) => onChange({ ...subject, agentID: event.target.value })}
-          />
-          <StatusBadge tone="warning" dot={false} testId={`${testPrefix}-agent-not-in-directory`}>
-            Not in directory
-          </StatusBadge>
-          <span className="field-hint">Agent selection will be available after agent management is added.</span>
-        </>
-      ) : null}
     </>
   );
 }
@@ -271,9 +251,9 @@ export function validateName(value: string, what: string): string {
   return "";
 }
 
-export function validateSubject(draft: { humanID: string; agentID: string; teamID: string }): string {
-  if (!draft.humanID.trim() && !draft.agentID.trim() && !draft.teamID.trim()) {
-    return "Identify the subject with at least one of human, agent, or team.";
+export function validateSubject(draft: { humanID: string; teamID: string }): string {
+  if (!draft.humanID.trim() && !draft.teamID.trim()) {
+    return "Choose a human or team subject.";
   }
   return "";
 }
