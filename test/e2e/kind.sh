@@ -337,7 +337,7 @@ server_proxy_paths_selected() {
 }
 
 oauth_proxy_paths_selected() {
-  scenario_selected "oauth" || scenario_selected "observability"
+  (scenario_selected "oauth" || scenario_selected "observability") && ! scenario_selected "adapter-certificates"
 }
 
 e2e_mcp_server_budget() {
