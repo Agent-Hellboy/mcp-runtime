@@ -1337,10 +1337,23 @@ spec:
     - name: aaa-ping
       decision: allow
 EOF
+  # Adapter sessions are bound to a human identity; an API key principal has
+  # no subject, so enroll with the admin's password-login token.
+  if [[ -z "${MCP_PLATFORM_ADMIN_EMAIL:-}" || -z "${MCP_PLATFORM_ADMIN_PASSWORD:-}" ]]; then
+    staging_skip "no platform admin email/password for a human-bound adapter session"
+  fi
+  local human_token
+  human_token="$(jq -n --arg e "${MCP_PLATFORM_ADMIN_EMAIL}" --arg p "${MCP_PLATFORM_ADMIN_PASSWORD}" '{email: $e, password: $p}' |
+    curl --fail --silent --show-error -X POST -H 'content-type: application/json' --data-binary @- \
+      "${PLATFORM_URL}/api/v1/auth/login" | jq -r '.access_token // empty')"
+  [[ -n "${human_token}" ]] || {
+    staging_err "admin password login returned no access token"
+    return 1
+  }
   local certs="${WORK_DIR}/adapter-certs" out attempt
   mkdir -p "${certs}"
   for attempt in 1 2 3 4 5 6; do
-    if out="$(MCP_PLATFORM_API_PROFILE=e2e "${BIN}" adapter enroll --platform-url "${PLATFORM_URL}" \
+    if out="$(MCP_PLATFORM_API_TOKEN="${human_token}" "${BIN}" adapter enroll --platform-url "${PLATFORM_URL}" \
       --server "${server}" --namespace "${ns}" --agent "${agent}" --trust-domain "${trust}" \
       --output-dir "${certs}" 2>&1)"; then
       break
@@ -1362,7 +1375,7 @@ EOF
   }
   # Deny path: an agent without a grant is refused a session.
   local code
-  code="$(staging_http_code -X POST -H "x-api-key: ${E2E_PLATFORM_API_TOKEN}" -H "authorization: Bearer ${E2E_PLATFORM_API_TOKEN}" \
+  code="$(staging_http_code -X POST -H "authorization: Bearer ${human_token}" \
     -H 'content-type: application/json' \
     --data "{\"serverName\":\"${server}\",\"namespace\":\"${ns}\",\"agentID\":\"staging-e2e-ungranted\"}" \
     "${PLATFORM_URL}/api/v1/runtime/adapter/sessions")"
