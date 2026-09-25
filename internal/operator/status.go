@@ -126,6 +126,9 @@ func (r *MCPServerReconciler) updateStatus(ctx context.Context, mcpServer *mcpv1
 	latest.Status.GatewayReady = readiness.Gateway
 	latest.Status.PolicyReady = readiness.Policy
 	latest.Status.CanaryReady = readiness.Canary
+	// mcpServer is the defaulted copy, so the URL reflects operator-wide
+	// ingress defaults the stored spec may not spell out.
+	latest.Status.URL = mcpServer.CanonicalResourceURL(r.publicURLOptions())
 
 	// Update all conditions using the centralized helper
 	operatorutil.SetCondition(&latest.Status.Conditions, operatorutil.DeploymentReady, readiness.Deployment, phase, message, latest.Generation)

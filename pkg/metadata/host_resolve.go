@@ -12,6 +12,7 @@ const envMCPRegistryHost = "MCP_REGISTRY_HOST"
 const envMCPRegistryIngressHost = "MCP_REGISTRY_INGRESS_HOST"
 const envMCPPlatformDomain = "MCP_PLATFORM_DOMAIN"
 const envMCPMcpIngressHost = "MCP_MCP_INGRESS_HOST"
+const envMCPDefaultIngressHost = "MCP_DEFAULT_INGRESS_HOST"
 const envMCPPlatformIngressHost = "MCP_PLATFORM_INGRESS_HOST"
 
 // NormalizePlatformDomain returns a lowercased FQDN suitable for
@@ -48,34 +49,59 @@ func platformDomainFromEnv() string {
 	return NormalizePlatformDomain(os.Getenv(envMCPPlatformDomain))
 }
 
-// ResolveRegistryEndpoint returns the registry hostname/endpoint for pulls and
-// in-cluster skopeo (MCP_REGISTRY_ENDPOINT, then MCP_REGISTRY_HOST, then
-// registry.<MCP_PLATFORM_DOMAIN> when the platform domain is set).
+// ResolveRegistryEndpoint returns the registry endpoint used by pulls and
+// in-cluster skopeo: MCP_REGISTRY_ENDPOINT, then MCP_REGISTRY_HOST, then
+// registry.<MCP_PLATFORM_DOMAIN>, then the local default. It deliberately
+// skips MCP_REGISTRY_INGRESS_HOST, the public auth-protected host, so an
+// install that only names its ingress still gets the "set
+// MCP_REGISTRY_ENDPOINT" guidance instead of pulling through the public edge.
 func ResolveRegistryEndpoint() string {
-	if v := strings.TrimSpace(os.Getenv(envMCPRegistryEndpoint)); v != "" {
-		return v
-	}
-	if v := strings.TrimSpace(os.Getenv(envMCPRegistryHost)); v != "" {
-		return v
+	for _, key := range []string{envMCPRegistryEndpoint, envMCPRegistryHost} {
+		if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+			return v
+		}
 	}
 	if p := platformDomainFromEnv(); p != "" {
-		return "registry." + p
+		return registryHostForDomain(p)
 	}
 	return DefaultRegistryHost
 }
 
-// ResolveMcpIngressHost is the public hostname for the MCP / gateway (operator
-// default): MCP_MCP_INGRESS_HOST, else mcp.<MCP_PLATFORM_DOMAIN> when the
-// platform domain is set, else empty (operator falls back to spec or
-// publicPathPrefix).
+// ResolveMcpIngressHost is the public hostname for the MCP / gateway. All
+// consumers use the same precedence: MCP_MCP_INGRESS_HOST,
+// MCP_DEFAULT_INGRESS_HOST, then mcp.<MCP_PLATFORM_DOMAIN>.
+
+// registryHostForDomain names the platform registry for a platform domain,
+// without doubling a domain that already starts with "registry.".
+func registryHostForDomain(domain string) string {
+	return "registry." + strings.TrimPrefix(domain, "registry.")
+}
 func ResolveMcpIngressHost() string {
-	if h := strings.TrimSpace(os.Getenv(envMCPMcpIngressHost)); h != "" {
-		return h
+	for _, key := range []string{envMCPMcpIngressHost, envMCPDefaultIngressHost} {
+		if h := normalizeIngressHost(os.Getenv(key)); h != "" {
+			return h
+		}
 	}
 	if p := platformDomainFromEnv(); p != "" {
 		return "mcp." + p
 	}
 	return ""
+}
+
+func normalizeIngressHost(raw string) string {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return ""
+	}
+	if parsed, err := url.Parse(value); err == nil && parsed.Scheme != "" && parsed.Host != "" {
+		value = parsed.Host
+	} else {
+		value = strings.Trim(value, "/")
+		if idx := strings.IndexByte(value, '/'); idx >= 0 {
+			value = value[:idx]
+		}
+	}
+	return strings.ToLower(strings.TrimSpace(value))
 }
 
 // ResolvePlatformIngressHost is the public hostname for the platform / admin
@@ -91,18 +117,19 @@ func ResolvePlatformIngressHost() string {
 	return ""
 }
 
-// ResolveRegistryHost resolves the host used for default image names.
-// Precedence: MCP_REGISTRY_INGRESS_HOST, legacy MCP_REGISTRY_HOST, then
-// registry.<MCP_PLATFORM_DOMAIN>, else fallback default.
+// ResolveRegistryHost resolves the public host used for default image names,
+// ingress, and registry credentials. Precedence is MCP_REGISTRY_INGRESS_HOST,
+// MCP_REGISTRY_HOST, registry.<MCP_PLATFORM_DOMAIN>, then the local
+// development default. MCP_REGISTRY_ENDPOINT is reserved for internal pulls
+// and transfers, so it must not become a public host fallback.
 func ResolveRegistryHost() string {
-	if host := strings.TrimSpace(os.Getenv(envMCPRegistryIngressHost)); host != "" {
-		return host
-	}
-	if host := strings.TrimSpace(os.Getenv(envMCPRegistryHost)); host != "" {
-		return host
+	for _, key := range []string{envMCPRegistryIngressHost, envMCPRegistryHost} {
+		if host := strings.TrimSpace(os.Getenv(key)); host != "" {
+			return host
+		}
 	}
 	if p := platformDomainFromEnv(); p != "" {
-		return "registry." + p
+		return registryHostForDomain(p)
 	}
 	return DefaultRegistryHost
 }

@@ -183,9 +183,11 @@ func TestHandleProxyOAuthChallengesWithoutBearer(t *testing.T) {
 	}
 }
 
-func TestHandleProxyOAuthChallengeUsesExternalBaseURL(t *testing.T) {
+func TestHandleProxyOAuthChallengeUsesAudienceMetadataURL(t *testing.T) {
 	issuer := newTestJWTIssuer(t)
-	proxy := newTestGatewayServer(t, oauthPolicy(issuer.url), func(w http.ResponseWriter, _ *http.Request) {
+	policy := oauthPolicy(issuer.url)
+	policy.Auth.Audience = "https://public.example.com/proxy/mcp"
+	proxy := newTestGatewayServer(t, policy, func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})
 
@@ -206,7 +208,7 @@ func TestHandleProxyOAuthChallengeUsesExternalBaseURL(t *testing.T) {
 	if recorder.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnauthorized)
 	}
-	if got := recorder.Header().Get("Www-Authenticate"); !strings.Contains(got, `resource_metadata="https://public.example.com/proxy/.well-known/oauth-protected-resource/mcp"`) {
+	if got := recorder.Header().Get("Www-Authenticate"); !strings.Contains(got, `resource_metadata="https://public.example.com/.well-known/oauth-protected-resource/proxy/mcp"`) {
 		t.Fatalf("WWW-Authenticate = %q, missing external resource metadata URL", got)
 	}
 }

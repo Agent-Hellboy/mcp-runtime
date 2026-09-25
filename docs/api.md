@@ -76,7 +76,7 @@ flowchart LR
 - Every listed `tools[]` entry must declare `sideEffect`. A tool called at runtime that the server never declared has no side effect to check, so the gateway fails closed with `403 tool_side_effect_unknown`.
 - Canary rollouts require positive `canaryReplicas` strictly less than total replicas.
 - Persisted `auth.mode: mtls` values are rejected; migrate the MCPServer to `auth.mode: oauth` with `gateway.enabled: true`, `issuerURL`, and `audience`.
-- `auth.mode: oauth` requires `auth.issuerURL` (with the gateway enabled) and an `auth.audience` that is an absolute URI without a fragment.
+- `auth.mode: oauth` derives an unset `auth.audience` from the canonical public MCP URL. An explicit audience must be an absolute URI without a fragment. `auth.issuerURL` is defaulted from the configured bundled issuer when available; otherwise it is required with the gateway enabled.
 
 ### Status
 
@@ -256,8 +256,9 @@ to the SDK-backed application. Do not add a
 second bearer-token gate to the upstream application unless that application
 is intentionally exposed outside the gateway.
 
-Configure the MCP server's external `auth.issuerURL` and explicit
-`auth.audience` to match the authorization server and canonical MCP resource.
+Configure the MCP server's external `auth.issuerURL` and `auth.audience` to
+match the authorization server and canonical MCP resource. The operator can
+default both from its configured bundled issuer and public MCP route.
 `auth.audience` is the single resource identifier for the server. It must be an
 absolute URI without a fragment. The gateway publishes it as `resource` in
 Protected Resource Metadata and validates the token's audience against it, so a

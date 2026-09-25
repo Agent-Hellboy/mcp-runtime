@@ -156,8 +156,8 @@ func (s *gatewayServer) emitAuditFromExchange(ex *Exchange) {
 func (s *gatewayServer) writeDeniedResponse(ex *Exchange) {
 	ex.W.Header().Set("content-type", "application/json")
 	if shouldChallengeOAuth(ex.Policy, ex.Decision) {
-		ex.W.Header().Set("www-authenticate", s.oauthAuthenticateHeader(
-			ex.R, ex.OriginalPath, ex.Decision.Reason, ex.Inspection.ToolName, ex.Decision,
+		ex.W.Header().Set("www-authenticate", oauthAuthenticateHeader(
+			ex.Policy, ex.Decision.Reason, ex.Inspection.ToolName, ex.Decision,
 		))
 	}
 	status := gatewayDeniedStatus(ex.Policy, ex.Decision)

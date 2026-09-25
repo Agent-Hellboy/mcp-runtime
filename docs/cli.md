@@ -707,17 +707,17 @@ The bundled OAuth authorization server is opt-in. Check the provider first with
 mcp-runtime setup \
   --with-tls \
   --with-mcp-auth-server \
-  --mcp-auth-issuer-url https://auth.example.com \
-  --mcp-auth-resource-url https://mcp.example.com/payments/mcp \
   --mcp-auth-connectors-file connectors.json \
   --mcp-auth-connector keycloak \
   --mcp-auth-signing-key-secret mcp-auth-signing-key
 ```
 
-Outside `--test-mode`, the issuer URL, at least one resource URL, and the
-signing-key Secret are required. With managed TLS, setup provisions the issuer
-certificate. Each resource URL must match that server's
-`auth.audience`. Full walkthrough:
+Outside `--test-mode`, setup derives the issuer from `MCP_PLATFORM_DOMAIN`; the
+issuer and each server's `auth.issuerURL` can be overridden explicitly. The
+operator reconciles accepted resources from OAuth MCPServer audiences, so
+`--mcp-auth-resource-url` is only an optional bootstrap value. The signing-key
+Secret remains required. With managed TLS, setup provisions the issuer
+certificate. Full walkthrough:
 [MCP authorization](mcp-authorization.md).
 
 Key env vars for `--env-file` (see `config/deployments/mcpruntime-org.env.example`):

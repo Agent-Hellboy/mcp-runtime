@@ -13,9 +13,6 @@ spec:
   ingressClass: traefik
   ingressAnnotations:
     traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
-  envVars:
-    - name: MCP_PATH
-      value: /workspace-assistant-mcp/mcp
   tools:
     - name: aaa-ping
       description: Check that the workspace assistant is reachable.

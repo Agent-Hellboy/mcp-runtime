@@ -19,6 +19,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
+	"mcp-runtime/pkg/oauthresource"
 )
 
 const (
@@ -489,7 +490,7 @@ func (r *MCPServerReconciler) reconcileMTLSIngress(ctx context.Context, mcpServe
 	}
 	routes := []any{route}
 	if serverUsesOAuth(mcpServer) {
-		metadataMatch := fmt.Sprintf("Path(`%s`)", oauthProtectedResourceIngressPath(effectiveIngressPath(mcpServer)))
+		metadataMatch := fmt.Sprintf("Path(`%s`)", oauthresource.ProtectedResourceMetadataPath(effectiveIngressPath(mcpServer)))
 		if host := effectiveIngressHost(mcpServer); host != "" {
 			metadataMatch = fmt.Sprintf("Host(`%s`) && %s", host, metadataMatch)
 		}

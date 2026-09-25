@@ -18,6 +18,7 @@ import (
 
 	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
 	"mcp-runtime/internal/operator"
+	"mcp-runtime/pkg/metadata"
 )
 
 var (
@@ -58,7 +59,7 @@ func main() {
 	if err = (&operator.MCPServerReconciler{
 		Client:                           mgr.GetClient(),
 		Scheme:                           mgr.GetScheme(),
-		DefaultIngressHost:               os.Getenv("MCP_DEFAULT_INGRESS_HOST"),
+		DefaultIngressHost:               metadata.ResolveMcpIngressHost(),
 		DefaultIngressEntryPoints:        strings.TrimSpace(os.Getenv("MCP_DEFAULT_INGRESS_ENTRYPOINTS")),
 		DefaultIngressTLS:                boolFromEnv(os.Getenv("MCP_DEFAULT_INGRESS_TLS")),
 		DefaultIngressTLSSecret:          strings.TrimSpace(os.Getenv("MCP_DEFAULT_INGRESS_TLS_SECRET")),
@@ -70,6 +71,7 @@ func main() {
 		DefaultAnalyticsIngestURL:        analyticsIngestURLFromEnv(os.Getenv),
 		ClusterName:                      clusterNameFromEnv(os.Getenv),
 		OAuthInternalIssuerURL:           strings.TrimSpace(os.Getenv("OAUTH_INTERNAL_ISSUER_URL")),
+		OAuthIssuerURL:                   strings.TrimSpace(os.Getenv("MCP_AUTH_ISSUER_URL")),
 		MTLSClusterIssuer:                strings.TrimSpace(os.Getenv("MCP_MTLS_CLUSTER_ISSUER")),
 		AdapterTrustDomain:               strings.TrimSpace(os.Getenv("MCP_TRUST_DOMAIN")),
 		AdapterCertificatesEnabled:       boolFromEnv(os.Getenv("MCP_ADAPTER_CERTIFICATES")),
@@ -83,8 +85,10 @@ func main() {
 
 	if webhooksEnabledFromEnv(os.Getenv) {
 		mcpServerWebhookOptions := mcpv1alpha1.MCPServerDefaultOptions{
-			DefaultIngressHost:        os.Getenv("MCP_DEFAULT_INGRESS_HOST"),
+			DefaultIngressHost:        metadata.ResolveMcpIngressHost(),
+			DefaultIngressTLS:         boolFromEnv(os.Getenv("MCP_DEFAULT_INGRESS_TLS")),
 			DefaultAnalyticsIngestURL: analyticsIngestURLFromEnv(os.Getenv),
+			DefaultOAuthIssuerURL:     strings.TrimSpace(os.Getenv("MCP_AUTH_ISSUER_URL")),
 		}
 		if err := (&mcpv1alpha1.MCPServer{}).SetupWebhookWithManagerWithOptions(mgr, mcpServerWebhookOptions); err != nil {
 			setupLog.Error(err, "unable to create webhook")

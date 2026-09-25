@@ -196,6 +196,9 @@ will use to push and pull container images.`,
 			envBool("with-mcp-auth-server", &withMCPAuthServer, "MCP_SETUP_WITH_MCP_AUTH_SERVER")
 			envStr("mcp-auth-server-image", &mcpAuthServerImage, "MCP_SETUP_MCP_AUTH_SERVER_IMAGE")
 			envStr("mcp-auth-issuer-url", &mcpAuthIssuerURL, "MCP_SETUP_MCP_AUTH_ISSUER_URL")
+			if withMCPAuthServer && !testMode && strings.TrimSpace(mcpAuthIssuerURL) == "" {
+				mcpAuthIssuerURL = setupplatform.DefaultMCPAuthIssuerURL()
+			}
 			envCSV("mcp-auth-resource-url", &mcpAuthResourceURLs, "MCP_SETUP_MCP_AUTH_RESOURCE_URL")
 			envStr("mcp-auth-tls-secret", &mcpAuthTLSSecret, "MCP_SETUP_MCP_AUTH_TLS_SECRET")
 			envStr("mcp-auth-signing-key-secret", &mcpAuthSigningKeySecret, "MCP_SETUP_MCP_AUTH_SIGNING_KEY_SECRET")
@@ -218,13 +221,8 @@ will use to push and pull container images.`,
 				if strings.TrimSpace(mcpAuthSigningKeySecret) == "" {
 					return fmt.Errorf("production mcp-auth deployment requires --mcp-auth-signing-key-secret; an ephemeral signing key would invalidate every issued token on restart")
 				}
-				// Outside --test-mode every resource must be named explicitly,
-				// otherwise the server would default to the bundled demo
-				// resources and mint tokens with an audience no real MCP server
-				// accepts.
-				if len(mcpAuthResourceURLs) == 0 {
-					return fmt.Errorf("production mcp-auth deployment requires --mcp-auth-resource-url")
-				}
+				// Resource audiences are reconciled from OAuth MCPServer objects;
+				// this flag only supplies an optional initial bootstrap list.
 				for _, value := range mcpAuthResourceURLs {
 					resource, err := url.Parse(strings.TrimSpace(value))
 					if err != nil || resource.Scheme != "https" || resource.Host == "" {
@@ -333,10 +331,10 @@ will use to push and pull container images.`,
 	cmd.Flags().BoolVar(&parallelBuilds, "parallel-builds", false, "Build and publish setup images in parallel; keeps cluster, registry, TLS, and rollout sequencing unchanged")
 	cmd.Flags().BoolVar(&strictProd, "strict-prod", false, "Require production-style registry and TLS validation for non-test setup")
 	cmd.Flags().BoolVar(&withoutAnalytics, "without-sentinel", false, "Skip deploying the bundled mcp-sentinel stack")
-	cmd.Flags().BoolVar(&withMCPAuthServer, "with-mcp-auth-server", false, "Deploy the optional bundled mcp-auth authorization server; production requires HTTPS issuer, connector, and TLS-enabled ingress")
+	cmd.Flags().BoolVar(&withMCPAuthServer, "with-mcp-auth-server", false, "Deploy the optional bundled mcp-auth authorization server; production requires a platform domain, connector, and TLS-enabled ingress")
 	cmd.Flags().StringVar(&mcpAuthServerImage, "mcp-auth-server-image", "docker.io/princekrroshan01/mcp-auth-server:latest", "Container image for the optional bundled mcp-auth authorization server")
-	cmd.Flags().StringVar(&mcpAuthIssuerURL, "mcp-auth-issuer-url", "", "Public HTTPS issuer URL for the bundled mcp-auth authorization server (required outside --test-mode)")
-	cmd.Flags().StringSliceVar(&mcpAuthResourceURLs, "mcp-auth-resource-url", nil, "Canonical resource URI the bundled mcp-auth server issues tokens for; repeat or comma-separate for several MCP servers, each matching that server's auth.audience (required outside --test-mode)")
+	cmd.Flags().StringVar(&mcpAuthIssuerURL, "mcp-auth-issuer-url", "", "Public HTTPS issuer URL for the bundled mcp-auth authorization server (defaults to https://auth.<MCP_PLATFORM_DOMAIN>/mcp-auth)")
+	cmd.Flags().StringSliceVar(&mcpAuthResourceURLs, "mcp-auth-resource-url", nil, "Optional initial resource URI for the bundled mcp-auth server; the operator reconciles this list from OAuth MCPServer audiences")
 	cmd.Flags().StringVar(&mcpAuthSigningKeySecret, "mcp-auth-signing-key-secret", "", "Secret holding the mcp-auth RSA signing key as private-key.pem (required outside --test-mode)")
 	cmd.Flags().StringVar(&mcpAuthTLSSecret, "mcp-auth-tls-secret", "", "Override the managed TLS Secret for the bundled mcp-auth ingress (default: mcp-auth-server-tls)")
 	cmd.Flags().StringVar(&mcpAuthConnectorsFile, "mcp-auth-connectors-file", "", "Provider connector JSON file for the bundled mcp-auth authorization server")

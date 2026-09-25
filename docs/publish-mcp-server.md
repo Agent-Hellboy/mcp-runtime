@@ -286,7 +286,7 @@ operator debugging.
 ./bin/mcp-runtime server build image payments --tag v1.0.0 --platform linux/amd64
 ```
 
-`server build image` builds the image, resolves the target registry host, tags the local image with that resolved reference, and rewrites matching `.mcp` metadata (`image` and `imageTag`). The command defaults Docker builds to `linux/amd64`, matching common amd64 Kubernetes nodes; set `--platform` or `MCP_DOCKER_PLATFORM` when your target nodes use another architecture. Registry resolution prefers explicit registry env, then the cluster's `registry/registry` Ingress host, before falling back to the registry Service address. When metadata sets `scope: tenant`, the build command uses platform credentials to resolve the same team repository prefix that `server push --scope tenant` uses, so log in first or set `MCP_PLATFORM_API_TOKEN` with a saved or explicit `MCP_PLATFORM_API_URL`.
+`server build image` builds the image, resolves the target registry host, tags the local image with that resolved reference, and rewrites matching `.mcp` metadata (`image` and `imageTag`). The command defaults Docker builds to `linux/amd64`, matching common amd64 Kubernetes nodes; set `--platform` or `MCP_DOCKER_PLATFORM` when your target nodes use another architecture. Public registry host resolution prefers `MCP_REGISTRY_INGRESS_HOST`, `MCP_REGISTRY_HOST`, then `MCP_PLATFORM_DOMAIN`. `MCP_REGISTRY_ENDPOINT` is reserved for internal pulls and transfers; it does not configure an Ingress hostname, image name, or credential host. During manifest generation, unqualified and platform-registry image refs are rewritten to the kubelet's internal pull host; external registry refs such as `ghcr.io/owner/image` remain unchanged. When metadata sets `scope: tenant`, the build command uses platform credentials to resolve the same team repository prefix that `server push --scope tenant` uses, so log in first or set `MCP_PLATFORM_API_TOKEN` with a saved or explicit `MCP_PLATFORM_API_URL`.
 
 After this command, push the exact image reference produced by the build output (or read it from the rewritten metadata):
 
@@ -332,9 +332,9 @@ scope prefix, for example `<registry>/public/payments` in public mode or
 `server deploy --scope public` resolves the platform public catalog namespace;
 `--scope org` resolves the org catalog namespace; `--scope tenant` uses the
 authenticated user's team namespace unless `--team` or `--namespace` selects one
-explicitly. `server deploy` uses the default public route `/<name>/mcp` and
-passes that same value as `MCP_PATH` so the bundled Go, Python, and Rust
-examples listen on the route the ingress exposes. The platform API and CLI
+explicitly. `server deploy` uses the default public route `/<name>/mcp`, and
+the operator sets `MCP_PATH` to the path the server receives so the bundled Go,
+Python, and Rust examples listen on the route the ingress exposes. The platform API and CLI
 deploy flow also default `spec.gateway.enabled: true`, so published servers use
 the governed gateway path unless you explicitly provide `spec.gateway`. When
 you run `server deploy` from a directory with `.mcp/*.yaml`, the CLI copies the

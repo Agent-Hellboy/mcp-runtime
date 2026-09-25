@@ -30,6 +30,10 @@ spec:
     - jsonPath: .status.deploymentReady
       name: Ready
       type: boolean
+    - jsonPath: .status.url
+      name: URL
+      priority: 1
+      type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -103,6 +107,11 @@ spec:
                   agentIDHeader:
                     type: string
                   audience:
+                    description: |-
+                      Audience is the OAuth resource identifier tokens must be issued for and
+                      that protected-resource metadata advertises. When auth.mode is oauth and
+                      this is unset, it defaults to the public MCP URL built from the ingress
+                      host (or MCP_DEFAULT_INGRESS_HOST on the operator), TLS setting, and path.
                     type: string
                   humanIDHeader:
                     type: string
@@ -532,6 +541,13 @@ spec:
               serviceReady:
                 description: ServiceReady indicates if the service is ready.
                 type: boolean
+              url:
+                description: |-
+                  URL is the public MCP endpoint the operator derived from the ingress
+                  host, TLS setting, and public path. The platform API, CLI, and UI show
+                  this value instead of rebuilding it, so every surface agrees with what
+                  the ingress and gateway actually serve. Empty when no host is known.
+                type: string
             type: object
         type: object
     served: true
