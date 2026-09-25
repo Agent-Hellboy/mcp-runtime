@@ -149,6 +149,21 @@ func (s *RuntimeServer) HandleRuntimeAgentPath(w http.ResponseWriter, r *http.Re
 		if parts[1] == "deactivate" {
 			status, action = "inactive", "agent.deactivated"
 		}
+		if parts[1] == "deactivate" {
+			updated, err := s.identity.SetAgentStatus(ctx, item.ID, status, p.UserID())
+			if err != nil {
+				writeAgentError(w, err)
+				return
+			}
+			if err := s.revokeAgentSessions(ctx, r, p, item); err != nil {
+				writeAPIError(w, http.StatusInternalServerError, "agent is inactive but session revocation is incomplete; retry deactivation")
+				return
+			}
+			updated.TeamSlug = item.TeamSlug
+			s.auditAgent(r, p, updated, action)
+			writeJSON(w, http.StatusOK, map[string]any{"agent": updated})
+			return
+		}
 		updated, err := s.identity.SetAgentStatus(ctx, item.ID, status, p.UserID())
 		if err != nil {
 			writeAgentError(w, err)
@@ -161,6 +176,29 @@ func (s *RuntimeServer) HandleRuntimeAgentPath(w http.ResponseWriter, r *http.Re
 	}
 	w.Header().Set("allow", "GET, PATCH, POST")
 	writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed")
+}
+
+func (s *RuntimeServer) revokeAgentSessions(ctx context.Context, r *http.Request, p principal, item platformclient.Agent) error {
+	if s.accessMgr == nil {
+		return errors.New("kubernetes unavailable")
+	}
+	sessions, err := s.accessMgr.ListSessions(ctx, "")
+	if err != nil {
+		return err
+	}
+	for _, session := range sessions.Items {
+		if string(session.Spec.Subject.AgentID) != item.ID || string(session.Spec.Subject.TeamID) != item.TeamID || session.Spec.Revoked {
+			continue
+		}
+		if err := s.accessMgr.RevokeSession(ctx, session.Name, session.Namespace); err != nil {
+			return err
+		}
+		message, _ := json.Marshal(map[string]string{"actor_id": p.UserID(), "agent_id": item.ID, "team_id": item.TeamID, "session_id": session.Name, "namespace": session.Namespace, "action": "agent.session_revoked"})
+		if s.audit != nil {
+			s.audit.WriteAudit(ctx, auditEvent{UserID: p.UserID(), Action: "agent.session_revoked", Resource: "session", Namespace: session.Namespace, Status: "success", Message: string(message), AgentID: item.ID, TeamID: item.TeamID, ActorIP: requestIP(r), RequestID: strings.TrimSpace(r.Header.Get("X-Request-ID")), Source: auditSource(r, p), AuthIdentity: auditIdentityLabel(p)})
+		}
+	}
+	return nil
 }
 
 func (s *RuntimeServer) auditAgent(r *http.Request, p principal, item platformclient.Agent, action string) {

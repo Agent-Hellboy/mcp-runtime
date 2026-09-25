@@ -99,6 +99,10 @@ func (s *AccessService) HandleAdapterCertificate(w http.ResponseWriter, r *http.
 		writeAPIError(w, http.StatusForbidden, "adapter session is revoked")
 		return
 	}
+	if err := requireActiveAgent(r.Context(), s.identity, string(session.Spec.Subject.AgentID), string(session.Spec.Subject.TeamID)); err != nil {
+		writeAgentDirectoryError(w, err)
+		return
+	}
 	serverName := string(session.Spec.ServerRef.Name)
 	serverNamespace := string(session.Spec.ServerRef.Namespace)
 	if serverNamespace == "" {
@@ -141,6 +145,15 @@ func (s *AccessService) HandleAdapterCertificate(w http.ResponseWriter, r *http.
 	certificate, caBundle, err := s.issueSessionCertificateDER(r.Context(), req.Namespace, req.Session, csrDER, duration)
 	if err != nil {
 		writeAPIError(w, http.StatusServiceUnavailable, "issue adapter certificate", err)
+		return
+	}
+	if err := requireActiveAgent(r.Context(), s.identity, string(session.Spec.Subject.AgentID), string(session.Spec.Subject.TeamID)); err != nil {
+		writeAgentDirectoryError(w, err)
+		return
+	}
+	latest, err := s.accessMgr.GetSession(r.Context(), req.Session, req.Namespace)
+	if err != nil || latest == nil || latest.Spec.Revoked {
+		writeAPIError(w, http.StatusForbidden, "adapter session was revoked during certificate enrollment")
 		return
 	}
 	writeJSON(w, http.StatusCreated, adapterCertificateResponse{
