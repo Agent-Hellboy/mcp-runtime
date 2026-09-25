@@ -63,6 +63,10 @@ classify_path() {
       mark_all
       return
       ;;
+    internal/cli/update/*|internal/platformrelease/*|hack/release/*)
+      add_scenario "platform-update"
+      return
+      ;;
     cmd/mcp-runtime/*|internal/cli/root/*|internal/cli/catalog/*)
       add_scenario "cli-platform"
       return

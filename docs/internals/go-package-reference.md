@@ -3272,6 +3272,20 @@ var (
 	ErrSetupReadSecretKeyFailed                    = newSentinelError("read secret key", errx.CodeSetup, errx.DescSetup)
 	ErrSetupDecodeSecretKeyFailed                  = newSentinelError("decode secret key", errx.CodeSetup, errx.DescSetup)
 
+	// Platform update errors.
+	ErrUpdateTargetRequired      = newSentinelError("update target required", errx.CodeSetup, errx.DescSetup)
+	ErrUpdateManifestInvalid     = newSentinelError("release manifest invalid", errx.CodeSetup, errx.DescSetup)
+	ErrUpdateTargetMismatch      = newSentinelError("release manifest version does not match --to", errx.CodeSetup, errx.DescSetup)
+	ErrUpdateInvalidFlag         = newSentinelError("invalid update flag", errx.CodeSetup, errx.DescSetup)
+	ErrUpdateKubeClientFailed    = newSentinelError("create Kubernetes client for update", errx.CodeSetup, errx.DescSetup)
+	ErrUpdateNotInstalled        = newSentinelError("cluster is not an MCP Runtime install", errx.CodeSetup, errx.DescSetup)
+	ErrUpdateInventoryFailed     = newSentinelError("read installed platform inventory", errx.CodeSetup, errx.DescSetup)
+	ErrUpdateCRDChange           = newSentinelError("release changes CRDs", errx.CodeSetup, errx.DescSetup)
+	ErrUpdateBlocked             = newSentinelError("update plan has blocked components", errx.CodeSetup, errx.DescSetup)
+	ErrUpdateConfirmationMissing = newSentinelError("update confirmation required", errx.CodeSetup, errx.DescSetup)
+	ErrUpdateAborted             = newSentinelError("update aborted", errx.CodeSetup, errx.DescSetup)
+	ErrUpdateRolloutFailed       = newSentinelError("platform update rollout failed", errx.CodeSetup, errx.DescSetup)
+
 	// Cert errors.
 	ErrCertManagerNotInstalled     = newSentinelError("cert-manager not installed", errx.CodeCert, errx.DescCert)
 	ErrCertManagerInstallFailed    = newSentinelError("cert-manager install failed", errx.CodeCert, errx.DescCert)
@@ -6876,6 +6890,9 @@ type SetupDeps struct {
 	GetRegistryPort                 func() int
 	OperatorImageFor                func(ext *config.ExternalRegistryConfig) string
 	GatewayProxyImageFor            func(ext *config.ExternalRegistryConfig) string
+	// StampPlatformVersion records the installed platform version on platform
+	// Deployment metadata after a successful setup. Nil skips stamping (tests).
+	StampPlatformVersion func(version string) error
 }
 
 ```
