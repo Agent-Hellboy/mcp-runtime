@@ -13,16 +13,29 @@ import (
 	"mcp-runtime/internal/cli/core"
 	"mcp-runtime/internal/cli/kube"
 	"mcp-runtime/internal/cli/setup/assetpath"
+	"mcp-runtime/pkg/metadata"
 )
 
-// mcpAuthInternalIssuerURL is the in-cluster address gateway sidecars use for
-// authorization-server metadata and JWKS discovery, so that discovery does not
-// depend on the workstation port-forward that serves the public issuer.
+// mcpAuthInternalIssuerURLForCluster returns the in-cluster address gateway
+// sidecars use for metadata and JWKS discovery, using the configured cluster
+// service DNS suffix instead of assuming cluster.local.
 // mcpAuthSigningKeyPath is where the signing key Secret is mounted. The Secret
 // must carry the RSA private key in PEM form under this file name.
 const mcpAuthSigningKeyPath = "/etc/mcp-auth-key/private-key.pem"
 
-const mcpAuthInternalIssuerURL = "http://mcp-auth-server.mcp-sentinel.svc.cluster.local:8080"
+func mcpAuthInternalIssuerURLForCluster() string {
+	return "http://" + clusterServiceDNS("mcp-auth-server", "mcp-sentinel") + ":8080"
+}
+
+// DefaultMCPAuthIssuerURL derives the bundled server's fixed public route from
+// the platform domain, returning empty when no public domain is configured.
+func DefaultMCPAuthIssuerURL() string {
+	domain := metadata.NormalizePlatformDomain(os.Getenv("MCP_PLATFORM_DOMAIN"))
+	if domain == "" {
+		return ""
+	}
+	return "https://auth." + domain + "/mcp-auth"
+}
 
 // secretKeyPattern is the character set Kubernetes accepts for Secret data
 // keys. Connector files supply these names, so they are validated before they
@@ -61,8 +74,13 @@ func deployMCPAuthServer(image, configuredIssuer string, configuredResources []s
 		TestMode:         testMode,
 	}
 	if strings.TrimSpace(opts.IssuerURL) == "" {
-		opts.IssuerURL = os.Getenv("OAUTH_ISSUER_URL")
+		if testMode {
+			opts.IssuerURL = "http://localhost:18080/mcp-auth"
+		} else {
+			opts.IssuerURL = DefaultMCPAuthIssuerURL()
+		}
 	}
+	opts.IssuerURL = strings.TrimRight(strings.TrimSpace(opts.IssuerURL), "/")
 	manifest, err := renderMCPAuthServerManifest(string(raw), opts)
 	if err != nil {
 		return err
@@ -94,7 +112,8 @@ func deployMCPAuthServer(image, configuredIssuer string, configuredResources []s
 	cmd, err := core.DefaultKubectlClient().CommandArgs([]string{
 		"set", "env", "deployment/mcp-runtime-operator-controller-manager",
 		"-n", core.NamespaceMCPRuntime,
-		"OAUTH_INTERNAL_ISSUER_URL=" + mcpAuthInternalIssuerURL,
+		"OAUTH_INTERNAL_ISSUER_URL=" + mcpAuthInternalIssuerURLForCluster(),
+		"MCP_AUTH_ISSUER_URL=" + opts.IssuerURL,
 	})
 	if err != nil {
 		return fmt.Errorf("prepare operator OAuth issuer update: %w", err)
@@ -190,7 +209,11 @@ func renderMCPAuthServerManifest(raw string, opts mcpAuthServerOptions) (string,
 	// "resource is not recognized" at /authorize. MCP_AUTH_RESOURCES is the
 	// multi-resource setting and takes precedence server-side.
 	manifest = strings.ReplaceAll(manifest, "MCP_AUTH_RESOURCES_VALUE", strconv.Quote(strings.Join(resources, ",")))
-	manifest = strings.ReplaceAll(manifest, "MCP_AUTH_RESOURCE_VALUE", strconv.Quote(resources[0]))
+	firstResource := ""
+	if len(resources) > 0 {
+		firstResource = resources[0]
+	}
+	manifest = strings.ReplaceAll(manifest, "MCP_AUTH_RESOURCE_VALUE", strconv.Quote(firstResource))
 	// Quoted: a container env value is a string, and a bare true/false renders
 	// as a YAML boolean that the API server rejects on the EnvVar.Value field.
 	manifest = strings.ReplaceAll(manifest, "MCP_AUTH_LOCAL_DEVELOPMENT_VALUE", strconv.FormatBool(opts.TestMode))
@@ -260,9 +283,8 @@ func renderMCPAuthServerManifest(raw string, opts mcpAuthServerOptions) (string,
 // spec.auth.audience of the MCP server it fronts, because that audience is also
 // the resource identifier the gateway advertises and validates.
 //
-// Outside --test-mode the set must be stated explicitly: defaulting would point
-// a production authorization server at the bundled demo servers, and every
-// token it issued would carry an audience no real MCP server accepts.
+// Outside --test-mode an empty initial set is valid: the operator supplies the
+// current OAuth MCPServer audiences after those resources are created.
 func mcpAuthResourceURLs(configured []string, issuer string, testMode bool) ([]string, error) {
 	resources := make([]string, 0, len(configured))
 	for _, value := range configured {
@@ -272,7 +294,8 @@ func mcpAuthResourceURLs(configured []string, issuer string, testMode bool) ([]s
 	}
 	if len(resources) == 0 {
 		if !testMode {
-			return nil, fmt.Errorf("production mcp-auth deployment requires at least one resource URL (--mcp-auth-resource-url); each must equal spec.auth.audience of an MCP server this authorization server issues tokens for")
+			// The operator fills this list from live OAuth MCPServer audiences.
+			return resources, nil
 		}
 		// Test mode serves the shipped SDK fixtures, so one authorization
 		// server covers both standalone SDK examples.
@@ -280,6 +303,7 @@ func mcpAuthResourceURLs(configured []string, issuer string, testMode bool) ([]s
 		return []string{
 			base + "/mcp-auth-sdk-ping/mcp",
 			base + "/mcp-auth-sdk-echo/mcp",
+			base + "/mcp-auth-sdk-ping-py/mcp",
 		}, nil
 	}
 	seen := map[string]bool{}

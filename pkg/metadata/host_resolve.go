@@ -12,6 +12,7 @@ const envMCPRegistryHost = "MCP_REGISTRY_HOST"
 const envMCPRegistryIngressHost = "MCP_REGISTRY_INGRESS_HOST"
 const envMCPPlatformDomain = "MCP_PLATFORM_DOMAIN"
 const envMCPMcpIngressHost = "MCP_MCP_INGRESS_HOST"
+const envMCPDefaultIngressHost = "MCP_DEFAULT_INGRESS_HOST"
 const envMCPPlatformIngressHost = "MCP_PLATFORM_INGRESS_HOST"
 
 // NormalizePlatformDomain returns a lowercased FQDN suitable for
@@ -66,24 +67,41 @@ func ResolveRegistryEndpoint() string {
 	return DefaultRegistryHost
 }
 
+// ResolveMcpIngressHost is the public hostname for the MCP / gateway. All
+// consumers use the same precedence: MCP_MCP_INGRESS_HOST,
+// MCP_DEFAULT_INGRESS_HOST, then mcp.<MCP_PLATFORM_DOMAIN>.
+
 // registryHostForDomain names the platform registry for a platform domain,
 // without doubling a domain that already starts with "registry.".
 func registryHostForDomain(domain string) string {
 	return "registry." + strings.TrimPrefix(domain, "registry.")
 }
-
-// ResolveMcpIngressHost is the public hostname for the MCP / gateway (operator
-// default): MCP_MCP_INGRESS_HOST, else mcp.<MCP_PLATFORM_DOMAIN> when the
-// platform domain is set, else empty (operator falls back to spec or
-// publicPathPrefix).
 func ResolveMcpIngressHost() string {
-	if h := strings.TrimSpace(os.Getenv(envMCPMcpIngressHost)); h != "" {
-		return h
+	for _, key := range []string{envMCPMcpIngressHost, envMCPDefaultIngressHost} {
+		if h := normalizeIngressHost(os.Getenv(key)); h != "" {
+			return h
+		}
 	}
 	if p := platformDomainFromEnv(); p != "" {
 		return "mcp." + p
 	}
 	return ""
+}
+
+func normalizeIngressHost(raw string) string {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return ""
+	}
+	if parsed, err := url.Parse(value); err == nil && parsed.Scheme != "" && parsed.Host != "" {
+		value = parsed.Host
+	} else {
+		value = strings.Trim(value, "/")
+		if idx := strings.IndexByte(value, '/'); idx >= 0 {
+			value = value[:idx]
+		}
+	}
+	return strings.ToLower(strings.TrimSpace(value))
 }
 
 // ResolvePlatformIngressHost is the public hostname for the platform / admin
