@@ -25,7 +25,7 @@ on:
         type: boolean
 
 concurrency:
-  group: production-e2e-disposable-vm
+  group: staging-e2e-disposable-vm
   cancel-in-progress: false
 
 permissions:

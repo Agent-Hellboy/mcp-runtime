@@ -26,7 +26,7 @@ on:
 # Shared with the on-VM workflow: both drive the same disposable VM, so they
 # must never run at the same time.
 concurrency:
-  group: production-e2e-disposable-vm
+  group: staging-e2e-disposable-vm
   cancel-in-progress: false
 
 permissions:

@@ -95,6 +95,8 @@ RUN_ID="${RUN_ID:-mt$(date +%m%d%H%M%S)-$((RANDOM % 9000 + 1000))}"
 WORK_DIR="${WORK_DIR:-$TMP_ROOT/mcp-runtime-multitenancy-${RUN_ID}}"
 TAG="${TAG:-v0.1.0}"
 ADAPTER_LISTEN="${ADAPTER_LISTEN:-127.0.0.1:8299}"
+# In-cluster Sentinel ingest endpoint for gateway analytics; set empty to skip.
+ANALYTICS_INGEST_URL="${ANALYTICS_INGEST_URL-http://mcp-sentinel-ingest.mcp-sentinel.svc.cluster.local:8081/events}"
 
 SERVER_CONTEXT="${SERVER_CONTEXT:-$ROOT_DIR/examples/workspace-assistant-mcp}"
 SERVER_DOCKERFILE="${SERVER_DOCKERFILE:-$SERVER_CONTEXT/Dockerfile}"
@@ -309,6 +311,12 @@ init_metadata() {
     --tool echo \
     --tool-spec slugify:medium:read \
     --force
+  # Gateway analytics are opt-in per server (spec.analytics); without it the
+  # sidecar emits nothing and the event checks below have nothing to find. The
+  # platform deploy then provisions the namespace-local ingest key Secret.
+  if [[ -n "${ANALYTICS_INGEST_URL}" ]]; then
+    printf '      analytics:\n        ingestURL: "%s"\n' "${ANALYTICS_INGEST_URL}" >>"${metadata_dir}/servers.yaml"
+  fi
 }
 
 verify_metadata_governance() {
