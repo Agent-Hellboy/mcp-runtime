@@ -127,6 +127,28 @@ GLOBEX_SERVER="${GLOBEX_SERVER:-globex-tools-${RUN_ID}}"
 TECHCORP_SERVER="${TECHCORP_SERVER:-techcorp-tools-${RUN_ID}}"
 AGENT_ID="${AGENT_ID:-cursor}"
 
+# Quickstart parity: by default tenant users run with only their saved auth
+# profile (no MCP_* registry/domain env), which is how a real user runs the
+# CLI. A platform on localhost (test-mode port-forward) has no public registry
+# to record at login, so it keeps the explicit REGISTRY_HOST override.
+USER_FLOW_UNSET_ENV=(
+  MCP_REGISTRY_INGRESS_HOST
+  MCP_REGISTRY_HOST
+  MCP_REGISTRY_ENDPOINT
+  MCP_REGISTRY_PULL_HOST
+  MCP_PLATFORM_DOMAIN
+  MCP_PLATFORM_INGRESS_HOST
+  MCP_MCP_INGRESS_HOST
+  MCP_DEFAULT_INGRESS_HOST
+  MCP_RUNTIME_TEST_MODE
+)
+if [[ -z "${PROFILE_ONLY_REGISTRY:-}" ]]; then
+  case "$(printf '%s' "$PLATFORM_URL" | sed -E 's#^[a-zA-Z]+://##; s#[/:].*$##')" in
+    localhost | 127.0.0.1) PROFILE_ONLY_REGISTRY=0 ;;
+    *) PROFILE_ONLY_REGISTRY=1 ;;
+  esac
+fi
+
 # Force platform-API paths; never touch the local kubeconfig.
 VERIFY_PULL_SECRET_KUBECONFIG="${KUBECONFIG:-}"
 unset KUBECONFIG
@@ -170,10 +192,26 @@ wait_for_adapter_proxy() {
   return 1
 }
 
+# Run the CLI as a signed-in platform user. With PROFILE_ONLY_REGISTRY=1 the
+# registry/domain env this script's caller may export (Staging E2E exports
+# MCP_REGISTRY_INGRESS_HOST, MCP_REGISTRY_ENDPOINT, ...) is removed, so the CLI
+# resolves the registry from the saved auth profile exactly like a quickstart
+# user on a laptop with no MCP_* env and no kubeconfig.
 run_as() {
   local profile="$1"
   shift
-  KUBECONFIG="" MCP_PLATFORM_API_TOKEN="" MCP_PLATFORM_API_URL="$PLATFORM_URL" MCP_PLATFORM_API_PROFILE="$profile" "$BIN" "$@"
+  local env_args=()
+  local name
+  if [[ "$PROFILE_ONLY_REGISTRY" == "1" ]]; then
+    for name in "${USER_FLOW_UNSET_ENV[@]}"; do
+      env_args+=(-u "$name")
+    done
+  fi
+  env_args+=(KUBECONFIG="" MCP_PLATFORM_API_TOKEN="" MCP_PLATFORM_API_URL="$PLATFORM_URL" MCP_PLATFORM_API_PROFILE="$profile")
+  if [[ "$PROFILE_ONLY_REGISTRY" != "1" ]]; then
+    env_args+=(MCP_REGISTRY_INGRESS_HOST="$REGISTRY_HOST")
+  fi
+  env "${env_args[@]}" "$BIN" "$@"
 }
 
 json_escape() {
@@ -358,7 +396,7 @@ publish_server() {
     echo "server ${server} does not exist for ${profile}; publishing and deploying it"
   fi
 
-  MCP_REGISTRY_INGRESS_HOST="$REGISTRY_HOST" run_as "$profile" server build image "$server" \
+  run_as "$profile" server build image "$server" \
     --metadata-dir "$metadata_dir" \
     --dockerfile "$SERVER_DOCKERFILE" \
     --context "$SERVER_CONTEXT" \
@@ -366,10 +404,17 @@ publish_server() {
 
   local image_ref
   image_ref="$(image_ref_from_metadata "$metadata_dir")"
+  # The saved profile names the public registry; a ref on any other host (for
+  # example the in-cluster registry.registry.svc.cluster.local:5000) would push
+  # fine but deploy into ImagePullBackOff on a remote platform.
+  if [[ "$PROFILE_ONLY_REGISTRY" == "1" && "$image_ref" != "${REGISTRY_HOST}/"* ]]; then
+    echo "server build image tagged ${image_ref} for ${profile}; expected the saved profile registry ${REGISTRY_HOST}" >&2
+    cat "${metadata_dir}/servers.yaml" >&2
+    exit 1
+  fi
 
   echo "Pushing image ${image_ref} as ${profile} via server push (platform API)..."
-  MCP_PLATFORM_API_URL="$PLATFORM_URL" MCP_REGISTRY_INGRESS_HOST="$REGISTRY_HOST" \
-    run_as "$profile" server push --scope tenant --image "$image_ref"
+  run_as "$profile" server push --scope tenant --image "$image_ref"
 
   verify_metadata_governance "$metadata_dir" "$server"
 
