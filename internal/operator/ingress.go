@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	networkingv1 "k8s.io/api/networking/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -25,18 +24,16 @@ func (r *MCPServerReconciler) reconcileIngress(ctx context.Context, mcpServer *m
 		},
 	}
 	if r.usesAdapterCertificates(mcpServer) {
-		// Create the IngressRoute first so the server is never left without
-		// a route while switching from the plain Ingress.
+		// Keep the ordinary Ingress for OAuth clients that do not present an
+		// adapter certificate. The additional IngressRoute provides the TLS
+		// client-certificate path; both routes target the same OAuth gateway.
 		if err := r.reconcileMTLSIngress(ctx, mcpServer); err != nil {
 			return err
 		}
-		if err := r.Delete(ctx, ingress); err != nil && !apierrors.IsNotFound(err) {
+	} else {
+		if err := r.deleteMTLSIngress(ctx, mcpServer); err != nil {
 			return err
 		}
-		return nil
-	}
-	if err := r.deleteMTLSIngress(ctx, mcpServer); err != nil {
-		return err
 	}
 
 	op, err := ctrl.CreateOrUpdate(ctx, r.Client, ingress, func() error {

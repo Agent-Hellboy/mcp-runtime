@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -24,6 +25,9 @@ func traefikScheme(t *testing.T) *runtime.Scheme {
 	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatalf("scheme: %v", err)
 	}
+	if err := networkingv1.AddToScheme(scheme); err != nil {
+		t.Fatalf("scheme: %v", err)
+	}
 	if err := corev1.AddToScheme(scheme); err != nil {
 		t.Fatalf("scheme: %v", err)
 	}
@@ -34,6 +38,26 @@ func traefikScheme(t *testing.T) *runtime.Scheme {
 		scheme.AddKnownTypeWithName(gvk.GroupVersion().WithKind(gvk.Kind+"List"), &unstructured.UnstructuredList{})
 	}
 	return scheme
+}
+
+func TestReconcileIngressKeepsOAuthIngressAlongsideAdapterCertificateRoute(t *testing.T) {
+	scheme := traefikScheme(t)
+	server := mtlsServer()
+	server.Spec.PublicPathPrefix = "oauth-server"
+	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(server).Build()
+	r := MCPServerReconciler{Client: client, Scheme: scheme, AdapterCertificatesEnabled: true, AdapterTrustDomain: "example.org", MTLSClusterIssuer: "mcp-runtime-ca"}
+
+	if err := r.reconcileIngress(context.Background(), server); err != nil {
+		t.Fatalf("reconcileIngress: %v", err)
+	}
+	ingress := &networkingv1.Ingress{}
+	if err := client.Get(context.Background(), types.NamespacedName{Name: server.Name, Namespace: server.Namespace}, ingress); err != nil {
+		t.Fatalf("OAuth Ingress should remain available: %v", err)
+	}
+	if len(ingress.Spec.Rules) != 1 || len(ingress.Spec.Rules[0].HTTP.Paths) != 2 {
+		t.Fatalf("OAuth Ingress paths = %#v, want MCP and protected-resource metadata", ingress.Spec.Rules)
+	}
+	getCR(t, client, ingressRouteGVK, server.Name, server.Namespace)
 }
 
 func getCR(t *testing.T, c client.Client, gvk schema.GroupVersionKind, name, ns string) *unstructured.Unstructured {
