@@ -158,6 +158,19 @@ spec:
 
 Every populated subject field must match the request identity. A grant bound to
 all three subject fields does not match a different human, agent, or team.
+For cross-team access, `subject.teamID` names the grantee team while the
+referenced `MCPServer.spec.teamID` remains the resource-owning authority team.
+The grant does not transfer or rewrite server ownership. Cross-team subjects
+must be active members of the named team, and their grant must expire within
+`MCP_CROSS_TEAM_GRANT_MAX_TTL` (default seven days). Adapter sessions stop at
+the grant expiry. Authorization and audit records preserve both dimensions:
+the caller's subject team and the server's resource team.
+For administrator-created sessions, pass `grantName` to link the session to an
+active grant; the API verifies its server and every populated subject field,
+then caps session trust and expiry to the grant. Grant-wide session revocation
+targets sessions with this explicit link, including adapter-issued sessions.
+Manually created sessions without `grantName` are not part of a grant's
+revoke-all operation.
 
 The grant controls:
 

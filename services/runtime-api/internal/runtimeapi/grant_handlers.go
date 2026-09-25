@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtimeaccess "mcp-runtime-api/internal/runtimeapi/access"
 	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
@@ -175,23 +176,42 @@ func (s *AccessService) handleRuntimeGrantApply(w http.ResponseWriter, r *http.R
 		}
 		return
 	}
+	if !s.principalCanAdministerAccessServer(r.Context(), *targetServer) {
+		writeAPIError(w, http.StatusForbidden, "forbidden server")
+		return
+	}
 	if err := s.bindAccessSubjectTeamID(ctx, req.Namespace, targetServer.Spec.TeamID, &req.Subject); err != nil {
 		writeAPIError(w, http.StatusForbidden, err.Error())
 		return
 	}
-	if !s.principalCanAdministerAccessServer(r.Context(), *targetServer) {
-		writeAPIError(w, http.StatusForbidden, "forbidden server")
-		return
+	crossTeam := strings.TrimSpace(string(req.Subject.TeamID)) != strings.TrimSpace(string(targetServer.Spec.TeamID))
+	if crossTeam {
+		if err := s.validateCrossTeamSubject(ctx, req.Subject); err != nil {
+			writeAPIError(w, http.StatusUnprocessableEntity, err.Error())
+			return
+		}
+		if err := validateCrossTeamGrantExpiry(&req); err != nil {
+			status := http.StatusUnprocessableEntity
+			if errors.Is(err, errInvalidCrossTeamGrantMaxTTL) {
+				status = http.StatusInternalServerError
+			}
+			writeAPIError(w, status, err.Error())
+			return
+		}
 	}
 	if err := requireActiveAgent(ctx, s.identity, string(req.Subject.AgentID), string(req.Subject.TeamID)); err != nil {
 		writeAgentDirectoryError(w, err)
 		return
 	}
-
 	disabled, err := s.grantDisabledForApply(ctx, req)
 	if err != nil {
 		log.Printf("read grant state %s/%s failed: %v", req.Namespace, req.Name, err)
 		writeAPIError(w, http.StatusInternalServerError, "failed to read grant state")
+		return
+	}
+	existingGrant, existingErr := s.accessMgr.GetGrant(ctx, req.Name, req.Namespace)
+	if existingErr != nil && !apierrors.IsNotFound(existingErr) {
+		writeAPIError(w, http.StatusInternalServerError, "failed to inspect existing grant")
 		return
 	}
 
@@ -216,5 +236,48 @@ func (s *AccessService) handleRuntimeGrantApply(w http.ResponseWriter, r *http.R
 		writeK8sApplyError(w, "grant", grant.Namespace, grant.Name, err)
 		return
 	}
+	if crossTeam && s.audit != nil {
+		action := "grant.cross_team.created"
+		if existingGrant != nil {
+			action = "grant.cross_team.updated"
+		}
+		s.writeCrossTeamGrantAudit(ctx, action, *applied, string(targetServer.Spec.TeamID))
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"grant": sentinelaccess.ToGrantSummary(*applied)})
+}
+
+func (s *AccessService) writeCrossTeamGrantAudit(ctx context.Context, action string, grant sentinelaccess.MCPAccessGrant, resourceTeamID string) {
+	if s == nil || s.audit == nil || strings.TrimSpace(string(grant.Spec.Subject.TeamID)) == strings.TrimSpace(resourceTeamID) {
+		return
+	}
+	p, _ := principalFromContext(ctx)
+	expiresAt := ""
+	if grant.Spec.ExpiresAt != nil {
+		expiresAt = grant.Spec.ExpiresAt.UTC().Format(time.RFC3339)
+	}
+	message, _ := json.Marshal(map[string]string{
+		"grantor":          auditIdentityLabel(p),
+		"grantee_team":     string(grant.Spec.Subject.TeamID),
+		"subject_human":    string(grant.Spec.Subject.HumanID),
+		"subject_agent":    string(grant.Spec.Subject.AgentID),
+		"server":           string(grant.Spec.ServerRef.Name),
+		"subject_team_id":  string(grant.Spec.Subject.TeamID),
+		"resource_team_id": strings.TrimSpace(resourceTeamID),
+		"expires_at":       expiresAt,
+	})
+	s.audit.WriteAudit(ctx, auditEvent{UserID: p.Subject, Action: action, Resource: grant.Name, Namespace: grant.Namespace, Status: "success", Message: string(message), AuthIdentity: auditIdentityLabel(p)})
+}
+
+func validateCrossTeamGrantExpiry(req *accessGrantRequest) error {
+	if req.ExpiresAt == nil {
+		return errors.New("expiresAt is required for cross-team grants")
+	}
+	maxTTL, err := crossTeamGrantMaxTTL()
+	if err != nil {
+		return err
+	}
+	if !crossTeamGrantExpiryValid(req.ExpiresAt.Time, time.Now(), maxTTL) {
+		return fmt.Errorf("expiresAt must be within %s", maxTTL)
+	}
+	return nil
 }

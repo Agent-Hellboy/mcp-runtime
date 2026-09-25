@@ -30,8 +30,10 @@ const (
 	// adapterSessionRefreshBuffer is the minimum remaining lifetime an existing
 	// session must have to be reused. Anything under this triggers a fresh
 	// session so the caller does not race expiry mid-conversation.
-	adapterSessionRefreshBuffer   = 30 * time.Second
-	adapterSessionRequestMaxBytes = 16 << 10
+	adapterSessionRefreshBuffer     = 30 * time.Second
+	adapterSessionRequestMaxBytes   = 16 << 10
+	adapterGrantNameAnnotation      = "mcpruntime.org/access-grant-name"
+	adapterGrantNamespaceAnnotation = "mcpruntime.org/access-grant-namespace"
 )
 
 // adapterSessionRequest is the input contract for POST /api/runtime/adapter/sessions.
@@ -122,9 +124,29 @@ func (s *AccessService) HandleAdapterSession(w http.ResponseWriter, r *http.Requ
 		writeAPIError(w, http.StatusUnauthorized, "principal has no subject or email")
 		return
 	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
 
 	teamIDs := adapterPrincipalTeamIDs(principal)
 	defaultTeamID := defaultAdapterSessionTeamID(principal, req.Namespace, teamIDs)
+	if s.identity == nil || !s.identity.Configured() {
+		writeAPIError(w, http.StatusServiceUnavailable, "platform identity is unavailable for adapter validation")
+		return
+	}
+	agent, found, err := s.identity.GetAgent(ctx, req.AgentID)
+	if err != nil {
+		log.Printf("adapter session: resolve agent %q failed: %v", req.AgentID, err)
+		writeAPIError(w, http.StatusServiceUnavailable, "failed to validate adapter agent")
+		return
+	}
+	if !found || strings.TrimSpace(agent.ID) != req.AgentID || strings.TrimSpace(agent.Status) != "active" {
+		writeAPIError(w, http.StatusForbidden, "adapter agent is unknown or inactive")
+		return
+	}
+	if !containsString(teamIDs, strings.TrimSpace(agent.TeamID)) {
+		writeAPIError(w, http.StatusForbidden, "adapter agent does not belong to a caller team")
+		return
+	}
 
 	requestedTrust, err := parseAdapterTrust(req.RequestedTrust)
 	if err != nil {
@@ -137,10 +159,7 @@ func (s *AccessService) HandleAdapterSession(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-	defer cancel()
-
-	grant, teamID, err := s.selectAdapterGrant(ctx, req.Namespace, req.ServerName, humanID, req.AgentID, teamIDs, defaultTeamID, principal.Role == roleAdmin)
+	grant, teamID, err := s.selectAdapterGrant(ctx, req.Namespace, req.ServerName, humanID, req.AgentID, teamIDs, defaultTeamID, false)
 	if err != nil {
 		writeAPIError(w, http.StatusForbidden, err.Error())
 		return
@@ -161,7 +180,7 @@ func (s *AccessService) HandleAdapterSession(w http.ResponseWriter, r *http.Requ
 	// Reuse an existing session when its identity, policy version, and trust
 	// still match and it has enough remaining lifetime to be useful.
 	existing, _ := s.accessMgr.GetSession(ctx, sessionName, req.Namespace)
-	if existing != nil && adapterSessionReusable(existing, policyVersion, consentedTrust) && adapterSessionWithinGrant(existing, grant) {
+	if existing != nil && adapterSessionReusable(existing, policyVersion, consentedTrust) && adapterSessionWithinGrant(existing, grant) && adapterSessionLinkedToGrant(existing, grant) {
 		writeJSON(w, http.StatusOK, adapterSessionResponse{
 			Name:           existing.Name,
 			Namespace:      existing.Namespace,
@@ -182,6 +201,10 @@ func (s *AccessService) HandleAdapterSession(w http.ResponseWriter, r *http.Requ
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      sessionName,
 			Namespace: runtimeaccess.DefaultAccessNamespace(req.Namespace),
+			Annotations: map[string]string{
+				adapterGrantNameAnnotation:      grant.Name,
+				adapterGrantNamespaceAnnotation: grant.Namespace,
+			},
 		},
 		Spec: sentinelaccess.MCPAgentSessionSpec{
 			ServerRef: sentinelaccess.ServerReference{
@@ -226,6 +249,23 @@ func (s *AccessService) HandleAdapterSession(w http.ResponseWriter, r *http.Requ
 		Reused:         false,
 		TrustDomain:    strings.TrimSpace(os.Getenv("MCP_TRUST_DOMAIN")),
 	})
+}
+
+func adapterSessionLinkedToGrant(session *sentinelaccess.MCPAgentSession, grant *sentinelaccess.MCPAccessGrant) bool {
+	if session == nil || grant == nil || session.Annotations == nil {
+		return false
+	}
+	return session.Annotations[adapterGrantNameAnnotation] == grant.Name &&
+		session.Annotations[adapterGrantNamespaceAnnotation] == grant.Namespace
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if strings.TrimSpace(value) == target {
+			return true
+		}
+	}
+	return false
 }
 
 func adapterSessionWithinGrant(session *sentinelaccess.MCPAgentSession, grant *sentinelaccess.MCPAccessGrant) bool {
@@ -328,9 +368,8 @@ func matchingAdapterGrantTeamID(subj sentinelaccess.SubjectRef, humanID, agentID
 			return grantTeamID, true
 		}
 	}
-	if allowAnyTeam {
-		return grantTeamID, true
-	}
+	// Admin status authorizes grant management, not impersonation of a caller
+	// from a team that is absent from the authenticated identity.
 	return "", false
 }
 
