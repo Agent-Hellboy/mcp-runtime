@@ -233,6 +233,9 @@ jobs:
       - name: Validate E2E scenario selectors
         run: bash test/e2e/scenarios_test.sh
 
+      - name: Test staging E2E target guard and stage runner
+        run: bash test/e2e/staging_lib_test.sh
+
       - name: Install kubectl
         run: |
           curl --retry 5 --retry-delay 5 --retry-all-errors -fsSL -o kubectl "https://dl.k8s.io/release/v1.34.1/bin/linux/amd64/kubectl"

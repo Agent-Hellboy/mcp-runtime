@@ -145,5 +145,6 @@ selector_expect "mtls-operator" "smoke-auth,mtls" "internal/operator/mtls.go"
 selector_expect "gateway" "smoke-auth,governance,trust,oauth,adapter-proxy,mtls" "services/mcp-gateway/main.go"
 selector_expect "observability" "smoke-auth,governance,trust,oauth,observability" "services/ingest/main.go"
 selector_expect "broad" "all" "api/v1alpha1/mcpserver_types.go"
+selector_expect "staging-e2e-only" "smoke-auth" "test/e2e/staging-vm.sh" "test/e2e/lib/staging.sh" ".github/workflows/staging-e2e.yaml"
 
 echo "[pass] scenario selector validation"

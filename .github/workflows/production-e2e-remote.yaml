@@ -1,4 +1,8 @@
-name: Production E2E (Remote Cluster)
+name: Staging E2E (Remote Cluster)
+
+# Same staging suite as the Disposable VM workflow, with the CLI on the runner
+# and the disposable VM reached through its kubeconfig. test/e2e/staging-target.sh
+# refuses to continue unless the target is provably the disposable VM.
 
 on:
   workflow_dispatch:
@@ -7,6 +11,16 @@ on:
         description: Run the destructive multi-team CLI/API scenario suite.
         required: true
         default: true
+        type: boolean
+      fresh-certificate:
+        description: Also issue a brand-new staging certificate for a unique run-<id> host (routine runs reuse the TLS snapshot).
+        required: false
+        default: false
+        type: boolean
+      bootstrap-disposable-marker:
+        description: One-time only, for a freshly provisioned disposable VM. Writes the DISPOSABLE marker after the DNS guard passes.
+        required: false
+        default: false
         type: boolean
 
 # Shared with the on-VM workflow: both drive the same disposable VM, so they
@@ -19,9 +33,14 @@ permissions:
   contents: read
 
 jobs:
-  production-e2e-remote:
+  staging-e2e-remote:
     runs-on: ubuntu-24.04
     timeout-minutes: 90
+    env:
+      E2E_VM_HOST: ${{ secrets.E2E_VM_HOST }}
+      E2E_VM_USER: ${{ secrets.E2E_VM_USER }}
+      SSHPASS: ${{ secrets.E2E_VM_PASSWORD }}
+      E2E_VM_KNOWN_HOSTS: /home/runner/.ssh/mcp-runtime-e2e-known-hosts
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -34,30 +53,35 @@ jobs:
 
       - name: Configure pinned VM host key
         env:
-          E2E_VM_KNOWN_HOSTS: ${{ secrets.E2E_VM_KNOWN_HOSTS }}
+          KNOWN_HOSTS: ${{ secrets.E2E_VM_KNOWN_HOSTS }}
         run: |
-          test -n "${E2E_VM_KNOWN_HOSTS}"
+          test -n "${KNOWN_HOSTS}"
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
-          printf '%s\n' "${E2E_VM_KNOWN_HOSTS}" > ~/.ssh/mcp-runtime-e2e-known-hosts
-          chmod 600 ~/.ssh/mcp-runtime-e2e-known-hosts
+          printf '%s\n' "${KNOWN_HOSTS}" > "${E2E_VM_KNOWN_HOSTS}"
+          chmod 600 "${E2E_VM_KNOWN_HOSTS}"
+
+      - name: Bootstrap disposable marker (explicit, one-time)
+        if: ${{ inputs.bootstrap-disposable-marker }}
+        run: E2E_CONFIRM_DISPOSABLE_VM="${E2E_VM_HOST}" bash test/e2e/staging-target.sh bootstrap
+
+      - name: Verify disposable target
+        run: bash test/e2e/staging-target.sh check
 
       # The CLI runs here and reaches the cluster over its kubeconfig, so the
       # repository never leaves the runner and artifacts are already local.
-      - name: Run remote production E2E
+      - name: Run remote staging E2E
         env:
-          E2E_VM_HOST: ${{ secrets.E2E_VM_HOST }}
-          E2E_VM_USER: ${{ secrets.E2E_VM_USER }}
-          SSHPASS: ${{ secrets.E2E_VM_PASSWORD }}
           E2E_ACME_EMAIL: ${{ secrets.E2E_ACME_EMAIL }}
-          E2E_VM_KNOWN_HOSTS: /home/runner/.ssh/mcp-runtime-e2e-known-hosts
           E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts
+          E2E_RUN_ID: gh-${{ github.run_id }}-${{ github.run_attempt }}
           E2E_RUN_MULTITENANCY: ${{ inputs.run-multitenancy && '1' || '0' }}
-        run: bash test/e2e/production-remote.sh
+          E2E_FRESH_CERTIFICATE: ${{ inputs.fresh-certificate && '1' || '0' }}
+        run: bash test/e2e/staging-remote.sh
 
       - name: Upload E2E artifacts
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: production-e2e-remote-artifacts
+          name: staging-e2e-remote-artifacts
           path: e2e-artifacts
