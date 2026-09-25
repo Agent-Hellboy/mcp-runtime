@@ -1164,8 +1164,8 @@ type PolicyDecision string
     +kubebuilder:validation:Enum=allow;deny
 
 const (
-	PolicyDecisionAllow PolicyDecision = "allow"
-	PolicyDecisionDeny  PolicyDecision = "deny"
+	PolicyDecisionAllow PolicyDecision = mcpdefaults.PolicyDecisionAllow
+	PolicyDecisionDeny  PolicyDecision = mcpdefaults.PolicyDecisionDeny
 )
 ```
 
@@ -1175,7 +1175,7 @@ type PolicyMode string
     +kubebuilder:validation:Enum=allow-list;observe
 
 const (
-	PolicyModeAllowList PolicyMode = "allow-list"
+	PolicyModeAllowList PolicyMode = mcpdefaults.PolicyModeAllowList
 	PolicyModeObserve   PolicyMode = "observe"
 )
 ```
@@ -1806,8 +1806,8 @@ type PolicyDecision string
     +kubebuilder:validation:Enum=allow;deny
 
 const (
-	PolicyDecisionAllow PolicyDecision = "allow"
-	PolicyDecisionDeny  PolicyDecision = "deny"
+	PolicyDecisionAllow PolicyDecision = mcpdefaults.PolicyDecisionAllow
+	PolicyDecisionDeny  PolicyDecision = mcpdefaults.PolicyDecisionDeny
 )
 ```
 
@@ -1817,7 +1817,7 @@ type PolicyMode string
     +kubebuilder:validation:Enum=allow-list;observe
 
 const (
-	PolicyModeAllowList PolicyMode = "allow-list"
+	PolicyModeAllowList PolicyMode = mcpdefaults.PolicyModeAllowList
 	PolicyModeObserve   PolicyMode = "observe"
 )
 ```
@@ -2280,10 +2280,10 @@ const (
 	DefaultListenAddr      = "127.0.0.1:8099"
 	DefaultProtocolVersion = "2025-06-18"
 
-	HumanIDHeader      = "X-MCP-Human-ID"
-	AgentIDHeader      = "X-MCP-Agent-ID"
-	TeamIDHeader       = "X-MCP-Team-ID"
-	AgentSessionHeader = "X-MCP-Agent-Session"
+	HumanIDHeader      = mcpdefaults.AuthHumanIDHeader
+	AgentIDHeader      = mcpdefaults.AuthAgentIDHeader
+	TeamIDHeader       = mcpdefaults.AuthTeamIDHeader
+	AgentSessionHeader = mcpdefaults.AuthSessionIDHeader
 	MCPProtocolHeader  = "Mcp-Protocol-Version"
 	MCPSessionHeader   = "Mcp-Session-Id"
 )
@@ -2637,9 +2637,9 @@ const (
 	// DefaultReplicas is the default number of replicas.
 	DefaultReplicas = 1
 	// DefaultPort is the default container port.
-	DefaultPort = 8088
+	DefaultPort = mcpdefaults.MCPServerPort
 	// DefaultGatewayPort is the default container port for the MCP proxy sidecar.
-	DefaultGatewayPort = 8091
+	DefaultGatewayPort = mcpdefaults.MCPGatewayPort
 	// DefaultGatewayMetricsPort is the default Prometheus scrape port for the MCP gateway sidecar.
 	DefaultGatewayMetricsPort = 9103
 	// DefaultServicePort is the default service port.
@@ -3094,7 +3094,7 @@ const (
 	NamespaceRegistry = "registry"
 
 	// NamespaceMCPServers is the default namespace for MCP server deployments.
-	NamespaceMCPServers = "mcp-servers"
+	NamespaceMCPServers = mcpdefaults.MCPServersNamespace
 
 	// DefaultAnalyticsNamespace is the namespace for the bundled mcp-sentinel stack.
 	DefaultAnalyticsNamespace = "mcp-sentinel"

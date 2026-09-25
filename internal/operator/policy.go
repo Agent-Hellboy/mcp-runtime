@@ -15,6 +15,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
+	"mcp-runtime/pkg/mcpdefaults"
 	"mcp-runtime/pkg/policy"
 )
 
@@ -238,7 +239,7 @@ func serverReferenceMatches(objectNamespace string, ref mcpv1alpha1.ServerRefere
 }
 
 func gatewayPolicyConfigMapName(serverName string) string {
-	return serverName + "-gateway-policy"
+	return mcpdefaults.GatewayPolicyConfigMapName(serverName)
 }
 
 func defaultTrust(trust mcpv1alpha1.TrustLevel) mcpv1alpha1.TrustLevel {
