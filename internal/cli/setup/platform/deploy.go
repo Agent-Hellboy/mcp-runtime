@@ -951,6 +951,9 @@ func operatorEnvOverrides(gatewayProxyImage, existingGatewayOTLPEndpoint string)
 	if enabled := strings.TrimSpace(os.Getenv("MCP_ADAPTER_CERTIFICATES")); enabled != "" {
 		envVars = append(envVars, operatorEnvVar{Name: "MCP_ADAPTER_CERTIFICATES", Value: enabled})
 	}
+	if tlsNamespace := strings.TrimSpace(os.Getenv("MCP_DEFAULT_INGRESS_TLS_SECRET_NAMESPACE")); tlsNamespace != "" {
+		envVars = append(envVars, operatorEnvVar{Name: "MCP_DEFAULT_INGRESS_TLS_SECRET_NAMESPACE", Value: tlsNamespace})
+	}
 	if trustDomain := strings.TrimSpace(os.Getenv("MCP_TRUST_DOMAIN")); trustDomain != "" {
 		envVars = append(envVars, operatorEnvVar{Name: "MCP_TRUST_DOMAIN", Value: trustDomain})
 	}

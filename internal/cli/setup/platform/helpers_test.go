@@ -654,6 +654,7 @@ func TestOperatorEnvOverrides(t *testing.T) {
 		core.DefaultCLIConfig = orig
 	})
 	t.Setenv("OAUTH_INTERNAL_ISSUER_URL", "")
+	t.Setenv("MCP_DEFAULT_INGRESS_TLS_SECRET_NAMESPACE", "")
 
 	t.Run("includes explicit internal OAuth issuer", func(t *testing.T) {
 		t.Setenv("OAUTH_INTERNAL_ISSUER_URL", "http://mcp-auth-server.mcp-sentinel.svc.cluster.local:8080")
@@ -769,6 +770,13 @@ func TestOperatorEnvOverrides(t *testing.T) {
 		requireOperatorEnvVar(t, got, "MCP_DEFAULT_INGRESS_HOST", "mcp.mcpruntime.org")
 		requireOperatorEnvVar(t, got, "MCP_DEFAULT_INGRESS_ENTRYPOINTS", "websecure")
 		requireOperatorEnvVar(t, got, "MCP_DEFAULT_INGRESS_TLS", "true")
+	})
+
+	t.Run("passes through platform ingress TLS namespace", func(t *testing.T) {
+		t.Setenv("MCP_DEFAULT_INGRESS_TLS_SECRET_NAMESPACE", "mcp-servers")
+		core.DefaultCLIConfig = &core.CLIConfig{}
+		got := operatorEnvOverrides("", "")
+		requireOperatorEnvVar(t, got, "MCP_DEFAULT_INGRESS_TLS_SECRET_NAMESPACE", "mcp-servers")
 	})
 }
 

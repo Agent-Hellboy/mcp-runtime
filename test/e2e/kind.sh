@@ -3336,6 +3336,15 @@ if deep_request_flows_enabled || scenario_selected "cli-platform"; then
 fi
 run_logged_stage "server init governed defaults" verify_server_init_governed_defaults
 
+if scenario_selected "adapter-certificates"; then
+  export MCP_ADAPTER_CERTIFICATES=true
+  export MCP_SETUP_MTLS_CLUSTER_ISSUER="${MCP_SETUP_MTLS_CLUSTER_ISSUER:-mcp-runtime-ca}"
+  export MCP_TRUST_DOMAIN="${MCP_TRUST_DOMAIN:-cluster.local}"
+  # All path-based routes on a shared host must use the same TLSOption. The
+  # operator stores its managed default in this Traefik-watched namespace.
+  export MCP_DEFAULT_INGRESS_TLS_SECRET_NAMESPACE="${MCP_DEFAULT_INGRESS_TLS_SECRET_NAMESPACE:-mcp-servers}"
+fi
+
 PLATFORM_CACHE_READY=0
 if platform_cache_ready; then
   PLATFORM_CACHE_READY=1
@@ -3344,6 +3353,12 @@ if platform_cache_ready; then
     -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="MCP_ADAPTER_CERTIFICATES")].value}' \
     | grep -qx true; then
     echo "[cache] adapter certificate feature is not enabled; setup will reconfigure the platform"
+    PLATFORM_CACHE_READY=0
+  fi
+  if scenario_selected "adapter-certificates" && ! kubectl -n mcp-runtime get deployment mcp-runtime-operator-controller-manager \
+    -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="MCP_DEFAULT_INGRESS_TLS_SECRET_NAMESPACE")].value}' \
+    | grep -qx "${MCP_DEFAULT_INGRESS_TLS_SECRET_NAMESPACE}"; then
+    echo "[cache] adapter certificate TLS namespace is not configured; setup will reconfigure the platform"
     PLATFORM_CACHE_READY=0
   fi
 fi
@@ -3378,11 +3393,6 @@ export MCP_DEPLOYMENT_TIMEOUT="${MCP_DEPLOYMENT_TIMEOUT:-900s}"
 export MCP_REGISTRY_ENDPOINT="${MCP_REGISTRY_ENDPOINT:-registry.registry.svc.cluster.local:5000}"
 export MCP_INGRESS_READINESS_MODE="${MCP_INGRESS_READINESS_MODE:-permissive}"
 export MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT="${MCP_GATEWAY_OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector.mcp-sentinel.svc.cluster.local:4318}"
-if scenario_selected "adapter-certificates"; then
-  export MCP_ADAPTER_CERTIFICATES=true
-  export MCP_SETUP_MTLS_CLUSTER_ISSUER="${MCP_SETUP_MTLS_CLUSTER_ISSUER:-mcp-runtime-ca}"
-  export MCP_TRUST_DOMAIN="${MCP_TRUST_DOMAIN:-cluster.local}"
-fi
 if [[ "${PLATFORM_CACHE_READY}" == "1" ]]; then
   refresh_cached_platform_ingress_contract
   echo "[setup] skipping platform setup because E2E_CACHE_MODE=1 found a ready platform"
