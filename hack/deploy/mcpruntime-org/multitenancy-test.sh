@@ -29,7 +29,7 @@ set -euo pipefail
 #   RESET=1 hack/deploy/mcpruntime-org/multitenancy-test.sh       # delete demo resources via platform API
 #   SKIP_SETUP=1 hack/deploy/mcpruntime-org/multitenancy-test.sh  # only run verification
 
-# The production E2E VM receives the repo as a tarball packaged with
+# The Staging E2E VM receives the repo as a tarball packaged with
 # `tar --exclude=.git`, so git metadata is absent there and `rev-parse` exits
 # 128. Prefer an explicitly supplied root, then git, then this script's own
 # location, which is always <root>/hack/deploy/mcpruntime-org.

@@ -6,6 +6,10 @@
       "should_trigger": true
     },
     {
+      "query": "Run the Staging E2E disposable VM workflow with multitenancy and a fresh certificate.",
+      "should_trigger": true
+    },
+    {
       "query": "My local Kind cluster has a dashboard 401 in test mode.",
       "should_trigger": true
     },

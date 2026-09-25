@@ -32,7 +32,7 @@ This file is the **onboarding index** for the MCP Runtime repo. It complements `
 | Samples / install YAML | `examples/workspace-assistant-mcp/`, `k8s/`, `config/` | Demo server; overlays and CRDs |
 | Team isolation | `docs/multi-team.md` | Namespaces, RBAC, ingress watch scope |
 | Deployment targets | `docs/deployment-targets.md`, `docs/k3s-on-prem-cluster.md` | Before distribution-specific runbooks |
-| E2E | `test/e2e/`, `test/integration/` | Kind script; envtest integration |
+| E2E | `test/e2e/`, `test/integration/` | Kind script; envtest integration; Staging E2E on the disposable VM (`test/e2e/staging-*.sh`, `docs/contributor/staging-e2e.md`) |
 | Agent skills | `.codex/skills/`, `.claude/skills` → `../.codex/skills` | Canonical skills tree |
 
 **Patterns:** mirror nearest similar packages; CLI errors → `internal/cli/core/errors.go`, `pkg/errx/`.

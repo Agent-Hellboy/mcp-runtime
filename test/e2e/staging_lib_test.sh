@@ -81,7 +81,7 @@ expect_ok "guard accepts the disposable VM by name" staging_guard_hosts vm.examp
 expect_ok "guard accepts on-VM run without VM host" staging_guard_hosts "" "${HOSTS[@]}"
 expect_fail "guard refuses the production VM address" staging_guard_hosts 198.51.100.14 "${HOSTS[@]}"
 expect_fail "guard refuses a production hostname as VM" staging_guard_hosts platform.mcpruntime.org "${HOSTS[@]}"
-expect_fail "guard refuses a production E2E host" staging_guard_hosts 198.51.100.81 platform.mcpruntime.org
+expect_fail "guard refuses a production hostname in the E2E host list" staging_guard_hosts 198.51.100.81 platform.mcpruntime.org
 expect_fail "guard refuses an E2E host resolving to production" staging_guard_hosts 198.51.100.81 hijacked.e2e.mcpruntime.org
 expect_fail "guard refuses an unresolvable E2E host" staging_guard_hosts 198.51.100.81 missing.e2e.mcpruntime.org
 expect_fail "guard refuses a VM the E2E hosts do not point at" staging_guard_hosts 203.0.113.9 "${HOSTS[@]}"

@@ -1,6 +1,6 @@
 ---
 name: k3s-public-ops
-description: Operate or debug the MCP Runtime public k3s deployment and related hack scripts, including setup, clean/restore, rollout, registry TLS/auth, ImagePullBackOff, node DNS vs pod DNS, and post-change live validation. Use when touching hack/deploy/mcpruntime-org/, config/deployments/mcpruntime-org.env.example, public TLS registry behavior, or k3s deployment docs.
+description: Operate or debug the MCP Runtime public k3s deployment and related hack scripts, including setup, clean/restore, rollout, registry TLS/auth, ImagePullBackOff, node DNS vs pod DNS, and post-change live validation. Use when touching hack/deploy/mcpruntime-org/, config/deployments/mcpruntime-org.env.example, public TLS registry behavior, k3s deployment docs, or the Staging E2E disposable-VM suites (test/e2e/staging-*.sh and their workflows).
 ---
 
 # k3s Public Ops
@@ -110,10 +110,10 @@ run `cluster doctor` before any production mutation.
   UI surfaces when credentials are available. Clean up every temporary resource
   and report any skipped authenticated/browser flow as blocked; do not treat
   `cluster doctor` alone as release acceptance.
-- The `test/e2e/production-remote.sh` and `production-vm.sh` suites reset and
-  provision disposable VMs. Never point them at the `mcpruntime.org`
-  production cluster; use targeted temporary user resources for production
-  acceptance instead.
+- The Staging E2E suites (`test/e2e/staging-remote.sh`, `staging-vm.sh`, see
+  [Staging E2E](#staging-e2e-disposable-vm)) reset and provision the
+  disposable VM. Never point them at the `mcpruntime.org` production cluster;
+  use targeted temporary user resources for production acceptance instead.
 - `cluster doctor` uses `KUBECONFIG` env, not `--kubeconfig`:
 
 ```bash
@@ -264,3 +264,40 @@ hack/deploy/mcpruntime-org/multitenancy-test.sh
 
 Use `SKIP_SETUP=1` only after the generated teams, users, servers, grants, and
 sessions already exist for the selected `RUN_ID`.
+
+## Staging E2E (disposable VM)
+
+Runbook: [`docs/contributor/staging-e2e.md`](../../../docs/contributor/staging-e2e.md).
+Workflows `Staging E2E (Disposable VM)` / `Staging E2E (Remote Cluster)` drive
+the full strict-prod install on the disposable VM (`*.e2e.mcpruntime.org`) and
+upload `summary.md`, `summary.json`, `stages/NN-<stage>.log`, and
+`diagnostics/`. Start triage from the first failed stage in `summary.md`.
+
+Safety rules:
+
+- The runners refuse to start unless `test/e2e/lib/staging.sh` proves the
+  target is disposable: E2E hosts under `.e2e.mcpruntime.org`, no address
+  shared with the production hostnames (resolved by DNS at run time; never
+  hardcode production addresses), E2E hosts resolving to the VM, and the
+  `/var/lib/mcp-runtime-e2e-backup/DISPOSABLE` marker.
+- The marker is created only by the explicit one-time bootstrap on a freshly
+  provisioned disposable VM:
+  `E2E_VM_HOST=<vm> E2E_CONFIRM_DISPOSABLE_VM=<vm> bash test/e2e/staging-target.sh bootstrap`
+  (or one workflow dispatch with `bootstrap-disposable-marker=true`). Never
+  bootstrap the production VM, and never set the `E2E_GUARD_ALLOW_*` escape
+  hatches in CI.
+- Keep `E2E_ACME_STAGING` on. Use `fresh-certificate=true` sparingly; routine
+  reruns reuse the TLS snapshot.
+- The two workflows share a concurrency group; run one at a time and do not
+  cancel other people's runs.
+
+Gotchas seen on real runs:
+
+- `x509: certificate signed by unknown authority` pulling
+  `registry.e2e.mcpruntime.org/...`: the node does not trust the Let's Encrypt
+  staging roots. The `staging-roots` stage installs them before k3s starts;
+  containerd must be (re)started after they are added.
+- "TLS snapshot incomplete": setup died before the platform certificate was
+  issued, so the previous snapshot was kept on purpose.
+- Exit 255 in the on-VM workflow is an SSH drop, not a test failure; the step
+  uses keepalives, and the remote runner avoids the long-lived session.
