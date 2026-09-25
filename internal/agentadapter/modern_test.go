@@ -188,3 +188,51 @@ func TestParamHeaderValues(t *testing.T) {
 		t.Fatalf("paramHeaderValues() = %v, want %v", got, want)
 	}
 }
+
+// Value keywords hold instance data, not schemas: an "x-mcp-header" key
+// inside them must not be treated as an (unreachable) annotation.
+func TestHeaderBindingsFromSchemaIgnoresValueKeywords(t *testing.T) {
+	t.Parallel()
+
+	schema := `{"type":"object",
+		"default":{"x-mcp-header":"Root-Default"},
+		"examples":[{"cfg":{"x-mcp-header":"Example"}}],
+		"x-vendor":{"x-mcp-header":"Vendor"},
+		"properties":{
+			"region":{"type":"string","x-mcp-header":"Region"},
+			"cfg":{"type":"object",
+				"default":{"x-mcp-header":"Default"},
+				"const":{"x-mcp-header":"Const"},
+				"enum":[{"x-mcp-header":"Enum"}],
+				"properties":{"mode":{"type":"string","default":"x","examples":[{"properties":{"a":{"x-mcp-header":"Nested"}}}]}}}}}`
+	got, err := headerBindingsFromSchema(json.RawMessage(schema))
+	if err != nil {
+		t.Fatalf("headerBindingsFromSchema() error = %v, want nil", err)
+	}
+	want := []toolHeaderBinding{{header: "Region", path: []string{"region"}}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("bindings = %#v, want %#v", got, want)
+	}
+
+	// Subschema keywords are still walked and rejected as unreachable.
+	for name, schema := range map[string]string{
+		"under $defs":                `{"type":"object","$defs":{"d":{"type":"string","x-mcp-header":"D"}}}`,
+		"under additionalProperties": `{"type":"object","additionalProperties":{"type":"string","x-mcp-header":"A"}}`,
+		"under not":                  `{"type":"object","properties":{"v":{"not":{"type":"string","x-mcp-header":"V"}}}}`,
+	} {
+		if _, err := headerBindingsFromSchema(json.RawMessage(schema)); err == nil {
+			t.Errorf("%s: headerBindingsFromSchema() error = nil, want error", name)
+		}
+	}
+}
+
+func TestFilterToolsListResultKeepsToolWithHeaderKeyInDefault(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`{"jsonrpc":"2.0","id":1,"result":{"tools":[
+		{"name":"configure","inputSchema":{"type":"object","properties":{"headers":{"type":"object","default":{"x-mcp-header":"literal"}}}}}]}}`)
+	out, _, rejected := filterToolsListResult(body)
+	if len(rejected) != 0 || string(out) != string(body) {
+		t.Fatalf("rejected = %#v, out = %s; want tool kept", rejected, out)
+	}
+}

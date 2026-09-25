@@ -293,26 +293,44 @@ func headerBindingsFromSchema(schema json.RawMessage) ([]toolHeaderBinding, erro
 				seen[lower] = true
 				out = append(out, toolHeaderBinding{header: name, path: append([]string(nil), path...)})
 			}
+			// Descend only into keywords whose values are subschemas. Value
+			// keywords (default, const, enum, examples, ...) and unknown
+			// keywords hold instance data, not schemas, so an "x-mcp-header"
+			// key inside them is not an annotation.
 			for key, child := range n {
-				if key == "x-mcp-header" {
-					continue
-				}
-				if props, ok := child.(map[string]any); ok && key == "properties" {
+				switch schemaKeywordKind(key) {
+				case schemaKeywordProperties:
+					props, ok := child.(map[string]any)
+					if !ok {
+						continue
+					}
 					for prop, sub := range props {
 						if err := walk(sub, append(append([]string(nil), path...), prop), reachable); err != nil {
 							return err
 						}
 					}
-					continue
-				}
-				if err := walk(child, path, false); err != nil {
-					return err
-				}
-			}
-		case []any:
-			for _, child := range n {
-				if err := walk(child, path, false); err != nil {
-					return err
+				case schemaKeywordSchemaMap:
+					subs, ok := child.(map[string]any)
+					if !ok {
+						continue
+					}
+					for _, sub := range subs {
+						if err := walk(sub, path, false); err != nil {
+							return err
+						}
+					}
+				case schemaKeywordSchemaOrArray:
+					if list, ok := child.([]any); ok {
+						for _, sub := range list {
+							if err := walk(sub, path, false); err != nil {
+								return err
+							}
+						}
+						continue
+					}
+					if err := walk(child, path, false); err != nil {
+						return err
+					}
 				}
 			}
 		}
@@ -323,6 +341,38 @@ func headerBindingsFromSchema(schema json.RawMessage) ([]toolHeaderBinding, erro
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].header < out[j].header })
 	return out, nil
+}
+
+type schemaKeyword uint8
+
+const (
+	// schemaKeywordValue marks keywords that are not walked: value keywords
+	// such as default/const/enum/examples, assertions, and unknown keywords.
+	schemaKeywordValue schemaKeyword = iota
+	// schemaKeywordProperties is "properties": a map from property name to
+	// subschema, the only path through which x-mcp-header is reachable.
+	schemaKeywordProperties
+	// schemaKeywordSchemaMap is a map from arbitrary names to subschemas.
+	schemaKeywordSchemaMap
+	// schemaKeywordSchemaOrArray is a subschema or an array of subschemas.
+	schemaKeywordSchemaOrArray
+)
+
+// schemaKeywordKind classifies a JSON Schema keyword by whether its value
+// contains subschemas (draft-04 through 2020-12 applicators).
+func schemaKeywordKind(key string) schemaKeyword {
+	switch key {
+	case "properties":
+		return schemaKeywordProperties
+	case "patternProperties", "$defs", "definitions", "dependentSchemas", "dependencies":
+		return schemaKeywordSchemaMap
+	case "items", "prefixItems", "additionalItems", "additionalProperties",
+		"unevaluatedItems", "unevaluatedProperties", "contains", "propertyNames",
+		"allOf", "anyOf", "oneOf", "not", "if", "then", "else":
+		return schemaKeywordSchemaOrArray
+	default:
+		return schemaKeywordValue
+	}
 }
 
 // isHeaderToken reports whether s matches the RFC 9110 token syntax (1*tchar).

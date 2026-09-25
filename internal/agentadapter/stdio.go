@@ -62,12 +62,58 @@ type stdioShim struct {
 	// inflight maps a JSON-RPC request ID to its cancel func so a stdio
 	// notifications/cancelled can close the HTTP request (modern revisions).
 	inflightMu sync.Mutex
-	inflight   map[string]inflightRequest
+	inflight   map[string]*inflightRequest
+	// recentModern remembers the IDs of recently completed modern requests
+	// so a late notifications/cancelled for one is dropped locally instead
+	// of being forwarded with legacy semantics to a modern server.
+	recentModern *recentIDs
 }
 
+// inflightRequest is stored by pointer so a request's release can tell
+// whether the map entry is still its own after a duplicate JSON-RPC ID.
 type inflightRequest struct {
 	cancel context.CancelCauseFunc
 	modern bool
+}
+
+// recentModernCapacity bounds how many completed modern request IDs the shim
+// remembers for dropping late cancellations.
+const recentModernCapacity = 128
+
+// recentIDs is a fixed-capacity FIFO set of JSON-RPC ID keys. It is not
+// safe for concurrent use; callers hold stdioShim.inflightMu.
+type recentIDs struct {
+	ring []string
+	next int
+	set  map[string]int
+}
+
+func newRecentIDs(capacity int) *recentIDs {
+	return &recentIDs{ring: make([]string, capacity), set: make(map[string]int, capacity)}
+}
+
+func (r *recentIDs) add(key string) {
+	if _, ok := r.set[key]; ok {
+		return
+	}
+	if old := r.ring[r.next]; old != "" {
+		delete(r.set, old)
+	}
+	r.ring[r.next] = key
+	r.set[key] = r.next
+	r.next = (r.next + 1) % len(r.ring)
+}
+
+func (r *recentIDs) remove(key string) {
+	if slot, ok := r.set[key]; ok {
+		r.ring[slot] = ""
+		delete(r.set, key)
+	}
+}
+
+func (r *recentIDs) contains(key string) bool {
+	_, ok := r.set[key]
+	return ok
 }
 
 // errRequestCancelled is the cancellation cause for a request the stdio
@@ -135,7 +181,8 @@ func RunStdioShim(ctx context.Context, cfg ShimConfig, opts StdioOptions) error 
 		protocolVersion: cfg.ProtocolVersion,
 		toolsCache:      newToolsListCache(cfg.ToolsCacheTTL),
 		toolHeaders:     newToolHeaderIndex(),
-		inflight:        make(map[string]inflightRequest),
+		inflight:        make(map[string]*inflightRequest),
+		recentModern:    newRecentIDs(recentModernCapacity),
 	}
 	shim.streamClient = &http.Client{Transport: shim.client.Transport}
 
@@ -345,7 +392,9 @@ func (s *stdioShim) forward(ctx context.Context, payload []byte, emit stdioRespo
 	}
 	defer resp.Body.Close()
 
-	if runtimeSessionID := resp.Header.Get(MCPSessionHeader); runtimeSessionID != "" {
+	// Modern revisions have no protocol-level session; a stray
+	// Mcp-Session-Id on a modern response must not rebind the legacy session.
+	if runtimeSessionID := resp.Header.Get(MCPSessionHeader); runtimeSessionID != "" && !modern {
 		s.setRuntimeSessionID(runtimeSessionID)
 	}
 
@@ -467,41 +516,62 @@ func (s *stdioShim) registerInflight(parent context.Context, meta rpcRequestMeta
 	if !meta.HasID || key == "" {
 		return ctx, func() { cancel(nil) }
 	}
+	entry := &inflightRequest{cancel: cancel, modern: isModernProtocolVersion(meta.ProtocolVersion)}
 	s.inflightMu.Lock()
-	s.inflight[key] = inflightRequest{cancel: cancel, modern: isModernProtocolVersion(meta.ProtocolVersion)}
+	s.inflight[key] = entry
+	// The ID is live again, so it no longer names a completed modern request.
+	s.recentModern.remove(key)
 	s.inflightMu.Unlock()
 	return ctx, func() {
 		s.inflightMu.Lock()
-		delete(s.inflight, key)
+		// A duplicate ID may have replaced this entry; only remove our own.
+		if s.inflight[key] == entry {
+			delete(s.inflight, key)
+			if entry.modern {
+				s.recentModern.add(key)
+			}
+		}
 		s.inflightMu.Unlock()
 		cancel(nil)
 	}
 }
 
-// cancelInflight handles a stdio notifications/cancelled. For an in-flight
-// modern request it cancels the HTTP request and returns true; the caller
-// then drops the notification. Legacy requests return false so the
-// notification is forwarded as before.
+// cancelInflight handles a stdio notifications/cancelled and reports whether
+// the caller should drop it instead of forwarding it. An in-flight modern
+// request is cancelled by closing its HTTP request. A cancellation that
+// declares a modern protocol version, or that targets a recently completed
+// modern request, is dropped too: modern Streamable HTTP defines no client
+// notifications. Other (legacy) cancellations are forwarded as before.
 func (s *stdioShim) cancelInflight(payload []byte) bool {
 	envelope, _, err := parseRPCEnvelope(payload)
 	if err != nil {
 		return false
 	}
+	modernNotification := isModernProtocolVersion(requestProtocolVersion(envelope.Params))
 	var params struct {
 		RequestID json.RawMessage `json:"requestId"`
 	}
 	if err := json.Unmarshal(envelope.Params, &params); err != nil {
-		return false
+		return modernNotification
 	}
 	key := inflightKey(params.RequestID)
+	if key == "" {
+		return modernNotification
+	}
 	s.inflightMu.Lock()
 	entry, ok := s.inflight[key]
+	recent := s.recentModern.contains(key)
 	s.inflightMu.Unlock()
-	if !ok || !entry.modern {
-		return false
+	switch {
+	case ok && entry.modern:
+		entry.cancel(errRequestCancelled)
+		return true
+	case ok:
+		// An in-flight legacy request: its server expects the notification.
+		return modernNotification
+	default:
+		return modernNotification || recent
 	}
-	entry.cancel(errRequestCancelled)
-	return true
 }
 
 // inflightKey normalizes a raw JSON-RPC ID so 7 and 7 with whitespace match.
