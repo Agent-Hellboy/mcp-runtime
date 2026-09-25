@@ -46,7 +46,7 @@ classify_path() {
     ""|README.md|docs/*|website/*)
       return
       ;;
-    test/e2e/staging-*.sh|test/e2e/staging_lib_test.sh|test/e2e/lib/staging.sh|test/e2e/lib/cluster-wait.sh|.github/workflows/staging-e2e*.yaml|.github/workflows/production-e2e*.yaml)
+    test/e2e/staging-*.sh|test/e2e/staging_lib_test.sh|test/e2e/lib/staging.sh|test/e2e/lib/cluster-wait.sh|.github/workflows/staging-e2e*.yaml)
       # Staging E2E runs only on the disposable VM through its own workflows;
       # its offline guard/stage tests run in CI without a Kind cluster.
       return

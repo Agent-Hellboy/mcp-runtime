@@ -849,7 +849,7 @@ staging_fresh_host() {
 # behind E2E_FRESH_CERTIFICATE so routine reruns reuse the snapshot.
 staging_check_fresh_certificate() {
   if ! staging_flag_enabled "${E2E_FRESH_CERTIFICATE:-0}"; then
-    staging_skip "fresh-certificate input is false; the run reused the TLS snapshot"
+    staging_skip "fresh-certificate input is false; routine runs reuse the TLS snapshot"
   fi
   if ! staging_acme_staging && ! staging_flag_enabled "${E2E_FRESH_CERT_ALLOW_PRODUCTION_CA:-0}"; then
     staging_skip "fresh issuance is limited to the staging CA (set E2E_FRESH_CERT_ALLOW_PRODUCTION_CA=1 to override)"
