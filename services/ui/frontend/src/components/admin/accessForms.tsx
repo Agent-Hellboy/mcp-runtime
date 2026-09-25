@@ -13,6 +13,7 @@ export type GrantDraft = {
   teamID: string;
   maxTrust: string;
   allowedSideEffects: string[];
+  expiresAt: string;
 };
 
 export type SessionDraft = {
@@ -139,6 +140,9 @@ export function GrantForm({
     const subjectError = validateSubject(draft);
     if (subjectError) next.subject = subjectError;
     if (draft.allowedSideEffects.length === 0) next.effects = "Allow at least one side effect.";
+    if (draft.expiresAt && (!Number.isFinite(Date.parse(draft.expiresAt)) || Date.parse(draft.expiresAt) <= Date.now())) {
+      next.expiresAt = "Choose a future expiry time.";
+    }
     setErrors(next);
     if (Object.keys(next).length > 0) {
       return;
@@ -224,6 +228,16 @@ export function GrantForm({
             hint="A call is denied when the tool needs more trust than this."
             data-testid="grant-trust"
             onChange={(event) => onChange({ ...draft, maxTrust: event.target.value })}
+          />
+          <TextField
+            label="Expires at (optional)"
+            type="datetime-local"
+            value={draft.expiresAt}
+            error={errors.expiresAt}
+            announceError
+            hint="After this time, the grant cannot authorize calls or session refreshes."
+            data-testid="grant-expires-at"
+            onChange={(event) => onChange({ ...draft, expiresAt: event.target.value })}
           />
           <div className="field">
             <span className="field-label" id="grant-effects-label">

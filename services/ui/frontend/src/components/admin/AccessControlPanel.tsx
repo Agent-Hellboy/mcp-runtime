@@ -44,6 +44,7 @@ function emptyGrantDraft(namespace: string): GrantDraft {
     teamID: "",
     maxTrust: "low",
     allowedSideEffects: ["read"],
+    expiresAt: "",
   };
 }
 
@@ -67,6 +68,18 @@ export function sessionState(session: SessionSummary, now = Date.now()) {
     return { tone: "attention" as const, label: "Revoked" };
   }
   switch (expiryState(session.expiresAt, now)) {
+    case "expired":
+      return { tone: "attention" as const, label: "Expired" };
+    case "unparseable":
+      return { tone: "unknown" as const, label: "Unknown expiry" };
+    default:
+      return { tone: "ready" as const, label: "Active" };
+  }
+}
+
+function grantStatus(grant: GrantSummary, now = Date.now()) {
+  if (grant.disabled) return { tone: "attention" as const, label: "Disabled" };
+  switch (expiryState(grant.expiresAt, now)) {
     case "expired":
       return { tone: "attention" as const, label: "Expired" };
     case "unparseable":
@@ -122,7 +135,7 @@ export function AccessControlPanel({
     matches([session.name, session.namespace, session.serverRef?.name, subjectLabel(session.subject)])
   );
 
-  const activeGrants = grants.filter((grant) => !grant.disabled).length;
+  const activeGrants = grants.filter((grant) => grantStatus(grant).label === "Active").length;
   const activeSessions = sessions.filter((session) => sessionState(session).label === "Active").length;
   const namespaceOptions = useMemo(() => {
     const names = new Set(catalog.namespaces.map((entry) => entry.namespace));
@@ -223,13 +236,19 @@ export function AccessControlPanel({
           cell: (grant) => (grant.allowedSideEffects || []).join(", ") || "—",
         },
         {
+          id: "expires",
+          header: "Expires",
+          sortValue: (grant) => grant.expiresAt || "",
+          cell: (grant) => (grant.expiresAt ? formatTimestamp(grant.expiresAt) : "No expiry"),
+        },
+        {
           id: "status",
           header: "Status",
-          sortValue: (grant) => (grant.disabled ? 1 : 0),
+          sortValue: (grant) => grantStatus(grant).label,
           cell: (grant) => (
             <div className="cell-actions">
-              <StatusBadge tone={grant.disabled ? "attention" : "ready"}>
-                {grant.disabled ? "Disabled" : "Active"}
+              <StatusBadge tone={grantStatus(grant).tone}>
+                {grantStatus(grant).label}
               </StatusBadge>
               <Button
                 variant="ghost"
@@ -455,6 +474,7 @@ export function AccessControlPanel({
                 },
                 maxTrust: grantDraft.maxTrust,
                 allowedSideEffects: grantDraft.allowedSideEffects,
+                expiresAt: grantDraft.expiresAt ? new Date(grantDraft.expiresAt).toISOString() : undefined,
               });
               setGrantDraft(null);
             })

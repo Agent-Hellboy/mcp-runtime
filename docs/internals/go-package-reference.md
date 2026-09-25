@@ -542,6 +542,7 @@ type MCPAccessGrantSpec struct {
 	AllowedSideEffects []ToolSideEffect `json:"allowedSideEffects,omitempty"`
 	PolicyVersion      string           `json:"policyVersion,omitempty"`
 	Disabled           bool             `json:"disabled,omitempty"`
+	ExpiresAt          *metav1.Time     `json:"expiresAt,omitempty"`
 	ToolRules          []ToolRule       `json:"toolRules,omitempty"`
 }
     MCPAccessGrantSpec defines who can use which MCP server and with what trust

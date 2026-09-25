@@ -36,6 +36,7 @@ type MCPAccessGrantSpec struct {
 	AllowedSideEffects []ToolSideEffect `json:"allowedSideEffects,omitempty"`
 	PolicyVersion      string           `json:"policyVersion,omitempty"`
 	Disabled           bool             `json:"disabled,omitempty"`
+	ExpiresAt          *metav1.Time     `json:"expiresAt,omitempty"`
 	ToolRules          []ToolRule       `json:"toolRules,omitempty"`
 }
 
@@ -55,6 +56,7 @@ type MCPAccessGrantStatus struct {
 // +kubebuilder:printcolumn:name="Team",type="string",JSONPath=".spec.subject.teamID"
 // +kubebuilder:printcolumn:name="Trust",type="string",JSONPath=".spec.maxTrust"
 // +kubebuilder:printcolumn:name="Disabled",type="boolean",JSONPath=".spec.disabled"
+// +kubebuilder:printcolumn:name="Expires",type="date",JSONPath=".spec.expiresAt"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 // +kubebuilder:webhook:path=/validate-mcpruntime-org-v1alpha1-mcpaccessgrant,mutating=false,failurePolicy=fail,sideEffects=None,groups=mcpruntime.org,resources=mcpaccessgrants,verbs=create;update,versions=v1alpha1,name=vmcpaccessgrant.kb.io,admissionReviewVersions=v1,serviceName=mcp-runtime-operator-webhook-service,serviceNamespace=mcp-runtime,servicePort=443
 

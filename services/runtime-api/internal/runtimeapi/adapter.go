@@ -148,11 +148,14 @@ func (s *AccessService) HandleAdapterSession(w http.ResponseWriter, r *http.Requ
 	policyVersion := runtimeaccess.DefaultPolicyVersion(grant.Spec.PolicyVersion)
 	sessionName := adapterSessionName(humanID, req.AgentID, teamID, req.ServerName)
 	expiresAt := time.Now().UTC().Add(requestedTTL)
+	if grant.Spec.ExpiresAt != nil && grant.Spec.ExpiresAt.Before(&metav1.Time{Time: expiresAt}) {
+		expiresAt = grant.Spec.ExpiresAt.Time.UTC()
+	}
 
 	// Reuse an existing session when its identity, policy version, and trust
 	// still match and it has enough remaining lifetime to be useful.
 	existing, _ := s.accessMgr.GetSession(ctx, sessionName, req.Namespace)
-	if existing != nil && adapterSessionReusable(existing, policyVersion, consentedTrust) {
+	if existing != nil && adapterSessionReusable(existing, policyVersion, consentedTrust) && adapterSessionWithinGrant(existing, grant) {
 		writeJSON(w, http.StatusOK, adapterSessionResponse{
 			Name:           existing.Name,
 			Namespace:      existing.Namespace,
@@ -208,6 +211,13 @@ func (s *AccessService) HandleAdapterSession(w http.ResponseWriter, r *http.Requ
 	})
 }
 
+func adapterSessionWithinGrant(session *sentinelaccess.MCPAgentSession, grant *sentinelaccess.MCPAccessGrant) bool {
+	if session == nil || session.Spec.ExpiresAt == nil {
+		return false
+	}
+	return grant == nil || grant.Spec.ExpiresAt == nil || !session.Spec.ExpiresAt.After(grant.Spec.ExpiresAt.Time)
+}
+
 func adapterPrincipalTeamIDs(p principal) []string {
 	if len(p.Teams) == 0 {
 		return nil
@@ -257,7 +267,7 @@ func (s *AccessService) selectAdapterGrant(ctx context.Context, namespace, serve
 	}
 	var matches []grantMatch
 	for _, g := range grants.Items {
-		if g.Spec.Disabled {
+		if g.Spec.Disabled || (g.Spec.ExpiresAt != nil && !g.Spec.ExpiresAt.After(time.Now())) {
 			continue
 		}
 		if string(g.Spec.ServerRef.Name) != serverName {

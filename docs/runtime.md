@@ -117,7 +117,7 @@ rendered document carries this metadata, separate from the authorization
 
 | Field | Meaning |
 |---|---|
-| `schema_version` | Compatibility of the rendered JSON contract. The gateway rejects any version it does not support. |
+| `schema_version` | Compatibility of the rendered JSON contract. The gateway rejects any version it does not support. Documents are `v1` unless a grant sets `expiresAt`; those are `v2`, so a gateway built before grant expiry rejects them and keeps its last valid policy instead of ignoring the expiry. |
 | `revision` | Deterministic `sha256:` digest of the canonical policy content. Identical content always yields the same revision. `generated_at` is excluded from the digest, so timestamps never change it. |
 | `generated_at` | Informational only; set at write time and never affects `revision`. |
 

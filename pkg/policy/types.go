@@ -3,6 +3,8 @@
 // policy and the proxy-consumed policy.
 package policy
 
+import "strings"
+
 // SchemaVersion is the current gateway policy contract schema version. It is
 // document-level metadata distinct from the authorization PolicyVersion: it
 // identifies the compatibility of the rendered JSON contract itself, not the
@@ -10,11 +12,32 @@ package policy
 // changes in a way the consumer must understand.
 const SchemaVersion = "v1"
 
+// SchemaVersionGrantExpiry is stamped on documents in which any grant sets
+// expires_at. Grant expiry is a field the consumer must understand: a gateway
+// that predates it would decode the document, drop the unknown field, and keep
+// honoring expired grants. Under v2 such a gateway rejects the document and
+// reports the reload failure instead. Documents without expiring grants stay
+// at SchemaVersion so they remain readable by older gateways.
+const SchemaVersionGrantExpiry = "v2"
+
 // supportedSchemaVersions enumerates the schema versions a consumer is able to
 // activate. Documents carrying any other version fail validation and are
 // rejected before activation.
 var supportedSchemaVersions = map[string]struct{}{
-	SchemaVersion: {},
+	SchemaVersion:            {},
+	SchemaVersionGrantExpiry: {},
+}
+
+// RequiredSchemaVersion returns the lowest schema version that can carry doc.
+func RequiredSchemaVersion(doc *Document) string {
+	if doc != nil {
+		for _, grant := range doc.Grants {
+			if strings.TrimSpace(grant.ExpiresAt) != "" {
+				return SchemaVersionGrantExpiry
+			}
+		}
+	}
+	return SchemaVersion
 }
 
 // ServerName identifies an MCP server in a rendered gateway policy.
@@ -118,6 +141,7 @@ type Grant struct {
 	AllowedSideEffects []string     `json:"allowed_side_effects,omitempty"`
 	PolicyVersion      string       `json:"policy_version,omitempty"`
 	Disabled           bool         `json:"disabled,omitempty"`
+	ExpiresAt          string       `json:"expires_at,omitempty"`
 	ToolRules          []ToolAccess `json:"tool_rules,omitempty"`
 }
 

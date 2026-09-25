@@ -35,6 +35,14 @@ The agent tried to call a tool that is not in any `allow` rule in the active gra
 
 **Fix:** Add the tool to the grant with `--tool <name>` and re-apply.
 
+### `grant_expired`
+
+Every grant that matches the caller has passed its `spec.expiresAt`.
+
+**Fix:** Re-apply the grant with a later `expiresAt`, or remove the field to make it
+open-ended. Sessions issued from the grant cannot outlive it, so the adapter
+obtains a new session on its next refresh.
+
 ### Server stuck in `Pending` or `NotReady`
 
 ```bash
