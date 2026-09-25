@@ -1,8 +1,11 @@
 import { useState, type FormEvent } from "react";
 
 import { Button } from "../../ui/Button";
+import { StatusBadge } from "../../ui/Badge";
 import { SelectField, TextField } from "../../ui/Field";
+import { EmptyState, ErrorState, LoadingState } from "../../ui/States";
 import type { ServerSummary } from "../../api/types";
+import { useTeamMembers, useTeams } from "../../hooks/useAdminData";
 
 export type GrantDraft = {
   name: string;
@@ -34,6 +37,221 @@ const TRUST_OPTIONS = [
   { value: "high", label: "high" },
 ];
 export const SIDE_EFFECTS = ["read", "write", "destructive"];
+
+type SubjectMode = "team" | "human" | "agent" | "human-agent";
+type SubjectValues = { humanID: string; agentID: string; teamID: string };
+
+function subjectModeOf(subject: SubjectValues): SubjectMode {
+  if (subject.humanID && subject.agentID) return "human-agent";
+  if (subject.humanID) return "human";
+  if (subject.agentID) return "agent";
+  if (subject.teamID) return "team";
+  return "human";
+}
+
+function SubjectFields({
+  testPrefix,
+  subject,
+  onChange,
+}: {
+  testPrefix: "grant" | "session";
+  subject: SubjectValues;
+  onChange: (subject: SubjectValues) => void;
+}) {
+  const [mode, setMode] = useState<SubjectMode>(() => subjectModeOf(subject));
+  const teamsQuery = useTeams(true);
+  const teams = teamsQuery.data ?? [];
+  const [teamSlug, setTeamSlug] = useState(() => teams.find((team) => team.id === subject.teamID)?.slug ?? "");
+  const [customTeam, setCustomTeam] = useState(false);
+  const [customHuman, setCustomHuman] = useState(false);
+  const membersQuery = useTeamMembers(true, teamSlug);
+  const members = membersQuery.data ?? [];
+
+  function selectMode(nextMode: SubjectMode) {
+    setMode(nextMode);
+    setTeamSlug("");
+    setCustomTeam(false);
+    setCustomHuman(false);
+    onChange({ humanID: "", agentID: "", teamID: "" });
+  }
+
+  function selectTeam(slug: string) {
+    const team = teams.find((candidate) => candidate.slug === slug);
+    setTeamSlug(slug);
+    setCustomHuman(false);
+    // Changing the team always drops IDs selected under the previous team.
+    onChange({ humanID: "", agentID: "", teamID: team?.id ?? "" });
+  }
+
+  return (
+    <>
+      <SelectField
+        label="Subject type"
+        value={mode}
+        data-testid={`${testPrefix}-subject-mode`}
+        options={[
+          { value: "team", label: "Team only" },
+          { value: "human", label: "Human" },
+          { value: "agent", label: "Agent" },
+          { value: "human-agent", label: "Human and agent" },
+        ]}
+        hint="Choose the subject combination for this grant or session."
+        onChange={(event) => selectMode(event.target.value as SubjectMode)}
+      />
+
+      {mode === "team" || mode === "human" || mode === "agent" || mode === "human-agent" ? (
+        <>
+          {customTeam ? (
+            <>
+              <TextField
+                label="Team ID"
+                value={subject.teamID}
+                data-testid={`${testPrefix}-team-custom`}
+                onChange={(event) => onChange({ ...subject, teamID: event.target.value })}
+              />
+              <StatusBadge tone="warning" dot={false} testId={`${testPrefix}-team-not-in-directory`}>
+                Not in directory
+              </StatusBadge>
+              <button type="button" className="link-button" onClick={() => { setCustomTeam(false); onChange({ ...subject, teamID: "" }); }}>
+                Choose a listed team
+              </button>
+            </>
+          ) : teamsQuery.error ? (
+            <div className="field">
+              <span className="field-label">Team</span>
+              <ErrorState
+                title="Teams could not be loaded."
+                detail="You can retry or enter a custom team ID."
+                onRetry={() => void teamsQuery.refetch()}
+                testId={`${testPrefix}-teams-error`}
+              />
+              <button type="button" className="link-button" onClick={() => setCustomTeam(true)}>
+                Enter a custom team ID
+              </button>
+            </div>
+          ) : teamsQuery.isPending ? (
+            <div className="field" data-testid={`${testPrefix}-teams-loading-wrap`}>
+              <span className="field-label">Team</span>
+              <LoadingState label="Loading teams…" variant="inline" testId={`${testPrefix}-teams-loading`} />
+            </div>
+          ) : teams.length === 0 ? (
+            <div className="field">
+              <span className="field-label">Team</span>
+              <EmptyState title="No teams are available." detail="Enter a custom team ID if you already have one." testId={`${testPrefix}-teams-empty`} />
+              <button type="button" className="link-button" onClick={() => setCustomTeam(true)}>
+                Enter a custom team ID
+              </button>
+            </div>
+          ) : (
+            <>
+              <SelectField
+                label={mode === "team" ? "Team" : mode === "agent" ? "Agent team" : "Subject team"}
+                value={teamSlug}
+                data-testid={`${testPrefix}-team-select`}
+                options={[
+                  { value: "", label: "Select a team" },
+                  ...teams.map((team) => ({ value: team.slug, label: `${team.name || team.slug} (${team.slug})` })),
+                ]}
+                onChange={(event) => selectTeam(event.target.value)}
+              />
+              <button type="button" className="link-button" onClick={() => { setCustomTeam(true); setTeamSlug(""); onChange({ humanID: "", agentID: "", teamID: "" }); }}>
+                Enter a custom team ID
+              </button>
+            </>
+          )}
+        </>
+      ) : null}
+
+      {mode === "human" || mode === "human-agent" ? (
+        customHuman ? (
+          <>
+            <TextField
+              label="Human ID"
+              value={subject.humanID}
+              data-testid={`${testPrefix}-human-custom`}
+              onChange={(event) => onChange({ ...subject, humanID: event.target.value })}
+            />
+            <StatusBadge tone="warning" dot={false} testId={`${testPrefix}-human-not-in-directory`}>
+              Not in directory
+            </StatusBadge>
+            <button type="button" className="link-button" onClick={() => { setCustomHuman(false); onChange({ ...subject, humanID: "" }); }}>
+              Choose a listed member
+            </button>
+          </>
+        ) : !teamSlug ? (
+          <div className="field">
+            <span className="field-label">Member</span>
+            <EmptyState title="Select a team to load its members." testId={`${testPrefix}-members-unselected`} />
+            <button type="button" className="link-button" onClick={() => setCustomHuman(true)}>
+              Enter a custom human ID
+            </button>
+          </div>
+        ) : membersQuery.error ? (
+          <div className="field">
+            <span className="field-label">Member</span>
+            <ErrorState
+              title="Team members could not be loaded."
+              detail="You can retry or enter a custom human ID."
+              onRetry={() => void membersQuery.refetch()}
+              testId={`${testPrefix}-members-error`}
+            />
+            <button type="button" className="link-button" onClick={() => setCustomHuman(true)}>
+              Enter a custom human ID
+            </button>
+          </div>
+        ) : membersQuery.isPending ? (
+          <div className="field">
+            <span className="field-label">Member</span>
+            <LoadingState label="Loading team members…" variant="inline" testId={`${testPrefix}-members-loading`} />
+          </div>
+        ) : members.length === 0 ? (
+          <div className="field">
+            <span className="field-label">Member</span>
+            <EmptyState title="This team has no members." detail="Enter a custom human ID if needed." testId={`${testPrefix}-members-empty`} />
+            <button type="button" className="link-button" onClick={() => setCustomHuman(true)}>
+              Enter a custom human ID
+            </button>
+          </div>
+        ) : (
+          <>
+            <SelectField
+              label="Member"
+              value={subject.humanID}
+              data-testid={`${testPrefix}-human-select`}
+              options={[
+                { value: "", label: "Select a member" },
+                ...members.map((member) => ({
+                  value: member.user_id,
+                  label: `${member.email || member.user_id} (${member.user_id})`,
+                })),
+              ]}
+              hint="The selected member’s stable user ID is submitted."
+              onChange={(event) => onChange({ ...subject, humanID: event.target.value })}
+            />
+            <button type="button" className="link-button" onClick={() => setCustomHuman(true)}>
+              Enter a custom human ID
+            </button>
+          </>
+        )
+      ) : null}
+
+      {mode === "agent" || mode === "human-agent" ? (
+        <>
+          <TextField
+            label="Agent ID"
+            value={subject.agentID}
+            data-testid={`${testPrefix}-agent-custom`}
+            onChange={(event) => onChange({ ...subject, agentID: event.target.value })}
+          />
+          <StatusBadge tone="warning" dot={false} testId={`${testPrefix}-agent-not-in-directory`}>
+            Not in directory
+          </StatusBadge>
+          <span className="field-hint">Agent selection will be available after agent management is added.</span>
+        </>
+      ) : null}
+    </>
+  );
+}
 
 // Kubernetes object names: RFC 1123 subdomain, which is what the API server
 // rejects if we get it wrong. Validating here keeps the error next to the field.
@@ -191,24 +409,10 @@ export function GrantForm({
       <fieldset className="form-fieldset">
         <legend>Subject</legend>
         <div className="form-grid">
-          <TextField
-            label="Human ID"
-            value={draft.humanID}
-            hint="Usually the user's email address."
-            data-testid="grant-human"
-            onChange={(event) => onChange({ ...draft, humanID: event.target.value })}
-          />
-          <TextField
-            label="Agent ID"
-            value={draft.agentID}
-            data-testid="grant-agent"
-            onChange={(event) => onChange({ ...draft, agentID: event.target.value })}
-          />
-          <TextField
-            label="Team ID"
-            value={draft.teamID}
-            data-testid="grant-team"
-            onChange={(event) => onChange({ ...draft, teamID: event.target.value })}
+          <SubjectFields
+            testPrefix="grant"
+            subject={draft}
+            onChange={(subject) => onChange({ ...draft, ...subject })}
           />
         </div>
         {errors.subject ? (
@@ -383,23 +587,10 @@ export function SessionForm({
       <fieldset className="form-fieldset">
         <legend>Subject</legend>
         <div className="form-grid">
-          <TextField
-            label="Human ID"
-            value={draft.humanID}
-            data-testid="session-human"
-            onChange={(event) => onChange({ ...draft, humanID: event.target.value })}
-          />
-          <TextField
-            label="Agent ID"
-            value={draft.agentID}
-            data-testid="session-agent"
-            onChange={(event) => onChange({ ...draft, agentID: event.target.value })}
-          />
-          <TextField
-            label="Team ID"
-            value={draft.teamID}
-            data-testid="session-team"
-            onChange={(event) => onChange({ ...draft, teamID: event.target.value })}
+          <SubjectFields
+            testPrefix="session"
+            subject={draft}
+            onChange={(subject) => onChange({ ...draft, ...subject })}
           />
         </div>
         {errors.subject ? (
