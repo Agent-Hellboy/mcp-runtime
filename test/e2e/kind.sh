@@ -4582,7 +4582,9 @@ EOF
   OAUTH_INGRESS_PATH="/${OAUTH_SERVER_NAME}/mcp"
   MCP_OAUTH_DIRECT_ORIGIN="http://127.0.0.1:${TRAEFIK_PORT}"
   if scenario_selected "adapter-certificates"; then
-    MCP_OAUTH_DIRECT_ORIGIN="http://127.0.0.1:${MCP_CURL_OAUTH_VALID_PORT}"
+    # The anonymous relay preserves per-request Authorization headers; the
+    # valid-token relay would override missing-token challenge probes.
+    MCP_OAUTH_DIRECT_ORIGIN="http://127.0.0.1:${MCP_CURL_OAUTH_ANON_PORT}"
   elif oauth_proxy_paths_selected; then
     MCP_OAUTH_DIRECT_ORIGIN="http://127.0.0.1:${OAUTH_PROXY_PORT}"
   fi
