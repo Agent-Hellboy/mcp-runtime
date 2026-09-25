@@ -538,6 +538,7 @@ func (r *MCPServerReconciler) reconcileMTLSIngress(ctx context.Context, mcpServe
 // platformClientAuthCASecret holds the workload CA in the platform TLS
 // namespace. Every gateway certificate is issued by MTLSClusterIssuer, so any
 // server's CA is the platform's.
+// #nosec G101 -- This is a Kubernetes Secret resource name, not a credential.
 const platformClientAuthCASecret = "mcp-adapter-client-ca"
 
 func (r *MCPServerReconciler) platformClientAuthNamespace() string {

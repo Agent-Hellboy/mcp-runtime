@@ -51,10 +51,10 @@ classify_path() {
       return
       ;;
     internal/operator/mtls*|internal/cli/certmanager/*|traefik-plugins/spiffe-identity/*|config/cert-manager/*|pkg/identity/*|pkg/certauth/*)
-      # Optional adapter certificates ride the OAuth route; the adapter proxy
-      # scenario covers enrollment and the oauth scenario the route itself.
+      # Exercise session-bound certificate enrollment and the OAuth TLS route.
       add_scenario "oauth"
       add_scenario "adapter-proxy"
+      add_scenario "adapter-certificates"
       return
       ;;
     traefik-plugins/pii-redactor/*)
