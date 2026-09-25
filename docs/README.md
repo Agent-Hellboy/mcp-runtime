@@ -66,7 +66,7 @@ at it. The adapter adds the identity and session headers the gateway checks.
 
 ## Why I built this
 
-I started building MCP servers in 2024, beginning with a Superset server at work. As I implemented the MCP specification, I started thinking beyond one server: how could teams host MCP servers internally, and how could they authorize access to them? That led me to build an internal platform and an authorization server, drawing on what I learned at work. Now I am bringing those lessons together in MCP Runtime, a platform for hosting, governing, and connecting MCP servers. Here I am building it in the open.
+I started building MCP servers at work in 2024 and went on to build many of them. Implementing the MCP specification led me to think beyond individual servers: how could teams host MCP servers internally, and how could they authorize access to them? That led me to build an internal platform and an authorization server, drawing on what I learned at work. Now I am bringing those lessons together in MCP Runtime, a platform for hosting, governing, and connecting MCP servers. Here I am building it in the open.
 
 I have been reading the MCP SEPs for gateway and identity management patterns. There are active proposals for exactly these problems. The gateway policy enforcement is a work in progress, and I am following the spec and iterating. MCP still has a long way to go here, and so do I.
 
