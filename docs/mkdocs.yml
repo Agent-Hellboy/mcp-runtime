@@ -87,7 +87,7 @@ nav:
       - Local Kind and Test Mode: contributor/local-kind.md
       - Service Iteration: contributor/service-iteration.md
       - Runtime MCP Testing: contributor/runtime-mcp-testing.md
-      - Production-Mode E2E: contributor/production-e2e.md
+      - Staging E2E: contributor/staging-e2e.md
       - Troubleshooting: contributor/troubleshooting.md
   - Internals:
       - Overview: internals/README.md

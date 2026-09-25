@@ -29,7 +29,7 @@ on the day-to-day loop for contributors.
 Start with [Local Kind and Test Mode](local-kind.md).
 
 For a real production-style install on the disposable VM, use
-[Production-mode E2E](production-e2e.md).
+[Staging E2E](staging-e2e.md).
 
 4. Rebuild only the changed service while iterating.
 

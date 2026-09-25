@@ -10,7 +10,8 @@ set -euo pipefail
 #
 # Set E2E_SCENARIOS to a comma-separated subset for local debugging.
 # Supported values: all, smoke-auth, governance, trust, oauth, observability,
-# multitenancy, api-platform, ui-auth, adapter-proxy, cli-platform.
+# multitenancy, api-platform, ui-auth, adapter-proxy, adapter-certificates,
+# cli-platform, mtls, platform-update.
 # observability requires the full traffic suite: smoke-auth, governance, trust, oauth.
 #
 # Set E2E_DEEP_REQUEST_FLOWS=1 for pre-release runs that should exercise
@@ -382,11 +383,11 @@ validate_scenarios() {
   local scenario
   for scenario in "${E2E_SCENARIO_LIST[@]}"; do
     case "${scenario}" in
-      all|smoke-auth|governance|trust|oauth|observability|multitenancy|api-platform|ui-auth|adapter-proxy|adapter-certificates|cli-platform)
-        ;;
+      all|smoke-auth|governance|trust|oauth|observability|multitenancy|api-platform|ui-auth|adapter-proxy|adapter-certificates|cli-platform|mtls|platform-update)
+         ;;
       *)
-        echo "unsupported E2E scenario: ${scenario}" >&2
-        echo "supported values: all, smoke-auth, governance, trust, oauth, observability, multitenancy, api-platform, ui-auth, adapter-proxy, adapter-certificates, cli-platform" >&2
+         echo "unsupported E2E scenario: ${scenario}" >&2
+         echo "supported values: all, smoke-auth, governance, trust, oauth, observability, multitenancy, api-platform, ui-auth, adapter-proxy, adapter-certificates, cli-platform, mtls, platform-update" >&2
         exit 1
         ;;
     esac
@@ -1023,6 +1024,11 @@ ensure_gateway_port_forward() {
   fi
   wait_port "${SENTINEL_PORT}"
 }
+
+# shellcheck source=scenarios/mtls.sh
+source "${PROJECT_ROOT}/test/e2e/scenarios/mtls.sh"
+# shellcheck source=scenarios/platform-update.sh
+source "${PROJECT_ROOT}/test/e2e/scenarios/platform-update.sh"
 
 refresh_mcp_proxy_urls() {
   MCP_INGRESS_PATH="/${SERVER_NAME}/mcp"
@@ -6353,6 +6359,15 @@ fi
 
 fi
 
+fi
+
+if scenario_selected "mtls"; then
+  run_e2e_mtls_scenario
+  cleanup_mcp_server_and_wait "${MTLS_SERVER_NAME}" mcp-servers 120s
+fi
+
+if scenario_selected "platform-update"; then
+  run_e2e_platform_update_scenario
 fi
 
 echo "[cli] checking sentinel restart command"

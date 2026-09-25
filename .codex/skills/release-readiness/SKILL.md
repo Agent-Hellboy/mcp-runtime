@@ -53,6 +53,7 @@ Choose every applicable focused skill:
 | MCP protocol behavior or upstream spec compatibility | `mcp-spec-compliance` |
 | Gateway/API/operator hot paths or "feels slower" risk | `qa-e2e-perf` |
 | Public k3s, TLS, ACME, production hostnames | `k3s-public-ops` or `mcp-runtime-platform-public` |
+| Full strict-prod install path (setup, public TLS, registry auth, tenants) | `k3s-public-ops` Staging E2E workflows on the disposable VM (`docs/contributor/staging-e2e.md`) |
 | Docs, CLI examples, contributor guidance, release notes | `repo-guidance-sync` |
 
 Do not substitute a generic review pass for a domain skill when one exists.

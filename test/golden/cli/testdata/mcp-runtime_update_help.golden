@@ -1,0 +1,49 @@
+Update an installed MCP Runtime platform to a release.
+
+The target comes from a release component manifest (service -> image
+repository, tag, optional digest), selected with --to (fetches the manifest
+attached to that GitHub release) or --release-manifest (local path or https
+URL). update compares it with the images running in the cluster and patches
+only the Deployments whose images changed, one at a time, waiting for each
+rollout.
+
+update only patches container images (and the operator's
+MCP_GATEWAY_PROXY_IMAGE env var) plus version labels/annotations. It never
+modifies Secrets, PVCs, ConfigMaps, cert-manager Issuers/Certificates, CRDs,
+Services, or Ingresses, and never deletes or recreates workloads. mcp-auth and
+cert-manager are skipped unless selected with --include-auth,
+--include-cert-manager, or --only. Releases that change CRDs are refused; run
+setup from that release instead.
+
+The plan always shows the kube context and cluster ID. Without --dry-run,
+update asks for confirmation (or requires --yes when not interactive).
+Images must already be published to the registry the manifest resolves to;
+relative repositories resolve against the registry of the running image.
+
+Usage:
+  mcp-runtime update [flags]
+
+Examples:
+  mcp-runtime update --to v0.5.0 --dry-run
+  mcp-runtime update --release-manifest ./platform-manifest.json
+  mcp-runtime update --to v0.5.0 --only ui,platform-api --yes
+  mcp-runtime update --release-manifest ./platform-manifest.json --include-auth --output json
+
+Flags:
+      --allow-downgrade           Allow a target version lower than the installed version
+      --context string            Kubernetes context to use (default: current context)
+      --dry-run                   Print the update plan and exit without changing the cluster
+  -h, --help                      help for update
+      --include-auth              Include the mcp-auth authorization server
+      --include-cert-manager      Include cert-manager images (patch releases only; CRDs are not upgraded)
+      --kubeconfig string         Path to kubeconfig file (default: KUBECONFIG or ~/.kube/config)
+      --only strings              Comma-separated components to consider (default: all non-opt-in components)
+      --output string             Output format: text or json (default "text")
+      --release-manifest string   Release component manifest path or https URL; its version must match --to when both are set
+      --rollback-on-failure       Restore previous images of workloads changed in this run if a rollout fails (default true)
+      --timeout duration          Rollout wait timeout per workload (default 5m0s)
+      --to string                 Target release version (for example v0.5.0); fetches that release's platform-manifest.json unless --release-manifest is set
+      --yes                       Apply without the interactive confirmation prompt
+
+Global Flags:
+      --debug   Enable debug mode with structured error logging

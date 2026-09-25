@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"mcp-runtime/internal/platformrelease"
 	"mcp-runtime/pkg/k8sclient"
 )
 
@@ -90,4 +91,14 @@ func writeApplyResults(stdout io.Writer, results []k8sclient.ApplyResult) {
 		}
 		fmt.Fprintln(stdout, result.String())
 	}
+}
+
+// stampPlatformVersionClientGo labels platform Deployments with the installed
+// platform version (metadata only; no rollout).
+func stampPlatformVersionClientGo(version string) error {
+	clients, err := platformKubernetesClients()
+	if err != nil {
+		return err
+	}
+	return platformrelease.StampInstalledVersion(context.Background(), clients.Clientset, version)
 }

@@ -46,6 +46,11 @@ classify_path() {
     ""|README.md|docs/*|website/*)
       return
       ;;
+    test/e2e/staging-*.sh|test/e2e/staging_lib_test.sh|test/e2e/lib/staging.sh|test/e2e/lib/cluster-wait.sh|.github/workflows/staging-e2e*.yaml|.github/workflows/production-e2e*.yaml)
+      # Staging E2E runs only on the disposable VM through its own workflows;
+      # its offline guard/stage tests run in CI without a Kind cluster.
+      return
+      ;;
     test/e2e/*|.github/workflows/ci.yaml|.github/workflows/pre-release-regression.yaml|go.mod|go.sum|Makefile*|Dockerfile*)
       mark_all
       return
@@ -64,6 +69,10 @@ classify_path() {
       ;;
     api/*|cmd/operator/*|internal/operator/*|config/*|k8s/*|pkg/controlplane/*|pkg/k8sclient/*|pkg/kubeworkload/*|pkg/manifest/*|pkg/metadata/*)
       mark_all
+      return
+      ;;
+    internal/cli/update/*|internal/platformrelease/*|hack/release/*)
+      add_scenario "platform-update"
       return
       ;;
     cmd/mcp-runtime/*|internal/cli/root/*|internal/cli/catalog/*)
