@@ -5017,9 +5017,9 @@ kind: MCPAccessGrant
 metadata:
   name: ${ADAPTER_CERT_GRANT}
   namespace: mcp-servers
-  spec:
-    serverRef:
-      name: ${OAUTH_SERVER_NAME}
+spec:
+  serverRef:
+    name: ${OAUTH_SERVER_NAME}
   subject:
     teamID: ${ADAPTER_TEAM_ID}
     agentID: ${ADAPTER_CERT_AGENT_ID}
