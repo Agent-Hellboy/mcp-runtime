@@ -4373,7 +4373,7 @@ print('adapter-session reused:', resp['name'])
     ADAPTER_SESSION_REJECT_STATUS="$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
       -H "Authorization: Bearer ${ADAPTER_CALLER_TOKEN}" \
       -H "content-type: application/json" \
-      --data '{"serverName":"definitely-missing","namespace":"mcp-servers","agentID":"ops-agent"}' \
+      --data "{\"serverName\":\"definitely-missing\",\"namespace\":\"mcp-servers\",\"agentID\":\"${ADAPTER_AGENT_ID}\"}" \
       "http://127.0.0.1:${SENTINEL_PORT}/api/v1/runtime/adapter/sessions")"
     if [[ "${ADAPTER_SESSION_REJECT_STATUS}" != "403" ]]; then
       echo "expected 403 when no grant matches, got ${ADAPTER_SESSION_REJECT_STATUS}" >&2
@@ -5529,7 +5529,7 @@ print('adapter-session reused:', resp['name'])
   ADAPTER_SESSION_REJECT_STATUS="$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
     -H "Authorization: Bearer ${ADAPTER_CALLER_TOKEN}" \
     -H "content-type: application/json" \
-    --data '{"serverName":"definitely-missing","namespace":"mcp-servers","agentID":"ops-agent"}' \
+    --data "{\"serverName\":\"definitely-missing\",\"namespace\":\"mcp-servers\",\"agentID\":\"${ADAPTER_AGENT_ID}\"}" \
     "http://127.0.0.1:${SENTINEL_PORT}/api/v1/runtime/adapter/sessions")"
   if [[ "${ADAPTER_SESSION_REJECT_STATUS}" != "403" ]]; then
     echo "expected 403 when no grant matches, got ${ADAPTER_SESSION_REJECT_STATUS}" >&2
