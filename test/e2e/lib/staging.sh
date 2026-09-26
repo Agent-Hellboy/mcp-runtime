@@ -1040,6 +1040,27 @@ staging_check_platform_api() {
   [[ "${failed}" == "0" ]]
 }
 
+# The public registry route must answer anonymous /v2/ with 401 (auth
+# required). Traefik's plain 404 means the registry Ingress rule host no
+# longer matches the public hostname (e.g. downgraded to registry.local), which
+# breaks every node image pull. Run before and after the user-flow stages.
+staging_check_registry_route() {
+  local code hosts
+  hosts="$(kubectl get ingress registry -n registry \
+    -o jsonpath='rules={.spec.rules[*].host} tls={.spec.tls[*].hosts}' 2>/dev/null || true)"
+  staging_log "registry Ingress hosts: ${hosts:-<missing>}"
+  code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "https://${REGISTRY_HOST}/v2/" || true)"
+  staging_log "anonymous GET https://${REGISTRY_HOST}/v2/ -> ${code}"
+  if [[ "${code}" != "401" ]]; then
+    staging_err "expected 401 from https://${REGISTRY_HOST}/v2/, got ${code} (404 = Traefik has no router for the registry host; run mcp-runtime cluster doctor)"
+    return 1
+  fi
+  if [[ "${hosts}" == *"rules=registry.local"* ]]; then
+    staging_err "registry Ingress rule host is registry.local on a public install"
+    return 1
+  fi
+}
+
 staging_check_registry_auth() {
   local reg="https://${REGISTRY_HOST}" failed=0 image repo tag probe accept
   accept='application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.index.v1+json'
@@ -1779,6 +1800,7 @@ staging_run_platform_stages() {
   staging_run_stage fresh-certificate soft "HTTP-01 for the unique host failed (DNS, port 80 routing, or Let's Encrypt staging limits); see the stage log's order/challenge describe" staging_check_fresh_certificate
   staging_run_stage platform-login critical "the platform API is unreachable or rejected the admin key; check mcp-platform-api logs in diagnostics/" staging_check_platform_login
   staging_run_stage platform-api soft "an admin API call failed or an anonymous/bad-key request was not denied" staging_check_platform_api
+  staging_run_stage registry-route soft "https://registry.<domain>/v2/ is not 401: the registry Ingress rule host no longer matches its TLS host (Traefik 404); run mcp-runtime cluster doctor" staging_check_registry_route
   staging_run_stage registry-auth soft "registry forward-auth is not enforcing (anonymous allowed) or rejects valid credentials; see traefik and mcp-platform-api logs" staging_check_registry_auth
   staging_run_stage image-pulls soft "a workload lacks mcp-runtime-registry-pull, or the node cannot pull from the public registry (x509/auth)" staging_check_image_pulls
   staging_run_stage ui soft "the platform UI ingress or mcp-sentinel-ui is down" staging_check_ui
@@ -1787,4 +1809,5 @@ staging_run_platform_stages() {
   staging_run_stage multitenancy soft "a tenant build/push/deploy, grant, adapter call, or event check failed; read multitenancy.log from the bottom" staging_check_multitenancy
   staging_run_stage governance soft "a grant/session deny path allowed traffic, or a granted agent was refused" staging_check_governance
   staging_run_stage analytics soft "events did not reach the analytics API/ClickHouse (ingest -> kafka -> processor path)" staging_check_analytics
+  staging_run_stage registry-route-after-user-flows soft "a push/deploy/reconcile stage rewrote the registry Ingress rule host (Traefik 404 on the registry host); compare registry Ingress hosts in both registry-route stage logs" staging_check_registry_route
 }
