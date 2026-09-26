@@ -1302,7 +1302,7 @@ EOF
   (cd "${TENANT_QS_DIR}" && tenant_owner_cli server deploy "${server}" --scope tenant --metadata-dir .mcp --update)
   # Admin in-cluster push from a shell without any MCP_* env (kubeconfig kept).
   envless_admin_cli admin registry push --image "${image}:${E2E_WORKLOAD_TAG}" \
-    --name "${team}/${server}-admin" --scope tenant
+    --name "${team}/${server}-admin" --scope org
   registry_ingress_after="$(registry_ingress_host_snapshot)"
   if [[ "${registry_ingress_after}" != "${registry_ingress_before}" ]]; then
     echo "[tenant-quickstart] registry Ingress hosts changed after env-less push/deploy: before=${registry_ingress_before} after=${registry_ingress_after}" >&2
