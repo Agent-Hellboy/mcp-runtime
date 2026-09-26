@@ -32,6 +32,7 @@
   {"service": "runtime-api", "path": "/api/v1/runtime/teams", "method": "GET", "role": "anon", "expect": 401},
   {"service": "runtime-api", "path": "/api/v1/runtime/teams/core/agents", "method": "GET", "role": "anon", "expect": 401},
   {"service": "runtime-api", "path": "/api/v1/runtime/teams/core/agents", "method": "POST", "role": "anon", "expect": 401},
+  {"service": "runtime-api", "path": "/api/v1/runtime/agents/config", "method": "GET", "role": "anon", "expect": 401},
   {"service": "runtime-api", "path": "/api/v1/runtime/agents/agt_01arz3ndektsv4rrffq69g5fav", "method": "GET", "role": "anon", "expect": 401},
   {"service": "runtime-api", "path": "/api/v1/runtime/agents/agt_01arz3ndektsv4rrffq69g5fav", "method": "PATCH", "role": "anon", "expect": 401},
   {"service": "runtime-api", "path": "/api/v1/runtime/agents/agt_01arz3ndektsv4rrffq69g5fav/deactivate", "method": "POST", "role": "anon", "expect": 401},

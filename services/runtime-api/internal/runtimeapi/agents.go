@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"mcp-runtime-api/internal/platformclient"
+	"mcp-runtime/pkg/serviceutil"
 )
 
 type agentCreateRequest struct {
@@ -87,6 +88,20 @@ func (s *RuntimeServer) HandleRuntimeTeamAgents(w http.ResponseWriter, r *http.R
 
 // HandleRuntimeAgentPath reads, renames, deactivates, or reactivates one agent.
 func (s *RuntimeServer) HandleRuntimeAgentPath(w http.ResponseWriter, r *http.Request) {
+	path := strings.Trim(strings.TrimPrefix(serviceutil.NormalizePublicAPIPath(r.URL.Path), "/runtime/agents/"), "/")
+	if path == "config" {
+		if r.Method != http.MethodGet {
+			w.Header().Set("allow", "GET")
+			writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed")
+			return
+		}
+		if _, ok := principalFromContext(r.Context()); !ok {
+			writeAPIError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"enforcement": AgentDirectoryEnforcementMode()})
+		return
+	}
 	if !s.identityConfigured() {
 		writeAPIError(w, http.StatusServiceUnavailable, "platform identity database not configured")
 		return
@@ -96,7 +111,6 @@ func (s *RuntimeServer) HandleRuntimeAgentPath(w http.ResponseWriter, r *http.Re
 		writeAPIError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/runtime/agents/"), "/")
 	parts := strings.Split(path, "/")
 	if len(parts) == 0 || strings.TrimSpace(parts[0]) == "" {
 		writeAPIError(w, http.StatusBadRequest, "invalid agent ID")

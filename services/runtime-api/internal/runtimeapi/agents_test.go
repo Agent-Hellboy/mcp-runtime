@@ -21,6 +21,12 @@ type agentIdentityStub struct {
 	agent   platformclient.Agent
 }
 
+type missingAgentIdentityStub struct{ agentIdentityStub }
+
+func (missingAgentIdentityStub) GetAgent(context.Context, string) (platformclient.Agent, bool, error) {
+	return platformclient.Agent{}, false, nil
+}
+
 func (agentIdentityStub) Configured() bool { return true }
 func (s *agentIdentityStub) CreateAgent(_ context.Context, slug, name, createdBy string) (platformclient.Agent, error) {
 	s.created = true
@@ -37,6 +43,7 @@ func (s *agentIdentityStub) GetAgent(_ context.Context, id string) (platformclie
 }
 
 func TestRequireActiveAgent(t *testing.T) {
+	t.Setenv(agentDirectoryEnforcementEnv, "enforce")
 	store := &agentIdentityStub{}
 	cases := []struct {
 		name, id, team string
@@ -59,6 +66,68 @@ func TestRequireActiveAgent(t *testing.T) {
 	store.agent = platformclient.Agent{ID: "agt_01arz3ndektsv4rrffq69g5fav", TeamID: "team-id", Status: "inactive"}
 	if err := requireActiveAgent(t.Context(), store, store.agent.ID, store.agent.TeamID); !errors.Is(err, errAgentNotActive) {
 		t.Fatalf("inactive agent error = %v, want %v", err, errAgentNotActive)
+	}
+}
+
+func TestAgentDirectoryEnforcementModeDefaultsAndFailsClosed(t *testing.T) {
+	t.Setenv(agentDirectoryEnforcementEnv, "")
+	if got := AgentDirectoryEnforcementMode(); got != "warn" {
+		t.Fatalf("default enforcement mode = %q, want warn", got)
+	}
+	t.Setenv(agentDirectoryEnforcementEnv, "WARN")
+	if got := AgentDirectoryEnforcementMode(); got != "warn" {
+		t.Fatalf("case-insensitive enforcement mode = %q, want warn", got)
+	}
+	t.Setenv(agentDirectoryEnforcementEnv, "unexpected")
+	if got := AgentDirectoryEnforcementMode(); got != "enforce" {
+		t.Fatalf("invalid enforcement mode = %q, want fail-closed enforce", got)
+	}
+}
+
+func TestRequireActiveAgentCompatibilityModes(t *testing.T) {
+	unknown := &missingAgentIdentityStub{}
+	t.Setenv(agentDirectoryEnforcementEnv, "warn")
+	if err := requireActiveAgent(t.Context(), unknown, "legacy-agent", "team-id"); err != nil {
+		t.Fatalf("warn mode should allow an unknown legacy ID, got %v", err)
+	}
+	if err := requireActiveAgent(t.Context(), nil, "legacy-agent", "team-id"); err != nil {
+		t.Fatalf("warn mode should allow a temporarily unavailable directory, got %v", err)
+	}
+
+	t.Setenv(agentDirectoryEnforcementEnv, "enforce")
+	if err := requireActiveAgent(t.Context(), unknown, "legacy-agent", "team-id"); !errors.Is(err, errAgentNotActive) {
+		t.Fatalf("enforce mode error = %v, want unknown-agent error", err)
+	}
+	if err := requireActiveAgent(t.Context(), nil, "legacy-agent", "team-id"); !errors.Is(err, errAgentDirectoryUnavailable) {
+		t.Fatalf("enforce mode error = %v, want directory-unavailable error", err)
+	}
+
+	t.Setenv(agentDirectoryEnforcementEnv, "off")
+	if err := requireActiveAgent(t.Context(), nil, "legacy-agent", "team-id"); err != nil {
+		t.Fatalf("off mode should skip directory lookup, got %v", err)
+	}
+	inactive := &agentIdentityStub{agent: platformclient.Agent{ID: "known-agent", TeamID: "team-id", Status: "inactive"}}
+	if err := requireActiveAgent(t.Context(), inactive, inactive.agent.ID, inactive.agent.TeamID); !errors.Is(err, errAgentNotActive) {
+		t.Fatalf("off mode must still reject known inactive agents, got %v", err)
+	}
+}
+
+func TestRuntimeAgentDirectoryConfigRequiresAuthentication(t *testing.T) {
+	t.Setenv(agentDirectoryEnforcementEnv, "warn")
+	server := &RuntimeServer{}
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/runtime/agents/config", nil)
+	recorder := httptest.NewRecorder()
+	server.HandleRuntimeAgentPath(recorder, request)
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated config status = %d, want 401", recorder.Code)
+	}
+
+	request = httptest.NewRequest(http.MethodGet, "/api/v1/runtime/agents/config", nil)
+	request = request.WithContext(withPrincipal(request.Context(), principal{Role: roleUser, Subject: "user-id"}))
+	recorder = httptest.NewRecorder()
+	server.HandleRuntimeAgentPath(recorder, request)
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), `"enforcement":"warn"`) {
+		t.Fatalf("authenticated config response = %d %s, want warn", recorder.Code, recorder.Body.String())
 	}
 }
 

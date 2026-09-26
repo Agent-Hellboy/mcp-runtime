@@ -95,14 +95,19 @@ metadata; the ID alone does not authenticate a runtime or prove which software
 made a request. Authentication continues to come from the configured OAuth
 flow or, for enrolled adapters, the session-bound certificate.
 
-Agent IDs are platform-generated immutable `agt_<26-character lowercase
-ULID>` values. The runtime API requires an active directory record in the
-subject team when writing grants or sessions, issuing adapter sessions, and
-enrolling adapter certificates. Deactivation first marks the agent inactive,
+New managed agent IDs are platform-generated immutable `agt_<26-character
+lowercase ULID>` values. `MCP_AGENT_DIRECTORY_ENFORCEMENT` controls unknown IDs:
+`warn` is the compatibility default and allows an unknown ID with a runtime-api
+warning; `off` allows unknown IDs without a warning; `enforce` rejects unknown
+IDs and requires the directory to be available. A known inactive agent or an
+agent owned by another subject team is always rejected. The admin access forms show
+the custom-ID escape hatch only in `off` and `warn` modes. The runtime API
+checks grants, sessions, adapter session issuance, and certificate enrollment;
+direct Kubernetes writes bypass these identity-store checks, so create
+sessions through the runtime API wherever directory enforcement is required.
+Deactivation first marks the agent inactive,
 then revokes its active sessions across namespaces and audits each revocation.
 If revocation fails, the agent remains inactive; retry deactivation to finish.
-Direct Kubernetes writes bypass these identity-store checks, so create
-sessions through the runtime API wherever directory enforcement is required.
 
 For audit, keep the **actor** (the agent named by the session) separate from
 the **authority** (the human or team that delegated access). A session and its
@@ -146,7 +151,7 @@ spec:
     namespace: mcp-team-finance
   subject:
     humanID: user-123
-    agentID: coding-agent
+    agentID: agt_01arz3ndektsv4rrffq69g5fav
     teamID: team-finance-id
   maxTrust: medium
   allowedSideEffects: [read, write]
@@ -180,6 +185,12 @@ The grant controls:
 - Whether the grant is disabled
 
 The grant does not prove that the agent has a current session.
+
+Managed agent IDs are created with `mcp-runtime agent create <team-slug>
+--name <name>` and selected from the team's agent directory when creating a
+grant or session. The directory page and `mcp-runtime agent list|get|rename|
+deactivate|reactivate` expose the same records. IDs are generated once and
+never reused; do not invent an agent ID for a new managed subject.
 
 ## Session: active delegated consent
 

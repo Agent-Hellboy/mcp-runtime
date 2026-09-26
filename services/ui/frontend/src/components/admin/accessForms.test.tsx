@@ -23,6 +23,7 @@ const EMPTY_DRAFT: GrantDraft = {
   namespace: "mcp-servers",
   server: "demo",
   humanID: "",
+  agentID: "",
   teamID: "",
   maxTrust: "low",
   allowedSideEffects: ["read"],
@@ -32,10 +33,12 @@ const EMPTY_DRAFT: GrantDraft = {
 function stubIdentityApi(options: {
   teams?: unknown;
   members?: Record<string, unknown>;
+  agents?: Record<string, unknown>;
   failTeams?: boolean;
   failMembers?: boolean;
   holdTeams?: boolean;
   holdMembers?: boolean;
+  agentEnforcement?: "off" | "warn" | "enforce";
 } = {}) {
   let releaseTeams: (() => void) | undefined;
   const teamsGate = new Promise<void>((resolve) => {
@@ -47,6 +50,18 @@ function stubIdentityApi(options: {
   });
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
+    if (url.endsWith("/runtime/agents/config")) {
+      return { ok: true, status: 200, json: async () => ({ enforcement: options.agentEnforcement ?? "warn" }), text: async () => "" } as unknown as Response;
+    }
+    const agentMatch = url.match(/\/runtime\/teams\/([^/]+)\/agents/);
+    if (agentMatch) {
+      const slug = decodeURIComponent(agentMatch[1]);
+      const defaults = { acme: { agents: [
+        { id: "agt_01arz3ndektsv4rrffq69g5fav", team_id: "team-acme", team_slug: "acme", name: "Ops Agent", status: "active" },
+        { id: "agt_01arz3ndektsv4rrffq69g5faw", team_id: "team-acme", team_slug: "acme", name: "Retired Agent", status: "inactive" },
+      ] } };
+      return { ok: true, status: 200, json: async () => (options.agents ?? defaults)[slug] ?? { agents: [] }, text: async () => "" } as unknown as Response;
+    }
     const memberMatch = url.match(/\/runtime\/teams\/([^/]+)\/members/);
     if (memberMatch) {
       const slug = decodeURIComponent(memberMatch[1]);
@@ -82,7 +97,7 @@ function FormHarness({ onSubmit = vi.fn() }: { onSubmit?: (draft: GrantDraft) =>
     <AppProviders>
       <GrantForm
         draft={draft}
-        servers={[{ name: "demo", namespace: "mcp-servers", ready: "1/1", status: "Ready" }]}
+        servers={[{ name: "demo", namespace: "mcp-servers", team_id: "team-acme", ready: "1/1", status: "Ready" }]}
         namespaces={["mcp-servers"]}
         busy={false}
         submitError=""
@@ -115,7 +130,7 @@ describe("access subject pickers", () => {
     await user.click(screen.getByTestId("grant-create-submit"));
 
     expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ teamID: "team-acme", humanID: "" }));
-    expect(onSubmit.mock.calls[0][0]).not.toHaveProperty("agentID");
+    expect(onSubmit.mock.calls[0][0]).toHaveProperty("agentID", "");
   });
 
   it("submits the stable user ID selected from the chosen team's member list", async () => {
@@ -146,17 +161,70 @@ describe("access subject pickers", () => {
     expect(await screen.findByRole("option", { name: /bob@example.com/ })).toBeInTheDocument();
   });
 
-  it("does not expose agent subjects until the team-scoped directory is available", async () => {
+  it("exposes agent subjects backed by the team-scoped directory", async () => {
     stubIdentityApi();
     render(<FormHarness />);
 
     const subjectMode = await screen.findByTestId("grant-subject-mode");
     expect(subjectMode).toHaveDisplayValue("Human");
     expect(screen.getByRole("option", { name: "Team only" })).toBeInTheDocument();
-    expect(screen.queryByRole("option", { name: "Agent" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("option", { name: "Human and agent" })).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Agent ID")).not.toBeInTheDocument();
-    expect(screen.getByText(/Agent subjects will be selectable/)).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Agent" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Human and agent" })).toBeInTheDocument();
+    expect(screen.getByText(/Agent choices come from the selected team's active agent directory/)).toBeInTheDocument();
+  });
+
+  it("submits the selected active agent and displays inactive agents as disabled", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    stubIdentityApi();
+    render(<FormHarness onSubmit={onSubmit} />);
+
+    await user.selectOptions(await screen.findByTestId("grant-subject-mode"), "agent");
+    await user.selectOptions(await screen.findByTestId("grant-team-select"), "acme");
+    const agentSelect = await screen.findByTestId("grant-agent-select");
+    await user.selectOptions(agentSelect, "agt_01arz3ndektsv4rrffq69g5fav");
+    expect(screen.getByRole("option", { name: /Retired Agent.*inactive, unavailable/ })).toBeDisabled();
+    await user.click(screen.getByTestId("grant-create-submit"));
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ agentID: "agt_01arz3ndektsv4rrffq69g5fav", teamID: "team-acme" }));
+  });
+
+  it("offers a marked custom agent ID in warn mode", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    stubIdentityApi({ agentEnforcement: "warn" });
+    render(<FormHarness onSubmit={onSubmit} />);
+
+    await user.selectOptions(await screen.findByTestId("grant-subject-mode"), "agent");
+    await user.selectOptions(await screen.findByTestId("grant-team-select"), "acme");
+    await user.click(await screen.findByRole("button", { name: "Enter a custom agent ID" }));
+    expect(screen.getByTestId("grant-agent-not-in-directory")).toHaveTextContent("Not in directory");
+    await user.type(screen.getByTestId("grant-agent-custom"), "legacy-agent-42");
+    await user.click(screen.getByTestId("grant-create-submit"));
+
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ agentID: "legacy-agent-42", teamID: "team-acme" }));
+  });
+
+  it("hides custom agent IDs when directory enforcement is enabled", async () => {
+    const user = userEvent.setup();
+    stubIdentityApi({ agentEnforcement: "enforce" });
+    render(<FormHarness />);
+
+    await user.selectOptions(await screen.findByTestId("grant-subject-mode"), "agent");
+    await user.selectOptions(await screen.findByTestId("grant-team-select"), "acme");
+    await screen.findByTestId("grant-agent-select");
+    expect(screen.queryByRole("button", { name: "Enter a custom agent ID" })).not.toBeInTheDocument();
+  });
+
+  it("shows cross-team access and requires a 24-hour-defaulted expiry", async () => {
+    const user = userEvent.setup();
+    stubIdentityApi();
+    render(<FormHarness />);
+
+    await user.selectOptions(await screen.findByTestId("grant-subject-mode"), "team");
+    await user.selectOptions(await screen.findByTestId("grant-team-select"), "globex");
+    expect(await screen.findByTestId("grant-cross-team-banner")).toHaveTextContent("Cross-team access");
+    expect(screen.getByTestId("grant-expires-at")).not.toHaveValue("");
+    expect(screen.getByTestId("grant-expires-at")).toBeRequired();
   });
 
   it("shows loading, empty, and API error states and allows a marked custom ID", async () => {
