@@ -1307,6 +1307,18 @@ func normalizeImageRegistryHost(value string) string {
 	return strings.TrimSpace(value)
 }
 
+// bundledRegistryServiceHost is the cluster DNS name of the bundled registry
+// Service. It resolves only inside the cluster network, not on nodes.
+const bundledRegistryServiceHost = "registry.registry.svc.cluster.local"
+
+func isBundledRegistryServiceHost(host string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if name, _, found := strings.Cut(host, ":"); found {
+		host = name
+	}
+	return host == bundledRegistryServiceHost || host == "registry.registry.svc"
+}
+
 func rewritePlatformRegistryImageReference(image, internalRegistry string) string {
 	internalRegistry = normalizeImageRegistryHost(internalRegistry)
 	if internalRegistry == "" {
@@ -1319,6 +1331,14 @@ func rewritePlatformRegistryImageReference(image, internalRegistry string) strin
 	currentRegistry = normalizeImageRegistryHost(currentRegistry)
 	if currentRegistry == "" || currentRegistry == internalRegistry {
 		return image
+	}
+	// The bundled in-cluster registry DNS name is only pullable where the
+	// node runtime mirrors it (Kind test-mode). When the platform pulls from a
+	// different host, a ref naming the bundled service can never be pulled by
+	// the kubelet, so map it onto the platform pull host instead of deploying
+	// an ImagePullBackOff.
+	if isBundledRegistryServiceHost(currentRegistry) {
+		return internalRegistry + "/" + rest
 	}
 	for _, host := range []string{
 		os.Getenv("PLATFORM_REGISTRY_URL"),

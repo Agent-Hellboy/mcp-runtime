@@ -400,6 +400,47 @@ func TestResolveDeployImageReferencePrefersPullHostOverInternalEndpoint(t *testi
 	}
 }
 
+// A tenant CLI that could not resolve the public registry wrote the bundled
+// in-cluster registry DNS name into its metadata. On a platform whose pull
+// host is a different registry (public k3s: MCP_REGISTRY_ENDPOINT is the
+// public registry), kubelet cannot resolve that name, so the ref must be
+// mapped onto the pull host rather than deployed as an ImagePullBackOff.
+func TestResolveDeployImageReferenceMapsBundledRegistryHostToPullHost(t *testing.T) {
+	t.Setenv("MCP_REGISTRY_PULL_HOST", "")
+	t.Setenv("MCP_REGISTRY_ENDPOINT", "registry.mcpruntime.org")
+	t.Setenv("MCP_REGISTRY_INGRESS_HOST", "registry.mcpruntime.org")
+	t.Setenv("PLATFORM_MODE", "tenant")
+
+	for _, image := range []string{
+		"registry.registry.svc.cluster.local:5000/acme/workspace-demo:v1",
+		"registry.registry.svc.cluster.local/acme/workspace-demo:v1",
+		"registry.registry.svc:5000/acme/workspace-demo:v1",
+	} {
+		got := ResolveDeployImageReference(image, "mcp-team-acme", "acme")
+		if want := "registry.mcpruntime.org/acme/workspace-demo:v1"; got != want {
+			t.Fatalf("ResolveDeployImageReference(%q) = %q, want %q", image, got, want)
+		}
+	}
+}
+
+// Kind test-mode pulls the bundled registry DNS name through a containerd
+// mirror, so when it is the pull host the ref must be left unchanged.
+func TestResolveDeployImageReferenceKeepsBundledRegistryHostWhenItIsThePullHost(t *testing.T) {
+	t.Setenv("MCP_REGISTRY_PULL_HOST", "")
+	t.Setenv("MCP_REGISTRY_ENDPOINT", "registry.registry.svc.cluster.local:5000")
+	t.Setenv("MCP_REGISTRY_INGRESS_HOST", "registry.local")
+	t.Setenv("PLATFORM_MODE", "tenant")
+
+	image := "registry.registry.svc.cluster.local:5000/acme/workspace-demo:v1"
+	if got := ResolveDeployImageReference(image, "mcp-team-acme", "acme"); got != image {
+		t.Fatalf("ResolveDeployImageReference() = %q, want unchanged %q", got, image)
+	}
+	external := "ghcr.io/acme/workspace-demo:v1"
+	if got := ResolveDeployImageReference(external, "mcp-team-acme", "acme"); got != external {
+		t.Fatalf("ResolveDeployImageReference(external) = %q, want unchanged", got)
+	}
+}
+
 func TestHandleDeploymentApplyRejectsInvalidVersionTag(t *testing.T) {
 	client := kubernetesfake.NewSimpleClientset()
 	server := &RuntimeServer{

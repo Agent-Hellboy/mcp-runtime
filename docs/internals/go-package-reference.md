@@ -5698,12 +5698,14 @@ Package registry owns routing for the registry top-level command.
 - [`func DeployRegistry(logger *zap.Logger, namespace string, port int, registryType, registryStorageSize, manifestPath string) error`](#cli-registry-func-deployregistry-logger-zap-logger-namespace-string-port-int-registrytype-registrystoragesize-manifestpath-string-error)
 - [`func New(runtime *core.Runtime) *cobra.Command`](#cli-registry-func-new-runtime-core-runtime-cobra-command)
 - [`func NewWithManager(mgr *RegistryManager) *cobra.Command`](#cli-registry-func-newwithmanager-mgr-registrymanager-cobra-command)
+- [`func PublicImageRefForSavedLogin(image string) (string, bool)`](#cli-registry-func-publicimagerefforsavedlogin-image-string-string-bool)
 - [`func ResolveExternalRegistryConfig(flagCfg *config.ExternalRegistryConfig) (*config.ExternalRegistryConfig, error)`](#cli-registry-func-resolveexternalregistryconfig-flagcfg-config-externalregistryconfig-config-externalregistryconfig-error)
 - [`func ResolveInternalPlatformRegistryURL(logger *zap.Logger) string`](#cli-registry-func-resolveinternalplatformregistryurl-logger-zap-logger-string)
 - [`func ResolvePlatformRegistryURL(logger *zap.Logger) string`](#cli-registry-func-resolveplatformregistryurl-logger-zap-logger-string)
 - [`func RunAdminRegistryPush(ctx context.Context, mgr *RegistryManager, image, registryURL, name, scope, mode, helperNamespace string) error`](#cli-registry-func-runadminregistrypush-ctx-context-context-mgr-registrymanager-image-registryurl-name-scope-mode-helpernamespace-string-error)
 - [`func RunRegistryProvision(mgr *RegistryManager, url, username, password, operatorImage string, dryRun bool) error`](#cli-registry-func-runregistryprovision-mgr-registrymanager-url-username-password-operatorimage-string-dryrun-bool-error)
 - [`func RunRegistryPush(ctx context.Context, mgr *RegistryManager, image, registryURL, name, scope string) error`](#cli-registry-func-runregistrypush-ctx-context-context-mgr-registrymanager-image-registryurl-name-scope-string-error)
+- [`func SavedLoginRegistryHost() string`](#cli-registry-func-savedloginregistryhost-string)
 - [`func ScopedRegistryRepository(ctx context.Context, client *platformapi.PlatformClient, repo string, scope publishscope.Scope) (string, error)`](#cli-registry-func-scopedregistryrepository-ctx-context-context-client-platformapi-platformclient-repo-string-scope-publishscope-scope-string-error)
 - [`type RegistryManager struct`](#cli-registry-type-registrymanager-struct)
 - [`func DefaultRegistryManager(logger *zap.Logger) *RegistryManager`](#cli-registry-func-defaultregistrymanager-logger-zap-logger-registrymanager)
@@ -5742,6 +5744,19 @@ func NewWithManager(mgr *RegistryManager) *cobra.Command
 
 ```
 
+<a id="cli-registry-func-publicimagerefforsavedlogin-image-string-string-bool"></a>
+```text
+func PublicImageRefForSavedLogin(image string) (string, bool)
+    PublicImageRefForSavedLogin rewrites an image ref whose registry is a local
+    placeholder (registry.local) or the bundled in-cluster registry Service
+    DNS name onto the registry host of the active platform login. Neither host
+    is pullable by a remote platform's nodes, so deploys through the platform
+    API must name the registry the user pushed to. It returns false when the
+    ref names another registry or no platform login registry is known (e.g.
+    a Kind test-mode login against localhost), leaving the ref unchanged.
+
+```
+
 <a id="cli-registry-func-resolveexternalregistryconfig-flagcfg-config-externalregistryconfig-config-externalregistryconfig-error"></a>
 ```text
 func ResolveExternalRegistryConfig(flagCfg *config.ExternalRegistryConfig) (*config.ExternalRegistryConfig, error)
@@ -5777,6 +5792,16 @@ func RunRegistryProvision(mgr *RegistryManager, url, username, password, operato
 ```text
 func RunRegistryPush(ctx context.Context, mgr *RegistryManager, image, registryURL, name, scope string) error
     RunRegistryPush pushes an image through the platform API.
+
+```
+
+<a id="cli-registry-func-savedloginregistryhost-string"></a>
+```text
+func SavedLoginRegistryHost() string
+    SavedLoginRegistryHost returns the registry host tied to the active platform
+    login: the registry host saved by auth login, else one derived from the
+    saved platform API URL (platform.<domain> -> registry.<domain>). It returns
+    "" for logins against localhost or when no login is saved.
 
 ```
 

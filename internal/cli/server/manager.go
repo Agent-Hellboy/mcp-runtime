@@ -24,6 +24,7 @@ import (
 	"mcp-runtime/internal/cli/kube"
 	"mcp-runtime/internal/cli/kubeerr"
 	"mcp-runtime/internal/cli/platformapi"
+	registrycli "mcp-runtime/internal/cli/registry"
 	"mcp-runtime/pkg/mcpdefaults"
 	"mcp-runtime/pkg/metadata"
 	"mcp-runtime/pkg/publishscope"
@@ -62,6 +63,26 @@ func (m *ServerManager) requireKubectlForMutation() error {
 		return core.NewWithSentinel(nil, "this command requires `--use-kube` for direct Kubernetes mode. "+kubeerr.DirectModeGuidance)
 	}
 	return nil
+}
+
+// loadMetadataForRewrite validates a metadata file with the normal loader and
+// returns its entries as written. Commands that rewrite .mcp metadata (init,
+// build image) must not persist loader defaults: they would stamp servers that
+// have no image with the registry.local placeholder, which no platform pulls.
+func loadMetadataForRewrite(path string) (*metadata.RegistryFile, error) {
+	if _, err := metadata.LoadFromFile(path); err != nil {
+		return nil, err
+	}
+	// #nosec G304 -- path is the user-selected local .mcp metadata file.
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read file: %w", err)
+	}
+	var registry metadata.RegistryFile
+	if err := yaml.Unmarshal(raw, &registry); err != nil {
+		return nil, fmt.Errorf("failed to parse YAML: %w", err)
+	}
+	return &registry, nil
 }
 
 func (m *ServerManager) InitServer(name, metadataDir, image, imageTag, scope, policyMode, defaultDecision string, sessionRequired bool, port int32, tools, toolSpecs []string, toolRisk string, force bool) error {
@@ -117,13 +138,11 @@ func (m *ServerManager) InitServer(name, metadataDir, image, imageTag, scope, po
 	registry := metadata.RegistryFile{Version: "v1"}
 	metadataPath := filepath.Join(metadataDir, "servers.yaml")
 	if _, err := os.Stat(metadataPath); err == nil {
-		existing, loadErr := metadata.LoadFromFile(metadataPath)
+		existing, loadErr := loadMetadataForRewrite(metadataPath)
 		if loadErr != nil {
 			return core.WrapWithSentinel(core.ErrLoadMetadataFailed, loadErr, fmt.Sprintf("failed to load existing metadata file %q: %v", metadataPath, loadErr))
 		}
-		if existing != nil {
-			registry = *existing
-		}
+		registry = *existing
 	} else if err != nil && !os.IsNotExist(err) {
 		return core.WrapWithSentinel(core.ErrLoadMetadataFailed, err, fmt.Sprintf("failed to inspect metadata file %q: %v", metadataPath, err))
 	}
@@ -659,6 +678,14 @@ func (m *ServerManager) DeployServer(name, namespace, team, scope, image, imageT
 	}
 	if strings.TrimSpace(spec.Image) == "" {
 		return core.NewWithSentinel(core.ErrImageRequired, "image is required unless .mcp metadata provides image; pass --image or run from a directory with .mcp/servers.yaml")
+	}
+	// Metadata written by an older CLI (or with no registry configured) can
+	// name the in-cluster registry DNS name or the registry.local placeholder.
+	// Neither is pullable by a remote platform, so deploy the ref from the
+	// registry of the active platform login that `server push` published to.
+	if rewritten, ok := registrycli.PublicImageRefForSavedLogin(spec.Image); ok {
+		core.Warn(fmt.Sprintf("Image %s names a registry that is only reachable inside a cluster; deploying %s from your platform login's registry instead", spec.Image, rewritten))
+		spec.Image = rewritten
 	}
 	expectedImage := strings.TrimSpace(spec.Image)
 	applied, err := plat.ApplyRuntimeServerWithScopeUpdate(context.Background(), name, namespace, scope, spec, update)

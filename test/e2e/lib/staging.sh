@@ -1676,6 +1676,13 @@ staging_check_multitenancy() {
   local image
   image="$(kubectl -n "${MT_ACME_NS}" get mcpserver "${MT_ACME_SERVER}" -o jsonpath='{.spec.image}:{.spec.imageTag}')"
   staging_log "tenant server image ${image}"
+  # The tenant flow runs with only the saved auth profile (no MCP_* registry
+  # env), like a quickstart user. The node resolves names through public DNS,
+  # so an image on the in-cluster registry Service name can never be pulled.
+  if [[ "${image}" == registry.registry.svc* ]]; then
+    staging_err "tenant server ${MT_ACME_SERVER} was deployed with the in-cluster registry host (${image}); the CLI ignored the saved profile registry"
+    return 1
+  fi
   kubectl -n "${MT_ACME_NS}" rollout status "deploy/${MT_ACME_SERVER}" --timeout=120s
 }
 
