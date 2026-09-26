@@ -11,6 +11,12 @@ The source-of-truth data plane is:
 - `MCPServer.spec.teamID` is the stable platform team ID that owns the server.
 - `SubjectRef` contains `humanID`, `agentID`, and `teamID`; the gateway matches
   every non-empty field by exact string equality.
+- A server owner may grant a different team access by setting `subject.teamID`
+  to that team's ID. The platform verifies that each named human or agent
+  belongs to that team; it never treats server ownership as subject identity.
+- Cross-team grants require `expiresAt` and are limited by
+  `MCP_CROSS_TEAM_GRANT_MAX_TTL` (default `168h`, seven days). Adapter sessions
+  issued from a grant cannot outlive the grant.
 - A subject with only `teamID` grants or binds any authenticated principal in
   that team.
 - `MCPAccessGrant.spec.expiresAt` can end a delegation automatically. Any
@@ -57,9 +63,9 @@ the managed namespace, quota, limit range, default deny network policy, default
 service account, bundled Traefik watch RBAC, and bundled Traefik namespace
 watch entry. Platform API server writes into that namespace default
 `spec.teamID` from the authenticated principal's team. Grant/session writes
-default missing `subject.teamID` to the owning server team, but an explicit
-foreign `subject.teamID` is allowed so a team can delegate access to another
-team's principal.
+default missing `subject.teamID` to the owning server team. The platform API
+accepts an explicit foreign `subject.teamID` only after verifying the named
+human or active agent belongs to that team and the grant has a capped expiry.
 
 Use `team user create` as a platform admin when you need a local password-login
 user for a team. The command creates or updates the password identity, adds the
@@ -207,7 +213,8 @@ default:
   rejects mismatches.
 - Grant/session apply defaults missing `subject.teamID` from the referenced
   server or namespace team. An explicit foreign `subject.teamID` is preserved,
-  allowing the server-owning team to grant another team access to that server.
+  allowing the server-owning team to grant another team access to that server
+  after the platform API verifies subject membership and bounded expiry.
 - A grant or session must reference an `MCPServer` in the same namespace as the
   access resource. Cross-namespace `serverRef.namespace` values are rejected.
 - Admin callers keep cluster-wide visibility, but same-namespace and team-ID
@@ -216,9 +223,11 @@ default:
 Direct `kubectl apply` still depends on Kubernetes RBAC. Bind team admins only
 inside their team namespace. As a defense-in-depth guard, the operator renders
 only grants and sessions whose `serverRef` points at the target server. Missing
-`subject.teamID` values are scoped to `MCPServer.spec.teamID`; explicit foreign
-subject teams are rendered and enforced by the gateway, which matches every
-non-empty `humanID`, `agentID`, and `teamID` exactly.
+  `subject.teamID` values constrain the caller, not server ownership. Direct
+  Kubernetes writes bypass platform identity and cross-team TTL checks, so use
+  the platform API for cross-team grants. Explicit foreign subjects are
+  rendered and enforced by the gateway, which matches every non-empty
+  `humanID`, `agentID`, and `teamID` exactly.
 
 ## Ingress controller watch scope
 

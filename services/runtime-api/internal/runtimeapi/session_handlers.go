@@ -145,13 +145,30 @@ func (s *AccessService) handleRuntimeSessionApply(w http.ResponseWriter, r *http
 		}
 		return
 	}
+	if !s.principalCanAdministerAccessServer(r.Context(), *targetServer) {
+		writeAPIError(w, http.StatusForbidden, "forbidden server")
+		return
+	}
 	if err := s.bindAccessSubjectTeamID(ctx, req.Namespace, targetServer.Spec.TeamID, &req.Subject); err != nil {
 		writeAPIError(w, http.StatusForbidden, err.Error())
 		return
 	}
-	if !s.principalCanAdministerAccessServer(r.Context(), *targetServer) {
-		writeAPIError(w, http.StatusForbidden, "forbidden server")
+	grantAnnotations, grant, err := s.sessionGrantLink(ctx, req)
+	if err != nil {
+		writeAPIError(w, http.StatusUnprocessableEntity, err.Error())
 		return
+	}
+	if grant != nil {
+		if strings.TrimSpace(string(req.Subject.TeamID)) != strings.TrimSpace(string(targetServer.Spec.TeamID)) {
+			if err := s.validateCrossTeamSubject(ctx, req.Subject); err != nil {
+				writeAPIError(w, http.StatusUnprocessableEntity, err.Error())
+				return
+			}
+		}
+		if grant.Spec.ExpiresAt != nil && (req.ExpiresAt == nil || req.ExpiresAt.After(grant.Spec.ExpiresAt.Time)) {
+			req.ExpiresAt = grant.Spec.ExpiresAt.DeepCopy()
+		}
+		req.ConsentedTrust = capTrust(req.ConsentedTrust, grant.Spec.MaxTrust)
 	}
 	if err := requireActiveAgent(ctx, s.identity, string(req.Subject.AgentID), string(req.Subject.TeamID)); err != nil {
 		writeAgentDirectoryError(w, err)
@@ -167,8 +184,9 @@ func (s *AccessService) handleRuntimeSessionApply(w http.ResponseWriter, r *http
 
 	session := &sentinelaccess.MCPAgentSession{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      req.Name,
-			Namespace: runtimeaccess.DefaultAccessNamespace(req.Namespace),
+			Name:        req.Name,
+			Namespace:   runtimeaccess.DefaultAccessNamespace(req.Namespace),
+			Annotations: grantAnnotations,
 		},
 		Spec: sentinelaccess.MCPAgentSessionSpec{
 			ServerRef:      req.ServerRef,
@@ -192,6 +210,28 @@ func (s *AccessService) handleRuntimeSessionApply(w http.ResponseWriter, r *http
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"session": sentinelaccess.ToSessionSummary(*applied)})
+}
+
+func (s *AccessService) sessionGrantLink(ctx context.Context, req accessSessionRequest) (map[string]string, *sentinelaccess.MCPAccessGrant, error) {
+	grantName := strings.TrimSpace(req.GrantName)
+	if grantName == "" {
+		return nil, nil, nil
+	}
+	grant, err := s.accessMgr.GetGrant(ctx, grantName, runtimeaccess.DefaultAccessNamespace(req.Namespace))
+	if err != nil || grant == nil || grant.Spec.Disabled || (grant.Spec.ExpiresAt != nil && !grant.Spec.ExpiresAt.After(time.Now())) {
+		return nil, nil, errors.New("grantName does not identify an active grant in this namespace")
+	}
+	if string(grant.Spec.ServerRef.Name) != string(req.ServerRef.Name) ||
+		(grant.Spec.ServerRef.Namespace != "" && string(grant.Spec.ServerRef.Namespace) != string(req.ServerRef.Namespace)) ||
+		(grant.Spec.Subject.HumanID != "" && grant.Spec.Subject.HumanID != req.Subject.HumanID) ||
+		(grant.Spec.Subject.AgentID != "" && grant.Spec.Subject.AgentID != req.Subject.AgentID) ||
+		(grant.Spec.Subject.TeamID != "" && grant.Spec.Subject.TeamID != req.Subject.TeamID) {
+		return nil, nil, errors.New("grantName does not match the session server and subject")
+	}
+	return map[string]string{
+		adapterGrantNameAnnotation:      grant.Name,
+		adapterGrantNamespaceAnnotation: grant.Namespace,
+	}, grant, nil
 }
 
 func (s *AccessService) sessionRevokedForApply(ctx context.Context, req accessSessionRequest) (bool, error) {

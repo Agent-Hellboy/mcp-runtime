@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -20,6 +21,7 @@ import (
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	kubernetesfake "k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
+	"mcp-runtime-api/internal/platformclient"
 	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
 	sentinelaccess "mcp-runtime/pkg/access"
 	"mcp-runtime/pkg/controlplane"
@@ -2208,8 +2210,22 @@ func TestRuntimeGrantApplyDefaultsSubjectTeamID(t *testing.T) {
 	}
 }
 
-func TestRuntimeGrantApplyAllowsForeignSubjectTeamID(t *testing.T) {
+func TestRuntimeGrantApplyAllowsValidatedCrossTeamSubjectWithoutChangingServerOwner(t *testing.T) {
 	ctx := context.Background()
+	identityHTTP := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/internal/identity/teams":
+			_, _ = fmt.Fprint(w, `{"teams":[{"id":"team-other","slug":"other"}]}`)
+		case "/internal/identity/teams/other/members":
+			_, _ = fmt.Fprint(w, `{"members":[{"user_id":"user-1","team_id":"team-other"}]}`)
+		case "/internal/identity/agents/agent-b":
+			_, _ = fmt.Fprint(w, `{"id":"agent-b","team_id":"team-other","team_slug":"other","name":"Agent B","status":"active"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer identityHTTP.Close()
+	identity := &platformclient.Client{BaseURL: identityHTTP.URL, Token: "test-token", HTTP: identityHTTP.Client()}
 	scheme := runtime.NewScheme()
 	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatalf("AddToScheme: %v", err)
@@ -2223,13 +2239,14 @@ func TestRuntimeGrantApplyAllowsForeignSubjectTeamID(t *testing.T) {
 			TeamID: "team-acme-id",
 		},
 	}), nil)
-	server := &RuntimeServer{accessMgr: accessMgr}
+	server := &RuntimeServer{accessMgr: accessMgr, identity: identity}
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/api/runtime/grants", bytes.NewReader([]byte(`{
 		"name": "grant-team",
 		"namespace": "mcp-team-acme",
 		"serverRef": {"name": "demo"},
-		"subject": {"humanID": "user-1", "teamID": "team-other"},
+		"subject": {"humanID": "user-1", "agentID": "agent-b", "teamID": "team-other"},
+		"expiresAt": "`+time.Now().Add(24*time.Hour).UTC().Format(time.RFC3339)+`",
 		"allowedSideEffects": ["read"],
 		"maxTrust": "low"
 	}`)))
@@ -2257,6 +2274,16 @@ func TestRuntimeGrantApplyAllowsForeignSubjectTeamID(t *testing.T) {
 	}
 	if grant.Spec.Subject.TeamID != "team-other" {
 		t.Fatalf("subject.teamID = %q, want team-other", grant.Spec.Subject.TeamID)
+	}
+	if grant.Spec.Subject.AgentID != "agent-b" {
+		t.Fatalf("subject.agentID = %q, want agent-b", grant.Spec.Subject.AgentID)
+	}
+	storedServer, err := accessMgr.GetMCPServerRef(ctx, sentinelaccess.ServerReference{Name: "demo", Namespace: "mcp-team-acme"})
+	if err != nil {
+		t.Fatalf("get server after cross-team grant: %v", err)
+	}
+	if storedServer.Spec.TeamID != "team-acme-id" || storedServer.Namespace != "mcp-team-acme" {
+		t.Fatalf("cross-team grant changed server owner: teamID=%q namespace=%q", storedServer.Spec.TeamID, storedServer.Namespace)
 	}
 }
 
