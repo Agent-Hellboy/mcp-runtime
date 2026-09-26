@@ -100,6 +100,9 @@ func applyObject(ctx context.Context, clients *Clients, mapper meta.RESTMapper, 
 	result := ApplyResult{GroupVersionKind: gvk, Namespace: objectNamespace, Name: name}
 	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		current, err := objectClient.Get(ctx, name, metav1.GetOptions{})
+		if guardErr := guardRegistryIngressApply(obj, objectNamespace, current, err); guardErr != nil {
+			return guardErr
+		}
 		if errors.IsNotFound(err) {
 			if _, createErr := objectClient.Create(ctx, obj.DeepCopy(), metav1.CreateOptions{FieldManager: defaultFieldManager}); createErr != nil {
 				return fmt.Errorf("create %s %s/%s: %w", gvk.String(), objectNamespace, name, createErr)
@@ -135,6 +138,23 @@ func applyObject(ctx context.Context, clients *Clients, mapper meta.RESTMapper, 
 		return ApplyResult{}, fmt.Errorf("apply %s %s/%s: %w", gvk.String(), objectNamespace, name, err)
 	}
 	return result, nil
+}
+
+// guardRegistryIngressApply refuses to downgrade the registry Ingress rule host
+// to the registry.local placeholder. mergeObject replaces spec.rules but keeps
+// a live spec.tls the manifest omits, so applying the non-TLS base manifest
+// onto a public install would otherwise leave rules=registry.local with
+// tls=registry.<domain> and Traefik would 404 every registry request.
+func guardRegistryIngressApply(obj *unstructured.Unstructured, namespace string, current *unstructured.Unstructured, getErr error) error {
+	if !isRegistryIngress(obj, namespace) {
+		return nil
+	}
+	rules, tls := unstructuredIngressHosts(obj.Object)
+	var liveRules, liveTLS []string
+	if getErr == nil && current != nil {
+		liveRules, liveTLS = unstructuredIngressHosts(current.Object)
+	}
+	return CheckRegistryIngressDowngrade(rules, tls, liveRules, liveTLS)
 }
 
 func shouldRecreateOnUpdateError(gvk schema.GroupVersionKind, err error) bool {

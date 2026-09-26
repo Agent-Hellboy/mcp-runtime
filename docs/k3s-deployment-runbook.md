@@ -704,6 +704,39 @@ SKIP_SETUP=1 hack/deploy/mcpruntime-org/multitenancy-test.sh
    kubectl delete certificate registry-tls -n registry --ignore-not-found
    ```
 
+### Traefik 404 on the registry host / node pulls fail with `NotFound`
+
+Symptom: every request to `https://registry.<domain>/v2/...`, including
+anonymous `/v2/`, returns Traefik's plain `404 page not found` instead of
+`401`, and new pods fail to pull `registry.<domain>/...` with `NotFound`.
+Check the registry Ingress:
+
+```bash
+kubectl get ingress registry -n registry \
+  -o jsonpath='rules={.spec.rules[*].host} tls={.spec.tls[*].hosts}{"\n"}'
+./bin/mcp-runtime cluster doctor   # "registry Ingress hosts" check
+```
+
+If `rules=registry.local` while `tls=registry.<domain>`, Traefik has no router
+for the public host. This happens when the non-TLS base manifest
+(`config/registry/base`, rule host `registry.local`) is applied over a public
+install, for example by a registry apply from a shell that lacks
+`MCP_PLATFORM_DOMAIN`, or by `kubectl apply -f config/registry/base/ingress.yaml`
+(the Kind e2e cache refresh) against the wrong context. The apply replaces
+`spec.rules` but keeps the existing `spec.tls`. Setup now resolves the host from
+the live Ingress TLS host and `mcp-sentinel-config`, and refuses to apply a
+`registry.local` rule host over a public Ingress. Fix a live cluster with the
+command doctor prints:
+
+```bash
+kubectl patch ingress registry -n registry --type=json \
+  -p '[{"op":"replace","path":"/spec/rules/0/host","value":"registry.<domain>"}]'
+curl -s -o /dev/null -w '%{http_code}\n' https://registry.<domain>/v2/   # expect 401
+```
+
+Also confirm `traefik.ingress.kubernetes.io/router.entrypoints` is `websecure`;
+the base manifest sets `web`.
+
 ### Setup fails "bundled registry platform setup requires MCP_REGISTRY_ENDPOINT"
 
 You omitted `--test-mode` and used `--registry-mode auto`. For this k3s cluster
