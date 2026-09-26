@@ -1280,7 +1280,7 @@ PY
 # now stamps the policy revision on the server pods to force an immediate
 # refresh; assert both the stamp and a short propagation budget.
 run_tenant_owner_adapter_quickstart() {
-  local stamp team namespace owner_email owner_password server image agent grant
+  local stamp team namespace owner_email owner_password server image agent grant agent_response
   local runtime_url proxy_url policy_revision pod_revisions
   stamp="$(date +%s)"
   team="e2e-tq-${stamp}"
@@ -1288,7 +1288,6 @@ run_tenant_owner_adapter_quickstart() {
   owner_email="${team}-owner@mcpruntime.org"
   owner_password="e2e-owner-pass-${stamp}"
   server="tq-${stamp}"
-  agent="cursor-${stamp}"
   grant="${server}-cursor"
   image="registry.registry.svc.cluster.local:5000/${team}/${server}"
   TENANT_QS_DIR="${WORKDIR}/tenant-quickstart"
@@ -1301,6 +1300,13 @@ run_tenant_owner_adapter_quickstart() {
   env MCP_PLATFORM_API_URL="http://127.0.0.1:${SENTINEL_PORT}" MCP_PLATFORM_API_TOKEN="${ADAPTER_PLATFORM_TOKEN}" \
     ./bin/mcp-runtime team user create "${team}" \
       --email "${owner_email}" --password "${owner_password}" --role owner >/dev/null
+
+  agent_response="$(curl -fsS -X POST \
+    -H "Authorization: Bearer ${ADAPTER_PLATFORM_TOKEN}" \
+    -H "content-type: application/json" \
+    --data '{"name":"E2E tenant quickstart agent"}' \
+    "http://127.0.0.1:${SENTINEL_PORT}/api/v1/runtime/teams/${team}/agents")"
+  agent="$(printf '%s' "${agent_response}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["agent"]["id"])')"
 
   log_line policy "tenant quickstart: owner logs in and pushes/deploys ${server} with --scope tenant"
   tenant_owner_cli auth login --api-url "http://127.0.0.1:${SENTINEL_PORT}" \
