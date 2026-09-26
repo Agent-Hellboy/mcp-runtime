@@ -101,7 +101,10 @@ by the selected subject team. Unknown, malformed, inactive, or wrong-team IDs
 are rejected, and agent IDs cannot be entered as free text in the admin access
 forms. The runtime API checks grants, sessions, adapter session issuance, and
 certificate enrollment; use the runtime API for access changes so it can
-validate agent ownership against the identity store.
+validate agent ownership against the identity store. Direct Kubernetes CRD
+writes do not consult the identity store and therefore bypass these directory
+checks; adapter session issuance and certificate enrollment still verify the
+agent before they issue credentials.
 Deactivation first marks the agent inactive,
 then revokes its active sessions across namespaces and audits each revocation.
 If revocation fails, the agent remains inactive; retry deactivation to finish.
