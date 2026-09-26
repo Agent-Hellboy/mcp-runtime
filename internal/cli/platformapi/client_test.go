@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
 	"mcp-runtime/pkg/authfile"
@@ -36,6 +37,9 @@ func TestApplyAccessFromYAMLFile_MultiDocument(t *testing.T) {
 				}
 				if payload.Subject.TeamID != "team-acme" {
 					t.Fatalf("grant subject teamID = %q, want team-acme", payload.Subject.TeamID)
+				}
+				if payload.ExpiresAt == nil || payload.ExpiresAt.UTC().Format(time.RFC3339) != "2099-01-01T00:00:00Z" {
+					t.Fatalf("grant expiresAt = %v, want 2099-01-01T00:00:00Z", payload.ExpiresAt)
 				}
 			case "/api/v1/runtime/sessions":
 				sessionCalls++
@@ -71,6 +75,7 @@ spec:
     humanID: user-1
     teamID: team-acme
   maxTrust: low
+  expiresAt: "2099-01-01T00:00:00Z"
   allowedSideEffects:
     - read
   toolRules:

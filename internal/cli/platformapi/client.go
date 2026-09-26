@@ -128,6 +128,7 @@ type grantAPIBody struct {
 	ServerRef          sentinelaccess.ServerReference  `json:"serverRef"`
 	Subject            sentinelaccess.SubjectRef       `json:"subject"`
 	MaxTrust           sentinelaccess.TrustLevel       `json:"maxTrust"`
+	ExpiresAt          *metav1.Time                    `json:"expiresAt,omitempty"`
 	AllowedSideEffects []sentinelaccess.ToolSideEffect `json:"allowedSideEffects,omitempty"`
 	PolicyVersion      string                          `json:"policyVersion,omitempty"`
 	Disabled           *bool                           `json:"disabled,omitempty"`
@@ -551,6 +552,7 @@ func grantFromV1(g *mcpv1alpha1.MCPAccessGrant) grantAPIBody {
 		ServerRef:          sentinelaccess.ServerReference{Name: sentinelaccess.ServerName(g.Spec.ServerRef.Name), Namespace: sentinelaccess.Namespace(g.Spec.ServerRef.Namespace)},
 		Subject:            sentinelaccess.SubjectRef{HumanID: sentinelaccess.HumanID(g.Spec.Subject.HumanID), AgentID: sentinelaccess.AgentID(g.Spec.Subject.AgentID), TeamID: sentinelaccess.TeamID(g.Spec.Subject.TeamID)},
 		MaxTrust:           trust,
+		ExpiresAt:          g.Spec.ExpiresAt,
 		AllowedSideEffects: allowedSideEffects,
 		PolicyVersion:      g.Spec.PolicyVersion,
 		Disabled:           &dis,

@@ -1383,6 +1383,11 @@ staging_adapter_cleanup() {
 # Adapter certificate enrollment on an OAuth MCPServer route, then a
 # certificate-authenticated MCP call through the public MCP ingress.
 staging_check_adapter_enrollment() {
+  if [[ "$(staging_stage_status multitenancy)" != "passed" ]]; then
+    staging_skip "adapter enrollment uses the managed Globex team and agents created by the multitenancy stage"
+  fi
+  staging_mt_names
+  staging_mt_read_agents || return 1
   if ! "${BIN}" adapter enroll --help >/dev/null 2>&1; then
     staging_skip "adapter enroll is not supported on this ref"
   fi
@@ -1393,9 +1398,6 @@ staging_check_adapter_enrollment() {
   fi
   if [[ "$(staging_operator_env MCP_ADAPTER_CERTIFICATES)" != "true" ]]; then
     staging_skip "the operator does not have MCP_ADAPTER_CERTIFICATES=true (E2E_ADAPTER_CERTIFICATES off, or a ref without the adapter-certificate platform feature)"
-  fi
-  if [[ -z "${MCP_PLATFORM_ADMIN_EMAIL:-}" || -z "${MCP_PLATFORM_ADMIN_PASSWORD:-}" ]]; then
-    staging_skip "no platform admin email/password for a human-bound adapter session"
   fi
   kubectl wait --for=condition=Ready "clusterissuer/${issuer}" --timeout=120s
   local operator_issuer trust platform_trust tls_ns
@@ -1429,7 +1431,9 @@ staging_check_adapter_enrollment() {
   fi
 
   local ns=mcp-servers server=staging-e2e-adapter wrong=staging-e2e-adapter-other
-  local agent=staging-e2e-adapter-agent grant=staging-e2e-adapter-grant pull=staging-e2e-adapter-pull
+  local agent="${MT_GLOBEX_AGENT_ID}" team_id="${MT_GLOBEX_TEAM_ID}" grant=staging-e2e-adapter-grant pull=staging-e2e-adapter-pull
+  local grant_expires_at
+  grant_expires_at="$(python3 -c 'from datetime import datetime,timedelta,timezone; print((datetime.now(timezone.utc)+timedelta(minutes=30)).replace(microsecond=0).isoformat().replace("+00:00","Z"))')"
   local certs="${WORK_DIR}/adapter-certs" session_file="${WORK_DIR}/adapter-session"
   local oauth_issuer="${E2E_MCP_AUTH_ISSUER_URL:-${AUTH_URL}}"
   rm -rf "${certs}" "${session_file}"
@@ -1503,7 +1507,9 @@ spec:
   serverRef:
     name: ${server}
   subject:
+    teamID: ${team_id}
     agentID: ${agent}
+  expiresAt: "${grant_expires_at}"
   maxTrust: low
   allowedSideEffects: [read]
   policyVersion: v1
@@ -1540,14 +1546,12 @@ EOF
   done
   staging_log "OAuth routes are on Traefik IngressRoutes with the ${tls_ns}/default client-auth TLSOption"
 
-  # Adapter sessions are bound to a human identity; an API key principal has
-  # no subject, so enroll with the admin's password-login token.
+  # The caller must belong to the managed agent's owning team. The Globex
+  # member profile created by the multitenancy stage carries that identity.
   local human_token
-  human_token="$(jq -n --arg e "${MCP_PLATFORM_ADMIN_EMAIL}" --arg p "${MCP_PLATFORM_ADMIN_PASSWORD}" '{email: $e, password: $p}' |
-    curl --fail --silent --show-error -X POST -H 'content-type: application/json' --data-binary @- \
-      "${PLATFORM_URL}/api/v1/auth/login" | jq -r '.access_token // empty')"
+  human_token="$(jq -r --arg p "${MT_GLOBEX_PROFILE}" '.accounts[$p].token // empty' "${MT_CONFIG}")"
   [[ -n "${human_token}" ]] || {
-    staging_err "admin password login returned no access token"
+    staging_err "no saved member token for ${MT_GLOBEX_PROFILE}"
     return 1
   }
   local out="" attempt
@@ -1660,7 +1664,7 @@ EOF
   # Deny path: an agent without a grant is refused a session.
   code="$(staging_http_code -X POST -H "authorization: Bearer ${human_token}" \
     -H 'content-type: application/json' \
-    --data "{\"serverName\":\"${server}\",\"namespace\":\"${ns}\",\"agentID\":\"staging-e2e-ungranted\"}" \
+    --data "{\"serverName\":\"${server}\",\"namespace\":\"${ns}\",\"agentID\":\"${MT_GLOBEX_DENIED_AGENT_ID}\"}" \
     "${PLATFORM_URL}/api/v1/runtime/adapter/sessions")"
   if [[ "${code}" == "403" ]]; then
     staging_log "ungranted agent refused an adapter session: HTTP 403"
@@ -1679,6 +1683,17 @@ staging_mt_names() {
   MT_ACME_SERVER="acme-tools-${MT_RUN_ID}"
   MT_GLOBEX_PROFILE="globex-user-${MT_RUN_ID}"
   MT_CONFIG="${STAGING_MT_CONFIG_DIR}/config.json"
+  MT_AGENTS_JSON="${WORK_DIR}/multitenancy/managed-agents.json"
+}
+
+staging_mt_read_agents() {
+  [[ -s "${MT_AGENTS_JSON}" ]] || {
+    staging_err "managed-agent identities were not saved by the multitenancy stage (${MT_AGENTS_JSON})"
+    return 1
+  }
+  MT_GLOBEX_TEAM_ID="$(jq -er '.globex.teamID' "${MT_AGENTS_JSON}")"
+  MT_GLOBEX_AGENT_ID="$(jq -er '.globex.agentID' "${MT_AGENTS_JSON}")"
+  MT_GLOBEX_DENIED_AGENT_ID="$(jq -er '.globex.deniedAgentID' "${MT_AGENTS_JSON}")"
 }
 
 staging_check_multitenancy() {
@@ -1712,6 +1727,7 @@ staging_check_governance() {
     staging_skip "needs the multitenancy stage's tenants, grants and sessions"
   fi
   staging_mt_names
+  staging_mt_read_agents || return 1
   local token code failed=0
   token="$(jq -r --arg p "${MT_GLOBEX_PROFILE}" '.accounts[$p].token // empty' "${MT_CONFIG}")"
   [[ -n "${token}" ]] || {
@@ -1722,7 +1738,7 @@ staging_check_governance() {
   # re-assert it at the session API, then the deny paths.
   code="$(staging_http_code -X POST -H "authorization: Bearer ${token}" -H "x-api-key: ${token}" \
     -H 'content-type: application/json' \
-    --data "{\"serverName\":\"${MT_ACME_SERVER}\",\"namespace\":\"${MT_ACME_NS}\",\"agentID\":\"cursor\"}" \
+    --data "{\"serverName\":\"${MT_ACME_SERVER}\",\"namespace\":\"${MT_ACME_NS}\",\"agentID\":\"${MT_GLOBEX_AGENT_ID}\"}" \
     "${PLATFORM_URL}/api/v1/runtime/adapter/sessions")"
   if [[ "${code}" == "200" || "${code}" == "201" ]]; then
     staging_log "granted agent session: HTTP ${code}"
@@ -1732,7 +1748,7 @@ staging_check_governance() {
   fi
   code="$(staging_http_code -X POST -H "authorization: Bearer ${token}" -H "x-api-key: ${token}" \
     -H 'content-type: application/json' \
-    --data "{\"serverName\":\"${MT_ACME_SERVER}\",\"namespace\":\"${MT_ACME_NS}\",\"agentID\":\"staging-e2e-ungranted\"}" \
+    --data "{\"serverName\":\"${MT_ACME_SERVER}\",\"namespace\":\"${MT_ACME_NS}\",\"agentID\":\"${MT_GLOBEX_DENIED_AGENT_ID}\"}" \
     "${PLATFORM_URL}/api/v1/runtime/adapter/sessions")"
   if [[ "${code}" == "403" ]]; then
     staging_log "ungranted agent session denied: HTTP 403"
@@ -1743,7 +1759,7 @@ staging_check_governance() {
   # Forged governance headers with a session that was never issued.
   code="$(staging_http_code -X POST -H 'content-type: application/json' \
     -H 'accept: application/json, text/event-stream' \
-    -H 'X-MCP-Human-ID: staging-e2e-forged' -H 'X-MCP-Agent-ID: cursor' \
+    -H 'X-MCP-Human-ID: staging-e2e-forged' -H "X-MCP-Agent-ID: ${MT_GLOBEX_AGENT_ID}" \
     -H 'X-MCP-Agent-Session: staging-e2e-forged-session' \
     --data '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"add","arguments":{"a":1,"b":2}}}' \
     "${MCP_URL}/${MT_ACME_SERVER}/mcp")"
@@ -1805,8 +1821,8 @@ staging_run_platform_stages() {
   staging_run_stage image-pulls soft "a workload lacks mcp-runtime-registry-pull, or the node cannot pull from the public registry (x509/auth)" staging_check_image_pulls
   staging_run_stage ui soft "the platform UI ingress or mcp-sentinel-ui is down" staging_check_ui
   staging_run_stage oidc soft "mcp-auth discovery/JWKS or the Keycloak issuer is unreachable" staging_check_oidc
-  staging_run_stage adapter-enrollment soft "adapter certificates on the OAuth route failed: setup did not pass MCP_ADAPTER_CERTIFICATES/MCP_TRUST_DOMAIN/MCP_DEFAULT_INGRESS_TLS_SECRET_NAMESPACE to the operator, the OAuth server's IngressRoute/TLSOption/gateway certificate never converged (adapter-enrollment/operator.log, traefik-crs.yaml, certificates-describe.txt), the CertificateRequest was not signed or the session not owned (adapter-enrollment/runtime-api.log), or the gateway rejected the SPIFFE identity (adapter-enrollment/staging-e2e-adapter.log)" staging_check_adapter_enrollment
   staging_run_stage multitenancy soft "a tenant build/push/deploy, grant, adapter call, or event check failed; read multitenancy.log from the bottom" staging_check_multitenancy
+  staging_run_stage adapter-enrollment soft "adapter certificates on the OAuth route failed: setup did not pass MCP_ADAPTER_CERTIFICATES/MCP_TRUST_DOMAIN/MCP_DEFAULT_INGRESS_TLS_SECRET_NAMESPACE to the operator, the OAuth server's IngressRoute/TLSOption/gateway certificate never converged (adapter-enrollment/operator.log, traefik-crs.yaml, certificates-describe.txt), the CertificateRequest was not signed or the session not owned (adapter-enrollment/runtime-api.log), or the gateway rejected the SPIFFE identity (adapter-enrollment/staging-e2e-adapter.log)" staging_check_adapter_enrollment
   staging_run_stage governance soft "a grant/session deny path allowed traffic, or a granted agent was refused" staging_check_governance
   staging_run_stage analytics soft "events did not reach the analytics API/ClickHouse (ingest -> kafka -> processor path)" staging_check_analytics
   staging_run_stage registry-route-after-user-flows soft "a push/deploy/reconcile stage rewrote the registry Ingress rule host (Traefik 404 on the registry host); compare registry Ingress hosts in both registry-route stage logs" staging_check_registry_route
