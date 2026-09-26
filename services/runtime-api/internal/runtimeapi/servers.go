@@ -489,16 +489,11 @@ func (s *RuntimeServer) scopedNamespaceForServerApply(ctx context.Context, reque
 	if !ok {
 		return "", errPrincipalIdentityRequired
 	}
+	if err := publishScopeEnabledError(scope); err != nil {
+		return "", err
+	}
 	switch scope {
-	case publishscope.Public:
-		if PlatformMode() != platformModePublic {
-			return "", errors.New("public scope is not enabled on this platform")
-		}
-		return scopedModeCatalogNamespaceForApply(p, requested)
-	case publishscope.Org:
-		if PlatformMode() != platformModeOrg {
-			return "", errors.New("org scope is not enabled on this platform")
-		}
+	case publishscope.Public, publishscope.Org:
 		return scopedModeCatalogNamespaceForApply(p, requested)
 	case publishscope.Tenant:
 		return scopedTenantNamespaceForApply(p, requested)

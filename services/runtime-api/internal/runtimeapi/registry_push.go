@@ -2,6 +2,7 @@ package runtimeapi
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -23,6 +24,82 @@ const (
 )
 
 const registryPushMaxBytes = 512 << 20
+
+const (
+	// registryPushUploadTimeoutEnv overrides how long the push route waits for
+	// the multipart image upload. The service-wide 15s read/write timeouts
+	// (svcboot) are far too short for a normal image over a laptop uplink.
+	registryPushUploadTimeoutEnv     = "MCP_REGISTRY_PUSH_UPLOAD_TIMEOUT"
+	defaultRegistryPushUploadTimeout = 20 * time.Minute
+	// registryPushOperationTimeout bounds the in-cluster push after upload.
+	registryPushOperationTimeout = 10 * time.Minute
+)
+
+// registryPushUploadTimeout returns the upload window for the push route.
+func registryPushUploadTimeout() time.Duration {
+	raw := strings.TrimSpace(os.Getenv(registryPushUploadTimeoutEnv))
+	if raw == "" {
+		return defaultRegistryPushUploadTimeout
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		log.Printf("registry push: ignoring invalid %s=%q; using %s", registryPushUploadTimeoutEnv, raw, defaultRegistryPushUploadTimeout)
+		return defaultRegistryPushUploadTimeout
+	}
+	return d
+}
+
+// extendRegistryPushDeadlines lifts the server-wide read and write deadlines
+// for this request only: the body may take up to upload to arrive, and the
+// response may be written after the in-cluster push that follows it. Every
+// other route keeps the svcboot defaults.
+func extendRegistryPushDeadlines(w http.ResponseWriter, upload time.Duration) {
+	now := time.Now()
+	rc := http.NewResponseController(w)
+	if err := rc.SetReadDeadline(now.Add(upload)); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		log.Printf("registry push: extend read deadline: %v", err)
+	}
+	if err := rc.SetWriteDeadline(now.Add(upload + registryPushOperationTimeout)); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		log.Printf("registry push: extend write deadline: %v", err)
+	}
+}
+
+// registryPushRequestError carries the HTTP status for an upload failure so
+// clients see why the body was rejected instead of a generic 400.
+type registryPushRequestError struct {
+	status  int
+	message string
+}
+
+func (e *registryPushRequestError) Error() string { return e.message }
+
+// classifyRegistryPushUploadError maps body read failures caused by the size
+// limit or the upload deadline to actionable errors. It returns nil for other
+// errors.
+func classifyRegistryPushUploadError(err error, upload time.Duration) error {
+	if err == nil {
+		return nil
+	}
+	var maxBytes *http.MaxBytesError
+	if errors.As(err, &maxBytes) {
+		return &registryPushRequestError{
+			status:  http.StatusRequestEntityTooLarge,
+			message: fmt.Sprintf("image archive exceeds the %d MiB upload limit; reduce the image size", registryPushMaxBytes>>20),
+		}
+	}
+	if errors.Is(err, os.ErrDeadlineExceeded) || isNetTimeout(err) {
+		return &registryPushRequestError{
+			status:  http.StatusRequestTimeout,
+			message: fmt.Sprintf("image upload did not finish within %s; retry from a faster connection or raise %s on mcp-runtime-api", upload, registryPushUploadTimeoutEnv),
+		}
+	}
+	return nil
+}
+
+func isNetTimeout(err error) bool {
+	var timeout interface{ Timeout() bool }
+	return errors.As(err, &timeout) && timeout.Timeout()
+}
 
 type registryPushRequest struct {
 	Target  string
@@ -49,10 +126,12 @@ func (s *RegistryPushService) HandleRuntimeRegistryPush(w http.ResponseWriter, r
 	}
 	clients := s.k8sClients
 
+	uploadTimeout := registryPushUploadTimeout()
+	extendRegistryPushDeadlines(w, uploadTimeout)
 	r.Body = http.MaxBytesReader(w, r.Body, registryPushMaxBytes)
-	req, err := readRegistryPushRequest(r)
+	req, err := readRegistryPushRequestWithTimeout(r, uploadTimeout)
 	if err != nil {
-		writeAPIError(w, http.StatusBadRequest, err.Error())
+		writeRegistryPushRequestError(w, err)
 		return
 	}
 	defer os.Remove(req.TarPath)
@@ -124,7 +203,20 @@ func (s *RegistryPushService) HandleRuntimeRegistryPush(w http.ResponseWriter, r
 	})
 }
 
-func readRegistryPushRequest(r *http.Request) (out registryPushRequest, err error) {
+func writeRegistryPushRequestError(w http.ResponseWriter, err error) {
+	var reqErr *registryPushRequestError
+	if errors.As(err, &reqErr) {
+		writeAPIError(w, reqErr.status, reqErr.message)
+		return
+	}
+	writeAPIError(w, http.StatusBadRequest, err.Error())
+}
+
+func readRegistryPushRequest(r *http.Request) (registryPushRequest, error) {
+	return readRegistryPushRequestWithTimeout(r, registryPushUploadTimeout())
+}
+
+func readRegistryPushRequestWithTimeout(r *http.Request, upload time.Duration) (out registryPushRequest, err error) {
 	mediaType, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || !strings.HasPrefix(mediaType, "multipart/") {
 		return registryPushRequest{}, fmt.Errorf("invalid multipart form")
@@ -149,6 +241,9 @@ func readRegistryPushRequest(r *http.Request) (out registryPushRequest, err erro
 			break
 		}
 		if err != nil {
+			if classified := classifyRegistryPushUploadError(err, upload); classified != nil {
+				return registryPushRequest{}, classified
+			}
 			return registryPushRequest{}, fmt.Errorf("invalid multipart form")
 		}
 
@@ -194,8 +289,13 @@ func readRegistryPushRequest(r *http.Request) (out registryPushRequest, err erro
 				part.Close()
 				return registryPushRequest{}, fmt.Errorf("failed to store uploaded image")
 			}
-			if _, err := io.Copy(tarFile, part); err != nil {
+			if _, copyErr := io.Copy(tarFile, part); copyErr != nil {
 				part.Close()
+				if classified := classifyRegistryPushUploadError(copyErr, upload); classified != nil {
+					err = classified
+					return registryPushRequest{}, classified
+				}
+				err = copyErr
 				return registryPushRequest{}, fmt.Errorf("failed to store uploaded image")
 			}
 		}
@@ -225,6 +325,9 @@ func registryPushAuthContext(target string, scope publishscope.Scope, p principa
 		return "", "", err
 	}
 
+	if err := publishScopeEnabledError(scope); err != nil {
+		return "", "", err
+	}
 	switch scope {
 	case publishscope.Public:
 		if p.Role != roleAdmin && !sharedCatalogWritableForUsers() {
