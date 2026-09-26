@@ -21,7 +21,7 @@ Session apply via platform API is **admin-only**. Adapters usually skip manual s
 - One namespace per team; `MCPServer.spec.teamID` and `SubjectRef.teamID` must match gateway identity fields exactly when set.
 - Platform API rejects cross-namespace `serverRef` and shared-catalog writes for non-admins.
 - Each `MCPServer.spec.tools[]` needs `sideEffect: read|write|destructive`; grants need explicit `allowedSideEffects` (empty = deny all classes).
-- `server policy inspect` shows rendered policy; gateway reloads on a short poll — wait before assuming `session_not_found`.
+- `server policy inspect` shows rendered policy; the operator stamps the policy revision on server pods so the gateway sees new grants/sessions within ~10s. Wait that long before assuming `session_not_found`.
 
 ## Example manifests
 

@@ -2725,6 +2725,10 @@ type MCPServerReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 
+	// APIReader is an uncached reader for objects the operator does not watch
+	// (the server's pods). Nil falls back to Client.
+	APIReader client.Reader
+
 	// DefaultIngressHost is the default ingress host if not specified in the CR.
 	DefaultIngressHost string
 

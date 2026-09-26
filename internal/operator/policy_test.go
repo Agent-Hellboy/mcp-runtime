@@ -6,8 +6,10 @@ import (
 	"strings"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
@@ -154,5 +156,113 @@ func TestRenderPolicyConfigMapDataRewritesWhenRevisionMetadataTampered(t *testin
 	}
 	if outDoc.Revision != unchanged.Revision {
 		t.Fatalf("written revision = %q, want %q", outDoc.Revision, unchanged.Revision)
+	}
+}
+
+// A policy change (new session, grant, or revocation) must reach the running
+// gateway without waiting for the kubelet's periodic ConfigMap volume resync:
+// the operator stamps the new revision on the server's pods, which makes the
+// kubelet sync the pod and re-project the policy volume immediately.
+func TestReconcilePolicyConfigMapAnnotatesServerPodsOnChange(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = mcpv1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+
+	const namespace = "mcp-team-acme"
+	mcpServer := &mcpv1alpha1.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{Name: "workspace-demo", Namespace: namespace, UID: "server-uid"},
+		Spec: mcpv1alpha1.MCPServerSpec{
+			Gateway: &mcpv1alpha1.GatewayConfig{Enabled: true},
+			Tools: []mcpv1alpha1.ToolConfig{
+				{Name: "echo", SideEffect: mcpv1alpha1.ToolSideEffectRead},
+			},
+		},
+	}
+	serverPod := func(name, app, track string) *corev1.Pod {
+		return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+			Labels: map[string]string{
+				"app":                          app,
+				"app.kubernetes.io/managed-by": "mcp-runtime",
+				"mcpruntime.org/rollout-track": track,
+			},
+		}}
+	}
+	stable := serverPod("workspace-demo-stable", "workspace-demo", "stable")
+	canary := serverPod("workspace-demo-canary", "workspace-demo", "canary")
+	other := serverPod("other-server-pod", "other-server", "stable")
+	terminating := serverPod("workspace-demo-old", "workspace-demo", "stable")
+	now := metav1.Now()
+	terminating.DeletionTimestamp = &now
+	terminating.Finalizers = []string{"test/keep"}
+
+	kube := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(mcpServer, stable, canary, other, terminating).Build()
+	r := MCPServerReconciler{Client: kube, Scheme: scheme}
+	ctx := context.Background()
+
+	getPod := func(name string) *corev1.Pod {
+		t.Helper()
+		pod := &corev1.Pod{}
+		if err := kube.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, pod); err != nil {
+			t.Fatalf("get pod %s: %v", name, err)
+		}
+		return pod
+	}
+
+	// Initial create: pods mount this content at start, nothing to nudge.
+	if err := r.reconcilePolicyConfigMap(ctx, mcpServer); err != nil {
+		t.Fatalf("initial reconcile: %v", err)
+	}
+	if got := getPod(stable.Name).Annotations[gatewayPolicyRevisionAnnotation]; got != "" {
+		t.Fatalf("stable pod annotated on ConfigMap create: %q", got)
+	}
+
+	// An adapter session is issued: the ConfigMap changes and the server's
+	// running pods must carry the new revision.
+	session := &mcpv1alpha1.MCPAgentSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "adapter-0123456789abcdef", Namespace: namespace},
+		Spec: mcpv1alpha1.MCPAgentSessionSpec{
+			Subject:   mcpv1alpha1.SubjectRef{HumanID: "user-1", AgentID: "cursor"},
+			ServerRef: mcpv1alpha1.ServerReference{Name: "workspace-demo"},
+		},
+	}
+	if err := kube.Create(ctx, session); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	if err := r.reconcilePolicyConfigMap(ctx, mcpServer); err != nil {
+		t.Fatalf("reconcile after session: %v", err)
+	}
+	cm := &corev1.ConfigMap{}
+	if err := kube.Get(ctx, types.NamespacedName{Namespace: namespace, Name: gatewayPolicyConfigMapName("workspace-demo")}, cm); err != nil {
+		t.Fatalf("get policy ConfigMap: %v", err)
+	}
+	var doc policy.Document
+	if err := json.Unmarshal([]byte(cm.Data[gatewayPolicyFileName]), &doc); err != nil {
+		t.Fatalf("decode policy: %v", err)
+	}
+	if len(doc.Sessions) != 1 || string(doc.Sessions[0].Name) != session.Name {
+		t.Fatalf("rendered sessions = %+v, want %s", doc.Sessions, session.Name)
+	}
+	for _, name := range []string{stable.Name, canary.Name} {
+		if got := getPod(name).Annotations[gatewayPolicyRevisionAnnotation]; got != doc.Revision {
+			t.Fatalf("pod %s annotation = %q, want policy revision %q", name, got, doc.Revision)
+		}
+	}
+	if got := getPod(other.Name).Annotations[gatewayPolicyRevisionAnnotation]; got != "" {
+		t.Fatalf("another server's pod was annotated: %q", got)
+	}
+	if got := getPod(terminating.Name).Annotations[gatewayPolicyRevisionAnnotation]; got != "" {
+		t.Fatalf("terminating pod was annotated: %q", got)
+	}
+
+	// Unchanged policy: no pod writes.
+	before := getPod(stable.Name).ResourceVersion
+	if err := r.reconcilePolicyConfigMap(ctx, mcpServer); err != nil {
+		t.Fatalf("idempotent reconcile: %v", err)
+	}
+	if after := getPod(stable.Name).ResourceVersion; after != before {
+		t.Fatalf("unchanged policy patched pod: resourceVersion %s -> %s", before, after)
 	}
 }

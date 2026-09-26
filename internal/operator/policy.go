@@ -12,7 +12,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
 	"mcp-runtime/pkg/mcpdefaults"
@@ -50,7 +52,7 @@ func (r *MCPServerReconciler) reconcilePolicyConfigMap(ctx context.Context, mcpS
 			Namespace: mcpServer.Namespace,
 		},
 	}
-	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, configMap, func() error {
+	op, err := controllerutil.CreateOrUpdate(ctx, r.Client, configMap, func() error {
 		configMap.Labels = map[string]string{
 			"app":                          mcpServer.Name,
 			"app.kubernetes.io/managed-by": "mcp-runtime",
@@ -64,7 +66,65 @@ func (r *MCPServerReconciler) reconcilePolicyConfigMap(ctx context.Context, mcpS
 		}
 		return ctrl.SetControllerReference(mcpServer, configMap, r.Scheme)
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	if op == controllerutil.OperationResultUpdated {
+		r.nudgeGatewayPodsForPolicy(ctx, mcpServer, doc.Revision)
+	}
+	return nil
+}
+
+// nudgeGatewayPodsForPolicy stamps the rendered policy revision onto the
+// server's running pods so the kubelet refreshes the mounted policy ConfigMap
+// now instead of on its periodic pod sync.
+//
+// The kubelet only re-projects ConfigMap volume contents when it syncs a pod,
+// which without a pod change happens on its resync period (about 60-90s on
+// default settings). The gateway polls the mounted file every few seconds, so
+// the kubelet is the bottleneck: a freshly issued adapter session, a new
+// grant, or a revocation stays invisible to the gateway until that resync, and
+// every tool call in the window is denied with session_not_found (or keeps
+// being allowed after a revoke). Updating a pod annotation triggers an
+// immediate pod sync, which remounts the ConfigMap volume with the new data.
+//
+// Failures are logged, not returned: the ConfigMap is already correct and the
+// kubelet will still converge on its own resync.
+func (r *MCPServerReconciler) nudgeGatewayPodsForPolicy(ctx context.Context, mcpServer *mcpv1alpha1.MCPServer, revision string) {
+	revision = strings.TrimSpace(revision)
+	if revision == "" {
+		return
+	}
+	logger := log.FromContext(ctx)
+	reader := r.APIReader
+	if reader == nil {
+		reader = r.Client
+	}
+	pods := &corev1.PodList{}
+	if err := reader.List(ctx, pods,
+		client.InNamespace(mcpServer.Namespace),
+		client.MatchingLabels{
+			"app":                          mcpServer.Name,
+			"app.kubernetes.io/managed-by": "mcp-runtime",
+		},
+	); err != nil {
+		logger.Info("Could not list gateway pods to refresh the policy volume; the kubelet resync will apply it", "mcpServer", mcpServer.Name, "namespace", mcpServer.Namespace, "error", err.Error())
+		return
+	}
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		if pod.DeletionTimestamp != nil || pod.Annotations[gatewayPolicyRevisionAnnotation] == revision {
+			continue
+		}
+		base := pod.DeepCopy()
+		if pod.Annotations == nil {
+			pod.Annotations = map[string]string{}
+		}
+		pod.Annotations[gatewayPolicyRevisionAnnotation] = revision
+		if err := r.Patch(ctx, pod, client.MergeFrom(base)); err != nil && !errors.IsNotFound(err) {
+			logger.Info("Could not annotate gateway pod to refresh the policy volume; the kubelet resync will apply it", "pod", pod.Name, "namespace", pod.Namespace, "error", err.Error())
+		}
+	}
 }
 
 // renderPolicyConfigMapData serializes the policy document for the ConfigMap.
