@@ -533,8 +533,28 @@ func deployRegistry(logger *zap.Logger, namespace string, port int, registryType
 		core.LogStructuredError(logger, wrappedErr, "Failed to render registry manifest")
 		return wrappedErr
 	}
-	manifest = rewriteRegistryHost(manifest, core.GetRegistryIngressHost())
+	registryHost := core.GetRegistryIngressHost()
+	clients, clientsErr := registryKubernetesClients()
+	if clientsErr == nil {
+		var source string
+		registryHost, source = k8sclient.ResolveRegistryPublicHost(context.Background(), clients, registryHost)
+		logger.Info("Resolved registry ingress host", zap.String("host", registryHost), zap.String("source", source))
+	}
+	manifest = rewriteRegistryHost(manifest, registryHost)
 	manifest = stripRegistryClusterIssuerAnnotation(manifest)
+	if clientsErr == nil {
+		if err := k8sclient.CheckRegistryIngressManifest(context.Background(), clients, manifest); err != nil {
+			wrappedErr := core.WrapWithSentinelAndContext(
+				core.ErrDeployRegistryFailed,
+				err,
+				err.Error(),
+				map[string]any{"namespace": namespace, "manifest_path": manifestPath, "registry_type": registryType, "component": "registry"},
+			)
+			core.Error("Refusing to downgrade registry ingress host")
+			core.LogStructuredError(logger, wrappedErr, "Refusing to downgrade registry ingress host")
+			return wrappedErr
+		}
+	}
 	if overrideImage != "" {
 		logger.Info("Applying registry image override", zap.String("image", overrideImage))
 		updated := strings.Replace(manifest, "image: "+defaultRegistryImage, "image: "+overrideImage, 1)

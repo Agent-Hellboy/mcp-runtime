@@ -64,7 +64,14 @@ func deployRegistryClientGo(logger *zap.Logger, namespace string, port int, regi
 	if overrideImage != "" && logger != nil {
 		logger.Info("Applying registry image override", zap.String("image", overrideImage))
 	}
-	manifest, err = mutateRegistryManifest(manifest, core.GetRegistryIngressHost(), overrideImage)
+	// Derive the public host from cluster state when the caller's env only
+	// yields the registry.local placeholder, so an env-less rerun never
+	// downgrades a public registry Ingress.
+	registryHost, registryHostSource := k8sclient.ResolveRegistryPublicHost(context.Background(), clients, core.GetRegistryIngressHost())
+	if logger != nil {
+		logger.Info("Resolved registry ingress host", zap.String("host", registryHost), zap.String("source", registryHostSource))
+	}
+	manifest, err = mutateRegistryManifest(manifest, registryHost, overrideImage)
 	if err != nil {
 		wrappedErr := core.WrapWithSentinelAndContext(
 			core.ErrDeployRegistryFailed,

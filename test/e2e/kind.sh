@@ -1167,6 +1167,23 @@ tenant_owner_cli() {
     "${PROJECT_ROOT}/bin/mcp-runtime" "$@"
 }
 
+# envless_admin_cli runs the CLI with every MCP_* variable unset but keeps the
+# admin kubeconfig, like an operator's fresh shell.
+envless_admin_cli() {
+  local -a unset_args=()
+  local name
+  while IFS= read -r name; do
+    unset_args+=(-u "${name}")
+  done < <(compgen -e | grep '^MCP_' || true)
+  env ${unset_args[@]+"${unset_args[@]}"} "${PROJECT_ROOT}/bin/mcp-runtime" "$@"
+}
+
+# registry_ingress_host_snapshot prints the registry Ingress rule and TLS hosts.
+registry_ingress_host_snapshot() {
+  kubectl get ingress registry -n registry \
+    -o jsonpath='rules={.spec.rules[*].host} tls={.spec.tls[*].hosts}' 2>/dev/null || echo "missing"
+}
+
 # assert_mcp_tools_list_contains initializes an MCP session at base_url and
 # fails unless tools/list returns every named tool.
 assert_mcp_tools_list_contains() {
@@ -1242,6 +1259,9 @@ run_tenant_owner_adapter_quickstart() {
     ./bin/mcp-runtime team user create "${team}" \
       --email "${owner_email}" --password "${owner_password}" --role owner >/dev/null
 
+  local registry_ingress_before registry_ingress_after
+  registry_ingress_before="$(registry_ingress_host_snapshot)"
+
   log_line policy "tenant quickstart: owner logs in and pushes/deploys ${server} with --scope tenant"
   tenant_owner_cli auth login --api-url "http://127.0.0.1:${SENTINEL_PORT}" \
     --email "${owner_email}" --password "${owner_password}" --profile e2e-owner >/dev/null
@@ -1277,6 +1297,15 @@ servers:
 EOF
   (cd "${TENANT_QS_DIR}" && tenant_owner_cli server deploy "${server}" --scope tenant --metadata-dir .mcp)
   (cd "${TENANT_QS_DIR}" && tenant_owner_cli server deploy "${server}" --scope tenant --metadata-dir .mcp --update)
+  # Admin in-cluster push from a shell without any MCP_* env (kubeconfig kept).
+  envless_admin_cli admin registry push --image "${image}:${E2E_WORKLOAD_TAG}" \
+    --name "${team}/${server}-admin" --scope tenant
+  registry_ingress_after="$(registry_ingress_host_snapshot)"
+  if [[ "${registry_ingress_after}" != "${registry_ingress_before}" ]]; then
+    echo "[tenant-quickstart] registry Ingress hosts changed after env-less push/deploy: before=${registry_ingress_before} after=${registry_ingress_after}" >&2
+    exit 1
+  fi
+  log_line policy "tenant quickstart: registry Ingress hosts unchanged (${registry_ingress_after})"
   wait_for_deployment_exists "${namespace}" "${server}"
   kubectl rollout status "deploy/${server}" -n "${namespace}" --timeout=180s
   runtime_url="http://127.0.0.1:${TRAEFIK_PORT}/${server}/mcp"
@@ -3515,6 +3544,13 @@ refresh_kind_kubeconfig() {
     elif [[ -s "${KUBECONFIG_BACKUP_FILE}" ]]; then
       cp "${KUBECONFIG_BACKUP_FILE}" "${KUBECONFIG_FILE}"
       echo "[kind][warn] could not refresh kubeconfig for ${CLUSTER_NAME}; restored last-known-good kubeconfig" >&2
+    elif [[ "$(kubectl config current-context 2>/dev/null)" != kind-* ]]; then
+      # Never fall back to a non-Kind context: cache mode re-applies
+      # config/registry/base/ingress.yaml, which downgrades a public registry
+      # Ingress rule host to registry.local (Traefik then 404s every pull).
+      rm -f "${refreshed_kubeconfig}"
+      echo "[kind][error] no kubeconfig for ${CLUSTER_NAME} and current context '$(kubectl config current-context 2>/dev/null)' is not a Kind context; refusing to run e2e against it" >&2
+      return 1
     elif kubectl config view --raw --minify > "${refreshed_kubeconfig}" 2>/dev/null && [[ -s "${refreshed_kubeconfig}" ]]; then
       mv "${refreshed_kubeconfig}" "${KUBECONFIG_FILE}"
       cp "${KUBECONFIG_FILE}" "${KUBECONFIG_BACKUP_FILE}" 2>/dev/null || true

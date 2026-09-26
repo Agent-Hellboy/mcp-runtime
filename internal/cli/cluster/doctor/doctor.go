@@ -254,6 +254,7 @@ func doctorCheckSpecs(kubectl core.KubectlRunner, distro Distribution) []doctorC
 			Run:    func() DoctorCheck { return checkIngressRouteProbe(kubectl, doctorMCPServersNamespace, distro) },
 		},
 		{Name: "registry Service", Detail: "checking the bundled registry Service and NodePort", Run: func() DoctorCheck { return checkRegistryService(kubectl) }},
+		{Name: registryIngressHostsCheckName, Detail: "checking registry Ingress rule hosts match its TLS hosts and the platform registry host", Run: func() DoctorCheck { return checkRegistryIngressHosts(kubectl) }},
 		{Name: "registry reachability (in-cluster)", Detail: "launching a temporary curl pod in registry to call /v2/ over cluster DNS", Run: func() DoctorCheck { return checkRegistryReachableFromCluster(kubectl) }},
 		{Name: "MCPServer registry image refs", Detail: "checking MCPServer specs for registry Service IP image references that kubelet cannot TLS-verify", Run: func() DoctorCheck { return checkRegistryServiceIPImageRefs(kubectl) }},
 		{Name: "MCPServer imagePullSecrets", Detail: "checking MCPServer imagePullSecrets reference existing Secrets in each server namespace", Run: func() DoctorCheck { return checkMCPServerImagePullSecrets(kubectl) }},
