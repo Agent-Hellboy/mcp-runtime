@@ -231,7 +231,9 @@ func (c *PlatformClient) PushRegistryImage(ctx context.Context, tarPath, target,
 	c.setAuthHeaders(req)
 	req.Header.Set("content-type", contentType)
 
-	client := &http.Client{Timeout: 15 * time.Minute}
+	// Covers the upload window (runtime API default 20m) plus the in-cluster
+	// push that follows it (up to 10m).
+	client := &http.Client{Timeout: 30 * time.Minute}
 	if c.http != nil && c.http.Transport != nil {
 		client.Transport = c.http.Transport
 	}
@@ -245,9 +247,29 @@ func (c *PlatformClient) PushRegistryImage(ctx context.Context, tarPath, target,
 		return err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return httpAPIError(resp.StatusCode, b)
+		return registryPushHTTPError(resp.StatusCode, b)
 	}
 	return nil
+}
+
+// registryPushHTTPError keeps the runtime API's JSON error when one reached
+// the CLI, and explains gateway failures where an ingress or proxy replaced it
+// with a bare "Bad Gateway" page.
+func registryPushHTTPError(status int, body []byte) error {
+	err := httpAPIError(status, body)
+	var m map[string]any
+	if json.Unmarshal(body, &m) == nil && (m["message"] != nil || m["error"] != nil) {
+		return err
+	}
+	switch status {
+	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return fmt.Errorf("%w; a proxy between the CLI and mcp-runtime-api closed the image upload before the runtime API answered. "+
+			"Check the mcp-runtime-api logs for POST /api/v1/runtime/registry/push, and make sure every hop allows a long upload: "+
+			"mcp-runtime-api honors MCP_REGISTRY_PUSH_UPLOAD_TIMEOUT (default 20m) and the ingress controller read timeout must not be shorter", err)
+	case http.StatusRequestEntityTooLarge:
+		return fmt.Errorf("%w; the image archive is larger than the platform upload limit", err)
+	}
+	return err
 }
 
 func (c *PlatformClient) RecordImagePublish(ctx context.Context, record ImagePublishRecord) error {

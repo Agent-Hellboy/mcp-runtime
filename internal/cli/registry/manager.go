@@ -210,10 +210,39 @@ func RunAdminRegistryPush(ctx context.Context, mgr *RegistryManager, image, regi
 	if pushErr != nil {
 		return pushErr
 	}
+	publishedRef := target
+	if mode == "in-cluster" && strings.TrimSpace(registryURL) == "" {
+		if pullRef, ok := adminPushPullRef(target, adminPushPublicRegistryHost(mgr.logger)); ok {
+			publishedRef = pullRef
+			core.Success(fmt.Sprintf("Image available to deploy as %s (pass this ref to server deploy --image)", pullRef))
+		}
+	}
 	if platformClient != nil {
-		mgr.recordImagePublish(ctx, platformClient, image, target, mode)
+		mgr.recordImagePublish(ctx, platformClient, image, publishedRef, mode)
 	}
 	return nil
+}
+
+// adminPushPublicRegistryHost resolves the registry host users and nodes pull
+// from (registry.<domain>), as opposed to the in-cluster endpoint the helper
+// pod pushes to. It is a variable so tests can stub cluster state.
+var adminPushPublicRegistryHost = func(logger *zap.Logger) string {
+	return resolvePlatformRegistryURL(logger)
+}
+
+// adminPushPullRef rewrites an in-cluster push target (for example a
+// ClusterIP:5000 helper destination) onto the public registry host. The
+// registry stores images by repository path, so the same image is pullable
+// under the public host. It returns false when there is no distinct public
+// host to report.
+func adminPushPullRef(target, publicHost string) (string, bool) {
+	publicHost = strings.TrimSuffix(strings.TrimSpace(publicHost), "/")
+	publicHost = strings.TrimPrefix(strings.TrimPrefix(publicHost, "https://"), "http://")
+	host, rest, found := strings.Cut(strings.TrimSpace(target), "/")
+	if !found || publicHost == "" || strings.EqualFold(host, publicHost) || rest == "" {
+		return target, false
+	}
+	return publicHost + "/" + rest, true
 }
 
 func buildRegistryPushTarget(ctx context.Context, mgr *RegistryManager, platformClient *platformapi.PlatformClient, image, registryURL, name, scope, mode string) (string, publishscope.Scope, error) {
@@ -413,7 +442,7 @@ func (m *RegistryManager) PushViaPlatform(ctx context.Context, client *platforma
 		core.Info("Saved image archive; uploading to platform API")
 	}
 
-	uploadCtx, cancel := context.WithTimeout(ctx, 15*time.Minute)
+	uploadCtx, cancel := context.WithTimeout(ctx, 30*time.Minute)
 	defer cancel()
 	core.Info(fmt.Sprintf("Uploading image for publish target %s", target))
 	if err := client.PushRegistryImage(uploadCtx, tmpPath, target, scope); err != nil {
@@ -1105,7 +1134,7 @@ func (m *RegistryManager) PushInCluster(source, target, helperNS string) error {
 	if pushTarget != target {
 		core.Success(fmt.Sprintf("Pushed %s via in-cluster helper (helper destination %s)", target, pushTarget))
 	} else {
-		core.Success(fmt.Sprintf("Pushed %s via in-cluster helper", target))
+		core.Success(fmt.Sprintf("Pushed via in-cluster helper (helper destination %s)", pushTarget))
 	}
 	return nil
 }

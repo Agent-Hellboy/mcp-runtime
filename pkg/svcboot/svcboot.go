@@ -26,6 +26,30 @@ type Config struct {
 	OnShutdown  func(context.Context) error
 }
 
+// Default per-connection timeouts for split API services. Routes that accept
+// large uploads or run long operations (for example the runtime-api registry
+// push) extend their own deadlines with http.ResponseController instead of
+// raising these for every route.
+const (
+	DefaultReadHeaderTimeout = 5 * time.Second
+	DefaultReadTimeout       = 15 * time.Second
+	DefaultWriteTimeout      = 15 * time.Second
+	DefaultIdleTimeout       = 60 * time.Second
+)
+
+// NewHTTPServer returns the service HTTP server with the shared default
+// timeouts.
+func NewHTTPServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: DefaultReadHeaderTimeout,
+		ReadTimeout:       DefaultReadTimeout,
+		WriteTimeout:      DefaultWriteTimeout,
+		IdleTimeout:       DefaultIdleTimeout,
+	}
+}
+
 // Run starts metrics, OTEL-instrumented HTTP, and blocks until shutdown.
 func Run(cfg Config) error {
 	if cfg.Handler == nil {
@@ -59,14 +83,7 @@ func Run(cfg Config) error {
 	log.Printf("%s listening on :%s", serviceName, port)
 
 	handler := otelhttp.NewHandler(serviceutil.LogRequests(cfg.Handler), "http.server")
-	httpServer := &http.Server{
-		Addr:              ":" + port,
-		Handler:           handler,
-		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      15 * time.Second,
-		IdleTimeout:       60 * time.Second,
-	}
+	httpServer := NewHTTPServer(":"+port, handler)
 
 	shutdownSignals, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
