@@ -22,7 +22,7 @@ Session apply via platform API is **admin-only**. Adapters usually skip manual s
 - Platform API rejects cross-namespace `serverRef` and shared-catalog writes for non-admins.
 - Each `MCPServer.spec.tools[]` needs `sideEffect: read|write|destructive`; grants need explicit `allowedSideEffects` (empty = deny all classes).
 - Managed agent IDs come from the team directory (`mcp-runtime agent create <team-slug> --name …`). New IDs use `agt_<26-character lowercase ULID>`; names can change, IDs cannot. Deactivation revokes active sessions.
-- `MCP_AGENT_DIRECTORY_ENFORCEMENT=warn` is the compatibility default for unknown IDs; `off` allows unknown IDs quietly; `enforce` rejects them. Known inactive or wrong-team agents are rejected in all modes. Access forms expose a marked custom ID only in `off` and `warn` modes.
+- Agent subjects must use an active directory ID owned by the selected subject team. Unknown, malformed, inactive, and wrong-team IDs fail closed; the access forms do not accept free-text agent IDs.
 - A cross-team grant names the subject's `teamID` and must expire; its TTL is capped by the runtime API. Audit fields distinguish the subject/actor team from the server/resource authority team.
 - `server policy inspect` shows rendered policy; the operator stamps the policy revision on server pods so the gateway sees new grants/sessions within ~10s. Wait that long before assuming `session_not_found`.
 

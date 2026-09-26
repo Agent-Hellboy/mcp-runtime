@@ -5,7 +5,7 @@ import { StatusBadge } from "../../ui/Badge";
 import { SelectField, TextField } from "../../ui/Field";
 import { EmptyState, ErrorState, LoadingState } from "../../ui/States";
 import type { ServerSummary } from "../../api/types";
-import { useAgentDirectoryConfig, useTeamAgents, useTeamMembers, useTeams } from "../../hooks/useAdminData";
+import { useTeamAgents, useTeamMembers, useTeams } from "../../hooks/useAdminData";
 
 export type GrantDraft = {
   name: string;
@@ -64,9 +64,6 @@ function SubjectFields({
   const [teamSlug, setTeamSlug] = useState(() => teams.find((team) => team.id === subject.teamID)?.slug ?? "");
   const [customTeam, setCustomTeam] = useState(false);
   const [customHuman, setCustomHuman] = useState(false);
-  const [customAgent, setCustomAgent] = useState(false);
-  const directoryConfigQuery = useAgentDirectoryConfig(true);
-  const allowCustomAgent = directoryConfigQuery.data?.enforcement === "off" || directoryConfigQuery.data?.enforcement === "warn";
   const membersQuery = useTeamMembers(true, teamSlug);
   const members = membersQuery.data ?? [];
   const agentsQuery = useTeamAgents(true, teamSlug);
@@ -80,7 +77,6 @@ function SubjectFields({
     setTeamSlug("");
     setCustomTeam(false);
     setCustomHuman(false);
-    setCustomAgent(false);
     onChange({ humanID: "", agentID: "", teamID: "" });
   }
 
@@ -88,7 +84,6 @@ function SubjectFields({
     const team = teams.find((candidate) => candidate.slug === slug);
     setTeamSlug(slug);
     setCustomHuman(false);
-    setCustomAgent(false);
     // Changing the team always drops IDs selected under the previous team.
     onChange({ humanID: "", agentID: "", teamID: team?.id ?? "" });
   }
@@ -246,38 +241,20 @@ function SubjectFields({
       ) : null}
 
       {needsAgent ? (
-        customAgent ? (
-          <>
-            <TextField
-              label="Agent ID"
-              value={subject.agentID}
-              data-testid={`${testPrefix}-agent-custom`}
-              hint="Use an existing ID only when it is not available in the directory."
-              onChange={(event) => onChange({ ...subject, agentID: event.target.value })}
-            />
-            <StatusBadge tone="warning" dot={false} testId={`${testPrefix}-agent-not-in-directory`}>
-              Not in directory
-            </StatusBadge>
-            <button type="button" className="link-button" onClick={() => { setCustomAgent(false); onChange({ ...subject, agentID: "" }); }}>
-              Choose a listed agent
-            </button>
-          </>
-        ) : !teamSlug ? (
+        !teamSlug ? (
           <div className="field">
             <span className="field-label">Agent</span>
             <EmptyState title="Select a listed team to load active agents." testId={`${testPrefix}-agents-unselected`} />
-            {allowCustomAgent && subject.teamID ? <button type="button" className="link-button" onClick={() => setCustomAgent(true)}>Enter a custom agent ID</button> : null}
           </div>
         ) : agentsQuery.error ? (
           <div className="field">
             <span className="field-label">Agent</span>
             <ErrorState
               title="Team agents could not be loaded."
-              detail={allowCustomAgent ? "Retry the directory request or enter a custom ID for an existing agent." : "Retry the directory request before selecting an agent."}
+              detail="Retry the directory request before selecting an agent."
               onRetry={() => void agentsQuery.refetch()}
               testId={`${testPrefix}-agents-error`}
             />
-            {allowCustomAgent ? <button type="button" className="link-button" onClick={() => setCustomAgent(true)}>Enter a custom agent ID</button> : null}
           </div>
         ) : agentsQuery.isPending ? (
           <div className="field">
@@ -288,7 +265,6 @@ function SubjectFields({
           <div className="field">
             <span className="field-label">Agent</span>
             <EmptyState title="This team has no active agents." detail="Create or reactivate an agent in the directory first." testId={`${testPrefix}-agents-empty`} />
-            {allowCustomAgent ? <button type="button" className="link-button" onClick={() => setCustomAgent(true)}>Enter a custom agent ID</button> : null}
           </div>
         ) : (
           <>
@@ -309,7 +285,6 @@ function SubjectFields({
               hint="Only active agents in the selected team are available."
               onChange={(event) => onChange({ ...subject, agentID: event.target.value })}
             />
-            {allowCustomAgent ? <button type="button" className="link-button" onClick={() => { setCustomAgent(true); onChange({ ...subject, agentID: "" }); }}>Enter a custom agent ID</button> : null}
           </>
         )
       ) : null}

@@ -310,10 +310,6 @@ export type AgentPage = {
   next_cursor?: string;
 };
 
-export type AgentDirectoryConfig = {
-  enforcement: "off" | "warn" | "enforce";
-};
-
 export type ComponentStatus = {
   key: string;
   display: string;

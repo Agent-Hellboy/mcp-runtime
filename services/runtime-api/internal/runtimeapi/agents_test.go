@@ -43,7 +43,6 @@ func (s *agentIdentityStub) GetAgent(_ context.Context, id string) (platformclie
 }
 
 func TestRequireActiveAgent(t *testing.T) {
-	t.Setenv(agentDirectoryEnforcementEnv, "enforce")
 	store := &agentIdentityStub{}
 	cases := []struct {
 		name, id, team string
@@ -54,6 +53,8 @@ func TestRequireActiveAgent(t *testing.T) {
 		{name: "active matching", id: "agt_01arz3ndektsv4rrffq69g5fav", team: "team-id", store: store},
 		{name: "wrong team", id: "agt_01arz3ndektsv4rrffq69g5fav", team: "other", store: store, want: errAgentNotActive},
 		{name: "directory unavailable", id: "agt_01arz3ndektsv4rrffq69g5fav", team: "team-id", want: errAgentDirectoryUnavailable},
+		{name: "missing team", id: "agt_01arz3ndektsv4rrffq69g5fav", store: store, want: errAgentNotActive},
+		{name: "malformed ID", id: "legacy-agent", team: "team-id", store: store, want: errAgentNotActive},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -69,65 +70,31 @@ func TestRequireActiveAgent(t *testing.T) {
 	}
 }
 
-func TestAgentDirectoryEnforcementModeDefaultsAndFailsClosed(t *testing.T) {
-	t.Setenv(agentDirectoryEnforcementEnv, "")
-	if got := AgentDirectoryEnforcementMode(); got != "warn" {
-		t.Fatalf("default enforcement mode = %q, want warn", got)
-	}
-	t.Setenv(agentDirectoryEnforcementEnv, "WARN")
-	if got := AgentDirectoryEnforcementMode(); got != "warn" {
-		t.Fatalf("case-insensitive enforcement mode = %q, want warn", got)
-	}
-	t.Setenv(agentDirectoryEnforcementEnv, "unexpected")
-	if got := AgentDirectoryEnforcementMode(); got != "enforce" {
-		t.Fatalf("invalid enforcement mode = %q, want fail-closed enforce", got)
-	}
-}
-
-func TestRequireActiveAgentCompatibilityModes(t *testing.T) {
+func TestRequireActiveAgentRejectsUnknownAndUnavailableDirectory(t *testing.T) {
 	unknown := &missingAgentIdentityStub{}
-	t.Setenv(agentDirectoryEnforcementEnv, "warn")
-	if err := requireActiveAgent(t.Context(), unknown, "legacy-agent", "team-id"); err != nil {
-		t.Fatalf("warn mode should allow an unknown legacy ID, got %v", err)
+	validID := "agt_01arz3ndektsv4rrffq69g5fav"
+	if err := requireActiveAgent(t.Context(), unknown, validID, "team-id"); !errors.Is(err, errAgentNotActive) {
+		t.Fatalf("unknown agent error = %v, want unknown-agent error", err)
 	}
-	if err := requireActiveAgent(t.Context(), nil, "legacy-agent", "team-id"); err != nil {
-		t.Fatalf("warn mode should allow a temporarily unavailable directory, got %v", err)
-	}
-
-	t.Setenv(agentDirectoryEnforcementEnv, "enforce")
-	if err := requireActiveAgent(t.Context(), unknown, "legacy-agent", "team-id"); !errors.Is(err, errAgentNotActive) {
-		t.Fatalf("enforce mode error = %v, want unknown-agent error", err)
-	}
-	if err := requireActiveAgent(t.Context(), nil, "legacy-agent", "team-id"); !errors.Is(err, errAgentDirectoryUnavailable) {
-		t.Fatalf("enforce mode error = %v, want directory-unavailable error", err)
+	if err := requireActiveAgent(t.Context(), nil, validID, "team-id"); !errors.Is(err, errAgentDirectoryUnavailable) {
+		t.Fatalf("unavailable directory error = %v, want directory-unavailable error", err)
 	}
 
-	t.Setenv(agentDirectoryEnforcementEnv, "off")
-	if err := requireActiveAgent(t.Context(), nil, "legacy-agent", "team-id"); err != nil {
-		t.Fatalf("off mode should skip directory lookup, got %v", err)
-	}
-	inactive := &agentIdentityStub{agent: platformclient.Agent{ID: "known-agent", TeamID: "team-id", Status: "inactive"}}
-	if err := requireActiveAgent(t.Context(), inactive, inactive.agent.ID, inactive.agent.TeamID); !errors.Is(err, errAgentNotActive) {
-		t.Fatalf("off mode must still reject known inactive agents, got %v", err)
-	}
 }
 
-func TestRuntimeAgentDirectoryConfigRequiresAuthentication(t *testing.T) {
-	t.Setenv(agentDirectoryEnforcementEnv, "warn")
-	server := &RuntimeServer{}
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/runtime/agents/config", nil)
-	recorder := httptest.NewRecorder()
-	server.HandleRuntimeAgentPath(recorder, request)
-	if recorder.Code != http.StatusUnauthorized {
-		t.Fatalf("unauthenticated config status = %d, want 401", recorder.Code)
-	}
-
-	request = httptest.NewRequest(http.MethodGet, "/api/v1/runtime/agents/config", nil)
-	request = request.WithContext(withPrincipal(request.Context(), principal{Role: roleUser, Subject: "user-id"}))
-	recorder = httptest.NewRecorder()
-	server.HandleRuntimeAgentPath(recorder, request)
-	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), `"enforcement":"warn"`) {
-		t.Fatalf("authenticated config response = %d %s, want warn", recorder.Code, recorder.Body.String())
+func TestRequireActiveAgentRejectsMalformedGeneratedIDs(t *testing.T) {
+	store := &agentIdentityStub{}
+	for _, id := range []string{
+		"legacy-agent",
+		"agt_81arz3ndektsv4rrffq69g5fav",
+		"agt_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+		"agt_01arz3ndektsv4rrffq69g5fa",
+	} {
+		t.Run(id, func(t *testing.T) {
+			if err := requireActiveAgent(t.Context(), store, id, "team-id"); !errors.Is(err, errAgentNotActive) {
+				t.Fatalf("malformed agent ID error = %v, want %v", err, errAgentNotActive)
+			}
+		})
 	}
 }
 

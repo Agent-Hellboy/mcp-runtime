@@ -3,7 +3,6 @@ import { useCallback } from "react";
 
 import {
   listComponents,
-  getAgentDirectoryConfig,
   listTeamAgents,
   listEvents,
   listGrants,
@@ -85,14 +84,6 @@ export function useTeamAgents(
     queryKey: [ADMIN_QUERY_KEY, "team-agents", slug, filters.status ?? "all", filters.q ?? "", filters.cursor ?? ""],
     queryFn: () => listTeamAgents(slug, { ...filters, limit: "100" }),
     enabled: enabled && Boolean(slug),
-  });
-}
-
-export function useAgentDirectoryConfig(enabled: boolean) {
-  return useQuery({
-    queryKey: [ADMIN_QUERY_KEY, "agent-directory-config"],
-    queryFn: getAgentDirectoryConfig,
-    enabled,
   });
 }
 

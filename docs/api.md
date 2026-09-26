@@ -430,7 +430,6 @@ PUT  /api/v1/runtime/teams/{team}/members/{userID} # Admin/team-owner membership
 DELETE /api/v1/runtime/teams/{team}/members/{userID}
 GET  /api/v1/runtime/teams/{team}/agents # List/search team agents (admin/member)
 POST /api/v1/runtime/teams/{team}/agents # Create agent (admin/team owner)
-GET /api/v1/runtime/agents/config # Authenticated agent-directory enforcement mode for access-form compatibility controls
 GET  /api/v1/runtime/agents/{id} # Read agent (admin/team member)
 PATCH /api/v1/runtime/agents/{id} # Rename agent (admin/team owner)
 POST /api/v1/runtime/agents/{id}/deactivate # Deactivate agent (admin/team owner)

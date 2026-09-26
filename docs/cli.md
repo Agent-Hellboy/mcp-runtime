@@ -602,9 +602,8 @@ new grants or sessions. Deactivation revokes active sessions. Admins can
 manage all teams; team owners manage their own agents; team members can list
 and view their team's agents. The administration workspace includes an
 **Agents** directory page.
-When `MCP_AGENT_DIRECTORY_ENFORCEMENT` is `off` or `warn`, the access forms
-also offer a marked custom agent-ID field for existing installations. In
-`enforce` mode, only active directory agents can be selected.
+Agent subjects must be selected from the active directory for the subject's
+team. The API rejects unknown, malformed, inactive, and wrong-team agent IDs.
 
 ## team
 

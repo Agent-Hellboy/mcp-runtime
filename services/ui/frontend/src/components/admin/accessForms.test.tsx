@@ -50,7 +50,6 @@ function stubIdentityApi(options: {
   holdTeams?: boolean;
   holdMembers?: boolean;
   holdAgents?: boolean;
-  agentEnforcement?: "off" | "warn" | "enforce";
   failAgents?: boolean;
 } = {}) {
   let releaseTeams: (() => void) | undefined;
@@ -67,9 +66,6 @@ function stubIdentityApi(options: {
   });
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
-    if (url.endsWith("/runtime/agents/config")) {
-      return { ok: true, status: 200, json: async () => ({ enforcement: options.agentEnforcement ?? "warn" }), text: async () => "" } as unknown as Response;
-    }
     const agentMatch = url.match(/\/runtime\/teams\/([^/]+)\/agents/);
     if (agentMatch) {
       if (options.holdAgents) await agentsGate;
@@ -228,31 +224,16 @@ describe("access subject pickers", () => {
     expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ agentID: "agt_01arz3ndektsv4rrffq69g5fav", teamID: "team-acme" }));
   });
 
-  it("offers a marked custom agent ID in warn mode", async () => {
+  it("never offers a custom agent ID outside the directory", async () => {
     const user = userEvent.setup();
-    const onSubmit = vi.fn();
-    stubIdentityApi({ agentEnforcement: "warn" });
-    render(<FormHarness onSubmit={onSubmit} />);
-
-    await user.selectOptions(await screen.findByTestId("grant-subject-mode"), "agent");
-    await user.selectOptions(await screen.findByTestId("grant-team-select"), "acme");
-    await user.click(await screen.findByRole("button", { name: "Enter a custom agent ID" }));
-    expect(screen.getByTestId("grant-agent-not-in-directory")).toHaveTextContent("Not in directory");
-    await user.type(screen.getByTestId("grant-agent-custom"), "legacy-agent-42");
-    await user.click(screen.getByTestId("grant-create-submit"));
-
-    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ agentID: "legacy-agent-42", teamID: "team-acme" }));
-  });
-
-  it("hides custom agent IDs when directory enforcement is enabled", async () => {
-    const user = userEvent.setup();
-    stubIdentityApi({ agentEnforcement: "enforce" });
+    stubIdentityApi();
     render(<FormHarness />);
 
     await user.selectOptions(await screen.findByTestId("grant-subject-mode"), "agent");
     await user.selectOptions(await screen.findByTestId("grant-team-select"), "acme");
     await screen.findByTestId("grant-agent-select");
     expect(screen.queryByRole("button", { name: "Enter a custom agent ID" })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("grant-agent-custom")).not.toBeInTheDocument();
   });
 
   it("shows active-agent loading, empty, and error states", async () => {

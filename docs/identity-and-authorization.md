@@ -95,16 +95,13 @@ metadata; the ID alone does not authenticate a runtime or prove which software
 made a request. Authentication continues to come from the configured OAuth
 flow or, for enrolled adapters, the session-bound certificate.
 
-New managed agent IDs are platform-generated immutable `agt_<26-character
-lowercase ULID>` values. `MCP_AGENT_DIRECTORY_ENFORCEMENT` controls unknown IDs:
-`warn` is the compatibility default and allows an unknown ID with a runtime-api
-warning; `off` allows unknown IDs without a warning; `enforce` rejects unknown
-IDs and requires the directory to be available. A known inactive agent or an
-agent owned by another subject team is always rejected. The admin access forms show
-the custom-ID escape hatch only in `off` and `warn` modes. The runtime API
-checks grants, sessions, adapter session issuance, and certificate enrollment;
-direct Kubernetes writes bypass these identity-store checks, so create
-sessions through the runtime API wherever directory enforcement is required.
+Agent IDs are platform-generated immutable `agt_<26-character lowercase
+ULID>` values. Agent subjects must resolve to an active directory record owned
+by the selected subject team. Unknown, malformed, inactive, or wrong-team IDs
+are rejected, and agent IDs cannot be entered as free text in the admin access
+forms. The runtime API checks grants, sessions, adapter session issuance, and
+certificate enrollment; use the runtime API for access changes so it can
+validate agent ownership against the identity store.
 Deactivation first marks the agent inactive,
 then revokes its active sessions across namespaces and audits each revocation.
 If revocation fails, the agent remains inactive; retry deactivation to finish.

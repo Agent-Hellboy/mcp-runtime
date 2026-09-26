@@ -1,7 +1,6 @@
 import { fetchJSON, withQuery } from "./client";
 import type {
   AdminOperations,
-  AgentDirectoryConfig,
   AgentPage,
   AgentRecord,
   AuditLogEntry,
@@ -136,15 +135,6 @@ export async function listTeamAgents(
     agents: asArray<AgentRecord>(record, "agents"),
     next_cursor: typeof record.next_cursor === "string" ? record.next_cursor : undefined,
   };
-}
-
-export async function getAgentDirectoryConfig(): Promise<AgentDirectoryConfig> {
-  const payload = asRecord(await fetchJSON("/runtime/agents/config"));
-  const enforcement = payload.enforcement;
-  if (enforcement !== "off" && enforcement !== "warn" && enforcement !== "enforce") {
-    throw new Error("The agent directory returned an invalid enforcement mode.");
-  }
-  return { enforcement };
 }
 
 export async function createTeamAgent(slug: string, name: string): Promise<AgentRecord> {
