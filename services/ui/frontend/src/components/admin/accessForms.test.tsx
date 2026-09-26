@@ -3,7 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { GrantForm, type GrantDraft } from "./accessForms";
+import { GrantForm, SessionForm, type GrantDraft, type SessionDraft } from "./accessForms";
 import { AppProviders } from "../../providers/AppProviders";
 
 const TEAMS = {
@@ -30,6 +30,17 @@ const EMPTY_DRAFT: GrantDraft = {
   expiresAt: "",
 };
 
+const EMPTY_SESSION: SessionDraft = {
+  name: "picker-session",
+  namespace: "mcp-servers",
+  server: "demo",
+  humanID: "",
+  agentID: "",
+  teamID: "",
+  consentedTrust: "low",
+  expiresAt: "",
+};
+
 function stubIdentityApi(options: {
   teams?: unknown;
   members?: Record<string, unknown>;
@@ -38,7 +49,9 @@ function stubIdentityApi(options: {
   failMembers?: boolean;
   holdTeams?: boolean;
   holdMembers?: boolean;
+  holdAgents?: boolean;
   agentEnforcement?: "off" | "warn" | "enforce";
+  failAgents?: boolean;
 } = {}) {
   let releaseTeams: (() => void) | undefined;
   const teamsGate = new Promise<void>((resolve) => {
@@ -48,6 +61,10 @@ function stubIdentityApi(options: {
   const membersGate = new Promise<void>((resolve) => {
     releaseMembers = resolve;
   });
+  let releaseAgents: (() => void) | undefined;
+  const agentsGate = new Promise<void>((resolve) => {
+    releaseAgents = resolve;
+  });
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url.endsWith("/runtime/agents/config")) {
@@ -55,6 +72,10 @@ function stubIdentityApi(options: {
     }
     const agentMatch = url.match(/\/runtime\/teams\/([^/]+)\/agents/);
     if (agentMatch) {
+      if (options.holdAgents) await agentsGate;
+      if (options.failAgents) {
+        return { ok: false, status: 500, json: async () => ({ error: "agent_lookup_failed" }), text: async () => JSON.stringify({ error: "agent_lookup_failed" }) } as unknown as Response;
+      }
       const slug = decodeURIComponent(agentMatch[1]);
       const defaults = { acme: { agents: [
         { id: "agt_01arz3ndektsv4rrffq69g5fav", team_id: "team-acme", team_slug: "acme", name: "Ops Agent", status: "active" },
@@ -88,6 +109,7 @@ function stubIdentityApi(options: {
     fetchMock,
     releaseTeams: () => releaseTeams?.(),
     releaseMembers: () => releaseMembers?.(),
+    releaseAgents: () => releaseAgents?.(),
   };
 }
 
@@ -96,6 +118,24 @@ function FormHarness({ onSubmit = vi.fn() }: { onSubmit?: (draft: GrantDraft) =>
   return (
     <AppProviders>
       <GrantForm
+        draft={draft}
+        servers={[{ name: "demo", namespace: "mcp-servers", team_id: "team-acme", ready: "1/1", status: "Ready" }]}
+        namespaces={["mcp-servers"]}
+        busy={false}
+        submitError=""
+        onChange={setDraft}
+        onCancel={() => {}}
+        onSubmit={() => onSubmit(draft)}
+      />
+    </AppProviders>
+  );
+}
+
+function SessionFormHarness({ onSubmit = vi.fn() }: { onSubmit?: (draft: SessionDraft) => void }) {
+  const [draft, setDraft] = useState(EMPTY_SESSION);
+  return (
+    <AppProviders>
+      <SessionForm
         draft={draft}
         servers={[{ name: "demo", namespace: "mcp-servers", team_id: "team-acme", ready: "1/1", status: "Ready" }]}
         namespaces={["mcp-servers"]}
@@ -213,6 +253,43 @@ describe("access subject pickers", () => {
     await user.selectOptions(await screen.findByTestId("grant-team-select"), "acme");
     await screen.findByTestId("grant-agent-select");
     expect(screen.queryByRole("button", { name: "Enter a custom agent ID" })).not.toBeInTheDocument();
+  });
+
+  it("shows active-agent loading, empty, and error states", async () => {
+    const user = userEvent.setup();
+    const held = stubIdentityApi({ holdAgents: true });
+    const loading = render(<FormHarness />);
+    await user.selectOptions(await screen.findByTestId("grant-subject-mode"), "agent");
+    await user.selectOptions(await screen.findByTestId("grant-team-select"), "acme");
+    expect(await screen.findByTestId("grant-agents-loading")).toBeInTheDocument();
+    held.releaseAgents();
+    expect(await screen.findByTestId("grant-agent-select")).toBeInTheDocument();
+    loading.unmount();
+
+    stubIdentityApi({ agents: { acme: { agents: [] } } });
+    const empty = render(<FormHarness />);
+    await user.selectOptions(await screen.findByTestId("grant-subject-mode"), "agent");
+    await user.selectOptions(await screen.findByTestId("grant-team-select"), "acme");
+    expect(await screen.findByTestId("grant-agents-empty")).toHaveTextContent("This team has no active agents");
+    empty.unmount();
+
+    stubIdentityApi({ failAgents: true });
+    render(<FormHarness />);
+    await user.selectOptions(await screen.findByTestId("grant-subject-mode"), "agent");
+    await user.selectOptions(await screen.findByTestId("grant-team-select"), "acme");
+    expect(await screen.findByTestId("grant-agents-error", {}, { timeout: 4000 })).toHaveTextContent("Team agents could not be loaded");
+  });
+
+  it("requires a 24-hour-defaulted expiry for a cross-team session", async () => {
+    const user = userEvent.setup();
+    stubIdentityApi();
+    render(<SessionFormHarness />);
+
+    await user.selectOptions(await screen.findByTestId("session-subject-mode"), "team");
+    await user.selectOptions(await screen.findByTestId("session-team-select"), "globex");
+    expect(await screen.findByTestId("session-cross-team-banner")).toHaveTextContent("Cross-team access");
+    expect(screen.getByTestId("session-expires")).not.toHaveValue("");
+    expect(screen.getByTestId("session-expires")).toBeRequired();
   });
 
   it("shows cross-team access and requires a 24-hour-defaulted expiry", async () => {
