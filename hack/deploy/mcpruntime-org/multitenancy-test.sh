@@ -14,7 +14,7 @@ set -euo pipefail
 # Default flow:
 #   1. admin: create/update Acme, Globex, and TechCorp teams + users
 #   2. team users: build, push, and deploy tenant MCP servers via platform API
-#   3. acme owner: apply cross-team grants for the cursor agent
+#   3. acme owner: apply bounded cross-team grants for managed team agents
 #   4. globex/techcorp: adapter MCP calls, event checks, no-kubeconfig smoke
 #
 # Required environment (no production defaults — set explicitly for your cluster):
@@ -125,7 +125,9 @@ TECHCORP_NS="${TECHCORP_NS:-mcp-team-${TECHCORP_SLUG}}"
 ACME_SERVER="${ACME_SERVER:-acme-tools-${RUN_ID}}"
 GLOBEX_SERVER="${GLOBEX_SERVER:-globex-tools-${RUN_ID}}"
 TECHCORP_SERVER="${TECHCORP_SERVER:-techcorp-tools-${RUN_ID}}"
-AGENT_ID="${AGENT_ID:-cursor}"
+GLOBEX_AGENT_ID="${GLOBEX_AGENT_ID:-}"
+TECHCORP_AGENT_ID="${TECHCORP_AGENT_ID:-}"
+GLOBEX_DENIED_AGENT_ID="${GLOBEX_DENIED_AGENT_ID:-}"
 
 # Quickstart parity: by default tenant users run with only their saved auth
 # profile (no MCP_* registry/domain env), which is how a real user runs the
@@ -264,6 +266,53 @@ team_id() {
     -H "x-api-key: ${token}" \
     -H "authorization: Bearer ${token}" \
     "${PLATFORM_URL}/api/v1/runtime/teams/${slug}" | jq -er '.team.id'
+}
+
+ensure_managed_agent() {
+  local team_slug="$1"
+  local agent_name="$2"
+  local requested_id="${3:-}"
+  local listing matches agent_id status listed_team
+
+  listing="$(run_as "$ADMIN_PROFILE" agent list "$team_slug" --limit 200)"
+  if [[ -n "$requested_id" ]]; then
+    matches="$(awk -v id="$requested_id" '$1 == id { print $1, $3, $4 }' <<<"$listing")"
+  else
+    matches="$(awk -v name="$agent_name" '$2 == name { print $1, $3, $4 }' <<<"$listing")"
+  fi
+  if [[ -z "$matches" && -z "$requested_id" ]]; then
+    run_as "$ADMIN_PROFILE" agent create "$team_slug" --name "$agent_name" >/dev/null
+    listing="$(run_as "$ADMIN_PROFILE" agent list "$team_slug" --limit 200)"
+    matches="$(awk -v name="$agent_name" '$2 == name { print $1, $3, $4 }' <<<"$listing")"
+  fi
+  [[ "$(wc -l <<<"$matches" | tr -d '[:space:]')" == 1 ]] || {
+    echo "expected one managed agent ${requested_id:-$agent_name} in team ${team_slug}; got: ${matches:-none}" >&2
+    return 1
+  }
+  read -r agent_id status listed_team <<<"$matches"
+  [[ "$status" == "active" && "$listed_team" == "$team_slug" ]] || {
+    echo "managed agent ${agent_id} must be active in team ${team_slug}; got status=${status} team=${listed_team}" >&2
+    return 1
+  }
+  printf '%s\n' "$agent_id"
+}
+
+setup_managed_agents() {
+  local agent_run_suffix
+  agent_run_suffix="$(printf '%s' "$RUN_ID" | tr -cd '[:alnum:]' | tail -c 12)"
+  GLOBEX_AGENT_ID="$(ensure_managed_agent "$GLOBEX_SLUG" "e2e-${agent_run_suffix}-globex" "$GLOBEX_AGENT_ID")"
+  TECHCORP_AGENT_ID="$(ensure_managed_agent "$TECHCORP_SLUG" "e2e-${agent_run_suffix}-techcorp" "$TECHCORP_AGENT_ID")"
+  GLOBEX_DENIED_AGENT_ID="$(ensure_managed_agent "$GLOBEX_SLUG" "e2e-${agent_run_suffix}-denied" "$GLOBEX_DENIED_AGENT_ID")"
+  mkdir -p "$WORK_DIR"
+  jq -n \
+    --arg acmeTeamID "$ACME_TEAM_ID" \
+    --arg globexTeamID "$GLOBEX_TEAM_ID" \
+    --arg globexAgentID "$GLOBEX_AGENT_ID" \
+    --arg globexDeniedAgentID "$GLOBEX_DENIED_AGENT_ID" \
+    --arg techcorpTeamID "$TECHCORP_TEAM_ID" \
+    --arg techcorpAgentID "$TECHCORP_AGENT_ID" \
+    '{acme:{teamID:$acmeTeamID},globex:{teamID:$globexTeamID,agentID:$globexAgentID,deniedAgentID:$globexDeniedAgentID},techcorp:{teamID:$techcorpTeamID,agentID:$techcorpAgentID}}' \
+    >"$WORK_DIR/managed-agents.json"
 }
 
 team_exists() {
@@ -455,13 +504,15 @@ init_grant() {
   local server_name="$3"
   local server_ns="$4"
   local subject_team_id="$5"
+  local subject_agent_id="$6"
 
   run_as "$ACME_PROFILE" access grant init "$grant_name" \
     --namespace "$server_ns" \
     --server "$server_name" \
     --server-namespace "$server_ns" \
     --team-id "$subject_team_id" \
-    --agent-id "$AGENT_ID" \
+    --agent-id "$subject_agent_id" \
+    --expires-in 1h \
     --trust low \
     --side-effect read \
     --tool-rule aaa-ping:allow:low \
@@ -480,13 +531,14 @@ init_session() {
   local server_name="$3"
   local server_ns="$4"
   local subject_team_id="$5"
+  local subject_agent_id="$6"
 
   run_as "$ACME_PROFILE" access session init "$session_name" \
     --namespace "$server_ns" \
     --server "$server_name" \
     --server-namespace "$server_ns" \
     --team-id "$subject_team_id" \
-    --agent-id "$AGENT_ID" \
+    --agent-id "$subject_agent_id" \
     --trust low \
     --policy-version v1 \
     --expires-in 1h \
@@ -583,7 +635,7 @@ setup_demo() {
     local _token
     _token="$(profile_token "$ADMIN_PROFILE")"
     delete_all_sessions "$ADMIN_PROFILE" "$ACME_NS"
-    for _ns_name in "${ACME_NS}/${ACME_SERVER}-${GLOBEX_SLUG}-${AGENT_ID}" "${ACME_NS}/${ACME_SERVER}-${TECHCORP_SLUG}-${AGENT_ID}"; do
+    for _ns_name in "${ACME_NS}/${ACME_SERVER}-${GLOBEX_SLUG}-grant" "${ACME_NS}/${ACME_SERVER}-${TECHCORP_SLUG}-grant"; do
       local _ns="${_ns_name%%/*}" _name="${_ns_name##*/}"
       curl -fsS -X DELETE -H "x-api-key: ${_token}" -H "authorization: Bearer ${_token}" "${PLATFORM_URL}/api/v1/runtime/grants/${_ns}/${_name}" >/dev/null 2>&1 || true
     done
@@ -610,12 +662,14 @@ setup_demo() {
   team_user_login "$GLOBEX_PROFILE" "$GLOBEX_EMAIL" "$GLOBEX_PASSWORD"
   team_user_login "$TECHCORP_PROFILE" "$TECHCORP_EMAIL" "$TECHCORP_PASSWORD"
 
+  setup_managed_agents
+
   local acme_metadata_dir="$WORK_DIR/${ACME_SERVER}/.mcp"
   local globex_metadata_dir="$WORK_DIR/${GLOBEX_SERVER}/.mcp"
   local techcorp_metadata_dir="$WORK_DIR/${TECHCORP_SERVER}/.mcp"
-  local acme_globex_grant="$WORK_DIR/${ACME_SERVER}-${GLOBEX_SLUG}-${AGENT_ID}.yaml"
-  local acme_techcorp_grant="$WORK_DIR/${ACME_SERVER}-${TECHCORP_SLUG}-${AGENT_ID}.yaml"
-  local acme_globex_session="$WORK_DIR/${ACME_SERVER}-${GLOBEX_SLUG}-${AGENT_ID}-manual-session.yaml"
+  local acme_globex_grant="$WORK_DIR/${ACME_SERVER}-${GLOBEX_SLUG}-grant.yaml"
+  local acme_techcorp_grant="$WORK_DIR/${ACME_SERVER}-${TECHCORP_SLUG}-grant.yaml"
+  local acme_globex_session="$WORK_DIR/${ACME_SERVER}-${GLOBEX_SLUG}-manual-session.yaml"
 
   init_metadata "$ACME_PROFILE" "$acme_metadata_dir" "$ACME_SERVER"
   init_metadata "$GLOBEX_PROFILE" "$globex_metadata_dir" "$GLOBEX_SERVER"
@@ -629,13 +683,13 @@ setup_demo() {
   wait_for_rollout "$GLOBEX_PROFILE" "$GLOBEX_NS" "$GLOBEX_SERVER"
   wait_for_rollout "$TECHCORP_PROFILE" "$TECHCORP_NS" "$TECHCORP_SERVER"
 
-  init_grant "$acme_globex_grant" "${ACME_SERVER}-${GLOBEX_SLUG}-${AGENT_ID}" "$ACME_SERVER" "$ACME_NS" "$GLOBEX_TEAM_ID"
-  init_grant "$acme_techcorp_grant" "${ACME_SERVER}-${TECHCORP_SLUG}-${AGENT_ID}" "$ACME_SERVER" "$ACME_NS" "$TECHCORP_TEAM_ID"
-  init_session "$acme_globex_session" "${ACME_SERVER}-${GLOBEX_SLUG}-${AGENT_ID}-manual-session" "$ACME_SERVER" "$ACME_NS" "$GLOBEX_TEAM_ID"
+  init_grant "$acme_globex_grant" "${ACME_SERVER}-${GLOBEX_SLUG}-grant" "$ACME_SERVER" "$ACME_NS" "$GLOBEX_TEAM_ID" "$GLOBEX_AGENT_ID"
+  init_grant "$acme_techcorp_grant" "${ACME_SERVER}-${TECHCORP_SLUG}-grant" "$ACME_SERVER" "$ACME_NS" "$TECHCORP_TEAM_ID" "$TECHCORP_AGENT_ID"
+  init_session "$acme_globex_session" "${ACME_SERVER}-${GLOBEX_SLUG}-manual-session" "$ACME_SERVER" "$ACME_NS" "$GLOBEX_TEAM_ID" "$GLOBEX_AGENT_ID"
   run_as "$ACME_PROFILE" access grant apply --file "$acme_globex_grant"
   run_as "$ACME_PROFILE" access grant apply --file "$acme_techcorp_grant"
   run_as "$ADMIN_PROFILE" access session apply --file "$acme_globex_session"
-  run_as "$ADMIN_PROFILE" access session get "${ACME_SERVER}-${GLOBEX_SLUG}-${AGENT_ID}-manual-session" --namespace "$ACME_NS" >/dev/null
+  run_as "$ADMIN_PROFILE" access session get "${ACME_SERVER}-${GLOBEX_SLUG}-manual-session" --namespace "$ACME_NS" >/dev/null
 }
 
 verify_no_kubeconfig_ops() {
@@ -676,13 +730,14 @@ verify_no_kubeconfig_ops() {
 
 precreate_adapter_session() {
   local profile="$1"
+  local agent_id="$2"
   local token body
   token="$(profile_token "$profile")"
   body="$(curl -fsS \
     -H "x-api-key: ${token}" \
     -H "authorization: Bearer ${token}" \
     -H "content-type: application/json" \
-    --data "{\"serverName\":\"${ACME_SERVER}\",\"namespace\":\"${ACME_NS}\",\"agentID\":\"${AGENT_ID}\"}" \
+    --data "{\"serverName\":\"${ACME_SERVER}\",\"namespace\":\"${ACME_NS}\",\"agentID\":\"${agent_id}\"}" \
     "${PLATFORM_URL}/api/v1/runtime/adapter/sessions")"
   jq -er '.name' <<<"$body" >/dev/null
 }
@@ -722,6 +777,7 @@ adapter_call_add_for() {
   local arg_a="${8}"
   local arg_b="${9}"
   local expected="${10}"
+  local agent_id="${11}"
   local adapter_url="http://${listen}"
 
   stop_listen_port "$listen"
@@ -731,7 +787,7 @@ adapter_call_add_for() {
     --runtime-url "${MCP_URL}/${ACME_SERVER}/mcp" \
     --server "$ACME_SERVER" \
     --namespace "$ACME_NS" \
-    --agent "$AGENT_ID" \
+    --agent "$agent_id" \
     --listen "$listen" \
     --auto-refresh >>"$log_file" 2>&1 &
   local proxy_pid=$!
@@ -830,7 +886,7 @@ adapter_call_add() {
   adapter_call_add_for "$GLOBEX_PROFILE" "$ADAPTER_LISTEN" \
     "$WORK_DIR/adapter.log" "$WORK_DIR/adapter.headers" \
     "$WORK_DIR/adapter-init.body" "$WORK_DIR/adapter-notify.body" "$WORK_DIR/adapter-add.body" \
-    7 9 16
+    7 9 16 "$GLOBEX_AGENT_ID"
 }
 
 verify_events() {
@@ -869,7 +925,7 @@ print_cursor_config() {
   profile_json="$(json_escape "$GLOBEX_PROFILE")"
   server_json="$(json_escape "$ACME_SERVER")"
   ns_json="$(json_escape "$ACME_NS")"
-  agent_json="$(json_escape "$AGENT_ID")"
+  agent_json="$(json_escape "$GLOBEX_AGENT_ID")"
 
   cat <<JSON
 
@@ -901,7 +957,7 @@ MCP_PLATFORM_API_PROFILE=${GLOBEX_PROFILE} ${BIN} adapter proxy \\
   --runtime-url ${MCP_URL}/${ACME_SERVER}/mcp \\
   --server ${ACME_SERVER} \\
   --namespace ${ACME_NS} \\
-  --agent ${AGENT_ID} \\
+  --agent ${GLOBEX_AGENT_ID} \\
   --listen ${ADAPTER_LISTEN} \\
   --auto-refresh
 
@@ -941,13 +997,14 @@ else
   ACME_TEAM_ID="$(team_id "$ACME_SLUG" "$ADMIN_TOKEN")"
   GLOBEX_TEAM_ID="$(team_id "$GLOBEX_SLUG" "$ADMIN_TOKEN")"
   TECHCORP_TEAM_ID="$(team_id "$TECHCORP_SLUG" "$ADMIN_TOKEN")"
+  setup_managed_agents
 fi
 
 wait_for_rollout "$ACME_PROFILE" "$ACME_NS" "$ACME_SERVER"
 wait_for_rollout "$GLOBEX_PROFILE" "$GLOBEX_NS" "$GLOBEX_SERVER"
 wait_for_rollout "$TECHCORP_PROFILE" "$TECHCORP_NS" "$TECHCORP_SERVER"
-verify_grant_exists "$ACME_PROFILE" "${ACME_SERVER}-${GLOBEX_SLUG}-${AGENT_ID}" "$ACME_NS"
-verify_grant_exists "$ACME_PROFILE" "${ACME_SERVER}-${TECHCORP_SLUG}-${AGENT_ID}" "$ACME_NS"
+verify_grant_exists "$ACME_PROFILE" "${ACME_SERVER}-${GLOBEX_SLUG}-grant" "$ACME_NS"
+verify_grant_exists "$ACME_PROFILE" "${ACME_SERVER}-${TECHCORP_SLUG}-grant" "$ACME_NS"
 
 verify_no_kubeconfig_ops
 
@@ -956,24 +1013,24 @@ delete_all_sessions "$ACME_PROFILE" "$ACME_NS"
 verify_direct_public_denied
 
 echo "=== verify: ${GLOBEX_SLUG} adapter call to ${ACME_SLUG}/${ACME_SERVER} ==="
-precreate_adapter_session "$GLOBEX_PROFILE"
+precreate_adapter_session "$GLOBEX_PROFILE" "$GLOBEX_AGENT_ID"
 adapter_call_add
 verify_events
 
 echo "=== verify: ${TECHCORP_SLUG} adapter call to ${ACME_SLUG}/${ACME_SERVER} ==="
-precreate_adapter_session "$TECHCORP_PROFILE"
+precreate_adapter_session "$TECHCORP_PROFILE" "$TECHCORP_AGENT_ID"
 sleep 10
 TECHCORP_ADAPTER_LISTEN="${TECHCORP_ADAPTER_LISTEN:-127.0.0.1:8300}"
 adapter_call_add_for "$TECHCORP_PROFILE" "$TECHCORP_ADAPTER_LISTEN" \
   "$WORK_DIR/techcorp-adapter.log" "$WORK_DIR/techcorp-adapter.headers" \
   "$WORK_DIR/techcorp-init.body" "$WORK_DIR/techcorp-notify.body" "$WORK_DIR/techcorp-add.body" \
-  11 22 33
+  11 22 33 "$TECHCORP_AGENT_ID"
 echo "=== techcorp adapter call: OK (11+22=33) ==="
 
 print_cursor_config
 echo
 echo "multi-tenant flow passed (platform API only, no kubectl/kubeconfig):"
 echo "  - tenant image publish via server push platform API (not admin direct push)"
-echo "  - ${GLOBEX_SLUG}/${AGENT_ID} called ${ACME_SLUG}/${ACME_SERVER} add(7,9)=16 via adapter"
-echo "  - ${TECHCORP_SLUG}/${AGENT_ID} called ${ACME_SLUG}/${ACME_SERVER} add(11,22)=33 via adapter"
+echo "  - ${GLOBEX_SLUG}/${GLOBEX_AGENT_ID} called ${ACME_SLUG}/${ACME_SERVER} add(7,9)=16 via adapter"
+echo "  - ${TECHCORP_SLUG}/${TECHCORP_AGENT_ID} called ${ACME_SLUG}/${ACME_SERVER} add(11,22)=33 via adapter"
 echo "  - admin credentials used only for team bootstrap; tenant flows used email/password login"
