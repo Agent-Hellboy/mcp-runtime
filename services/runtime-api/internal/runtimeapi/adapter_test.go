@@ -447,16 +447,23 @@ func TestGrantRevokeSessionsOnlyTouchesLinkedSessionsAndIsRetrySafe(t *testing.T
 	runtimeServer := &RuntimeServer{accessMgr: accessMgr}
 	runtimeServer.SetAuditWriter(audit)
 	adminCtx := withPrincipal(httptest.NewRequest(http.MethodPost, "/", nil).Context(), principal{Role: roleAdmin, Subject: "admin-1"})
-	revoke := func() *httptest.ResponseRecorder {
-		req := httptest.NewRequest(http.MethodPost, "/api/runtime/grants/mcp-team-acme/cross-team/revoke-sessions", nil).WithContext(adminCtx)
+	revoke := func(path string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, path, nil).WithContext(adminCtx)
 		recorder := httptest.NewRecorder()
 		runtimeServer.Access().HandleGrantItemPath(recorder, req)
 		return recorder
 	}
-	if rec := revoke(); rec.Code != http.StatusOK {
+	if rec := revoke("/api/v1/runtime/grants/mcp-team-acme/cross-team/revoke-sessions"); rec.Code != http.StatusOK {
 		t.Fatalf("first revoke status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if rec := revoke(); rec.Code != http.StatusOK {
+	linkedAfterVersioned, err := accessMgr.GetSession(t.Context(), "linked", "mcp-team-acme")
+	if err != nil || !linkedAfterVersioned.Spec.Revoked {
+		t.Fatalf("linked session after versioned revoke = %#v, err=%v; want revoked", linkedAfterVersioned, err)
+	}
+	if len(audit.events) != 1 || audit.events[0].Action != "grant.session.revoked" {
+		t.Fatalf("audit events after versioned revoke = %#v, want exactly one successful session revocation", audit.events)
+	}
+	if rec := revoke("/api/runtime/grants/mcp-team-acme/cross-team/revoke-sessions"); rec.Code != http.StatusOK {
 		t.Fatalf("retry status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	linkedAfter, err := accessMgr.GetSession(t.Context(), "linked", "mcp-team-acme")

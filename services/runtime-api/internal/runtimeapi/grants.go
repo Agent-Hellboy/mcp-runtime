@@ -75,9 +75,9 @@ func (s *AccessService) HandleGrantItemPath(w http.ResponseWriter, r *http.Reque
 		s.handleGrantPatch(w, r, ns, name)
 		return
 	case http.MethodPost:
-		parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-		if len(parts) == 6 && parts[0] == "api" && parts[1] == "runtime" && parts[2] == "grants" && parts[5] == "revoke-sessions" {
-			s.handleGrantRevokeSessions(w, r, parts[3], parts[4])
+		parts := strings.Split(strings.Trim(serviceutil.NormalizePublicAPIPath(r.URL.Path), "/"), "/")
+		if len(parts) == 5 && parts[0] == "runtime" && parts[1] == "grants" && parts[4] == "revoke-sessions" {
+			s.handleGrantRevokeSessions(w, r, parts[2], parts[3])
 			return
 		}
 		s.handleGrantPostTogglePath(w, r)
