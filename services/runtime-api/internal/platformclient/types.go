@@ -10,6 +10,9 @@ import (
 // Team is a managed platform team and its Kubernetes namespace.
 type Team = internalapi.Team
 
+type Agent = internalapi.Agent
+type AgentPage = internalapi.AgentPage
+
 // TeamMembership is the platform team membership API contract.
 type TeamMembership = platform.TeamMembership
 

@@ -88,6 +88,20 @@ The adapter obtains this identity from the platform and writes it to the
 configured governance headers on every request. It removes caller-supplied
 identity headers before applying the issued values.
 
+The platform agent directory gives each managed `AgentID` a stable record
+owned by one team. Its display name and active status help administrators
+select and govern agents in grants and sessions. The directory is governance
+metadata; the ID alone does not authenticate a runtime or prove which software
+made a request. Authentication continues to come from the configured OAuth
+flow or, for enrolled adapters, the session-bound certificate.
+
+For audit, keep the **actor** (the agent named by the session) separate from
+the **authority** (the human or team that delegated access). A session and its
+gateway decisions should preserve both identities, along with the grant,
+server, MCP method/tool, decision, and request trace ID. MCP's OAuth roles and
+emerging workload identity guidance provide useful context; an OAuth client
+registration or `client_id` does not automatically create a managed agent.
+
 In the default header mode, the gateway reads these headers. Therefore, the
 adapter, ingress path, and gateway form a trust boundary: untrusted clients
 should not be able to bypass the adapter and inject governance headers directly.
@@ -101,6 +115,11 @@ Adapter certificates are opt-in (`MCP_ADAPTER_CERTIFICATES=true`) and
 require the platform-wide `MCP_MTLS_CLUSTER_ISSUER` and `MCP_TRUST_DOMAIN`
 settings. Persisted `auth.mode: mtls` resources must be
 migrated to OAuth; that per-server mode was removed.
+
+Further reading: [MCP authorization](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization),
+[WIMSE Agent Identity Management Services draft](https://datatracker.ietf.org/doc/draft-ietf-wimse-aims/00/)
+(work in progress), [AUDIT delegation and interaction traceability proposal](https://datatracker.ietf.org/doc/bofreq-kuhlewind-audit-agent-use-of-delegation-and-interaction-traceability/),
+and [SPIFFE SVIDs](https://spiffe.io/docs/latest/deploying/svids/).
 
 ## Grant: administrator-approved authority
 

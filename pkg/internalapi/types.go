@@ -58,6 +58,35 @@ type AuditEvent struct {
 	ImageRef         string `json:"image_ref,omitempty"`
 	ServerName       string `json:"server_name,omitempty"`
 	DeploymentTarget string `json:"deployment_target,omitempty"`
+	AgentID          string `json:"agent_id,omitempty"`
+	TeamID           string `json:"team_id,omitempty"`
+}
+
+type Agent struct {
+	ID            string     `json:"id"`
+	TeamID        string     `json:"team_id"`
+	TeamSlug      string     `json:"team_slug"`
+	Name          string     `json:"name"`
+	Status        string     `json:"status"`
+	CreatedBy     string     `json:"created_by,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
+	DeactivatedAt *time.Time `json:"deactivated_at,omitempty"`
+	DeactivatedBy string     `json:"deactivated_by,omitempty"`
+}
+
+type AgentPage struct {
+	Agents     []Agent `json:"agents"`
+	NextCursor string  `json:"next_cursor,omitempty"`
+}
+
+type AgentCreateRequest struct {
+	Name      string `json:"name"`
+	CreatedBy string `json:"created_by"`
+}
+
+type AgentRenameRequest struct {
+	Name string `json:"name"`
 }
 
 // TeamCreateRequest is POST /internal/identity/teams.

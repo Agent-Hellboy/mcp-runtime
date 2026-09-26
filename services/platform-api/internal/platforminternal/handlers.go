@@ -26,6 +26,11 @@ type PlatformStore interface {
 	CreateTeam(ctx context.Context, slug, name, createdByUserID string) (platformstore.Team, error)
 	ListTeams(ctx context.Context) ([]platformstore.Team, error)
 	GetTeamBySlug(ctx context.Context, slug string) (platformstore.Team, bool, error)
+	CreateAgent(ctx context.Context, teamSlug, name, createdBy string) (platformstore.Agent, error)
+	ListAgents(ctx context.Context, filter platformstore.AgentListFilter) (platformstore.AgentPage, error)
+	GetAgent(ctx context.Context, id string) (platformstore.Agent, bool, error)
+	RenameAgent(ctx context.Context, id, name string) (platformstore.Agent, error)
+	SetAgentStatus(ctx context.Context, id, status, actorID string) (platformstore.Agent, error)
 	DeleteTeamBySlug(ctx context.Context, slug string) error
 	ListNamespaces(ctx context.Context) ([]map[string]any, error)
 	GetNamespace(ctx context.Context, namespace string) (map[string]any, bool, error)
@@ -49,10 +54,89 @@ func (h Handler) Register(mux *http.ServeMux) {
 	mux.Handle("/internal/audit", h.authorize(http.HandlerFunc(h.audit)))
 	mux.Handle("/internal/identity/teams", h.authorize(http.HandlerFunc(h.teams)))
 	mux.Handle("/internal/identity/teams/", h.authorize(http.HandlerFunc(h.teamPath)))
+	mux.Handle("/internal/identity/agents/", h.authorize(http.HandlerFunc(h.agentPath)))
 	mux.Handle("/internal/identity/namespaces", h.authorize(http.HandlerFunc(h.namespaces)))
 	mux.Handle("/internal/identity/namespaces/", h.authorize(http.HandlerFunc(h.namespaceItem)))
 	mux.Handle("/internal/identity/users", h.authorize(http.HandlerFunc(h.createUser)))
 	mux.Handle("/internal/operations/snapshot", h.authorize(http.HandlerFunc(h.operationsSnapshot)))
+}
+
+func (h Handler) agentPath(w http.ResponseWriter, r *http.Request) {
+	path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/internal/identity/agents/"), "/")
+	parts := strings.Split(path, "/")
+	if len(parts) == 0 || strings.TrimSpace(parts[0]) == "" {
+		apihttp.WriteEnvelope(w, http.StatusNotFound, apihttp.CodeNotFound, "agent not found")
+		return
+	}
+	id := parts[0]
+	if len(parts) == 1 && r.Method == http.MethodGet {
+		item, ok, err := h.Store.GetAgent(r.Context(), id)
+		if err != nil {
+			apihttp.WriteEnvelope(w, http.StatusInternalServerError, apihttp.CodeQueryFailed, "failed to get agent")
+			return
+		}
+		if !ok {
+			apihttp.WriteEnvelope(w, http.StatusNotFound, apihttp.CodeNotFound, "agent not found")
+			return
+		}
+		writeJSON(w, http.StatusOK, agentToInternal(item))
+		return
+	}
+	if len(parts) == 1 && r.Method == http.MethodPatch {
+		var request internalapi.AgentRenameRequest
+		if err := decodeJSON(r, &request); err != nil {
+			apihttp.WriteEnvelope(w, http.StatusBadRequest, apihttp.CodeInvalidRequestBody, "invalid request body")
+			return
+		}
+		item, err := h.Store.RenameAgent(r.Context(), id, request.Name)
+		if err != nil {
+			writeAgentStoreError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, agentToInternal(item))
+		return
+	}
+	if len(parts) == 2 && r.Method == http.MethodPost && (parts[1] == "deactivate" || parts[1] == "reactivate") {
+		var request struct {
+			ActorID string `json:"actor_id"`
+		}
+		if err := decodeJSON(r, &request); err != nil {
+			apihttp.WriteEnvelope(w, http.StatusBadRequest, apihttp.CodeInvalidRequestBody, "invalid request body")
+			return
+		}
+		status := "inactive"
+		if parts[1] == "reactivate" {
+			status = "active"
+		}
+		item, err := h.Store.SetAgentStatus(r.Context(), id, status, request.ActorID)
+		if err != nil {
+			writeAgentStoreError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, agentToInternal(item))
+		return
+	}
+	methodNotAllowed(w)
+}
+
+func writeAgentStoreError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		apihttp.WriteEnvelope(w, http.StatusNotFound, apihttp.CodeNotFound, "team not found")
+	case errors.Is(err, platformstore.ErrAgentNotFound):
+		apihttp.WriteEnvelope(w, http.StatusNotFound, apihttp.CodeNotFound, "agent not found")
+	case errors.Is(err, platformstore.ErrAgentNameTaken):
+		apihttp.WriteEnvelope(w, http.StatusConflict, apihttp.CodeConflict, "an agent with this name already exists in the team")
+	case errors.Is(err, platformstore.ErrInvalidAgentName):
+		apihttp.WriteEnvelope(w, http.StatusBadRequest, apihttp.CodeInvalidRequestBody, err.Error())
+	default:
+		apihttp.WriteEnvelope(w, http.StatusInternalServerError, apihttp.CodeQueryFailed, "failed to update agent")
+	}
+}
+
+func agentToInternal(item platformstore.Agent) internalapi.Agent {
+	return internalapi.Agent{ID: item.ID, TeamID: item.TeamID, TeamSlug: item.TeamSlug, Name: item.Name, Status: item.Status,
+		CreatedBy: item.CreatedBy, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt, DeactivatedAt: item.DeactivatedAt, DeactivatedBy: item.DeactivatedBy}
 }
 
 func (h Handler) authorize(next http.Handler) http.Handler {
@@ -208,9 +292,63 @@ func (h Handler) teamPath(w http.ResponseWriter, r *http.Request) {
 		h.teamMemberDelete(w, r, slug, parts[2])
 	case len(parts) == 2 && parts[1] == "users" && r.Method == http.MethodPost:
 		h.teamUserCreate(w, r, slug)
+	case len(parts) == 2 && parts[1] == "agents" && (r.Method == http.MethodGet || r.Method == http.MethodPost):
+		h.teamAgents(w, r, slug)
 	default:
 		methodNotAllowed(w)
 	}
+}
+
+func (h Handler) teamAgents(w http.ResponseWriter, r *http.Request, slug string) {
+	if r.Method == http.MethodPost {
+		var request internalapi.AgentCreateRequest
+		if err := decodeJSON(r, &request); err != nil {
+			apihttp.WriteEnvelope(w, http.StatusBadRequest, apihttp.CodeInvalidRequestBody, "invalid request body")
+			return
+		}
+		item, err := h.Store.CreateAgent(r.Context(), slug, request.Name, request.CreatedBy)
+		if err != nil {
+			writeAgentStoreError(w, err)
+			return
+		}
+		if team, ok, err := h.Store.GetTeamBySlug(r.Context(), slug); err == nil && ok {
+			item.TeamSlug = team.Slug
+		}
+		writeJSON(w, http.StatusCreated, agentToInternal(item))
+		return
+	}
+	query := r.URL.Query()
+	limit := 0
+	if raw := strings.TrimSpace(query.Get("limit")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > 200 {
+			apihttp.WriteEnvelope(w, http.StatusBadRequest, apihttp.CodeInvalidRequestBody, "limit must be between 1 and 200")
+			return
+		}
+		limit = parsed
+	}
+	status := strings.TrimSpace(query.Get("status"))
+	if status != "" && status != "active" && status != "inactive" {
+		apihttp.WriteEnvelope(w, http.StatusBadRequest, apihttp.CodeInvalidRequestBody, "status must be active or inactive")
+		return
+	}
+	page, err := h.Store.ListAgents(r.Context(), platformstore.AgentListFilter{TeamSlug: slug, Status: status,
+		Query: query.Get("q"), Cursor: query.Get("cursor"), Limit: limit})
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			apihttp.WriteEnvelope(w, http.StatusNotFound, apihttp.CodeNotFound, "team not found")
+		} else if strings.Contains(err.Error(), "invalid cursor") {
+			apihttp.WriteEnvelope(w, http.StatusBadRequest, apihttp.CodeInvalidRequestBody, "invalid cursor")
+		} else {
+			apihttp.WriteEnvelope(w, http.StatusInternalServerError, apihttp.CodeQueryFailed, "failed to list agents")
+		}
+		return
+	}
+	out := internalapi.AgentPage{Agents: make([]internalapi.Agent, 0, len(page.Agents)), NextCursor: page.NextCursor}
+	for _, item := range page.Agents {
+		out.Agents = append(out.Agents, agentToInternal(item))
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (h Handler) teamItemGet(w http.ResponseWriter, r *http.Request, slug string) {

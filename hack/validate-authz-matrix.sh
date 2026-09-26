@@ -30,6 +30,7 @@ while IFS= read -r row; do
   method=$(echo "$row" | jq -r .method)
   role=$(echo "$row" | jq -r .role)
   want=$(echo "$row" | jq -r .expect)
+  body=$(echo "$row" | jq -r '.body // empty')
   headers=()
   case "$role" in
     anon) ;;
@@ -38,7 +39,11 @@ while IFS= read -r row; do
     ingest-key) headers=(-H "x-api-key: $INGEST_KEY") ;;
     *) echo "SKIP unknown role $role for $method $path"; continue ;;
   esac
-  got=$(curl -sS -o /dev/null -w '%{http_code}' -X "$method" "${headers[@]}" "${BASE}${path}" || echo "000")
+  request_args=()
+  if [ -n "$body" ]; then
+    request_args=(-H "content-type: application/json" --data "$body")
+  fi
+  got=$(curl -sS -o /dev/null -w '%{http_code}' -X "$method" "${headers[@]}" "${request_args[@]}" "${BASE}${path}" || echo "000")
   if [ "$got" = "$want" ]; then
     echo "PASS $method $path role=$role"
     pass=$((pass + 1))

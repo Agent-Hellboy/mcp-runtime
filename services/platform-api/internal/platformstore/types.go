@@ -68,6 +68,35 @@ type Team struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// Agent is a team-owned governance record for attributing MCP actions.
+type Agent struct {
+	ID            string     `json:"id"`
+	TeamID        string     `json:"team_id"`
+	TeamSlug      string     `json:"team_slug"`
+	Name          string     `json:"name"`
+	Status        string     `json:"status"`
+	CreatedBy     string     `json:"created_by,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
+	DeactivatedAt *time.Time `json:"deactivated_at,omitempty"`
+	DeactivatedBy string     `json:"deactivated_by,omitempty"`
+}
+
+// AgentListFilter bounds and filters an agent directory query.
+type AgentListFilter struct {
+	TeamSlug string
+	Status   string
+	Query    string
+	Cursor   string
+	Limit    int
+}
+
+// AgentPage is a bounded page of agent records.
+type AgentPage struct {
+	Agents     []Agent `json:"agents"`
+	NextCursor string  `json:"next_cursor,omitempty"`
+}
+
 // TeamMembership is the platform team membership API contract.
 type TeamMembership = platform.TeamMembership
 
@@ -96,6 +125,8 @@ type AuditEvent struct {
 	ImageRef         string `json:"image_ref,omitempty"`
 	ServerName       string `json:"server_name,omitempty"`
 	DeploymentTarget string `json:"deployment_target,omitempty"`
+	AgentID          string `json:"agent_id,omitempty"`
+	TeamID           string `json:"team_id,omitempty"`
 }
 
 // AuditLog is the read-side platform audit record returned to administrators.
@@ -115,6 +146,8 @@ type AuditLog struct {
 	ImageRef         string    `json:"image_ref,omitempty"`
 	ServerName       string    `json:"server_name,omitempty"`
 	DeploymentTarget string    `json:"deployment_target,omitempty"`
+	AgentID          string    `json:"agent_id,omitempty"`
+	TeamID           string    `json:"team_id,omitempty"`
 	CreatedAt        time.Time `json:"created_at"`
 }
 

@@ -58,6 +58,38 @@ func (f *fakeStore) GetTeamBySlug(_ context.Context, slug string) (platformstore
 	return platformstore.Team{ID: "team-1", Slug: slug, Name: "Core", Namespace: "mcp-team-core"}, true, nil
 }
 
+func (f *fakeStore) CreateAgent(_ context.Context, slug, name, createdBy string) (platformstore.Agent, error) {
+	return platformstore.Agent{ID: "agt_01arz3ndektsv4rrffq69g5fav", TeamID: "team-1", TeamSlug: slug, Name: name, Status: "active", CreatedBy: createdBy}, nil
+}
+
+func (f *fakeStore) ListAgents(context.Context, platformstore.AgentListFilter) (platformstore.AgentPage, error) {
+	return platformstore.AgentPage{Agents: []platformstore.Agent{}}, nil
+}
+
+func (f *fakeStore) GetAgent(_ context.Context, id string) (platformstore.Agent, bool, error) {
+	return platformstore.Agent{ID: id, TeamID: "team-1", TeamSlug: "core", Status: "active"}, true, nil
+}
+
+func (f *fakeStore) RenameAgent(_ context.Context, id, name string) (platformstore.Agent, error) {
+	return platformstore.Agent{ID: id, TeamID: "team-1", TeamSlug: "core", Name: name, Status: "active"}, nil
+}
+
+func (f *fakeStore) SetAgentStatus(_ context.Context, id, status, actorID string) (platformstore.Agent, error) {
+	return platformstore.Agent{ID: id, TeamID: "team-1", TeamSlug: "core", Status: status, DeactivatedBy: actorID}, nil
+}
+
+func TestTeamAgentDirectoryInternalRoutesRequireInternalToken(t *testing.T) {
+	mux := newTestServer(&fakeStore{})
+	for _, path := range []string{"/internal/identity/teams/core/agents", "/internal/identity/agents/agt_01arz3ndektsv4rrffq69g5fav"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("GET %s status = %d, want 401", path, rec.Code)
+		}
+	}
+}
+
 func (f *fakeStore) DeleteTeamBySlug(context.Context, string) error {
 	return nil
 }
@@ -153,15 +185,34 @@ func TestResolveIDsAndAudit(t *testing.T) {
 		t.Fatalf("resolve status=%d body=%s", rec.Code, rec.Body.String())
 	}
 
-	req = httptest.NewRequest(http.MethodPost, "/internal/audit", bytes.NewBufferString(`{"user_id":"user-1","action":"deploy","resource":"server","status":"success"}`))
+	req = httptest.NewRequest(http.MethodPost, "/internal/audit", bytes.NewBufferString(`{"user_id":"user-1","action":"agent.created","resource":"agent","status":"success","agent_id":"agt_01arz3ndektsv4rrffq69g5fav","team_id":"team-1"}`))
 	req.Header.Set("Authorization", "Bearer internal-token")
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("audit status = %d", rec.Code)
 	}
-	if store.audit.UserID != "user-1" || store.audit.Action != "deploy" {
+	if store.audit.UserID != "user-1" || store.audit.Action != "agent.created" || store.audit.AgentID != "agt_01arz3ndektsv4rrffq69g5fav" || store.audit.TeamID != "team-1" {
 		t.Fatalf("audit = %#v", store.audit)
+	}
+}
+
+func TestInternalAgentRoutesReturnDirectoryRecords(t *testing.T) {
+	handler := newTestServer(&fakeStore{})
+	req := httptest.NewRequest(http.MethodPost, "/internal/identity/teams/core/agents", bytes.NewBufferString(`{"name":"Release Planner","created_by":"user-1"}`))
+	req.Header.Set("Authorization", "Bearer internal-token")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated || !bytes.Contains(rec.Body.Bytes(), []byte(`"id":"agt_01arz3ndektsv4rrffq69g5fav"`)) {
+		t.Fatalf("create agent status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/internal/identity/teams/core/agents?status=active&limit=25", nil)
+	req.Header.Set("Authorization", "Bearer internal-token")
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte(`"agents":[]`)) {
+		t.Fatalf("list agents status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
 

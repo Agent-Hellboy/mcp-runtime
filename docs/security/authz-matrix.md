@@ -72,6 +72,12 @@ Expected codes:
 | `/api/v1/runtime/teams`                                  | POST          | 401  | 403         | 403      | 200       | 401/403    | Admin-only team + namespace provisioning. |
 | `/api/v1/runtime/teams/{id}`                             | GET           | 401  | 200         | 200      | 200       | 401/403    | Team members can read only their teams; admins can read all teams. |
 | `/api/v1/runtime/teams/{id}/members`                     | GET, POST     | 401  | 200         | 200      | 200       | 401/403    | POST requires admin or team owner. |
+| `/api/v1/runtime/teams/{slug}/agents`                    | GET           | 401  | 200         | 200      | 200       | 401/403    | Team members can list/search their team's agents. |
+| `/api/v1/runtime/teams/{slug}/agents`                    | POST          | 401  | 403         | 403      | 201       | 401/403    | Create requires admin or owning-team owner. |
+| `/api/v1/runtime/agents/{id}`                            | GET           | 401  | 200/403     | 200/403  | 200/404   | 401/403    | Admin/team members can view; other teams are forbidden. |
+| `/api/v1/runtime/agents/{id}`                            | PATCH         | 401  | 403         | 403      | 200/404   | 401/403    | Rename requires admin or owning-team owner. |
+| `/api/v1/runtime/agents/{id}/deactivate`               | POST          | 401  | 403         | 403      | 200/404   | 401/403    | Lifecycle change requires admin or owning-team owner. |
+| `/api/v1/runtime/agents/{id}/reactivate`               | POST          | 401  | 403         | 403      | 200/404   | 401/403    | Lifecycle change requires admin or owning-team owner. |
 | `/api/v1/users`                                          | POST          | 401  | 403         | 403      | 200       | 401/403    | Admin-only password user create. |
 | `/api/v1/runtime/namespaces`                             | GET           | 401  | 200         | 200      | 200       | 401/403    | |
 | `/api/v1/runtime/namespaces/{name}`                      | GET           | 401  | 200         | 200      | 200       | 401/403    | |

@@ -24,6 +24,13 @@ type Client struct {
 	HTTP    *http.Client
 }
 
+var (
+	ErrAgentNotFound    = errors.New("agent not found")
+	ErrTeamNotFound     = errors.New("team not found")
+	ErrAgentNameTaken   = errors.New("agent name already exists in team")
+	ErrInvalidAgentName = errors.New("invalid agent name")
+)
+
 func (c *Client) httpClient() *http.Client {
 	if c.HTTP != nil {
 		return c.HTTP
@@ -102,6 +109,112 @@ func (c *Client) CreateTeam(ctx context.Context, slug, name, createdByUserID str
 		return Team{}, fmt.Errorf("create team: status %d", status)
 	}
 	return team, nil
+}
+
+func (c *Client) CreateAgent(ctx context.Context, teamSlug, name, createdBy string) (Agent, error) {
+	var item Agent
+	path := "/internal/identity/teams/" + url.PathEscape(teamSlug) + "/agents"
+	status, err := c.authorizedJSON(ctx, http.MethodPost, path, internalapi.AgentCreateRequest{Name: name, CreatedBy: createdBy}, &item)
+	if err != nil {
+		return Agent{}, err
+	}
+	if status == http.StatusConflict {
+		return Agent{}, ErrAgentNameTaken
+	}
+	if status == http.StatusBadRequest {
+		return Agent{}, ErrInvalidAgentName
+	}
+	if status == http.StatusNotFound {
+		return Agent{}, ErrTeamNotFound
+	}
+	if status != http.StatusCreated {
+		return Agent{}, fmt.Errorf("create agent: status %d", status)
+	}
+	return item, nil
+}
+
+func (c *Client) ListAgents(ctx context.Context, teamSlug, statusFilter, q, cursor string, limit int) (AgentPage, error) {
+	params := url.Values{}
+	if statusFilter != "" {
+		params.Set("status", statusFilter)
+	}
+	if q != "" {
+		params.Set("q", q)
+	}
+	if cursor != "" {
+		params.Set("cursor", cursor)
+	}
+	if limit > 0 {
+		params.Set("limit", fmt.Sprintf("%d", limit))
+	}
+	path := "/internal/identity/teams/" + url.PathEscape(teamSlug) + "/agents"
+	if encoded := params.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var page AgentPage
+	status, err := c.authorizedJSON(ctx, http.MethodGet, path, nil, &page)
+	if err != nil {
+		return AgentPage{}, err
+	}
+	if status == http.StatusNotFound {
+		return AgentPage{}, ErrTeamNotFound
+	}
+	if status != http.StatusOK {
+		return AgentPage{}, fmt.Errorf("list agents: status %d", status)
+	}
+	return page, nil
+}
+
+func (c *Client) GetAgent(ctx context.Context, id string) (Agent, bool, error) {
+	var item Agent
+	status, err := c.authorizedJSON(ctx, http.MethodGet, "/internal/identity/agents/"+url.PathEscape(id), nil, &item)
+	if err != nil {
+		return Agent{}, false, err
+	}
+	if status == http.StatusNotFound {
+		return Agent{}, false, nil
+	}
+	if status != http.StatusOK {
+		return Agent{}, false, fmt.Errorf("get agent: status %d", status)
+	}
+	return item, true, nil
+}
+
+func (c *Client) RenameAgent(ctx context.Context, id, name string) (Agent, error) {
+	var item Agent
+	status, err := c.authorizedJSON(ctx, http.MethodPatch, "/internal/identity/agents/"+url.PathEscape(id), internalapi.AgentRenameRequest{Name: name}, &item)
+	if err != nil {
+		return Agent{}, err
+	}
+	if status == http.StatusNotFound {
+		return Agent{}, ErrAgentNotFound
+	}
+	if status == http.StatusConflict {
+		return Agent{}, ErrAgentNameTaken
+	}
+	if status == http.StatusBadRequest {
+		return Agent{}, ErrInvalidAgentName
+	}
+	if status != http.StatusOK {
+		return Agent{}, fmt.Errorf("rename agent: status %d", status)
+	}
+	return item, nil
+}
+
+func (c *Client) SetAgentStatus(ctx context.Context, id, statusName, actorID string) (Agent, error) {
+	var item Agent
+	path := "/internal/identity/agents/" + url.PathEscape(id) + "/" + statusName
+	status, err := c.authorizedJSON(ctx, http.MethodPost, path, map[string]string{"actor_id": actorID}, &item)
+	if err != nil {
+		return Agent{}, err
+	}
+	if status == http.StatusNotFound {
+		return Agent{}, ErrAgentNotFound
+	}
+	if status != http.StatusOK {
+		return Agent{}, fmt.Errorf("set agent status: status %d", status)
+	}
+	return item, nil
 }
 
 func (c *Client) DeleteTeamBySlug(ctx context.Context, slug string) error {

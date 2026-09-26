@@ -47,6 +47,9 @@ func (s *RuntimeServer) HandleRuntimeTeamItemPath(w http.ResponseWriter, r *http
 	case len(parts) == 2 && parts[1] == "users" && r.Method == http.MethodPost:
 		s.handleRuntimeTeamUserCreate(w, r, p, teamSlug)
 		return
+	case len(parts) == 2 && parts[1] == "agents":
+		s.HandleRuntimeTeamAgents(w, r, p, teamSlug)
+		return
 	case len(parts) == 3 && parts[1] == "members" && r.Method == http.MethodPut:
 		s.handleRuntimeTeamMemberUpsert(w, r, p, teamSlug, strings.TrimSpace(parts[2]))
 		return
