@@ -594,6 +594,7 @@ wait_managed_port() {
   local label="$4"
   local tries="${5:-60}"
   local i
+  local stable_listen_checks=0
 
   for i in $(seq 1 "${tries}"); do
     if ! kill -0 "${pid}" >/dev/null 2>&1; then
@@ -605,7 +606,16 @@ wait_managed_port() {
       return 1
     fi
     if port_is_listening "${port}"; then
-      return 0
+      # A Kubernetes port-forward may bind localhost before discovering that
+      # its selected pod is terminating. Require a brief stable window so
+      # port_forward_bg can retry that transient failure instead of returning
+      # a dead listener to the caller.
+      stable_listen_checks=$((stable_listen_checks + 1))
+      if (( stable_listen_checks >= 3 )); then
+        return 0
+      fi
+    else
+      stable_listen_checks=0
     fi
     sleep 1
   done
