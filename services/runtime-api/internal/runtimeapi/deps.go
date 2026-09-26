@@ -88,7 +88,7 @@ func writeAPIErrorCode(w http.ResponseWriter, status int, code, message string, 
 
 func stableCodeForStatus(status int) string {
 	switch status {
-	case http.StatusBadRequest:
+	case http.StatusBadRequest, http.StatusUnprocessableEntity:
 		return apihttp.CodeInvalidRequestBody
 	case http.StatusUnauthorized:
 		return apihttp.CodeUnauthorized

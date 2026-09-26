@@ -594,6 +594,7 @@ wait_managed_port() {
   local label="$4"
   local tries="${5:-60}"
   local i
+  local stable_listen_checks=0
 
   for i in $(seq 1 "${tries}"); do
     if ! kill -0 "${pid}" >/dev/null 2>&1; then
@@ -605,7 +606,16 @@ wait_managed_port() {
       return 1
     fi
     if port_is_listening "${port}"; then
-      return 0
+      # A Kubernetes port-forward may bind localhost before discovering that
+      # its selected pod is terminating. Require a brief stable window so
+      # port_forward_bg can retry that transient failure instead of returning
+      # a dead listener to the caller.
+      stable_listen_checks=$((stable_listen_checks + 1))
+      if (( stable_listen_checks >= 3 )); then
+        return 0
+      fi
+    else
+      stable_listen_checks=0
     fi
     sleep 1
   done
@@ -1121,6 +1131,56 @@ ensure_adapter_proxy_prerequisites() {
   refresh_mcp_proxy_urls
 }
 
+ensure_adapter_agent_identity() {
+  if [[ -n "${ADAPTER_AGENT_ID:-}" && -n "${ADAPTER_CALLER_TOKEN:-}" ]]; then
+    return
+  fi
+
+  ensure_api_port_forward
+  ensure_gateway_port_forward
+
+  local admin_token team_slug member_email member_password agent_response
+  local -a platform_env
+  admin_token="$(PLATFORM_ADMIN_EMAIL="${PLATFORM_ADMIN_EMAIL}" PLATFORM_ADMIN_PASSWORD="${PLATFORM_ADMIN_PASSWORD}" python3 -c '
+import json, os
+print(json.dumps({"email": os.environ["PLATFORM_ADMIN_EMAIL"], "password": os.environ["PLATFORM_ADMIN_PASSWORD"]}))
+' | curl -fsS -X POST \
+    -H "content-type: application/json" \
+    --data-binary @- \
+    "http://127.0.0.1:${API_SERVICE_PORT}/api/v1/auth/login" | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')"
+
+  team_slug="e2e-adapter-$(date +%s)"
+  member_email="${team_slug}@mcpruntime.org"
+  member_password="test-password-123"
+  platform_env=(
+    "MCP_PLATFORM_API_URL=http://127.0.0.1:${SENTINEL_PORT}"
+    "MCP_PLATFORM_API_TOKEN=${admin_token}"
+  )
+  env "${platform_env[@]}" ./bin/mcp-runtime team create "${team_slug}" \
+    --name "E2E adapter ${team_slug}" >/dev/null
+  env "${platform_env[@]}" ./bin/mcp-runtime team user create "${team_slug}" \
+    --email "${member_email}" \
+    --password "${member_password}" \
+    --role member >/dev/null
+
+  agent_response="$(curl -fsS -X POST \
+    -H "Authorization: Bearer ${admin_token}" \
+    -H "content-type: application/json" \
+    --data '{"name":"E2E adapter agent"}' \
+    "http://127.0.0.1:${SENTINEL_PORT}/api/v1/runtime/teams/${team_slug}/agents")"
+  ADAPTER_AGENT_ID="$(printf '%s' "${agent_response}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["agent"]["id"])')"
+  ADAPTER_TEAM_ID="$(printf '%s' "${agent_response}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["agent"]["team_id"])')"
+  ADAPTER_AGENT_EXPIRES_AT="$(python3 -c 'from datetime import datetime,timedelta,timezone; print((datetime.now(timezone.utc)+timedelta(hours=1)).replace(microsecond=0).isoformat().replace("+00:00","Z"))')"
+  ADAPTER_PLATFORM_TOKEN="${admin_token}"
+  ADAPTER_CALLER_TOKEN="$(ADAPTER_MEMBER_EMAIL="${member_email}" ADAPTER_MEMBER_PASSWORD="${member_password}" python3 -c '
+import json, os
+print(json.dumps({"email": os.environ["ADAPTER_MEMBER_EMAIL"], "password": os.environ["ADAPTER_MEMBER_PASSWORD"]}))
+' | curl -fsS -X POST \
+    -H "content-type: application/json" \
+    --data-binary @- \
+    "http://127.0.0.1:${API_SERVICE_PORT}/api/v1/auth/login" | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')"
+}
+
 start_e2e_adapter_proxy() {
   local adapter_agent_id="$1"
   local platform_token="$2"
@@ -1240,7 +1300,7 @@ PY
 # now stamps the policy revision on the server pods to force an immediate
 # refresh; assert both the stamp and a short propagation budget.
 run_tenant_owner_adapter_quickstart() {
-  local stamp team namespace owner_email owner_password server image agent grant
+  local stamp team namespace owner_email owner_password server image agent grant agent_response
   local runtime_url proxy_url policy_revision pod_revisions
   stamp="$(date +%s)"
   team="e2e-tq-${stamp}"
@@ -1248,7 +1308,6 @@ run_tenant_owner_adapter_quickstart() {
   owner_email="${team}-owner@mcpruntime.org"
   owner_password="e2e-owner-pass-${stamp}"
   server="tq-${stamp}"
-  agent="cursor-${stamp}"
   grant="${server}-cursor"
   image="registry.registry.svc.cluster.local:5000/${team}/${server}"
   TENANT_QS_DIR="${WORKDIR}/tenant-quickstart"
@@ -1264,6 +1323,12 @@ run_tenant_owner_adapter_quickstart() {
 
   local registry_ingress_before registry_ingress_after
   registry_ingress_before="$(registry_ingress_host_snapshot)"
+  agent_response="$(curl -fsS -X POST \
+    -H "Authorization: Bearer ${ADAPTER_PLATFORM_TOKEN}" \
+    -H "content-type: application/json" \
+    --data '{"name":"E2E tenant quickstart agent"}' \
+    "http://127.0.0.1:${SENTINEL_PORT}/api/v1/runtime/teams/${team}/agents")"
+  agent="$(printf '%s' "${agent_response}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["agent"]["id"])')"
 
   log_line policy "tenant quickstart: owner logs in and pushes/deploys ${server} with --scope tenant"
   tenant_owner_cli auth login --api-url "http://127.0.0.1:${SENTINEL_PORT}" \
@@ -4105,18 +4170,12 @@ EOF
   if scenario_selected "governance" || scenario_selected "adapter-proxy"; then
     # Phase 6: exercise the platform-issued adapter-session endpoint. The
     # existing governance grant pins humanID to ${HUMAN_ID}, while this flow
-    # calls the endpoint as the platform admin principal. Apply a second,
-    # per-run agent-scoped grant just for this test. The endpoint must pick the
+    # uses a team member principal with an active directory agent. Apply a
+    # per-run team-and-agent-scoped grant just for this test. The endpoint must pick the
     # grant, write/reuse an MCPAgentSession with the deterministic adapter-<hash>
     # name, and report reused=true on the second call.
-    # Use a fresh agentID per e2e invocation so deterministic-name reuse
-    # doesn't leak across re-runs in E2E_CACHE_MODE=1 (where the cluster and
-    # prior adapter-<hash> sessions are retained between runs). A timestamp
-    # suffix is sufficient; the assertions below verify the platform's own
-    # reuse semantics (reused=true on the *second* call within this run).
-    ADAPTER_AGENT_ID="e2e-adapter-agent-$(date +%s)"
-
     ensure_adapter_proxy_prerequisites
+    ensure_adapter_agent_identity
 
     log_line policy "applying agent-scoped grant for adapter-session test"
     cat >"${WORKDIR}/adapter-session-grant.yaml" <<EOF
@@ -4129,7 +4188,9 @@ spec:
   serverRef:
     name: ${SERVER_NAME}
   subject:
+    teamID: ${ADAPTER_TEAM_ID}
     agentID: ${ADAPTER_AGENT_ID}
+  expiresAt: ${ADAPTER_AGENT_EXPIRES_AT}
   maxTrust: low
   allowedSideEffects: [read]
   policyVersion: v1
@@ -4140,19 +4201,12 @@ EOF
     (cd "${WORKDIR}" && "${PROJECT_ROOT}/bin/mcp-runtime" access --use-kube grant apply --file adapter-session-grant.yaml)
     wait_for_policy_text "\"agent_id\": \"${ADAPTER_AGENT_ID}\""
 
-    log_line policy "logging in platform admin for adapter-session test"
-    ADAPTER_PLATFORM_TOKEN="$(PLATFORM_ADMIN_EMAIL="${PLATFORM_ADMIN_EMAIL}" PLATFORM_ADMIN_PASSWORD="${PLATFORM_ADMIN_PASSWORD}" python3 -c '
-import json, os
-print(json.dumps({"email": os.environ["PLATFORM_ADMIN_EMAIL"], "password": os.environ["PLATFORM_ADMIN_PASSWORD"]}))
-' | curl -fsS -X POST \
-      -H "content-type: application/json" \
-      --data-binary @- \
-      "http://127.0.0.1:${API_SERVICE_PORT}/api/v1/auth/login" | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')"
+    log_line policy "logging in team member for adapter-session test"
 
-    log_line policy "adapter-session endpoint should issue a session for the wildcard grant"
+    log_line policy "adapter-session endpoint should issue a session for the team agent grant"
     ADAPTER_SESSION_BODY="$(printf '{"serverName":"%s","namespace":"mcp-servers","agentID":"%s"}' "${SERVER_NAME}" "${ADAPTER_AGENT_ID}")"
     ADAPTER_SESSION_RESP="$(curl -fsS -X POST \
-      -H "Authorization: Bearer ${ADAPTER_PLATFORM_TOKEN}" \
+      -H "Authorization: Bearer ${ADAPTER_CALLER_TOKEN}" \
       -H "content-type: application/json" \
       --data "${ADAPTER_SESSION_BODY}" \
       "http://127.0.0.1:${SENTINEL_PORT}/api/v1/runtime/adapter/sessions")"
@@ -4180,7 +4234,7 @@ print('adapter-session issued:', resp['name'], 'reused=', resp['reused'])
     # whether the first call hit a leftover from a previous e2e run.
     log_line policy "adapter-session endpoint should reuse the existing session on a second call"
     ADAPTER_SESSION_RESP2="$(curl -fsS -X POST \
-      -H "Authorization: Bearer ${ADAPTER_PLATFORM_TOKEN}" \
+      -H "Authorization: Bearer ${ADAPTER_CALLER_TOKEN}" \
       -H "content-type: application/json" \
       --data "${ADAPTER_SESSION_BODY}" \
       "http://127.0.0.1:${SENTINEL_PORT}/api/v1/runtime/adapter/sessions")"
@@ -4194,7 +4248,7 @@ print('adapter-session reused:', resp['name'])
 
     log_line policy "adapter-session endpoint must reject requests with no matching grant"
     ADAPTER_SESSION_REJECT_STATUS="$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
-      -H "Authorization: Bearer ${ADAPTER_PLATFORM_TOKEN}" \
+      -H "Authorization: Bearer ${ADAPTER_CALLER_TOKEN}" \
       -H "content-type: application/json" \
       --data '{"serverName":"definitely-missing","namespace":"mcp-servers","agentID":"ops-agent"}' \
       "http://127.0.0.1:${SENTINEL_PORT}/api/v1/runtime/adapter/sessions")"
@@ -4205,7 +4259,7 @@ print('adapter-session reused:', resp['name'])
 
     if deep_request_flows_enabled || scenario_selected "adapter-proxy"; then
       log_line policy "running local adapter proxy with platform-issued session"
-      start_e2e_adapter_proxy "${ADAPTER_AGENT_ID}" "${ADAPTER_PLATFORM_TOKEN}"
+      start_e2e_adapter_proxy "${ADAPTER_AGENT_ID}" "${ADAPTER_CALLER_TOKEN}"
       # The adapter session is rendered through the policy ConfigMap, then the
       # gateway observes the mounted file on its next kubelet/poll interval.
       # Reuse the normal policy wait budget here; CI can take longer than a
@@ -4994,7 +5048,8 @@ PY
   run_mcp_curl_expect "mcp-curl-oauth-valid" "${MCP_OAUTH_VALID_URL}" true
   if scenario_selected "adapter-certificates"; then
     log_line oauth "testing adapter certificate enrollment and OAuth-route authentication over Traefik TLS"
-    ADAPTER_CERT_AGENT_ID="e2e-adapter-cert-$(date +%s)"
+    ensure_adapter_agent_identity
+    ADAPTER_CERT_AGENT_ID="${ADAPTER_AGENT_ID}"
     ADAPTER_CERT_DIR="${WORKDIR}/adapter-certificate"
     ADAPTER_CERT_GRANT="${OAUTH_SERVER_NAME}-adapter-cert-grant"
     WRONG_SERVER_NAME="${ADAPTER_CERT_WRONG_SERVER_NAME}"
@@ -5010,7 +5065,9 @@ spec:
   serverRef:
     name: ${OAUTH_SERVER_NAME}
   subject:
+    teamID: ${ADAPTER_TEAM_ID}
     agentID: ${ADAPTER_CERT_AGENT_ID}
+  expiresAt: ${ADAPTER_AGENT_EXPIRES_AT}
   maxTrust: low
   allowedSideEffects: [read]
   policyVersion: v1
@@ -5030,7 +5087,7 @@ EOF
     wait_for_named_server_ready "${WRONG_SERVER_NAME}"
 
     ADAPTER_CERT_ENROLL_OUTPUT="$(MCP_PLATFORM_API_URL="http://127.0.0.1:${SENTINEL_PORT}" \
-      MCP_PLATFORM_API_TOKEN="${ADAPTER_PLATFORM_TOKEN}" \
+      MCP_PLATFORM_API_TOKEN="${ADAPTER_CALLER_TOKEN}" \
       ./bin/mcp-runtime adapter enroll \
         --platform-url "http://127.0.0.1:${SENTINEL_PORT}" \
         --server "${OAUTH_SERVER_NAME}" \
@@ -5269,18 +5326,12 @@ fi
 if scenario_selected "governance" || scenario_selected "adapter-proxy"; then
   # Phase 6: exercise the platform-issued adapter-session endpoint. The
   # existing governance grant pins humanID to ${HUMAN_ID}, while this flow
-  # calls the endpoint as the platform admin principal. Apply a second,
-  # per-run agent-scoped grant just for this test. The endpoint must pick the
+  # uses a team member principal with an active directory agent. Apply a
+  # per-run team-and-agent-scoped grant just for this test. The endpoint must pick the
   # grant, write/reuse an MCPAgentSession with the deterministic adapter-<hash>
   # name, and report reused=true on the second call.
-  # Use a fresh agentID per e2e invocation so deterministic-name reuse
-  # doesn't leak across re-runs in E2E_CACHE_MODE=1 (where the cluster and
-  # prior adapter-<hash> sessions are retained between runs). A timestamp
-  # suffix is sufficient; the assertions below verify the platform's own
-  # reuse semantics (reused=true on the *second* call within this run).
-  ADAPTER_AGENT_ID="e2e-adapter-agent-$(date +%s)"
-
   ensure_adapter_proxy_prerequisites
+  ensure_adapter_agent_identity
 
   log_line policy "applying agent-scoped grant for adapter-session test"
   cat >"${WORKDIR}/adapter-session-grant.yaml" <<EOF
@@ -5293,7 +5344,9 @@ spec:
   serverRef:
     name: ${SERVER_NAME}
   subject:
+    teamID: ${ADAPTER_TEAM_ID}
     agentID: ${ADAPTER_AGENT_ID}
+  expiresAt: ${ADAPTER_AGENT_EXPIRES_AT}
   maxTrust: low
   allowedSideEffects: [read]
   policyVersion: v1
@@ -5304,19 +5357,12 @@ EOF
   (cd "${WORKDIR}" && "${PROJECT_ROOT}/bin/mcp-runtime" access --use-kube grant apply --file adapter-session-grant.yaml)
   wait_for_policy_text "\"agent_id\": \"${ADAPTER_AGENT_ID}\""
 
-  log_line policy "logging in platform admin for adapter-session test"
-  ADAPTER_PLATFORM_TOKEN="$(PLATFORM_ADMIN_EMAIL="${PLATFORM_ADMIN_EMAIL}" PLATFORM_ADMIN_PASSWORD="${PLATFORM_ADMIN_PASSWORD}" python3 -c '
-import json, os
-print(json.dumps({"email": os.environ["PLATFORM_ADMIN_EMAIL"], "password": os.environ["PLATFORM_ADMIN_PASSWORD"]}))
-' | curl -fsS -X POST \
-    -H "content-type: application/json" \
-    --data-binary @- \
-    "http://127.0.0.1:${API_SERVICE_PORT}/api/v1/auth/login" | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')"
+  log_line policy "logging in team member for adapter-session test"
 
-  log_line policy "adapter-session endpoint should issue a session for the wildcard grant"
+  log_line policy "adapter-session endpoint should issue a session for the team agent grant"
   ADAPTER_SESSION_BODY="$(printf '{"serverName":"%s","namespace":"mcp-servers","agentID":"%s"}' "${SERVER_NAME}" "${ADAPTER_AGENT_ID}")"
   ADAPTER_SESSION_RESP="$(curl -fsS -X POST \
-    -H "Authorization: Bearer ${ADAPTER_PLATFORM_TOKEN}" \
+    -H "Authorization: Bearer ${ADAPTER_CALLER_TOKEN}" \
     -H "content-type: application/json" \
     --data "${ADAPTER_SESSION_BODY}" \
     "http://127.0.0.1:${SENTINEL_PORT}/api/v1/runtime/adapter/sessions")"
@@ -5344,7 +5390,7 @@ print('adapter-session issued:', resp['name'], 'reused=', resp['reused'])
   # whether the first call hit a leftover from a previous e2e run.
   log_line policy "adapter-session endpoint should reuse the existing session on a second call"
   ADAPTER_SESSION_RESP2="$(curl -fsS -X POST \
-    -H "Authorization: Bearer ${ADAPTER_PLATFORM_TOKEN}" \
+    -H "Authorization: Bearer ${ADAPTER_CALLER_TOKEN}" \
     -H "content-type: application/json" \
     --data "${ADAPTER_SESSION_BODY}" \
     "http://127.0.0.1:${SENTINEL_PORT}/api/v1/runtime/adapter/sessions")"
@@ -5358,7 +5404,7 @@ print('adapter-session reused:', resp['name'])
 
   log_line policy "adapter-session endpoint must reject requests with no matching grant"
   ADAPTER_SESSION_REJECT_STATUS="$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
-    -H "Authorization: Bearer ${ADAPTER_PLATFORM_TOKEN}" \
+    -H "Authorization: Bearer ${ADAPTER_CALLER_TOKEN}" \
     -H "content-type: application/json" \
     --data '{"serverName":"definitely-missing","namespace":"mcp-servers","agentID":"ops-agent"}' \
     "http://127.0.0.1:${SENTINEL_PORT}/api/v1/runtime/adapter/sessions")"
@@ -5369,7 +5415,7 @@ print('adapter-session reused:', resp['name'])
 
   if deep_request_flows_enabled || scenario_selected "adapter-proxy"; then
     log_line policy "running local adapter proxy with platform-issued session"
-    start_e2e_adapter_proxy "${ADAPTER_AGENT_ID}" "${ADAPTER_PLATFORM_TOKEN}"
+    start_e2e_adapter_proxy "${ADAPTER_AGENT_ID}" "${ADAPTER_CALLER_TOKEN}"
     # The adapter session is rendered through the policy ConfigMap, then the
     # gateway observes the mounted file on its next kubelet/poll interval.
     # Reuse the normal policy wait budget here; CI can take longer than a

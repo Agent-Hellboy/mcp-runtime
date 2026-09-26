@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"mcp-runtime/internal/cli/certmanager"
 	"mcp-runtime/internal/cli/core"
@@ -912,10 +913,38 @@ func operatorImagePullPolicy(operatorImage string) string {
 	return "Always"
 }
 
+// bundledMCPAuthServicePresent reports whether the bundled mcp-auth Service
+// exists in the cluster. It is a variable so tests can stub cluster state.
+var bundledMCPAuthServicePresent = func() bool {
+	clients, err := platformKubernetesClients()
+	if err != nil || clients == nil || clients.Clientset == nil {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_, err = clients.Clientset.CoreV1().Services(core.DefaultAnalyticsNamespace).Get(ctx, "mcp-auth-server", metav1.GetOptions{})
+	return err == nil
+}
+
+// operatorInternalOAuthIssuerURL returns the in-cluster issuer URL the
+// operator hands to gateway sidecars. An explicit OAUTH_INTERNAL_ISSUER_URL
+// wins; otherwise it is derived from cluster state, so a setup rerun that
+// skips the mcp-auth step still keeps the value while the bundled mcp-auth
+// Service exists instead of dropping it from the re-rendered operator.
+func operatorInternalOAuthIssuerURL() string {
+	if issuer := strings.TrimSpace(os.Getenv("OAUTH_INTERNAL_ISSUER_URL")); issuer != "" {
+		return issuer
+	}
+	if bundledMCPAuthServicePresent() {
+		return mcpAuthInternalIssuerURLForCluster()
+	}
+	return ""
+}
+
 // operatorEnvOverrides returns the environment variables to set on the operator deployment.
 func operatorEnvOverrides(gatewayProxyImage, existingGatewayOTLPEndpoint string) []operatorEnvVar {
 	var envVars []operatorEnvVar
-	if issuer := strings.TrimSpace(os.Getenv("OAUTH_INTERNAL_ISSUER_URL")); issuer != "" {
+	if issuer := operatorInternalOAuthIssuerURL(); issuer != "" {
 		envVars = append(envVars, operatorEnvVar{Name: "OAUTH_INTERNAL_ISSUER_URL", Value: issuer})
 	}
 	image := strings.TrimSpace(gatewayProxyImage)

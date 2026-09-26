@@ -76,7 +76,7 @@ Expected codes:
 | `/api/v1/runtime/teams/{slug}/agents`                    | POST          | 401  | 403         | 403      | 201       | 401/403    | Create requires admin or owning-team owner. |
 | `/api/v1/runtime/agents/{id}`                            | GET           | 401  | 200/403     | 200/403  | 200/404   | 401/403    | Admin/team members can view; other teams are forbidden. |
 | `/api/v1/runtime/agents/{id}`                            | PATCH         | 401  | 403         | 403      | 200/404   | 401/403    | Rename requires admin or owning-team owner. |
-| `/api/v1/runtime/agents/{id}/deactivate`               | POST          | 401  | 403         | 403      | 200/404   | 401/403    | Lifecycle change requires admin or owning-team owner. |
+| `/api/v1/runtime/agents/{id}/deactivate`               | POST          | 401  | 403         | 403      | 200/404   | 401/403    | Admin or owning-team owner; marks inactive and revokes active sessions across namespaces. |
 | `/api/v1/runtime/agents/{id}/reactivate`               | POST          | 401  | 403         | 403      | 200/404   | 401/403    | Lifecycle change requires admin or owning-team owner. |
 | `/api/v1/users`                                          | POST          | 401  | 403         | 403      | 200       | 401/403    | Admin-only password user create. |
 | `/api/v1/runtime/namespaces`                             | GET           | 401  | 200         | 200      | 200       | 401/403    | |
@@ -85,13 +85,14 @@ Expected codes:
 | `/api/v1/deployments/{id}`                               | GET           | 401  | 200         | 200      | 200       | 401/403    | |
 | `/api/v1/runtime/server-events`                          | GET           | 401  | 200/403     | 200/403  | 200       | 401/403    | Full event details only for admin, server owner, or team owner; regular namespace readers are forbidden. |
 | `/api/v1/runtime/grants`                                 | GET           | 401  | 200         | 200      | 200       | 401/403    | Lists only grants for servers the caller can administer; regular team/catalog readers receive an empty scoped set. |
-| `/api/v1/runtime/grants`                                 | POST          | 401  | 200/403     | 200/403  | 200       | 401/403    | Create/update requires admin, server owner, or team owner. |
+| `/api/v1/runtime/grants`                                 | POST          | 401  | 200/403/422/503 | 200/403/422/503 | 200/422/503 | 401/403 | Create/update requires admin, server owner, or team owner. Agent subjects must be active directory entries belonging to the subject team; cross-team human/agent subjects must also belong to the named team and require an expiry within `MCP_CROSS_TEAM_GRANT_MAX_TTL` (default seven days). Invalid subjects/expiry return 422; unavailable directory returns 503; invalid TTL configuration returns 500. |
 | `/api/v1/runtime/grants/{ns}/{name}`                     | GET           | 401  | 200/403     | 200/403  | 200       | 401/403    | Full grant summary only for admin, server owner, or team owner. |
 | `/api/v1/runtime/grants/{ns}/{name}`                     | DELETE        | 401  | 200/403     | 200/403  | 200       | 401/403    | Mutating; same owner/team-owner gate as apply. |
 | `/api/v1/runtime/grants/{ns}/{name}/enable`              | POST          | 401  | 200/403     | 200/403  | 200       | 401/403    | Mutating; same owner/team-owner gate as apply. |
 | `/api/v1/runtime/grants/{ns}/{name}/disable`             | POST          | 401  | 200/403     | 200/403  | 200       | 401/403    | Mutating; same owner/team-owner gate as apply. |
+| `/api/v1/runtime/grants/{ns}/{name}/revoke-sessions`      | POST          | 401  | 200/403     | 200/403  | 200       | 401/403    | Revokes every active adapter session issued from this grant; requires authority over its referenced server. |
 | `/api/v1/runtime/sessions`                               | GET           | 401  | 200         | 200      | 200       | 401/403    | Lists only sessions for servers the caller can administer. |
-| `/api/v1/runtime/sessions`                               | POST          | 401  | 403         | 403      | 200       | 401/403    | Direct session apply is admin/internal-only; users should use `/api/v1/runtime/adapter/sessions`. |
+| `/api/v1/runtime/sessions`                               | POST          | 401  | 403         | 403      | 200/422/503 | 401/403   | Admin/internal-only; agent subjects must be active directory entries in the subject team. |
 | `/api/v1/runtime/sessions/{ns}/{name}`                   | GET           | 401  | 200/403     | 200/403  | 200       | 401/403    | Full session summary only for admin, server owner, or team owner. |
 | `/api/v1/runtime/sessions/{ns}/{name}`                   | DELETE        | 401  | 200/403     | 200/403  | 200       | 401/403    | Mutating; requires admin, server owner, or team owner. |
 | `/api/v1/runtime/sessions/{ns}/{name}/revoke`            | POST          | 401  | 200/403     | 200/403  | 200       | 401/403    | Mutating; requires admin, server owner, or team owner. |

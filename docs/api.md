@@ -446,8 +446,17 @@ Agent list accepts `status=active|inactive`, a name substring in `q`, an opaque
 IDs in the `agt_<26-character lowercase ULID>` format. Names are trimmed,
 internal whitespace is collapsed, and names are unique case-insensitively per
 team, including inactive records. This directory records governance identity;
-it does not authenticate an agent runtime. Deactivation changes the directory
-status; session revocation is delivered in a follow-up stage of #467.
+it does not authenticate an agent runtime. Runtime API grant and session writes,
+adapter session issuance, and adapter certificate enrollment reject unknown,
+inactive, malformed, or wrong-team agent IDs. Deactivation marks the agent
+inactive and revokes its active sessions across namespaces; each revoked
+session produces an audit event. If revocation is incomplete, the API returns
+an error and a retry completes the remaining revocations.
+
+Direct Kubernetes writes do not pass through these directory checks. In
+particular, a cluster administrator can create an `MCPAgentSession` directly;
+use the runtime API for session creation when directory enforcement is
+required. Admission-time directory validation is not currently installed.
 
 For non-admin users, runtime scope depends on `PLATFORM_MODE` / setup
 `--platform-mode`. In `tenant` mode, `GET /api/v1/runtime/servers` without a

@@ -95,6 +95,15 @@ metadata; the ID alone does not authenticate a runtime or prove which software
 made a request. Authentication continues to come from the configured OAuth
 flow or, for enrolled adapters, the session-bound certificate.
 
+Agent IDs are platform-generated immutable `agt_<26-character lowercase
+ULID>` values. The runtime API requires an active directory record in the
+subject team when writing grants or sessions, issuing adapter sessions, and
+enrolling adapter certificates. Deactivation first marks the agent inactive,
+then revokes its active sessions across namespaces and audits each revocation.
+If revocation fails, the agent remains inactive; retry deactivation to finish.
+Direct Kubernetes writes bypass these identity-store checks, so create
+sessions through the runtime API wherever directory enforcement is required.
+
 For audit, keep the **actor** (the agent named by the session) separate from
 the **authority** (the human or team that delegated access). A session and its
 gateway decisions should preserve both identities, along with the grant,
@@ -149,6 +158,19 @@ spec:
 
 Every populated subject field must match the request identity. A grant bound to
 all three subject fields does not match a different human, agent, or team.
+For cross-team access, `subject.teamID` names the grantee team while the
+referenced `MCPServer.spec.teamID` remains the resource-owning authority team.
+The grant does not transfer or rewrite server ownership. Cross-team subjects
+must be active members of the named team, and their grant must expire within
+`MCP_CROSS_TEAM_GRANT_MAX_TTL` (default seven days). Adapter sessions stop at
+the grant expiry. Authorization and audit records preserve both dimensions:
+the caller's subject team and the server's resource team.
+For administrator-created sessions, pass `grantName` to link the session to an
+active grant; the API verifies its server and every populated subject field,
+then caps session trust and expiry to the grant. Grant-wide session revocation
+targets sessions with this explicit link, including adapter-issued sessions.
+Manually created sessions without `grantName` are not part of a grant's
+revoke-all operation.
 
 The grant controls:
 

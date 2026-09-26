@@ -25,6 +25,7 @@ type accessSessionRequest struct {
 	ExpiresAt      *metav1.Time                   `json:"expiresAt"`
 	Revoked        *bool                          `json:"revoked,omitempty"`
 	PolicyVersion  string                         `json:"policyVersion"`
+	GrantName      string                         `json:"grantName,omitempty"`
 }
 
 type accessSessionPatchRequest struct {

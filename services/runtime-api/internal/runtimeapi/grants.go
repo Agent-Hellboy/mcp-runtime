@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -74,12 +75,81 @@ func (s *AccessService) HandleGrantItemPath(w http.ResponseWriter, r *http.Reque
 		s.handleGrantPatch(w, r, ns, name)
 		return
 	case http.MethodPost:
+		parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+		if len(parts) == 6 && parts[0] == "api" && parts[1] == "runtime" && parts[2] == "grants" && parts[5] == "revoke-sessions" {
+			s.handleGrantRevokeSessions(w, r, parts[3], parts[4])
+			return
+		}
 		s.handleGrantPostTogglePath(w, r)
 		return
 	default:
 		w.Header().Set("allow", "GET, POST, PATCH, DELETE")
 		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed")
 	}
+}
+
+func (s *AccessService) handleGrantRevokeSessions(w http.ResponseWriter, r *http.Request, namespace, name string) {
+	if s == nil || s.accessMgr == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "kubernetes not available")
+		return
+	}
+	namespace, err := s.scopedAccessWriteNamespaceForPrincipal(r.Context(), namespace)
+	if err != nil {
+		writeAPIError(w, http.StatusForbidden, err.Error())
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	grant, err := s.accessMgr.GetGrant(ctx, name, namespace)
+	if err != nil {
+		code, msg := k8sclient.HTTPStatusFromK8sError(err)
+		writeAPIError(w, code, msg)
+		return
+	}
+	allowed, err := s.canAdministerAccessServerRef(ctx, namespace, grant.Spec.ServerRef)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "failed to verify server authority")
+		return
+	}
+	if !allowed {
+		writeAPIError(w, http.StatusForbidden, "forbidden server")
+		return
+	}
+	sessions, err := s.accessMgr.ListSessions(ctx, namespace)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "failed to list grant sessions")
+		return
+	}
+	resourceTeam := ""
+	if server, serverErr := s.accessMgr.GetMCPServerRef(ctx, grant.Spec.ServerRef); serverErr == nil && server != nil {
+		resourceTeam = strings.TrimSpace(string(server.Spec.TeamID))
+	}
+	revoked := 0
+	for _, session := range sessions.Items {
+		if session.Annotations[adapterGrantNameAnnotation] != grant.Name || session.Annotations[adapterGrantNamespaceAnnotation] != grant.Namespace {
+			continue
+		}
+		if session.Spec.Revoked {
+			revoked++
+			continue
+		}
+		if err := s.accessMgr.RevokeSession(ctx, session.Name, session.Namespace); err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "failed to revoke every grant session")
+			return
+		}
+		revoked++
+		if s.audit != nil {
+			p, _ := principalFromContext(r.Context())
+			message, _ := json.Marshal(map[string]string{
+				"grant":            grant.Name,
+				"session":          session.Name,
+				"subject_team_id":  string(session.Spec.Subject.TeamID),
+				"resource_team_id": resourceTeam,
+			})
+			s.audit.WriteAudit(ctx, auditEvent{UserID: p.Subject, Action: "grant.session.revoked", Resource: session.Name, Namespace: session.Namespace, Status: "success", Message: string(message), AuthIdentity: auditIdentityLabel(p)})
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"grant": name, "revokedSessions": revoked})
 }
 
 func (s *AccessService) handleGrantGet(w http.ResponseWriter, r *http.Request, namespace, name string) {
@@ -141,6 +211,9 @@ func (s *AccessService) handleGrantDelete(w http.ResponseWriter, r *http.Request
 		log.Printf("delete grant %s/%s failed (status=%d): %v", namespace, name, code, err)
 		writeAPIError(w, code, fmt.Sprintf("failed to delete grant: %s", msg))
 		return
+	}
+	if server, serverErr := s.accessMgr.GetMCPServerRef(ctx, grant.Spec.ServerRef); serverErr == nil && server != nil {
+		s.writeCrossTeamGrantAudit(ctx, "grant.cross_team.revoked", *grant, string(server.Spec.TeamID))
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"success":   true,
@@ -244,6 +317,7 @@ func (s *AccessService) handleGrantToggle(w http.ResponseWriter, r *http.Request
 }
 
 func (s *AccessService) handleGrantStateChange(w http.ResponseWriter, ctx context.Context, namespace, name string, disable bool) {
+	grant, _ := s.accessMgr.GetGrant(ctx, name, namespace)
 	var updateErr error
 	if disable {
 		updateErr = s.accessMgr.DisableGrant(ctx, name, namespace)
@@ -253,6 +327,11 @@ func (s *AccessService) handleGrantStateChange(w http.ResponseWriter, ctx contex
 	if updateErr != nil {
 		writeAPIError(w, http.StatusInternalServerError, "failed to update grant")
 		return
+	}
+	if disable && grant != nil {
+		if server, serverErr := s.accessMgr.GetMCPServerRef(ctx, grant.Spec.ServerRef); serverErr == nil && server != nil {
+			s.writeCrossTeamGrantAudit(ctx, "grant.cross_team.revoked", *grant, string(server.Spec.TeamID))
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"success":   true,

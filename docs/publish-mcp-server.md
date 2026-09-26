@@ -305,6 +305,12 @@ Use `--scope public` for public catalog images. Use `--scope tenant` for team
 images; if the image name has no repository prefix, the CLI prefixes it with
 the authenticated user's active team slug. Explicit repository prefixes for
 tenant images must match one of the user's teams.
+`--scope org` and `--scope public` are accepted only when the platform runs in
+the matching mode (`PLATFORM_MODE=org` or `public`); `server push` and
+`server deploy` reject a disabled scope the same way and list the enabled
+scopes, so use `--scope tenant` on a tenant-mode platform. Uploads may take up
+to `MCP_REGISTRY_PUSH_UPLOAD_TIMEOUT` (default `20m`) on `mcp-runtime-api`;
+archives over 512 MiB are rejected with `413`.
 
 Then deploy from metadata:
 

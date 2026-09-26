@@ -1,6 +1,7 @@
 package runtimeapi
 
 import (
+	"fmt"
 	"net/http"
 	"os"
 	"strings"
@@ -33,6 +34,39 @@ func PlatformMode() string {
 	default:
 		return platformModeTenant
 	}
+}
+
+// enabledPublishScopes lists the publish scopes the configured platform mode
+// accepts. Tenant scope is always available; org and public need the
+// matching platform mode.
+func enabledPublishScopes() []publishscope.Scope {
+	switch PlatformMode() {
+	case platformModeOrg:
+		return []publishscope.Scope{publishscope.Tenant, publishscope.Org}
+	case platformModePublic:
+		return []publishscope.Scope{publishscope.Tenant, publishscope.Public}
+	default:
+		return []publishscope.Scope{publishscope.Tenant}
+	}
+}
+
+// publishScopeEnabledError returns an actionable error when scope is not
+// enabled by the platform mode. Registry push and server deploy share it so
+// an image can only be published to a scope it can also be deployed from.
+func publishScopeEnabledError(scope publishscope.Scope) error {
+	if scope == "" {
+		return nil
+	}
+	enabled := enabledPublishScopes()
+	names := make([]string, 0, len(enabled))
+	for _, candidate := range enabled {
+		if candidate == scope {
+			return nil
+		}
+		names = append(names, string(candidate))
+	}
+	return fmt.Errorf("%s scope is not enabled on this platform (platform mode %q; enabled scopes: %s); pass --scope tenant, or omit --scope and set scope: tenant in .mcp metadata to publish to your team namespace",
+		scope, PlatformMode(), strings.Join(names, ", "))
 }
 
 // PublicCatalogEnabled reports whether the runtime should expose public catalog behavior.

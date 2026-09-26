@@ -782,7 +782,7 @@ func TestAuditPayloadIncludesLatencyMetadata(t *testing.T) {
 			TeamID:    "team-acme",
 			SessionID: "session-1",
 		},
-		nil,
+		&policypkg.Document{Server: policypkg.Server{TeamID: "team-owner"}},
 		policypkg.Decision{Allowed: true, Reason: "allowed", PolicyVersion: "test-policy"},
 		http.StatusAccepted,
 		27,
@@ -816,6 +816,12 @@ func TestAuditPayloadIncludesLatencyMetadata(t *testing.T) {
 	}
 	if got := payload["bytes_out"]; got != 91 {
 		t.Fatalf("bytes_out = %#v, want %d", got, 91)
+	}
+	if got := payload["subject_team_id"]; got != "team-acme" {
+		t.Fatalf("subject_team_id = %#v, want team-acme", got)
+	}
+	if got := payload["resource_team_id"]; got != "team-owner" {
+		t.Fatalf("resource_team_id = %#v, want team-owner", got)
 	}
 }
 

@@ -43,6 +43,7 @@ type AccessService struct {
 	k8sClients *k8sclient.Clients
 	identity   identityStore
 	accessMgr  *sentinelaccess.Manager
+	audit      auditWriter
 }
 
 type InventoryService struct {
@@ -118,6 +119,7 @@ func (s *RuntimeServer) Access() *AccessService {
 		k8sClients: s.k8sClients,
 		identity:   s.identity,
 		accessMgr:  s.accessMgr,
+		audit:      s.audit,
 	}
 }
 
