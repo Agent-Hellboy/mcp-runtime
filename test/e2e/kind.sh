@@ -4994,7 +4994,8 @@ PY
   run_mcp_curl_expect "mcp-curl-oauth-valid" "${MCP_OAUTH_VALID_URL}" true
   if scenario_selected "adapter-certificates"; then
     log_line oauth "testing adapter certificate enrollment and OAuth-route authentication over Traefik TLS"
-    ADAPTER_CERT_AGENT_ID="e2e-adapter-cert-$(date +%s)"
+    ensure_adapter_agent_identity
+    ADAPTER_CERT_AGENT_ID="${ADAPTER_AGENT_ID}"
     ADAPTER_CERT_DIR="${WORKDIR}/adapter-certificate"
     ADAPTER_CERT_GRANT="${OAUTH_SERVER_NAME}-adapter-cert-grant"
     WRONG_SERVER_NAME="${ADAPTER_CERT_WRONG_SERVER_NAME}"
@@ -5006,11 +5007,13 @@ kind: MCPAccessGrant
 metadata:
   name: ${ADAPTER_CERT_GRANT}
   namespace: mcp-servers
-spec:
-  serverRef:
-    name: ${OAUTH_SERVER_NAME}
+  spec:
+    serverRef:
+      name: ${OAUTH_SERVER_NAME}
   subject:
+    teamID: ${ADAPTER_TEAM_ID}
     agentID: ${ADAPTER_CERT_AGENT_ID}
+  expiresAt: ${ADAPTER_AGENT_EXPIRES_AT}
   maxTrust: low
   allowedSideEffects: [read]
   policyVersion: v1
@@ -5030,7 +5033,7 @@ EOF
     wait_for_named_server_ready "${WRONG_SERVER_NAME}"
 
     ADAPTER_CERT_ENROLL_OUTPUT="$(MCP_PLATFORM_API_URL="http://127.0.0.1:${SENTINEL_PORT}" \
-      MCP_PLATFORM_API_TOKEN="${ADAPTER_PLATFORM_TOKEN}" \
+      MCP_PLATFORM_API_TOKEN="${ADAPTER_CALLER_TOKEN}" \
       ./bin/mcp-runtime adapter enroll \
         --platform-url "http://127.0.0.1:${SENTINEL_PORT}" \
         --server "${OAUTH_SERVER_NAME}" \
