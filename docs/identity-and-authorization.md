@@ -95,6 +95,15 @@ metadata; the ID alone does not authenticate a runtime or prove which software
 made a request. Authentication continues to come from the configured OAuth
 flow or, for enrolled adapters, the session-bound certificate.
 
+Agent IDs are platform-generated immutable `agt_<26-character lowercase
+ULID>` values. The runtime API requires an active directory record in the
+subject team when writing grants or sessions, issuing adapter sessions, and
+enrolling adapter certificates. Deactivation first marks the agent inactive,
+then revokes its active sessions across namespaces and audits each revocation.
+If revocation fails, the agent remains inactive; retry deactivation to finish.
+Direct Kubernetes writes bypass these identity-store checks, so create
+sessions through the runtime API wherever directory enforcement is required.
+
 For audit, keep the **actor** (the agent named by the session) separate from
 the **authority** (the human or team that delegated access). A session and its
 gateway decisions should preserve both identities, along with the grant,

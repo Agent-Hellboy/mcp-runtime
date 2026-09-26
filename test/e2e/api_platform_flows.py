@@ -383,6 +383,32 @@ check(
 
 api_runtime_grant = f"{server_name}-e2e-api-grant-{suffix}"
 api_runtime_session = f"{server_name}-e2e-api-session-{suffix}"
+runtime_namespace = expect_json(
+    f"{api_base}/runtime/namespaces/mcp-servers", headers=admin_key_headers
+).get("namespace", {})
+api_runtime_subject = {"humanID": human_id}
+runtime_team_slug = runtime_namespace.get("team_slug", "")
+runtime_team_id = runtime_namespace.get("team_id", "")
+if runtime_team_slug and runtime_team_id:
+    directory_agent = expect_json(
+        f"{api_base}/runtime/teams/{quote_segment(runtime_team_slug)}/agents",
+        status=201,
+        method="POST",
+        headers=admin_headers,
+        body={"name": f"API flow agent {suffix}"},
+    ).get("agent", {})
+    check(
+        bool(directory_agent.get("id"))
+        and directory_agent.get("team_id") == runtime_team_id,
+        "created runtime API test agent in the server namespace team",
+        f"agent response: {directory_agent}",
+    )
+    api_runtime_subject.update(
+        {
+            "agentID": directory_agent["id"],
+            "teamID": runtime_team_id,
+        }
+    )
 expect_json(
     f"{api_base}/runtime/grants",
     method="POST",
@@ -391,7 +417,7 @@ expect_json(
         "name": api_runtime_grant,
         "namespace": "mcp-servers",
         "serverRef": {"name": server_name, "namespace": "mcp-servers"},
-        "subject": {"humanID": human_id, "agentID": agent_id},
+        "subject": api_runtime_subject,
         "maxTrust": "low",
         "allowedSideEffects": ["read"],
         "toolRules": [{"name": "add", "decision": "allow", "requiredTrust": "low"}],
@@ -405,7 +431,7 @@ expect_json(
         "name": api_runtime_session,
         "namespace": "mcp-servers",
         "serverRef": {"name": server_name, "namespace": "mcp-servers"},
-        "subject": {"humanID": human_id, "agentID": agent_id},
+        "subject": api_runtime_subject,
         "consentedTrust": "low",
     },
 )

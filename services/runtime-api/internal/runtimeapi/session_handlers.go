@@ -153,6 +153,10 @@ func (s *AccessService) handleRuntimeSessionApply(w http.ResponseWriter, r *http
 		writeAPIError(w, http.StatusForbidden, "forbidden server")
 		return
 	}
+	if err := requireActiveAgent(ctx, s.identity, string(req.Subject.AgentID), string(req.Subject.TeamID)); err != nil {
+		writeAgentDirectoryError(w, err)
+		return
+	}
 
 	revoked, err := s.sessionRevokedForApply(ctx, req)
 	if err != nil {
@@ -178,6 +182,13 @@ func (s *AccessService) handleRuntimeSessionApply(w http.ResponseWriter, r *http
 	applied, err := s.accessMgr.ApplySession(ctx, session)
 	if err != nil {
 		writeK8sApplyError(w, "session", session.Namespace, session.Name, err)
+		return
+	}
+	if err := requireActiveAgent(ctx, s.identity, string(applied.Spec.Subject.AgentID), string(applied.Spec.Subject.TeamID)); err != nil {
+		if revokeErr := s.accessMgr.RevokeSession(ctx, applied.Name, applied.Namespace); revokeErr != nil {
+			log.Printf("revoke session for inactive agent %s/%s failed: %v", applied.Namespace, applied.Name, revokeErr)
+		}
+		writeAgentDirectoryError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"session": sentinelaccess.ToSessionSummary(*applied)})

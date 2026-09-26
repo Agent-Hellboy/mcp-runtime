@@ -183,6 +183,10 @@ func (s *AccessService) handleRuntimeGrantApply(w http.ResponseWriter, r *http.R
 		writeAPIError(w, http.StatusForbidden, "forbidden server")
 		return
 	}
+	if err := requireActiveAgent(ctx, s.identity, string(req.Subject.AgentID), string(req.Subject.TeamID)); err != nil {
+		writeAgentDirectoryError(w, err)
+		return
+	}
 
 	disabled, err := s.grantDisabledForApply(ctx, req)
 	if err != nil {

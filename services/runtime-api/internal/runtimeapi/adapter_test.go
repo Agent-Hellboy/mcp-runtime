@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"mcp-runtime-api/internal/platformclient"
 	mcpv1alpha1 "mcp-runtime/api/v1alpha1"
 	sentinelaccess "mcp-runtime/pkg/access"
 	"mcp-runtime/pkg/platformauth"
@@ -43,7 +44,7 @@ func newAdapterTestFixture(t *testing.T, grants ...mcpv1alpha1.MCPAccessGrant) a
 	}
 	mgr := sentinelaccess.NewManager(dynamicfake.NewSimpleDynamicClient(scheme, objects...), nil)
 	return adapterTestFixture{
-		server: &RuntimeServer{accessMgr: mgr},
+		server: &RuntimeServer{accessMgr: mgr, identity: &agentIdentityStub{agent: platformclient.Agent{ID: "ops-agent", TeamID: "team-acme", Status: "active"}}},
 		principal: principal{
 			Subject:   "user-123",
 			Email:     "user@example.org",
@@ -222,6 +223,7 @@ func TestAdapterSessionIssuesCrossTeamSessionFromGrantedTeam(t *testing.T) {
 		},
 	}
 	fx := newAdapterTestFixture(t, grant)
+	fx.server.identity = &agentIdentityStub{agent: platformclient.Agent{ID: "ops-agent", TeamID: "team-globex", Status: "active"}}
 	fx.principal.Namespace = "mcp-team-globex"
 	fx.principal.Teams = []platformauth.PrincipalTeam{
 		{ID: "team-globex", Namespace: "mcp-team-globex"},
