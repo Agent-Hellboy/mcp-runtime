@@ -1529,6 +1529,7 @@ print(items[0]["metadata"]["name"])
   revoked_body="${TENANT_QS_DIR}/cross-team-session-revoked.json"
   revoked_status=""
   for i in $(seq 1 "${TENANT_SESSION_PROPAGATION_TRIES}"); do
+    : >"${revoked_body}"
     revoked_status="$(curl -sS -o "${revoked_body}" -w '%{http_code}' -X POST \
       -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' \
       -H "Mcp-Protocol-Version: ${MCP_PROTOCOL_VERSION}" \
@@ -1537,6 +1538,7 @@ print(items[0]["metadata"]["name"])
       --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"'"${MCP_PROTOCOL_VERSION}"'","capabilities":{},"clientInfo":{"name":"mcp-runtime-e2e","version":"1.0.0"}}}' \
       "${runtime_url}" || true)"
     if [[ "${revoked_status}" == "401" ]] && grep -q 'session_revoked' "${revoked_body}"; then break; fi
+    recover_traefik_port_forward_if_needed || true
     sleep 2
   done
   if [[ "${revoked_status}" != "401" ]] || ! grep -q 'session_revoked' "${revoked_body}"; then
@@ -1575,6 +1577,7 @@ print(items[0]["metadata"]["name"])
   fi
   revoked_status=""
   for i in $(seq 1 "${TENANT_SESSION_PROPAGATION_TRIES}"); do
+    : >"${revoked_body}"
     revoked_status="$(curl -sS -o "${revoked_body}" -w '%{http_code}' -X POST \
       -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' \
       -H "Mcp-Protocol-Version: ${MCP_PROTOCOL_VERSION}" \
@@ -1583,6 +1586,7 @@ print(items[0]["metadata"]["name"])
       --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"'"${MCP_PROTOCOL_VERSION}"'","capabilities":{},"clientInfo":{"name":"mcp-runtime-e2e","version":"1.0.0"}}}' \
       "${runtime_url}" || true)"
     if [[ "${revoked_status}" == "401" ]] && grep -q 'session_revoked' "${revoked_body}"; then break; fi
+    recover_traefik_port_forward_if_needed || true
     sleep 2
   done
   if [[ "${revoked_status}" != "401" ]] || ! grep -q 'session_revoked' "${revoked_body}"; then
