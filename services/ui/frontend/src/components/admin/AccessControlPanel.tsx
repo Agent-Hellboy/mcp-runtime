@@ -40,7 +40,6 @@ function emptyGrantDraft(namespace: string): GrantDraft {
     namespace: defaultNamespace(namespace),
     server: "",
     humanID: "",
-    agentID: "",
     teamID: "",
     maxTrust: "low",
     allowedSideEffects: ["read"],
@@ -54,7 +53,6 @@ function emptySessionDraft(namespace: string): SessionDraft {
     namespace: defaultNamespace(namespace),
     server: "",
     humanID: "",
-    agentID: "",
     teamID: "",
     consentedTrust: "low",
     expiresAt: "",
@@ -469,7 +467,6 @@ export function AccessControlPanel({
                 serverRef: { name: grantDraft.server.trim() },
                 subject: {
                   humanID: grantDraft.humanID.trim() || undefined,
-                  agentID: grantDraft.agentID.trim() || undefined,
                   teamID: grantDraft.teamID.trim() || undefined,
                 },
                 maxTrust: grantDraft.maxTrust,
@@ -499,7 +496,6 @@ export function AccessControlPanel({
                 serverRef: { name: sessionDraft.server.trim() },
                 subject: {
                   humanID: sessionDraft.humanID.trim() || undefined,
-                  agentID: sessionDraft.agentID.trim() || undefined,
                   teamID: sessionDraft.teamID.trim() || undefined,
                 },
                 consentedTrust: sessionDraft.consentedTrust,
