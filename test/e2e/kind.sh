@@ -1153,8 +1153,10 @@ start_e2e_adapter_proxy() {
 }
 
 # tenant_owner_cli runs the CLI the way a docs/quickstart.md user does: only
-# the saved `auth login` profile, no MCP_* environment and no kubeconfig, so
-# every command goes through the platform API as that user.
+# the saved `auth login` profile, no API token or other MCP_* configuration,
+# and no kubeconfig, so every command goes through the platform API as that
+# user. Select the profile explicitly so every subprocess uses the same owner
+# credentials even if another CLI command changes the config's current profile.
 tenant_owner_cli() {
   local -a unset_args=()
   local name
@@ -1163,6 +1165,7 @@ tenant_owner_cli() {
   done < <(compgen -e | grep '^MCP_' || true)
   env ${unset_args[@]+"${unset_args[@]}"} \
     KUBECONFIG="${TENANT_QS_DIR}/no-kubeconfig" \
+    MCP_PLATFORM_API_PROFILE=e2e-owner \
     MCP_RUNTIME_CONFIG_DIR="${TENANT_QS_DIR}/owner-config" \
     "${PROJECT_ROOT}/bin/mcp-runtime" "$@"
 }
